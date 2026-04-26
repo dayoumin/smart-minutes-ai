@@ -4,6 +4,7 @@ import { Input } from './Input';
 import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'mock';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
 
 interface AnalyzeResult {
@@ -42,7 +43,6 @@ export const MeetingWriter: React.FC = () => {
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [participants, setParticipants] = useState('');
-    const [analysisMode, setAnalysisMode] = useState<'mock' | 'real'>('mock');
     const [file, setFile] = useState<File | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -78,7 +78,7 @@ export const MeetingWriter: React.FC = () => {
             formData.append('title', title.trim());
             formData.append('date', date);
             formData.append('participants', participants.trim());
-            formData.append('mode', analysisMode);
+            formData.append('mode', ANALYSIS_MODE);
             formData.append('file', file);
 
             const response = await fetch(`${API_BASE}/api/analyze`, {
@@ -186,35 +186,6 @@ export const MeetingWriter: React.FC = () => {
                         <label className="text-sm font-medium text-foreground">참석자 *</label>
                         <Input value={participants} onChange={e => setParticipants(e.target.value)} placeholder="예: 홍길동, 김철수" disabled={isAnalyzing} />
                     </div>
-                </div>
-
-                <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-foreground">분석 모드</label>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        <button
-                            type="button"
-                            disabled={isAnalyzing}
-                            onClick={() => setAnalysisMode('mock')}
-                            className={`rounded-md border px-4 py-3 text-left transition-colors ${analysisMode === 'mock' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-foreground hover:bg-muted/40'}`}
-                        >
-                            <div className="text-sm font-semibold">빠른 테스트</div>
-                            <div className="mt-1 text-xs text-muted-foreground">Mock SSE로 UI 흐름을 확인합니다.</div>
-                        </button>
-                        <button
-                            type="button"
-                            disabled={isAnalyzing}
-                            onClick={() => setAnalysisMode('real')}
-                            className={`rounded-md border px-4 py-3 text-left transition-colors ${analysisMode === 'real' ? 'border-primary bg-primary/10 text-primary' : 'border-border bg-background text-foreground hover:bg-muted/40'}`}
-                        >
-                            <div className="text-sm font-semibold">실제 로컬 분석</div>
-                            <div className="mt-1 text-xs text-muted-foreground">ffmpeg/STT/요약 파이프라인을 실행합니다.</div>
-                        </button>
-                    </div>
-                    {analysisMode === 'real' && (
-                        <p className="text-xs text-amber-700">
-                            실제 분석은 로컬 모델과 ffmpeg가 준비되어 있어야 하며, 긴 영상은 청크 단위로 오래 처리될 수 있습니다.
-                        </p>
-                    )}
                 </div>
 
                 <div className="flex flex-col gap-2 mt-2">

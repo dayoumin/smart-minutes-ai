@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from model_manager import download_model, ensure_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
+from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
 from pipeline.audio_preprocess import convert_to_wav
 from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
 from pipeline.transcribe import transcribe_audio
@@ -282,23 +282,18 @@ async def stream_real_analysis(
         return upload_path
 
     async def prepare_real_config() -> dict:
-        token = os.environ.get("HF_TOKEN")
         config = load_config()
 
         report_progress("Cohere STT 모델 확인 중", 6)
-        stt_path = await asyncio.to_thread(ensure_model, BASE_DIR, "stt_primary", token)
-        config["paths"]["stt_model"] = stt_path
+        stt_spec = get_model_spec("stt_primary")
+        if not model_exists(BASE_DIR, stt_spec):
+            raise RuntimeError("Cohere Transcribe 모델이 없습니다. 설정 화면에서 모델 다운로드를 먼저 활성화해 주세요.")
+        config["paths"]["stt_model"] = stt_spec.local_dir
         report_progress("Cohere STT 모델 준비 완료", 8)
 
         diarization_spec = get_model_spec("diarization")
         segmentation_spec = get_model_spec("segmentation")
         diarization_ready = model_exists(BASE_DIR, diarization_spec) and model_exists(BASE_DIR, segmentation_spec)
-
-        if not diarization_ready and token:
-            report_progress("화자 분리 모델 다운로드 시도 중", 9)
-            await asyncio.to_thread(ensure_model, BASE_DIR, "diarization", token)
-            await asyncio.to_thread(ensure_model, BASE_DIR, "segmentation", token)
-            diarization_ready = True
 
         if not diarization_ready:
             config["diarization"]["enabled"] = False

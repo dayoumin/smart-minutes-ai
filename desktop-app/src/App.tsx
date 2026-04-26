@@ -10,7 +10,7 @@ export const App: React.FC = () => {
 
     return (
         <Layout activeTab={activeTab} onTabChange={setActiveTab}>
-            {activeTab === 'minutes' && <MeetingWriter />}
+            {activeTab === 'minutes' && <MeetingWriter onOpenSettings={() => setActiveTab('settings')} />}
             {activeTab === 'history' && <MeetingHistory />}
             {activeTab === 'settings' && <Settings />}
         </Layout>

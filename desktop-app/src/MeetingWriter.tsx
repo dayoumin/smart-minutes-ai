@@ -48,7 +48,11 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
     return 'unknown';
 };
 
-export const MeetingWriter: React.FC = () => {
+interface MeetingWriterProps {
+    onOpenSettings?: () => void;
+}
+
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) => {
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [participants, setParticipants] = useState('');
@@ -74,7 +78,10 @@ export const MeetingWriter: React.FC = () => {
             .filter(model => model.required && !model.installed)
             .map(model => model.label)
             .join(', ');
-        setErrorMessage(`실제 로컬 분석에 필요한 모델이 없습니다. 설정에서 모델을 준비해 주세요: ${missing}`);
+        const message = `실제 로컬 분석에 필요한 모델이 없습니다. 설정에서 다운로드를 활성화해 주세요: ${missing}`;
+        setErrorMessage(message);
+        window.alert(message);
+        onOpenSettings?.();
         return false;
     };
 

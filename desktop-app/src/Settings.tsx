@@ -77,6 +77,14 @@ export const Settings: React.FC = () => {
     }, []);
 
     const handleDownloadModels = async () => {
+        const needsToken = models?.models.some(model => model.requires_token && !model.installed && model.downloadable);
+        const confirmed = window.confirm(
+            needsToken
+                ? '누락 모델 다운로드를 시작합니다. Pyannote 계열은 Hugging Face 라이선스 동의와 HF_TOKEN 환경변수가 필요할 수 있습니다. 계속할까요?'
+                : '누락 모델 다운로드를 시작할까요?'
+        );
+        if (!confirmed) return;
+
         setIsDownloading(true);
         setMessage('모델 다운로드 요청을 시작했습니다.');
         setErrorMessage('');
@@ -179,7 +187,7 @@ export const Settings: React.FC = () => {
                         </p>
                     </div>
                     <Button onClick={handleDownloadModels} disabled={isLoading || isDownloading}>
-                        {isDownloading ? '다운로드 중...' : '누락 모델 다운로드'}
+                        {isDownloading ? '다운로드 중...' : '누락 모델 다운로드 활성화'}
                     </Button>
                 </div>
 

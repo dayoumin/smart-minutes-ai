@@ -3,6 +3,7 @@ import asyncio
 import os
 import json
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
@@ -22,7 +23,12 @@ from pipeline.summarize import summarize_meeting
 from pipeline.export_docx import export_docx
 from pipeline.export_markdown import export_markdown
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+BASE_DIR = os.path.abspath(
+    os.environ.get(
+        "MEETING_AI_BACKEND_DIR",
+        getattr(sys, "_MEIPASS", os.path.dirname(os.path.abspath(__file__))),
+    )
+)
 
 app = FastAPI(title="NIFS AI Meeting API")
 

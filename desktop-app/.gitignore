@@ -10,6 +10,15 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+src-tauri/target
+src-tauri/gen/schemas
+src-tauri/resources/backend/config.json
+src-tauri/resources/backend/models/
+src-tauri/resources/backend/templates/
+src-tauri/binaries/*.exe
+src-tauri/binaries/*-x86_64*
+src-tauri/binaries/*-aarch64*
+src-tauri/binaries/*-i686*
 *.local
 
 # Editor directories and files

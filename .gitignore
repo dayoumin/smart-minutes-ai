@@ -19,6 +19,8 @@ backend/ffmpeg.zip
 backend/temp/
 backend/output/
 backend/outputs/
+backend/build/
+backend/*.spec
 
 # Node / Frontend
 node_modules/

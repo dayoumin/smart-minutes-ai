@@ -1,116 +1,283 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* ============================================================
+   DESIGN TOKEN SYSTEM - Smart Minutes AI
+   ============================================================
+   All values live here. Components reference tokens only.
+   Never hardcode colors, shadows, or spacing in components.
+   ============================================================ */
+
 @custom-variant dark (&:is(.dark *));
 
-@theme {
-  /* Core Theme Colors */
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-destructive-foreground: var(--destructive-foreground);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
+/* ── 1. PRIMITIVE TOKENS (Raw values) ─────────────────────── */
+:root {
+  /* Brand Palette - NIFS Deep Blue */
+  --color-blue-50: #eff6ff;
+  --color-blue-100: #dbeafe;
+  --color-blue-200: #bfdbfe;
+  --color-blue-400: #60a5fa;
+  --color-blue-500: #3b82f6;
+  --color-blue-700: #1d4ed8;
+  --color-blue-800: #1e40af;
+  --color-blue-900: #1e3a8a;
+
+  --color-teal-400: #22d3ee;
+  --color-teal-500: #06b6d4;
+  --color-teal-600: #0891b2;
+
+  /* Neutral Palette */
+  --color-neutral-0: #ffffff;
+  --color-neutral-50: #f8fafc;
+  --color-neutral-100: #f1f5f9;
+  --color-neutral-200: #e2e8f0;
+  --color-neutral-300: #cbd5e1;
+  --color-neutral-400: #94a3b8;
+  --color-neutral-500: #64748b;
+  --color-neutral-600: #475569;
+  --color-neutral-700: #334155;
+  --color-neutral-800: #1e293b;
+  --color-neutral-900: #0f172a;
+  --color-neutral-950: #020617;
+}
+
+/* ── 2. SEMANTIC TOKENS (Light Mode) ──────────────────────── */
+:root {
+  /* Backgrounds */
+  --bg-page: var(--color-neutral-50);
+  --bg-surface: rgba(255, 255, 255, 0.88);
+  --bg-surface-hover: rgba(255, 255, 255, 0.95);
+  --bg-overlay: rgba(248, 250, 252, 0.65);
+
+  /* Brand */
+  --brand-primary: var(--color-blue-700);
+  --brand-primary-fg: var(--color-neutral-0);
+  --brand-secondary: var(--color-teal-500);
+
+  /* Text */
+  --text-default: var(--color-neutral-900);
+  --text-muted: var(--color-neutral-500);
+  --text-subtle: var(--color-neutral-400);
+  --text-on-primary: var(--color-neutral-0);
+
+  /* Borders */
+  --border-default: rgba(0, 0, 0, 0.10);
+  --border-strong: rgba(0, 0, 0, 0.18);
+  --border-brand: rgba(29, 78, 216, 0.30);
+  /* blue-700 */
+
+  /* Shadows */
+  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.06), 0 0 0 1.5px rgba(0, 0, 0, 0.08);
+  --shadow-card-hover: 0 8px 32px rgba(0, 0, 0, 0.12), 0 0 0 1.5px rgba(29, 78, 216, 0.25);
+  --shadow-brand: 0 4px 16px rgba(29, 78, 216, 0.25);
 
   /* Effects */
-  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  --blur-premium: 25px;
-  
+  --blur-glass: 20px;
+  --radius-card: 1.5rem;
+  --radius-btn: 0.75rem;
+  --radius-pill: 999px;
+}
+
+/* ── 3. SEMANTIC TOKENS (Dark Mode) ───────────────────────── */
+.dark {
+  /* Backgrounds */
+  --bg-page: var(--color-neutral-950);
+  --bg-surface: rgba(24, 24, 27, 0.82);
+  --bg-surface-hover: rgba(30, 30, 36, 0.95);
+  --bg-overlay: rgba(9, 9, 11, 0.65);
+
+  /* Brand (slightly brighter in dark) */
+  --brand-primary: var(--color-blue-400);
+  --brand-primary-fg: var(--color-neutral-950);
+  --brand-secondary: var(--color-teal-400);
+
+  /* Text */
+  --text-default: var(--color-neutral-50);
+  --text-muted: var(--color-neutral-400);
+  --text-subtle: var(--color-neutral-600);
+  --text-on-primary: var(--color-neutral-950);
+
+  /* Borders */
+  --border-default: rgba(255, 255, 255, 0.12);
+  --border-strong: rgba(255, 255, 255, 0.20);
+  --border-brand: rgba(96, 165, 250, 0.35);
+  /* blue-400 */
+
+  /* Shadows */
+  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.40), 0 0 0 1.5px rgba(255, 255, 255, 0.08);
+  --shadow-card-hover: 0 8px 32px rgba(0, 0, 0, 0.60), 0 0 0 1.5px rgba(96, 165, 250, 0.30);
+  --shadow-brand: 0 4px 20px rgba(96, 165, 250, 0.30);
+}
+
+/* ── 4. TAILWIND THEME MAPPING ────────────────────────────── */
+@theme inline {
+  /* Colors → Tailwind utilities (bg-*, text-*, border-*) */
+  --color-background: var(--bg-page);
+  --color-foreground: var(--text-default);
+  --color-primary: var(--brand-primary);
+  --color-primary-fg: var(--brand-primary-fg);
+  --color-secondary: var(--brand-secondary);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+  --color-border: var(--border-default);
+  --color-border-strong: var(--border-strong);
+  --color-surface: var(--bg-surface);
+
+  /* shadcn compatibility */
+  --color-card: var(--bg-surface);
+  --color-card-foreground: var(--text-default);
+  --color-popover: var(--bg-surface);
+  --color-popover-foreground: var(--text-default);
+  --color-primary-foreground: var(--brand-primary-fg);
+  --color-secondary-foreground: var(--text-default);
+  --color-muted-foreground: var(--text-muted);
+  --color-accent: var(--color-blue-100);
+  --color-accent-foreground: var(--color-blue-700);
+  --color-destructive: oklch(0.577 0.245 27.325);
+  --color-input: var(--border-default);
+  --color-ring: var(--brand-primary);
+
+  /* Radius */
+  --radius-sm: 0.5rem;
+  --radius-md: 0.75rem;
+  --radius-lg: 1rem;
   --radius-xl: 1.5rem;
   --radius-2xl: 2rem;
-  --radius-3xl: 3rem;
+
+  /* Animations */
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
 }
 
+/* ── 5. BASE STYLES ───────────────────────────────────────── */
 @layer base {
-  :root {
-    --background: oklch(1 0 0);
-    --foreground: oklch(0.145 0 0);
-    --card: oklch(1 0 0 / 40%);
-    --card-foreground: oklch(0.145 0 0);
-    --popover: oklch(1 0 0);
-    --popover-foreground: oklch(0.145 0 0);
-    
-    /* Primary Violet #8b5cf6 */
-    --primary: oklch(0.607 0.202 286.34);
-    --primary-foreground: oklch(0.985 0 0);
-    
-    /* Secondary Teal #06b6d4 */
-    --secondary: oklch(0.701 0.158 201.75);
-    --secondary-foreground: oklch(0.205 0 0);
-    
-    --muted: oklch(0.97 0 0);
-    --muted-foreground: oklch(0.556 0 0);
-    --accent: oklch(0.97 0 0);
-    --accent-foreground: oklch(0.205 0 0);
-    --destructive: oklch(0.577 0.245 27.325);
-    --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(0.922 0 0 / 15%);
-    --input: oklch(0.922 0 0);
-    --ring: oklch(0.607 0.202 286.34 / 50%);
-    --radius: 1rem;
+  html {
+    @apply font-sans;
   }
 
-  .dark {
-    --background: oklch(0.12 0 0);
-    --foreground: oklch(0.985 0 0);
-    --card: oklch(0 0 0 / 60%);
-    --card-foreground: oklch(0.985 0 0);
-    --popover: oklch(0.145 0 0);
-    --popover-foreground: oklch(0.985 0 0);
-    
-    /* Brighter Violet for Dark Mode */
-    --primary: oklch(0.7 0.2 286.34);
-    --primary-foreground: oklch(0.145 0 0);
-    
-    --secondary: oklch(0.75 0.15 201.75);
-    --secondary-foreground: oklch(0.985 0 0);
-    
-    --muted: oklch(0.25 0 0);
-    --muted-foreground: oklch(0.7 0 0);
-    --accent: oklch(0.25 0 0);
-    --accent-foreground: oklch(0.985 0 0);
-    --destructive: oklch(0.6 0.2 27);
-    --destructive-foreground: oklch(0.985 0 0);
-    --border: oklch(1 0 0 / 10%);
-    --input: oklch(1 0 0 / 15%);
-    --ring: oklch(0.7 0.2 286.34 / 50%);
-  }
-}
-
-@layer base {
   body {
-    @apply antialiased transition-colors duration-500 bg-background text-foreground;
-    font-family: 'Inter', system-ui, sans-serif;
+    background-color: var(--bg-page);
+    color: var(--text-default);
+    font-family: 'Pretendard', 'Inter', system-ui, sans-serif;
+    @apply antialiased transition-colors duration-300;
+  }
+
+  * {
+    box-sizing: border-box;
   }
 }
 
+/* ── 6. COMPONENT TOKENS ──────────────────────────────────── */
 @layer components {
-  .glass-card {
-    @apply backdrop-blur-premium bg-card border border-border shadow-2xl;
-  }
-}
 
-/* Custom Scrollbar */
-.custom-scrollbar::-webkit-scrollbar {
-  width: 6px;
-}
-.custom-scrollbar::-webkit-scrollbar-track {
-  background: transparent;
-}
-.custom-scrollbar::-webkit-scrollbar-thumb {
-  background: rgba(var(--foreground), 0.1);
-  @apply bg-slate-400/20 dark:bg-white/10 rounded-full;
+  /* Typography Hierarchy */
+  .text-h1 {
+    @apply text-3xl font-bold tracking-tight text-foreground;
+  }
+
+  .text-h2 {
+    @apply text-2xl font-semibold tracking-tight text-foreground;
+  }
+
+  .text-h3 {
+    @apply text-xl font-medium tracking-tight text-foreground;
+  }
+
+  .text-body {
+    @apply text-base font-normal leading-relaxed text-foreground;
+  }
+
+  .text-caption {
+    @apply text-sm font-normal text-muted;
+  }
+
+  .text-overline {
+    @apply text-sm font-bold tracking-[0.2em] uppercase text-primary;
+  }
+
+  /* Navigation & Layout States */
+  .nav-item {
+    @apply text-sm font-medium text-muted transition-colors duration-200 px-3 py-2 rounded-md cursor-pointer;
+  }
+
+  .nav-item:hover {
+    @apply text-foreground bg-[var(--color-neutral-200)] dark:bg-[var(--color-neutral-800)];
+  }
+
+  .nav-item-active {
+    @apply text-sm font-semibold text-primary bg-[var(--color-blue-50)] dark:bg-[var(--color-blue-900)] px-3 py-2 rounded-md cursor-default;
+  }
+
+  /* Interactive Text States */
+  .text-interactive {
+    @apply transition-colors duration-200 hover:text-primary active:scale-95 cursor-pointer inline-block;
+  }
+
+  /* Glass Surface Card */
+  .glass-card {
+    background: var(--bg-surface);
+    border: 1.5px solid var(--border-default);
+    box-shadow: var(--shadow-card);
+    border-radius: var(--radius-card);
+    backdrop-filter: blur(var(--blur-glass));
+    -webkit-backdrop-filter: blur(var(--blur-glass));
+    transition: box-shadow 0.2s ease, border-color 0.2s ease;
+  }
+
+  .glass-card:hover {
+    box-shadow: var(--shadow-card-hover);
+    border-color: var(--border-brand);
+  }
+
+  /* Drop Zone */
+  .drop-zone {
+    border: 2px dashed var(--border-brand);
+    border-radius: var(--radius-xl);
+    background: rgba(29, 78, 216, 0.04);
+    transition: all 0.2s ease;
+  }
+
+  .drop-zone:hover {
+    background: rgba(29, 78, 216, 0.08);
+    border-color: var(--brand-primary);
+  }
+
+  /* Custom Scrollbar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 5px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--border-default);
+    border-radius: 99px;
+  }
+
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--border-strong);
+  }
+
+  /* Buttons */
+  .btn {
+    @apply inline-flex items-center justify-center whitespace-nowrap rounded-[var(--radius-btn)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 h-10 px-4 py-2;
+  }
+
+  .btn-primary {
+    @apply bg-primary text-primary-foreground shadow hover:bg-[var(--color-blue-800)] dark:hover:bg-[var(--color-blue-500)];
+  }
+
+  .btn-secondary {
+    @apply bg-secondary text-primary-foreground shadow-sm hover:bg-[var(--color-teal-600)] dark:hover:bg-[var(--color-teal-400)];
+  }
+
+  .btn-outline {
+    @apply border border-input bg-transparent shadow-sm hover:bg-accent hover:text-accent-foreground;
+  }
+
+  /* Inputs */
+  .input-field {
+    @apply flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 transition-colors duration-200;
+  }
 }

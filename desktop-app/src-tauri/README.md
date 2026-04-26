@@ -60,3 +60,4 @@ cd ..
 ```
 
 `desktop:build:exe` uses `tauri build --no-bundle`, which avoids MSI/NSIS limits while still producing `src-tauri/target/release/smart-minutes-ai.exe`.
+The Tauri build runs `npm run build:desktop`, which loads `.env.desktop` so the packaged UI sends real analysis requests to the local sidecar.

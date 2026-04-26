@@ -11,6 +11,11 @@ interface ModelStatus {
     installed: boolean;
     required: boolean;
     gated: boolean;
+    requires_token: boolean;
+    token_available: boolean;
+    license_name: string;
+    license_url: string;
+    manual_note: string;
     downloadable: boolean;
 }
 
@@ -25,6 +30,10 @@ interface SettingsPayload {
     privacy?: {
         auto_delete_temp_audio?: boolean;
         save_original_audio_copy?: boolean;
+    };
+    summary?: {
+        provider?: string;
+        model?: string;
     };
 }
 
@@ -166,7 +175,7 @@ export const Settings: React.FC = () => {
                     <div>
                         <h3 className="text-lg font-semibold text-foreground">모델 준비 상태</h3>
                         <p className="text-sm text-muted-foreground">
-                            모델이 없으면 실제 분석은 실패할 수 있습니다. Pyannote 계열은 라이선스 동의와 `HF_TOKEN` 환경변수가 필요할 수 있습니다.
+                            기본 음성 인식은 Cohere Transcribe를 사용합니다. 로컬에 없으면 실제 분석 시작 시 자동 다운로드를 시도하고, Pyannote 계열은 라이선스 동의와 `HF_TOKEN` 환경변수가 필요할 수 있습니다.
                         </p>
                     </div>
                     <Button onClick={handleDownloadModels} disabled={isLoading || isDownloading}>
@@ -180,6 +189,7 @@ export const Settings: React.FC = () => {
                             <tr>
                                 <th className="p-3">모델</th>
                                 <th className="p-3">상태</th>
+                                <th className="p-3">요구 사항</th>
                                 <th className="p-3">비고</th>
                             </tr>
                         </thead>
@@ -196,7 +206,22 @@ export const Settings: React.FC = () => {
                                         </span>
                                     </td>
                                     <td className="p-3 text-muted-foreground">
-                                        {model.gated ? '토큰/라이선스 필요 가능' : model.downloadable ? '자동 다운로드 가능' : '수동 배치 필요'}
+                                        <div>{model.required ? '필수' : '선택'}</div>
+                                        {model.requires_token && (
+                                            <div className={model.token_available ? 'text-green-700' : 'text-amber-700'}>
+                                                HF_TOKEN {model.token_available ? '확인됨' : '필요'}
+                                            </div>
+                                        )}
+                                        {model.license_name && <div>{model.license_name}</div>}
+                                    </td>
+                                    <td className="p-3 text-muted-foreground">
+                                        <div>{model.gated ? '라이선스/조건 수락 필요 가능' : model.downloadable ? '자동 다운로드 가능' : '수동 배치 필요'}</div>
+                                        {model.manual_note && <div className="mt-1 text-xs">{model.manual_note}</div>}
+                                        {model.license_url && (
+                                            <a className="mt-1 inline-block text-primary underline" href={model.license_url} target="_blank" rel="noreferrer">
+                                                모델 페이지
+                                            </a>
+                                        )}
                                     </td>
                                 </tr>
                             ))}
@@ -222,6 +247,10 @@ export const Settings: React.FC = () => {
                     <div className="rounded-md bg-muted/30 p-3">
                         <div className="text-muted-foreground">청크 길이</div>
                         <div className="font-medium text-foreground">{settings?.processing?.long_audio_chunk_seconds || 900}초</div>
+                    </div>
+                    <div className="rounded-md bg-muted/30 p-3">
+                        <div className="text-muted-foreground">요약 엔진</div>
+                        <div className="font-medium text-foreground">{settings?.summary?.provider || 'ollama'} · {settings?.summary?.model || 'gemma4:e2b'}</div>
                     </div>
                 </div>
             </section>

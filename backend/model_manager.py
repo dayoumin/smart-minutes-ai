@@ -1,4 +1,5 @@
 import os
+import subprocess
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
 
@@ -13,14 +14,28 @@ class ModelSpec:
     local_dir: str
     required: bool = True
     gated: bool = False
+    license_name: str = ""
+    license_url: str = ""
+    requires_token: bool = False
+    manual_note: str = ""
 
 
 MODEL_SPECS = [
+    ModelSpec(
+        key="stt_primary",
+        label="Cohere Transcribe 03-2026",
+        repo_id="CohereLabs/cohere-transcribe-03-2026",
+        local_dir="./models/stt/cohere-transcribe-03-2026",
+        license_name="Apache-2.0",
+        license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
+    ),
     ModelSpec(
         key="stt_fallback",
         label="Faster Whisper Large v3",
         repo_id="Systran/faster-whisper-large-v3",
         local_dir="./models/stt/faster-whisper-large-v3",
+        required=False,
+        license_url="https://huggingface.co/Systran/faster-whisper-large-v3",
     ),
     ModelSpec(
         key="diarization",
@@ -28,6 +43,8 @@ MODEL_SPECS = [
         repo_id="pyannote/speaker-diarization-3.1",
         local_dir="./models/diarization/speaker-diarization-3.1",
         gated=True,
+        license_url="https://huggingface.co/pyannote/speaker-diarization-3.1",
+        requires_token=True,
     ),
     ModelSpec(
         key="segmentation",
@@ -35,13 +52,17 @@ MODEL_SPECS = [
         repo_id="pyannote/segmentation-3.0",
         local_dir="./models/segmentation/segmentation-3.0",
         gated=True,
+        license_name="MIT",
+        license_url="https://huggingface.co/pyannote/segmentation-3.0",
+        requires_token=True,
     ),
     ModelSpec(
         key="llm",
-        label="Gemma GGUF",
+        label="Gemma via Ollama",
         repo_id=None,
-        local_dir="./models/llm/gemma.gguf",
+        local_dir="ollama:gemma4:e2b",
         required=False,
+        manual_note="Ollama에 gemma4:e2b 또는 호환 Gemma 모델이 있어야 합니다.",
     ),
 ]
 
@@ -53,6 +74,9 @@ def resolve_backend_path(base_dir: str, path_value: str) -> str:
 
 
 def model_exists(base_dir: str, spec: ModelSpec) -> bool:
+    if spec.local_dir.startswith("ollama:"):
+        return ollama_model_exists(spec.local_dir.removeprefix("ollama:"))
+
     path = resolve_backend_path(base_dir, spec.local_dir)
     if os.path.isfile(path):
         return os.path.getsize(path) > 0
@@ -61,10 +85,26 @@ def model_exists(base_dir: str, spec: ModelSpec) -> bool:
     return False
 
 
+def ollama_model_exists(model_name: str) -> bool:
+    try:
+        result = subprocess.run(
+            ["ollama", "list"],
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+    except Exception:
+        return False
+
+    return any(line.split(maxsplit=1)[0] == model_name for line in result.stdout.splitlines()[1:])
+
+
 def get_model_status(base_dir: str) -> Dict:
     models = []
     for spec in MODEL_SPECS:
-        path = resolve_backend_path(base_dir, spec.local_dir)
+        path = spec.local_dir if spec.local_dir.startswith("ollama:") else resolve_backend_path(base_dir, spec.local_dir)
         installed = model_exists(base_dir, spec)
         models.append({
             "key": spec.key,
@@ -74,6 +114,11 @@ def get_model_status(base_dir: str) -> Dict:
             "installed": installed,
             "required": spec.required,
             "gated": spec.gated,
+            "requires_token": spec.requires_token,
+            "token_available": bool(os.environ.get("HF_TOKEN")),
+            "license_name": spec.license_name,
+            "license_url": spec.license_url,
+            "manual_note": spec.manual_note,
             "downloadable": spec.repo_id is not None,
         })
 
@@ -88,6 +133,25 @@ def missing_downloadable_models(base_dir: str) -> Iterable[ModelSpec]:
     for spec in MODEL_SPECS:
         if spec.repo_id and not model_exists(base_dir, spec):
             yield spec
+
+
+def get_model_spec(key: str) -> ModelSpec:
+    for spec in MODEL_SPECS:
+        if spec.key == key:
+            return spec
+    raise KeyError(f"Unknown model key: {key}")
+
+
+def ensure_model(base_dir: str, key: str, token: Optional[str] = None) -> str:
+    spec = get_model_spec(key)
+    if model_exists(base_dir, spec):
+        return spec.local_dir
+    if not spec.repo_id:
+        raise ValueError(f"{spec.label}은 자동 다운로드 대상이 아닙니다.")
+    if spec.requires_token and not token:
+        raise ValueError(f"{spec.label} 다운로드에는 HF_TOKEN이 필요합니다.")
+    download_model(base_dir, spec, token=token)
+    return spec.local_dir
 
 
 def download_model(base_dir: str, spec: ModelSpec, token: Optional[str] = None) -> str:

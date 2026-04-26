@@ -32,6 +32,9 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("processing", settings_response.json())
         self.assertIn("models", models_response.json())
         self.assertIsInstance(models_response.json()["models"], list)
+        model_keys = {model["key"] for model in models_response.json()["models"]}
+        self.assertIn("stt_primary", model_keys)
+        self.assertIn("llm", model_keys)
 
     def test_analyze_streams_progress_and_result(self) -> None:
         with open(TEST_AUDIO_PATH, "rb") as audio_file:

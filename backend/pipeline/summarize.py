@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 
 def summarize_meeting(
     transcript_segments: list[dict],
@@ -53,7 +54,45 @@ def summarize_meeting(
 JSON 출력만 반환하세요:
 """
 
-    # 3. 모델 파일 존재 여부 확인
+    # 3. Ollama 모델명인 경우 외부 Ollama 런타임 사용
+    if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
+        try:
+            print(f"[LLM] Generating summary with Ollama model: {model_name_or_path} ...")
+            response = subprocess.run(
+                ["ollama", "run", model_name_or_path, prompt],
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=600,
+            )
+            result_text = response.stdout.strip()
+            if result_text.startswith("```json"):
+                result_text = result_text[7:]
+            if result_text.endswith("```"):
+                result_text = result_text[:-3]
+            return json.loads(result_text.strip())
+        except FileNotFoundError:
+            return {
+                "title": "회의록 (생성 실패)",
+                "overview": "Ollama 실행 파일을 찾을 수 없습니다. Ollama 설치 또는 GGUF 모델 경로 설정이 필요합니다.",
+                "topics": [], "decisions": [], "actions": [], "needs_check": []
+            }
+        except json.JSONDecodeError:
+            return {
+                "title": "회의록 (형식 오류)",
+                "overview": "Ollama 모델이 올바른 JSON 형식으로 응답하지 않았습니다. 다시 시도해 주세요.",
+                "topics": [], "decisions": [], "actions": [], "needs_check": []
+            }
+        except Exception as e:
+            return {
+                "title": "회의록 (생성 실패)",
+                "overview": f"Ollama 요약 중 오류가 발생했습니다: {e}",
+                "topics": [], "decisions": [], "actions": [], "needs_check": []
+            }
+
+    # 4. GGUF 모델 파일 존재 여부 확인
     if not os.path.exists(model_name_or_path):
         return {
             "title": "회의록 (생성 실패)",

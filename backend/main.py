@@ -11,7 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-from model_manager import download_model, get_model_status, missing_downloadable_models
+from model_manager import download_model, ensure_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
 from pipeline.audio_preprocess import convert_to_wav
 from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
 from pipeline.transcribe import transcribe_audio
@@ -67,6 +67,7 @@ async def get_settings() -> dict:
         "paths": config.get("paths", {}),
         "processing": config.get("processing", {}),
         "privacy": config.get("privacy", {}),
+        "summary": config.get("summary", {}),
     }
 
 
@@ -280,6 +281,31 @@ async def stream_real_analysis(
 
         return upload_path
 
+    async def prepare_real_config() -> dict:
+        token = os.environ.get("HF_TOKEN")
+        config = load_config()
+
+        report_progress("Cohere STT 모델 확인 중", 6)
+        stt_path = await asyncio.to_thread(ensure_model, BASE_DIR, "stt_primary", token)
+        config["paths"]["stt_model"] = stt_path
+        report_progress("Cohere STT 모델 준비 완료", 8)
+
+        diarization_spec = get_model_spec("diarization")
+        segmentation_spec = get_model_spec("segmentation")
+        diarization_ready = model_exists(BASE_DIR, diarization_spec) and model_exists(BASE_DIR, segmentation_spec)
+
+        if not diarization_ready and token:
+            report_progress("화자 분리 모델 다운로드 시도 중", 9)
+            await asyncio.to_thread(ensure_model, BASE_DIR, "diarization", token)
+            await asyncio.to_thread(ensure_model, BASE_DIR, "segmentation", token)
+            diarization_ready = True
+
+        if not diarization_ready:
+            config["diarization"]["enabled"] = False
+            report_progress("화자 분리 모델이 없어 STT 중심 분석으로 진행합니다", 10)
+
+        return config
+
     async def worker() -> None:
         upload_path = ""
         try:
@@ -292,11 +318,12 @@ async def stream_real_analysis(
                 "status": "processing",
             })
 
+            config = await prepare_real_config()
             result = await asyncio.to_thread(
                 process_audio_pipeline,
                 upload_path,
                 None,
-                None,
+                config,
                 report_progress,
             )
             result_data = result["result_data"]

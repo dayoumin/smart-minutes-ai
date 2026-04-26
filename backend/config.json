@@ -3,7 +3,7 @@
   "offline_mode": true,
   "paths": {
     "ffmpeg": "ffmpeg",
-    "stt_model": "CohereLabs/cohere-transcribe-03-2026",
+    "stt_model": "./models/stt/cohere-transcribe-03-2026",
     "diarization_model": "./models/diarization/speaker-diarization-3.1",
     "segmentation_model": "./models/segmentation/segmentation-3.0",
     "llm_model": "./models/llm/gemma.gguf",
@@ -30,7 +30,8 @@
   "summary": {
     "enabled": true,
     "mode": "meeting_minutes",
-    "model": "./models/llm/gemma.gguf"
+    "provider": "ollama",
+    "model": "gemma4:e2b"
   },
   "export_templates": {
     "use_custom_template": false,

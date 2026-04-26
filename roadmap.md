@@ -17,3 +17,12 @@
 - [ ] **RAG (Retrieval-Augmented Generation)**: "지난번 회의에서 A에 대해 뭐라고 했지?"와 같은 질문에 AI가 과거 기록을 찾아 답변
 - [ ] **팀 프로젝트 및 히스토리 관리**: 팀 단위 권한 관리 및 히스토리 추적
 - [ ] **외부 협업 툴 연동**: Notion, Slack, Jira 자동 연동
+
+## 🖥️ Desktop Packaging Notes
+- [x] **Portable 배포 채택**: Cohere 모델의 대용량 파일 때문에 MSI/NSIS 설치 파일 대신 portable 폴더 배포를 기본으로 사용한다.
+- [x] **회사 전달용 no-Cohere 패키지 생성**: 앱, 백엔드 sidecar, Pyannote 모델은 포함하고 Cohere STT 모델은 회사 PC에서 별도 다운로드한다.
+- [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\backend\models\stt\cohere-transcribe-03-2026\model.safetensors` 경로가 존재해야 실제 분석이 가능하다.
+- [ ] **AppData 저장소 분리**: 향후 설치형 배포를 지원하려면 `config.json`, `outputs`, `temp`를 앱 리소스 폴더가 아니라 사용자 쓰기 가능한 AppData/localData 경로로 분리한다.
+- [ ] **로컬 API 보안 개선**: 현재는 `127.0.0.1:8000` 고정 포트를 사용한다. 포트 충돌과 로컬 호출 오용을 줄이기 위해 랜덤 포트와 세션 토큰 구조를 검토한다.
+- [ ] **라이선스/고지 정리**: Cohere, Pyannote, Gemma/Ollama, FFmpeg 및 Python/npm/cargo 의존성에 대한 배포 고지와 라이선스 문서를 릴리스 전에 정리한다.
+- [ ] **SQLite 저장소 전환**: IndexedDB 히스토리는 MVP용이다. 데스크탑 앱에서는 SQLite 기반의 영구 저장소로 이전한다.

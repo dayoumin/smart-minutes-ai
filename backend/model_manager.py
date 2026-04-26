@@ -3,7 +3,9 @@ import subprocess
 from dataclasses import dataclass
 from typing import Dict, Iterable, Optional
 
-from huggingface_hub import snapshot_download
+from huggingface_hub import get_token, snapshot_download
+
+from ollama_utils import find_ollama_executable
 
 
 @dataclass(frozen=True)
@@ -26,8 +28,11 @@ MODEL_SPECS = [
         label="Cohere Transcribe 03-2026",
         repo_id="CohereLabs/cohere-transcribe-03-2026",
         local_dir="./models/stt/cohere-transcribe-03-2026",
+        gated=True,
         license_name="Apache-2.0",
         license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
+        requires_token=True,
+        manual_note="Hugging Face에서 접근 권한을 받은 뒤 HF_TOKEN으로 인증해야 다운로드할 수 있습니다.",
     ),
     ModelSpec(
         key="stt_fallback",
@@ -72,14 +77,42 @@ def model_exists(base_dir: str, spec: ModelSpec) -> bool:
     if os.path.isfile(path):
         return os.path.getsize(path) > 0
     if os.path.isdir(path):
-        return any(os.scandir(path))
+        return directory_has_model_payload(path)
     return False
+
+
+def directory_has_model_payload(path: str) -> bool:
+    model_extensions = {
+        ".bin",
+        ".gguf",
+        ".model",
+        ".npz",
+        ".onnx",
+        ".pt",
+        ".pth",
+        ".safetensors",
+    }
+    ignored_dirs = {".cache", ".eval_results", ".git", "assets", "demo"}
+    ignored_files = {"README.md", ".gitattributes"}
+
+    for root, dirs, files in os.walk(path):
+        dirs[:] = [directory for directory in dirs if directory not in ignored_dirs]
+        for filename in files:
+            if filename in ignored_files:
+                continue
+            if os.path.splitext(filename)[1].lower() in model_extensions:
+                return True
+    return False
+
+
+def hf_token_available() -> bool:
+    return bool(os.environ.get("HF_TOKEN") or get_token())
 
 
 def ollama_model_exists(model_name: str) -> bool:
     try:
         result = subprocess.run(
-            ["ollama", "list"],
+            [find_ollama_executable(), "list"],
             check=True,
             capture_output=True,
             text=True,
@@ -106,7 +139,7 @@ def get_model_status(base_dir: str) -> Dict:
             "required": spec.required,
             "gated": spec.gated,
             "requires_token": spec.requires_token,
-            "token_available": bool(os.environ.get("HF_TOKEN")),
+            "token_available": hf_token_available(),
             "license_name": spec.license_name,
             "license_url": spec.license_url,
             "manual_note": spec.manual_note,
@@ -139,6 +172,7 @@ def ensure_model(base_dir: str, key: str, token: Optional[str] = None) -> str:
         return spec.local_dir
     if not spec.repo_id:
         raise ValueError(f"{spec.label}은 자동 다운로드 대상이 아닙니다.")
+    token = token or get_token()
     if spec.requires_token and not token:
         raise ValueError(f"{spec.label} 다운로드에는 HF_TOKEN이 필요합니다.")
     download_model(base_dir, spec, token=token)
@@ -151,6 +185,7 @@ def download_model(base_dir: str, spec: ModelSpec, token: Optional[str] = None) 
 
     local_dir = resolve_backend_path(base_dir, spec.local_dir)
     os.makedirs(local_dir, exist_ok=True)
+    token = token or get_token()
     snapshot_download(
         repo_id=spec.repo_id,
         local_dir=local_dir,

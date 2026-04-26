@@ -1,6 +1,7 @@
 import json
 import os
 import subprocess
+from ollama_utils import find_ollama_executable
 
 def summarize_meeting(
     transcript_segments: list[dict],
@@ -59,7 +60,7 @@ JSON 출력만 반환하세요:
         try:
             print(f"[LLM] Generating summary with Ollama model: {model_name_or_path} ...")
             response = subprocess.run(
-                ["ollama", "run", model_name_or_path, prompt],
+                [find_ollama_executable(), "run", model_name_or_path, prompt],
                 check=True,
                 capture_output=True,
                 text=True,

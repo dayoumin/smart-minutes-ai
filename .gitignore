@@ -30,3 +30,4 @@ desktop-app/test-results/
 # Environment variables
 .env
 .env.local
+.hf_modules/

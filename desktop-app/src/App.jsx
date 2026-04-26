@@ -81,7 +81,22 @@ function App() {
         
         const resJson = await fetch(`${API_BASE}/result/${currentJobId}`);
         if(resJson.ok) {
-           setResult(await resJson.json());
+           const jsonData = await resJson.json();
+           const formattedResult = {
+              summary: jsonData.summary?.overview || '',
+              topics: jsonData.summary?.topics || [],
+              actions: jsonData.summary?.actions || [],
+              text: jsonData.segments?.map(s => {
+                const m = Math.floor(s.start / 60).toString().padStart(2, '0');
+                const sec = Math.floor(s.start % 60).toString().padStart(2, '0');
+                return `[${m}:${sec}] ${s.speaker_name || ''}: ${s.text}`;
+              }).join('\n\n') || '',
+              duration: jsonData.segments && jsonData.segments.length > 0
+                ? new Date(jsonData.segments[jsonData.segments.length - 1].end * 1000).toISOString().substring(11, 19)
+                : '00:00:00',
+              speaker_count: [...new Set(jsonData.segments?.map(s => s.speaker))].length || 0
+           };
+           setResult(formattedResult);
         }
       } else if (data.status === 'error') {
         setIsProcessing(false);

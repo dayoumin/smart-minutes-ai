@@ -47,3 +47,17 @@
   - FastAPI sidecar 시작/종료, 포트 충돌, ffmpeg/model 경로, Python 런타임 포함 전략 결정
 - [ ] 저장소 기준 정리
   - 백엔드 JSON/MD/DOCX 결과와 UI IndexedDB 저장 구조를 SQLite 전환 전에 단일 기준으로 정리
+
+## 7. Immediate Priority: Real E2E Smoke Test
+- [x] 짧은 실제 음성 파일로 전체 파이프라인 검증
+  - 입력 파일 저장
+  - ffmpeg WAV 변환
+  - Cohere STT 30초 청크 분석
+  - Pyannote 화자 분리
+  - Ollama Gemma 요약
+  - JSON/TXT/MD/DOCX 결과 파일 생성 확인
+- [x] E2E 실패 지점이 있으면 원인을 `환경/모델/파이프라인/UI` 중 하나로 분류해서 다음 수정 항목으로 올리기
+  - 환경: 기존 `.venv`가 Python 3.11 네이티브 패키지와 섞여 있어 Python 3.12 런타임에서 여러 import 실패 발생
+  - 파이프라인: Pyannote가 torchcodec으로 파일을 직접 읽지 않도록 waveform 메모리 입력 방식으로 수정
+  - 파이프라인: Ollama CLI 출력 제어문자 문제를 피하기 위해 요약은 Ollama HTTP API JSON 모드 우선 사용
+- [ ] E2E 성공 후 같은 흐름을 프론트엔드 업로드 화면에서 재검증

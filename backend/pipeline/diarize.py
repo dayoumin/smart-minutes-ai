@@ -6,6 +6,7 @@ def diarize_audio(
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None
 ) -> List[Dict]:
+    import soundfile as sf
     import torch
     from pyannote.audio import Pipeline
     """
@@ -39,7 +40,10 @@ def diarize_audio(
         kwargs["min_speakers"] = min_speakers
     if max_speakers is not None:
         kwargs["max_speakers"] = max_speakers
-    diarization = pipeline(wav_path, **kwargs)
+
+    waveform, sample_rate = sf.read(wav_path, dtype="float32", always_2d=True)
+    waveform_tensor = torch.from_numpy(waveform.T)
+    diarization = pipeline({"waveform": waveform_tensor, "sample_rate": sample_rate}, **kwargs)
 
     if hasattr(diarization, "exclusive_speaker_diarization"):
         diarization = diarization.exclusive_speaker_diarization

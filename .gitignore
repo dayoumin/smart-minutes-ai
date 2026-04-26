@@ -18,6 +18,7 @@ backend/ffmpeg.zip
 # Temp & Output
 backend/temp/
 backend/output/
+backend/outputs/
 
 # Node / Frontend
 node_modules/

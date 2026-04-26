@@ -1,0 +1,15 @@
+faster-whisper
+torch
+torchaudio
+ffmpeg-python
+cohere
+transformers
+pyannote.audio
+python-docx
+pydantic
+gradio
+fastapi
+uvicorn
+python-multipart
+llama-cpp-python
+huggingface_hub

@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+*.log
+
+# Models & Binaries (Large Files)
+backend/models/
+backend/ffmpeg.exe
+backend/ffmpeg.zip
+*.gguf
+*.pt
+*.bin
+
+# Temp & Output
+backend/temp/
+backend/output/
+
+# Node / Frontend
+node_modules/
+desktop-app/node_modules/
+desktop-app/dist/
+.DS_Store
+*.local
+
+# Environment variables
+.env
+.env.local

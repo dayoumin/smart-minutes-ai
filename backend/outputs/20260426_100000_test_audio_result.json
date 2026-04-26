@@ -1,0 +1,15 @@
+{
+  "job_id": "20260426_100000_test_audio",
+  "source_file": "test_audio.wav",
+  "created_at": "2026-04-26T10:04:30.481367",
+  "language": "ko",
+  "settings": {
+    "stt_model": "large-v3",
+    "diarization_model": "./models/diarization/speaker-diarization-3.1",
+    "llm_model": "./models/llm/gemma-4b",
+    "diarization": false,
+    "summary": false
+  },
+  "segments": [],
+  "summary": {}
+}

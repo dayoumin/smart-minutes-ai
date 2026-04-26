@@ -1,0 +1,50 @@
+{
+  "app_name": "Local Meeting AI",
+  "offline_mode": true,
+  "paths": {
+    "ffmpeg": "d:/Projects/audio/backend/ffmpeg.exe",
+    "stt_model": "CohereLabs/cohere-transcribe-03-2026",
+    "diarization_model": "./models/diarization/speaker-diarization-3.1",
+    "segmentation_model": "./models/segmentation/segmentation-3.0",
+    "llm_model": "./models/llm/gemma.gguf",
+    "output_dir": "./outputs",
+    "temp_dir": "./temp",
+    "log_dir": "./logs"
+  },
+  "stt": {
+    "language": "ko",
+    "default_model": "cohere-transcribe-03-2026",
+    "fallback_model": "faster-whisper-large-v3",
+    "device": "auto",
+    "chunk_seconds": 30
+  },
+  "diarization": {
+    "enabled": true,
+    "min_speakers": null,
+    "max_speakers": null
+  },
+  "summary": {
+    "enabled": true,
+    "mode": "meeting_minutes",
+    "model": "./models/llm/gemma.gguf"
+  },
+  "rag": {
+    "enabled": false,
+    "db_type": "chromadb",
+    "db_path": "./vector_db",
+    "embedding_model": "bge-m3",
+    "comment": "FUTURE: RAG 연동 시 enabled를 true로 바꾸고 검색 인덱스 경로를 지정하세요."
+  },
+  "export_templates": {
+    "use_custom_template": false,
+    "hwpx_template_path": "./templates/default_meeting.hwpx",
+    "docx_template_path": "./templates/default_meeting.docx",
+    "comment": "FUTURE: HWPX나 DOCX 템플릿 기반 보고서 생성 기능을 위한 설정입니다."
+  },
+  "privacy": {
+    "send_data_to_server": false,
+    "auto_delete_temp_audio": true,
+    "save_logs": true,
+    "save_original_audio_copy": false
+  }
+}

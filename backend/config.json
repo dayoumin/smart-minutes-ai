@@ -19,7 +19,7 @@
     "chunk_seconds": 30
   },
   "processing": {
-    "long_audio_chunk_seconds": 900,
+    "long_audio_chunk_seconds": 30,
     "enable_long_audio_chunking": true
   },
   "diarization": {

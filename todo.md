@@ -31,3 +31,19 @@
 - [x] 청크별 STT 결과를 타임스탬프 오프셋으로 병합하는 기본 유틸 추가
 - [x] 청크별 진행률을 SSE로 전송해 사용자가 긴 파일 처리 상태를 확인할 수 있게 개선
 - [ ] 실패한 청크만 재시도할 수 있도록 임시 작업 상태와 partial result 저장
+
+## 6. 2026-04-26 Agent Review Notes
+- [x] Cohere Transcribe, Pyannote Community-1, Ollama Gemma 준비 상태 확인 및 Cohere 데모 음성 STT 검증
+- [x] Ollama 실행 파일을 PATH 없이도 찾도록 백엔드 자동 탐색 추가
+- [x] 모델 폴더가 일부만 다운로드된 상태를 설치 완료로 오판하지 않도록 모델 payload 검사 강화
+- [ ] 1순위: Cohere STT 결과를 화자 분리와 맞게 더 작은 시간 조각으로 만들기
+  - 현재 위험: Cohere가 청크당 1개 세그먼트를 반환하면 긴 청크 전체가 한 화자에게 붙을 수 있음
+  - 단기 개선: 기본 STT 청크를 30초 수준으로 줄여 화자 정렬 품질 확보
+  - 중기 개선: 문장 단위 분할 또는 Cohere/대체 STT의 안정적인 타임스탬프 전략 검토
+- [ ] 모델/의존성 설치 재현성 개선
+  - requirements.txt에 Cohere 실행에 필요한 librosa, soundfile, sentencepiece, protobuf 반영
+  - Python venv 런처와 네이티브 패키지 버전 정리 필요
+- [ ] 데스크탑 패키징 설계
+  - FastAPI sidecar 시작/종료, 포트 충돌, ffmpeg/model 경로, Python 런타임 포함 전략 결정
+- [ ] 저장소 기준 정리
+  - 백엔드 JSON/MD/DOCX 결과와 UI IndexedDB 저장 구조를 SQLite 전환 전에 단일 기준으로 정리

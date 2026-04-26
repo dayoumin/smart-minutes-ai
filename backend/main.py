@@ -446,6 +446,11 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     if stt_model_path.startswith((".", "..")):
         stt_model_path = resolve_config_path(stt_model_path)
 
+    fallback_stt_model_path = None
+    fallback_stt_spec = get_model_spec("stt_fallback")
+    if model_exists(BASE_DIR, fallback_stt_spec):
+        fallback_stt_model_path = resolve_config_path(fallback_stt_spec.local_dir)
+
     processing_config = config.get("processing", {})
     enable_chunking = processing_config.get("enable_long_audio_chunking", True)
     long_chunk_seconds = int(processing_config.get("long_audio_chunk_seconds", 900))
@@ -467,6 +472,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
             language=config["stt"].get("language", "ko"),
             device=config["stt"].get("device", "auto"),
             chunk_seconds=config["stt"].get("chunk_seconds", 30),
+            fallback_model_path=fallback_stt_model_path,
         )
         segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
     

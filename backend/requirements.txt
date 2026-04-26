@@ -5,6 +5,10 @@ ffmpeg-python
 cohere
 transformers
 pyannote.audio
+librosa
+soundfile
+sentencepiece
+protobuf>=5,<7
 python-docx
 pydantic
 gradio

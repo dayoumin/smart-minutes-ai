@@ -5,7 +5,7 @@ from typing import Dict, List
 
 _COHERE_PROCESSOR = None
 _COHERE_MODEL = None
-_COHERE_MODEL_PATH = None
+_COHERE_MODEL_CACHE_KEY = None
 
 
 def _ensure_hf_module_cache() -> None:
@@ -48,27 +48,40 @@ def transcribe_audio_fallback_whisper(
         raise RuntimeError(f"STT processing failed: {exc}") from exc
 
 
-def _load_cohere_model(model_path: str):
-    global _COHERE_PROCESSOR, _COHERE_MODEL, _COHERE_MODEL_PATH
+def _resolve_torch_device(device: str):
+    import torch
 
-    if _COHERE_MODEL_PATH == model_path and _COHERE_PROCESSOR is not None and _COHERE_MODEL is not None:
+    if device == "cuda":
+        if not torch.cuda.is_available():
+            raise RuntimeError("CUDA was requested, but it is not available.")
+        return torch.device("cuda")
+    if device == "cpu":
+        return torch.device("cpu")
+    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
+def _load_cohere_model(model_path: str, device: str):
+    global _COHERE_PROCESSOR, _COHERE_MODEL, _COHERE_MODEL_CACHE_KEY
+
+    torch_device = _resolve_torch_device(device)
+    cache_key = (model_path, str(torch_device))
+
+    if _COHERE_MODEL_CACHE_KEY == cache_key and _COHERE_PROCESSOR is not None and _COHERE_MODEL is not None:
         return _COHERE_PROCESSOR, _COHERE_MODEL
 
     _ensure_hf_module_cache()
 
-    import torch
     from transformers import AutoProcessor, CohereAsrForConditionalGeneration
 
-    print(f"[STT] Loading Cohere Transcribe model: {model_path}")
+    print(f"[STT] Loading Cohere Transcribe model: {model_path} on {torch_device}")
     _COHERE_PROCESSOR = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
     _COHERE_MODEL = CohereAsrForConditionalGeneration.from_pretrained(
         model_path,
         trust_remote_code=True,
     )
-    if torch.cuda.is_available():
-        _COHERE_MODEL = _COHERE_MODEL.to("cuda")
+    _COHERE_MODEL = _COHERE_MODEL.to(torch_device)
     _COHERE_MODEL.eval()
-    _COHERE_MODEL_PATH = model_path
+    _COHERE_MODEL_CACHE_KEY = cache_key
     return _COHERE_PROCESSOR, _COHERE_MODEL
 
 
@@ -86,11 +99,12 @@ def transcribe_audio_cohere(
     wav_path: str,
     model_path: str,
     language: str = "ko",
+    device: str = "auto",
 ) -> List[Dict]:
     _ensure_hf_module_cache()
     import librosa
 
-    processor, model = _load_cohere_model(model_path)
+    processor, model = _load_cohere_model(model_path, device)
 
     print(f"[STT] Transcribing {wav_path} with Cohere Transcribe...")
     audio, _sample_rate = librosa.load(wav_path, sr=16000, mono=True)
@@ -129,14 +143,17 @@ def transcribe_audio(
     language: str = "ko",
     device: str = "auto",
     chunk_seconds: int = 30,
+    fallback_model_path: str | None = None,
 ) -> List[Dict]:
     if "faster-whisper" in model_path.lower() or "large-v3" in model_path.lower():
         print(f"[STT] Defaulting to faster-whisper ({model_path}).")
         return transcribe_audio_fallback_whisper(wav_path, model_path, language, device)
 
     try:
-        return transcribe_audio_cohere(wav_path, model_path, language)
+        return transcribe_audio_cohere(wav_path, model_path, language, device)
     except Exception as exc:
         print(f"[STT] Failed to load or run Cohere model ({model_path}): {exc}")
-        print("[STT] Falling back to faster-whisper (large-v3)...")
-        return transcribe_audio_fallback_whisper(wav_path, "large-v3", language, device)
+        if not fallback_model_path:
+            raise
+        print(f"[STT] Falling back to faster-whisper ({fallback_model_path})...")
+        return transcribe_audio_fallback_whisper(wav_path, fallback_model_path, language, device)

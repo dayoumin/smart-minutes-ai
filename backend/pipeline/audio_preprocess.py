@@ -1,8 +1,8 @@
-import ffmpeg
 import os
 import shutil
 
 def convert_to_wav(input_path: str, output_path: str, ffmpeg_path: str = "ffmpeg") -> str:
+    import ffmpeg
     """
     입력 음성/영상 파일을 16kHz mono wav로 변환한다.
     """

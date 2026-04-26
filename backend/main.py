@@ -28,8 +28,11 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         if progress_callback:
             progress_callback(step, prog)
 
-    output_dir = os.path.join(BASE_DIR, config["paths"]["output_dir"].lstrip('./\\'))
-    temp_dir = os.path.join(BASE_DIR, config["paths"]["temp_dir"].lstrip('./\\'))
+    out_dir_raw = config["paths"]["output_dir"]
+    output_dir = out_dir_raw if os.path.isabs(out_dir_raw) else os.path.normpath(os.path.join(BASE_DIR, out_dir_raw))
+
+    temp_dir_raw = config["paths"]["temp_dir"]
+    temp_dir = temp_dir_raw if os.path.isabs(temp_dir_raw) else os.path.normpath(os.path.join(BASE_DIR, temp_dir_raw))
     
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
@@ -53,23 +56,23 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     # ffmpeg path is safe to leave as-is if it's "ffmpeg" (system path), otherwise resolve
     ffmpeg_path = config["paths"]["ffmpeg"]
     if not ffmpeg_path.lower() == "ffmpeg" and not os.path.isabs(ffmpeg_path):
-        ffmpeg_path = os.path.join(BASE_DIR, ffmpeg_path.lstrip('./\\'))
+        ffmpeg_path = os.path.normpath(os.path.join(BASE_DIR, ffmpeg_path))
     convert_to_wav(input_file, temp_wav_path, ffmpeg_path)
     
     # 2. STT (Transcribe)
     _report_progress("Transcribing audio...", 30)
     stt_model_path = config["paths"]["stt_model"]
     # If stt_model_path looks like a local relative path, resolve it
-    if stt_model_path.startswith(("./", ".\\")):
-        stt_model_path = os.path.join(BASE_DIR, stt_model_path.lstrip('./\\'))
+    if stt_model_path.startswith((".", "..")):
+        stt_model_path = os.path.normpath(os.path.join(BASE_DIR, stt_model_path))
     segments = transcribe_audio(temp_wav_path, stt_model_path)
     
     # 3. Diarization (Optional)
     if config.get("diarization", {}).get("enabled", True):
         _report_progress("Speaker Diarization & Alignment...", 60)
         diarize_model_path = config["paths"]["diarization_model"]
-        if diarize_model_path and diarize_model_path.startswith(("./", ".\\")):
-            diarize_model_path = os.path.join(BASE_DIR, diarize_model_path.lstrip('./\\'))
+        if diarize_model_path and diarize_model_path.startswith((".", "..")):
+            diarize_model_path = os.path.normpath(os.path.join(BASE_DIR, diarize_model_path))
         min_spk = config["diarization"].get("min_speakers")
         max_spk = config["diarization"].get("max_speakers")
         
@@ -81,8 +84,8 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     if config.get("summary", {}).get("enabled", True):
         _report_progress("Summarizing with Local LLM...", 80)
         llm_model = config["summary"].get("model", "gemma-4b")
-        if llm_model and llm_model.startswith(("./", ".\\")):
-            llm_model = os.path.join(BASE_DIR, llm_model.lstrip('./\\'))
+        if llm_model and llm_model.startswith((".", "..")):
+            llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
         summary_data = summarize_meeting(segments, model_name_or_path=llm_model)
     
     # 5. Save Results

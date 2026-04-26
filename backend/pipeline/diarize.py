@@ -1,5 +1,3 @@
-import torch
-from pyannote.audio import Pipeline
 from typing import List, Dict, Optional
 
 def diarize_audio(
@@ -8,6 +6,8 @@ def diarize_audio(
     min_speakers: Optional[int] = None,
     max_speakers: Optional[int] = None
 ) -> List[Dict]:
+    import torch
+    from pyannote.audio import Pipeline
     """
     pyannote/speaker-diarization-3.1 파이프라인으로 화자 분리 수행.
     오프라인 환경을 위해 diarization_model_path는 로컬 폴더(또는 config.yaml) 경로여야 합니다.

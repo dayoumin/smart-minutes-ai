@@ -151,204 +151,153 @@
 /* Main Summary Header Grid */
 .summary-header-grid {
   display: grid;
-  grid-template-columns: 1fr 220px;
-  gap: 1rem;
+  grid-template-columns: 1fr 240px;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
 }
 
 .main-summary {
   background: rgba(139, 92, 246, 0.08) !important;
   border: 1px solid rgba(139, 92, 246, 0.2) !important;
   backdrop-filter: blur(20px);
+  padding: 1.5rem !important; /* 내부 여백 증가 */
+}
+
+.main-summary p {
+  line-height: 1.7;
+  font-size: 0.95rem;
+  margin-top: 0.75rem;
 }
 
 .pulse-stats-box {
   display: flex;
   flex-direction: column;
-  gap: 0.75rem;
+  justify-content: center; /* 중앙 정렬 */
+  gap: 1.25rem;
   background: rgba(255, 255, 255, 0.03);
   border: 1px solid var(--border-color);
   border-radius: 12px;
-  padding: 1rem;
+  padding: 1.5rem;
 }
 
 .stat-item {
   display: flex;
   flex-direction: column;
+  gap: 0.25rem;
 }
 
 .stat-label {
-  font-size: 0.7rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0.8px;
 }
 
 .stat-value {
-  font-size: 1.1rem;
-  font-weight: 700;
+  font-size: 1.2rem;
+  font-weight: 800;
+  color: var(--text-primary);
 }
 
 /* Rich Lists & Inner Cards */
+.grid-2-col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1.5rem;
+  margin-bottom: 2rem; /* 하단 간격 추가 */
+}
+
 .inner-card {
   background: rgba(255, 255, 255, 0.02) !important;
   border: 1px solid var(--border-color) !important;
+  padding: 1.5rem !important;
   height: 100%;
 }
 
 .inner-card h4 {
-  margin-bottom: 1rem;
-  font-size: 0.95rem;
-  color: var(--text-primary);
-}
-
-.rich-list {
-  list-style: none;
-  padding: 0;
-  margin: 0;
+  margin-bottom: 1.25rem;
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
 }
 
 .rich-list li {
   position: relative;
-  padding-left: 1.25rem;
-  margin-bottom: 0.75rem;
-  line-height: 1.5;
-  font-size: 0.9rem;
+  padding-left: 1.5rem;
+  margin-bottom: 1rem; /* 리스트 간격 증가 */
+  line-height: 1.6;
+  font-size: 0.92rem;
 }
 
 .rich-list li::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 0.5rem;
-  width: 6px;
-  height: 6px;
-  background: var(--accent-primary);
-  border-radius: 50%;
-}
-
-.rich-list.decision li::before {
-  background: var(--success);
+  top: 0.6rem;
 }
 
 /* Action Items Grid */
+.result-section {
+  margin-bottom: 2.5rem; /* 섹션 간격 확보 */
+}
+
+.result-section h4 {
+  margin-bottom: 1.25rem;
+}
+
 .action-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
 }
 
 .action-card {
   display: flex;
-  gap: 1rem;
+  gap: 1.25rem;
   background: rgba(255, 255, 255, 0.03);
-  padding: 1rem;
-  border-radius: 10px;
+  padding: 1.25rem;
+  border-radius: 12px;
   border: 1px solid var(--border-color);
   align-items: center;
-  transition: transform 0.2s;
-}
-
-.action-card:hover {
-  transform: translateY(-2px);
-  border-color: var(--success);
-}
-
-.action-check {
-  width: 20px;
-  height: 20px;
-  border: 2px solid var(--success);
-  border-radius: 4px;
-  flex-shrink: 0;
+  transition: all 0.3s ease;
 }
 
 .action-text {
-  font-size: 0.9rem;
-  font-weight: 500;
+  font-size: 0.95rem;
+  line-height: 1.4;
 }
 
 /* Transcript Area & Bubbles */
 .transcript-area {
-  margin-top: 1.5rem;
-}
-
-.section-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-}
-
-.badge {
-  background: rgba(255, 255, 255, 0.1);
-  padding: 0.2rem 0.6rem;
-  border-radius: 12px;
-  font-size: 0.75rem;
+  margin-top: 2rem;
+  border-top: 1px solid var(--border-color);
+  padding-top: 2rem;
 }
 
 .transcript-scroll {
-  display: flex;
-  flex-direction: column;
-  gap: 0.75rem;
-  max-height: 500px;
-  overflow-y: auto;
-  padding-right: 0.5rem;
+  gap: 1rem; /* 버블 간격 증가 */
 }
 
 .transcript-bubble {
-  background: rgba(255, 255, 255, 0.02);
-  padding: 1rem;
-  border-radius: 12px;
-  border: 1px solid transparent;
-  transition: all 0.2s;
-}
-
-.transcript-bubble:hover {
-  background: rgba(255, 255, 255, 0.04);
-  border-color: var(--border-color);
+  padding: 1.25rem;
+  border-radius: 16px;
 }
 
 .bubble-info {
-  display: flex;
-  justify-content: space-between;
-  margin-bottom: 0.5rem;
+  margin-bottom: 0.75rem;
 }
 
 .bubble-spk {
-  font-weight: 800;
-  font-size: 0.8rem;
-  color: var(--accent-primary);
-  text-transform: uppercase;
-}
-
-.bubble-time {
-  font-size: 0.75rem;
-  color: var(--text-muted);
+  font-size: 0.85rem;
+  letter-spacing: 0.5px;
 }
 
 .bubble-text {
-  font-size: 0.95rem;
-  line-height: 1.6;
+  font-size: 1rem;
+  line-height: 1.7;
 }
 
-/* Glassmorphism Global Override */
-.card {
-  background: rgba(255, 255, 255, 0.03) !important;
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
-  border: 1px solid rgba(255, 255, 255, 0.08) !important;
-  box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.37);
-}
-
-/* Result Panel Scrolling */
-.preview-card {
-  display: flex;
-  flex-direction: column;
-  max-height: calc(100vh - 120px);
-}
-
+/* Final Polish */
 .preview-container {
-  flex: 1;
-  padding-right: 0.5rem;
+  padding: 1rem; /* 컨테이너 자체 여백 */
 }
 
 /* Loading States */

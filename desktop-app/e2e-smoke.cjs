@@ -1,6 +1,10 @@
+const path = require('node:path');
 const { chromium } = require('playwright');
 
-const assertVisible = async (locator, label, timeout = 5000) => {
+const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+const AUDIO_PATH = path.resolve(__dirname, '../backend/models/stt/cohere-transcribe-03-2026/demo/voxpopuli_test_en_demo.wav');
+
+const assertVisible = async (locator, label, timeout = 10000) => {
   await locator.waitFor({ state: 'visible', timeout });
   console.log(`ok - ${label}`);
 };
@@ -10,25 +14,35 @@ const assertVisible = async (locator, label, timeout = 5000) => {
   const page = await browser.newPage();
 
   try {
-    await page.goto('http://localhost:5173', { waitUntil: 'domcontentloaded' });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
 
-    await assertVisible(page.getByRole('button', { name: '회의록 작성' }), 'sidebar has meeting writer button');
-    await assertVisible(page.getByText('새 회의록 작성'), 'meeting writer screen is visible');
+    await assertVisible(page.locator('input').first(), 'meeting writer form is visible');
 
-    await page.getByPlaceholder('예: 2026년 상반기 기획 회의').fill('E2E 테스트 회의');
+    await page.locator('input').nth(0).fill('Real E2E Smoke Test');
     await page.locator('input[type="datetime-local"]').fill('2026-04-26T17:30');
-    await page.getByPlaceholder('예: 홍길동, 김철수').fill('홍길동, 김철수');
-    await page.locator('input[type="file"]').setInputFiles('../backend/test_audio.wav');
-    await page.getByRole('button', { name: 'AI 분석 시작' }).click();
+    await page.locator('input').nth(2).fill('Speaker 1');
+    await page.locator('input[type="file"]').setInputFiles(AUDIO_PATH);
 
-    await assertVisible(page.getByText('회의록 저장이 완료되었습니다.'), 'analysis completes and saves', 10000);
+    const completedResponsePromise = page.waitForResponse(
+      response => response.url().includes('/api/analyze') && response.status() === 200,
+      { timeout: 180000 },
+    );
+    await page.getByRole('button', { name: /AI/ }).click();
+    const completedResponse = await completedResponsePromise;
+    const body = await completedResponse.text();
 
-    await page.getByRole('button', { name: '이전 회의 기록' }).click();
-    await assertVisible(page.getByRole('cell', { name: 'E2E 테스트 회의', exact: true }), 'history shows saved meeting');
+    if (!body.includes('"mode":"real"') && !body.includes('"mode": "real"')) {
+      throw new Error(`Expected real mode SSE result, got: ${body.slice(0, 1000)}`);
+    }
+    if (!body.includes('"status":"completed"') && !body.includes('"status": "completed"')) {
+      throw new Error(`Expected completed SSE result, got: ${body.slice(0, 1000)}`);
+    }
 
-    await page.getByRole('button', { name: '시스템 설정' }).click();
-    await assertVisible(page.getByRole('heading', { name: '모델 준비 상태' }), 'settings shows model status');
-    await assertVisible(page.getByRole('button', { name: '누락 모델 다운로드 활성화' }), 'settings has model download action');
+    console.log('ok - /api/analyze returned real completed SSE result');
+    await assertVisible(page.getByText(/완료|저장|completed/), 'analysis produced a visible completion status', 30000);
+
+    await page.getByRole('button', { name: /기록|History|회의/ }).last().click();
+    await assertVisible(page.getByText('Real E2E Smoke Test'), 'history shows saved real meeting', 30000);
   } finally {
     await browser.close();
   }

@@ -60,4 +60,5 @@
   - 환경: 기존 `.venv`가 Python 3.11 네이티브 패키지와 섞여 있어 Python 3.12 런타임에서 여러 import 실패 발생
   - 파이프라인: Pyannote가 torchcodec으로 파일을 직접 읽지 않도록 waveform 메모리 입력 방식으로 수정
   - 파이프라인: Ollama CLI 출력 제어문자 문제를 피하기 위해 요약은 Ollama HTTP API JSON 모드 우선 사용
-- [ ] E2E 성공 후 같은 흐름을 프론트엔드 업로드 화면에서 재검증
+- [x] E2E 성공 후 같은 흐름을 프론트엔드 업로드 화면에서 재검증
+  - Playwright smoke test로 파일 선택, real `/api/analyze` SSE 완료, IndexedDB 기록 저장 확인

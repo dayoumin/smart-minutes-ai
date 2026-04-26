@@ -7,14 +7,8 @@ from fastapi import FastAPI, UploadFile, File, BackgroundTasks, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
-from pipeline.audio_preprocess import convert_to_wav
-from pipeline.transcribe import transcribe_audio
-from pipeline.export_txt import export_txt, save_result_json
-from pipeline.diarize import diarize_audio
-from pipeline.align_speakers import align_segments_with_speakers
-from pipeline.summarize import summarize_meeting
-from pipeline.export_docx import export_docx
-from pipeline.export_markdown import export_markdown
+# Import the core pipeline logic
+from main import process_audio_pipeline, BASE_DIR
 
 app = FastAPI(title="Local Meeting AI - Sidecar API")
 
@@ -22,80 +16,25 @@ app = FastAPI(title="Local Meeting AI - Sidecar API")
 JOBS: Dict[str, dict] = {}
 
 def load_config(config_path: str = "config.json") -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
+    full_path = os.path.join(BASE_DIR, config_path)
+    with open(full_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
 def run_pipeline(input_file: str, job_id: str, config: dict):
     try:
-        output_dir = config["paths"]["output_dir"]
-        temp_dir = config["paths"]["temp_dir"]
-        os.makedirs(output_dir, exist_ok=True)
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        temp_wav_path = os.path.join(temp_dir, f"{job_id}.wav")
-        out_json_path = os.path.join(output_dir, f"{job_id}_result.json")
-        out_txt_path = os.path.join(output_dir, f"{job_id}_transcript.txt")
-        out_md_path = os.path.join(output_dir, f"{job_id}_report.md")
-        out_docx_path = os.path.join(output_dir, f"{job_id}_report.docx")
-
         JOBS[job_id]["status"] = "processing"
         
-        # 1. Convert to WAV
-        JOBS[job_id]["step"] = "Converting to WAV..."
-        JOBS[job_id]["progress"] = 10
-        convert_to_wav(input_file, temp_wav_path, config["paths"]["ffmpeg"])
-        
-        # 2. STT (Transcribe)
-        JOBS[job_id]["step"] = "Transcribing audio..."
-        JOBS[job_id]["progress"] = 30
-        stt_model_path = config["paths"]["stt_model"]
-        segments = transcribe_audio(temp_wav_path, stt_model_path)
-        
-        # 3. Diarization
-        if config.get("diarization", {}).get("enabled", True):
-            JOBS[job_id]["step"] = "Speaker Diarization & Alignment..."
-            JOBS[job_id]["progress"] = 60
-            diarize_model_path = config["paths"]["diarization_model"]
-            min_spk = config["diarization"].get("min_speakers")
-            max_spk = config["diarization"].get("max_speakers")
+        def update_progress(step_name: str, progress_percent: int):
+            JOBS[job_id]["step"] = step_name
+            JOBS[job_id]["progress"] = progress_percent
             
-            spk_segments = diarize_audio(temp_wav_path, diarize_model_path, min_spk, max_spk)
-            segments = align_segments_with_speakers(segments, spk_segments)
-            
-        # 4. Summary
-        summary_data = {}
-        if config.get("summary", {}).get("enabled", True):
-            JOBS[job_id]["step"] = "Summarizing with Local LLM..."
-            JOBS[job_id]["progress"] = 80
-            llm_model = config["summary"].get("model", "gemma-4b")
-            summary_data = summarize_meeting(segments, model_name_or_path=llm_model)
-            
-        # 5. Save Results
-        JOBS[job_id]["step"] = "Saving results..."
-        JOBS[job_id]["progress"] = 90
+        # Re-use the unified CLI/API pipeline
+        process_audio_pipeline(input_file, job_id, config, progress_callback=update_progress)
         
-        result_data = {
-            "job_id": job_id,
-            "source_file": os.path.basename(input_file),
-            "created_at": datetime.now().isoformat(),
-            "language": config["stt"]["language"],
-            "segments": segments,
-            "summary": summary_data
-        }
-        
-        save_result_json(result_data, out_json_path)
-        export_txt(segments, out_txt_path)
-        if summary_data:
-            export_markdown(result_data, out_md_path)
-            export_docx(result_data, out_docx_path)
-            
-        # Cleanup
-        if config["privacy"].get("auto_delete_temp_audio", True):
-            if os.path.exists(temp_wav_path):
-                os.remove(temp_wav_path)
-            if not config["privacy"].get("save_original_audio_copy", False):
-                if os.path.exists(input_file):
-                    os.remove(input_file)
+        # Cleanup original upload file if required (pipeline cleans up temp wav)
+        if not config["privacy"].get("save_original_audio_copy", False):
+            if os.path.exists(input_file):
+                os.remove(input_file)
                 
         JOBS[job_id]["status"] = "completed"
         JOBS[job_id]["step"] = "Done"

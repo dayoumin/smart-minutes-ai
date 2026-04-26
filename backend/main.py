@@ -11,16 +11,25 @@ from pipeline.summarize import summarize_meeting
 from pipeline.export_docx import export_docx
 from pipeline.export_markdown import export_markdown
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
 def load_config(config_path: str = "config.json") -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
+    # Resolve relative to script location for sidecar stability
+    full_path = os.path.join(BASE_DIR, config_path)
+    with open(full_path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = None) -> dict:
+def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = None, progress_callback=None) -> dict:
     if config is None:
         config = load_config()
         
-    output_dir = config["paths"]["output_dir"]
-    temp_dir = config["paths"]["temp_dir"]
+    def _report_progress(step: str, prog: int):
+        print(f"[{prog}%] {step}")
+        if progress_callback:
+            progress_callback(step, prog)
+
+    output_dir = os.path.join(BASE_DIR, config["paths"]["output_dir"].lstrip('./\\'))
+    temp_dir = os.path.join(BASE_DIR, config["paths"]["temp_dir"].lstrip('./\\'))
     
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
@@ -40,37 +49,44 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     print(f"Input: {input_file}")
     
     # 1. Convert to WAV
-    print(f"[1/5] Converting to 16kHz mono WAV...")
-    convert_to_wav(input_file, temp_wav_path, config["paths"]["ffmpeg"])
+    _report_progress("Converting to WAV...", 10)
+    # ffmpeg path is safe to leave as-is if it's "ffmpeg" (system path), otherwise resolve
+    ffmpeg_path = config["paths"]["ffmpeg"]
+    if not ffmpeg_path.lower() == "ffmpeg" and not os.path.isabs(ffmpeg_path):
+        ffmpeg_path = os.path.join(BASE_DIR, ffmpeg_path.lstrip('./\\'))
+    convert_to_wav(input_file, temp_wav_path, ffmpeg_path)
     
     # 2. STT (Transcribe)
-    print(f"[2/5] Transcribing audio...")
+    _report_progress("Transcribing audio...", 30)
     stt_model_path = config["paths"]["stt_model"]
+    # If stt_model_path looks like a local relative path, resolve it
+    if stt_model_path.startswith(("./", ".\\")):
+        stt_model_path = os.path.join(BASE_DIR, stt_model_path.lstrip('./\\'))
     segments = transcribe_audio(temp_wav_path, stt_model_path)
     
     # 3. Diarization (Optional)
     if config.get("diarization", {}).get("enabled", True):
-        print(f"[3/5] Speaker Diarization & Alignment...")
+        _report_progress("Speaker Diarization & Alignment...", 60)
         diarize_model_path = config["paths"]["diarization_model"]
+        if diarize_model_path and diarize_model_path.startswith(("./", ".\\")):
+            diarize_model_path = os.path.join(BASE_DIR, diarize_model_path.lstrip('./\\'))
         min_spk = config["diarization"].get("min_speakers")
         max_spk = config["diarization"].get("max_speakers")
         
         spk_segments = diarize_audio(temp_wav_path, diarize_model_path, min_spk, max_spk)
         segments = align_segments_with_speakers(segments, spk_segments)
-    else:
-        print(f"[3/5] Speaker Diarization disabled. Skipping.")
     
     # 4. Summary (Optional)
     summary_data = {}
     if config.get("summary", {}).get("enabled", True):
-        print(f"[4/5] Summarizing with Local LLM...")
+        _report_progress("Summarizing with Local LLM...", 80)
         llm_model = config["summary"].get("model", "gemma-4b")
+        if llm_model and llm_model.startswith(("./", ".\\")):
+            llm_model = os.path.join(BASE_DIR, llm_model.lstrip('./\\'))
         summary_data = summarize_meeting(segments, model_name_or_path=llm_model)
-    else:
-        print(f"[4/5] Summarization disabled. Skipping.")
     
     # 5. Save Results
-    print(f"[5/5] Saving results...")
+    _report_progress("Saving results...", 90)
     result_data = {
         "job_id": job_id,
         "source_file": os.path.basename(input_file),

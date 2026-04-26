@@ -2,7 +2,7 @@
   "app_name": "Local Meeting AI",
   "offline_mode": true,
   "paths": {
-    "ffmpeg": "d:/Projects/audio/backend/ffmpeg.exe",
+    "ffmpeg": "ffmpeg",
     "stt_model": "CohereLabs/cohere-transcribe-03-2026",
     "diarization_model": "./models/diarization/speaker-diarization-3.1",
     "segmentation_model": "./models/segmentation/segmentation-3.0",
@@ -27,13 +27,6 @@
     "enabled": true,
     "mode": "meeting_minutes",
     "model": "./models/llm/gemma.gguf"
-  },
-  "rag": {
-    "enabled": false,
-    "db_type": "chromadb",
-    "db_path": "./vector_db",
-    "embedding_model": "bge-m3",
-    "comment": "FUTURE: RAG 연동 시 enabled를 true로 바꾸고 검색 인덱스 경로를 지정하세요."
   },
   "export_templates": {
     "use_custom_template": false,

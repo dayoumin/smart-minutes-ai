@@ -97,10 +97,6 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         export_markdown(result_data, out_md_path)
         export_docx(result_data, out_docx_path)
     
-    # FUTURE HOOK (RAG Integration):
-    # if config["rag"]["enabled"]:
-    #     add_to_vector_db(result_data) # result_data 전체를 벡터 DB에 인덱싱하여 향후 대화 검색에 활용
-    
     # Cleanup temp wav
     if config["privacy"].get("auto_delete_temp_audio", True):
         if os.path.exists(temp_wav_path):

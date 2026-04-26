@@ -9,6 +9,7 @@
     "tauri": "tauri",
     "desktop:dev": "tauri dev",
     "desktop:build": "tauri build",
+    "desktop:build:exe": "tauri build --no-bundle",
     "e2e:smoke": "node e2e-smoke.cjs",
     "lint": "eslint .",
     "preview": "vite preview"

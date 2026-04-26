@@ -23,6 +23,16 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["ok"], True)
 
+    def test_settings_and_model_status(self) -> None:
+        settings_response = self.client.get("/api/settings")
+        models_response = self.client.get("/api/models/status")
+
+        self.assertEqual(settings_response.status_code, 200)
+        self.assertEqual(models_response.status_code, 200)
+        self.assertIn("processing", settings_response.json())
+        self.assertIn("models", models_response.json())
+        self.assertIsInstance(models_response.json()["models"], list)
+
     def test_analyze_streams_progress_and_result(self) -> None:
         with open(TEST_AUDIO_PATH, "rb") as audio_file:
             with self.client.stream(

@@ -14,6 +14,15 @@ interface AnalyzeResult {
     segments?: MeetingSegment[];
 }
 
+interface ModelsPayload {
+    ready: boolean;
+    models: Array<{
+        label: string;
+        installed: boolean;
+        required: boolean;
+    }>;
+}
+
 const parseSseChunk = (chunk: string): string[] => {
     return chunk
         .split('\n\n')
@@ -50,6 +59,25 @@ export const MeetingWriter: React.FC = () => {
     const [errorMessage, setErrorMessage] = useState('');
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+    const ensureModelsReady = async (): Promise<boolean> => {
+        if (ANALYSIS_MODE !== 'real') return true;
+
+        const response = await fetch(`${API_BASE}/api/models/status`);
+        if (!response.ok) {
+            throw new Error('모델 준비 상태를 확인하지 못했습니다.');
+        }
+
+        const payload = await response.json() as ModelsPayload;
+        if (payload.ready) return true;
+
+        const missing = payload.models
+            .filter(model => model.required && !model.installed)
+            .map(model => model.label)
+            .join(', ');
+        setErrorMessage(`실제 로컬 분석에 필요한 모델이 없습니다. 설정에서 모델을 준비해 주세요: ${missing}`);
+        return false;
+    };
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0] ?? null;
         setErrorMessage('');
@@ -74,6 +102,9 @@ export const MeetingWriter: React.FC = () => {
         setErrorMessage('');
 
         try {
+            const modelsReady = await ensureModelsReady();
+            if (!modelsReady) return;
+
             const formData = new FormData();
             formData.append('title', title.trim());
             formData.append('date', date);

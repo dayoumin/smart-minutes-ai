@@ -25,6 +25,10 @@ const assertVisible = async (locator, label, timeout = 5000) => {
 
     await page.getByRole('button', { name: '이전 회의 기록' }).click();
     await assertVisible(page.getByRole('cell', { name: 'E2E 테스트 회의', exact: true }), 'history shows saved meeting');
+
+    await page.getByRole('button', { name: '시스템 설정' }).click();
+    await assertVisible(page.getByRole('heading', { name: '모델 준비 상태' }), 'settings shows model status');
+    await assertVisible(page.getByRole('button', { name: '누락 모델 다운로드' }), 'settings has model download action');
   } finally {
     await browser.close();
   }

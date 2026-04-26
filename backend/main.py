@@ -11,6 +11,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
+from model_manager import download_model, get_model_status, missing_downloadable_models
 from pipeline.audio_preprocess import convert_to_wav
 from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
 from pipeline.transcribe import transcribe_audio
@@ -54,6 +55,93 @@ def sse_event(payload: dict | str, event: str | None = None) -> str:
 @app.get("/api/health")
 async def health_check() -> dict:
     return {"ok": True, "service": "NIFS AI Meeting API"}
+
+
+@app.get("/api/settings")
+async def get_settings() -> dict:
+    config = load_config()
+    return {
+        "app_name": config.get("app_name"),
+        "offline_mode": config.get("offline_mode", True),
+        "analysis_mode": os.environ.get("ANALYSIS_MODE", "mock"),
+        "paths": config.get("paths", {}),
+        "processing": config.get("processing", {}),
+        "privacy": config.get("privacy", {}),
+    }
+
+
+@app.get("/api/models/status")
+async def models_status() -> dict:
+    return get_model_status(BASE_DIR)
+
+
+@app.post("/api/models/download")
+async def download_missing_models() -> StreamingResponse:
+    async def event_generator() -> AsyncIterator[str]:
+        token = os.environ.get("HF_TOKEN")
+        missing = list(missing_downloadable_models(BASE_DIR))
+
+        if not missing:
+            yield sse_event({
+                "type": "result",
+                "status": "completed",
+                "message": "모든 자동 다운로드 대상 모델이 준비되어 있습니다.",
+                "models": get_model_status(BASE_DIR)["models"],
+            }, event="result")
+            yield sse_event("[DONE]", event="done")
+            return
+
+        total = len(missing)
+        for index, spec in enumerate(missing, start=1):
+            progress = int(((index - 1) / total) * 100)
+            yield sse_event({
+                "type": "progress",
+                "status": "processing",
+                "progress": progress,
+                "message": f"{spec.label} 다운로드 준비 중",
+                "model": spec.key,
+                "gated": spec.gated,
+            }, event="progress")
+
+            try:
+                await asyncio.to_thread(download_model, BASE_DIR, spec, token)
+            except Exception as exc:
+                yield sse_event({
+                    "type": "error",
+                    "status": "error",
+                    "progress": progress,
+                    "message": f"{spec.label} 다운로드 실패: {exc}",
+                    "model": spec.key,
+                }, event="error")
+                yield sse_event("[DONE]", event="done")
+                return
+
+            yield sse_event({
+                "type": "progress",
+                "status": "processing",
+                "progress": int((index / total) * 100),
+                "message": f"{spec.label} 다운로드 완료",
+                "model": spec.key,
+            }, event="progress")
+
+        yield sse_event({
+            "type": "result",
+            "status": "completed",
+            "progress": 100,
+            "message": "모델 다운로드가 완료되었습니다.",
+            "models": get_model_status(BASE_DIR)["models"],
+        }, event="result")
+        yield sse_event("[DONE]", event="done")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @app.post("/api/analyze")

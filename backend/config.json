@@ -4,8 +4,8 @@
   "paths": {
     "ffmpeg": "ffmpeg",
     "stt_model": "./models/stt/cohere-transcribe-03-2026",
-    "diarization_model": "./models/diarization/speaker-diarization-3.1",
-    "segmentation_model": "./models/segmentation/segmentation-3.0",
+    "diarization_model": "./models/diarization/speaker-diarization-community-1",
+    "segmentation_model": "",
     "llm_model": "./models/llm/gemma.gguf",
     "output_dir": "./outputs",
     "temp_dir": "./temp",

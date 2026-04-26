@@ -292,8 +292,7 @@ async def stream_real_analysis(
         report_progress("Cohere STT 모델 준비 완료", 8)
 
         diarization_spec = get_model_spec("diarization")
-        segmentation_spec = get_model_spec("segmentation")
-        diarization_ready = model_exists(BASE_DIR, diarization_spec) and model_exists(BASE_DIR, segmentation_spec)
+        diarization_ready = model_exists(BASE_DIR, diarization_spec)
 
         if not diarization_ready:
             config["diarization"]["enabled"] = False

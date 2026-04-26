@@ -26,7 +26,7 @@ def main():
     print("Now update 'backend/config.json' to point 'stt_model' and 'diarization_model' to these local directories.")
     print("Example in config.json:")
     print('  "stt_model": "./models/stt/faster-whisper-large-v3"')
-    print('  "diarization_model": "./models/diarization/speaker-diarization-3.1"')
+    print('  "diarization_model": "./models/diarization/speaker-diarization-community-1"')
 
 if __name__ == "__main__":
     main()

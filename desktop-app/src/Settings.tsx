@@ -183,7 +183,7 @@ export const Settings: React.FC = () => {
                     <div>
                         <h3 className="text-lg font-semibold text-foreground">모델 준비 상태</h3>
                         <p className="text-sm text-muted-foreground">
-                            기본 음성 인식은 Cohere Transcribe를 사용합니다. 로컬에 없으면 실제 분석 시작 시 자동 다운로드를 시도하고, Pyannote 계열은 라이선스 동의와 `HF_TOKEN` 환경변수가 필요할 수 있습니다.
+                            기본 음성 인식은 Cohere Transcribe를 사용합니다. 화자 분리는 Pyannote Community-1을 사용하며, Hugging Face 조건 수락과 `HF_TOKEN` 환경변수가 필요할 수 있습니다.
                         </p>
                     </div>
                     <Button onClick={handleDownloadModels} disabled={isLoading || isDownloading}>

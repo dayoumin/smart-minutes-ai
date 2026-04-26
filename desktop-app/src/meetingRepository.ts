@@ -12,6 +12,16 @@ export interface MeetingRecord {
     summary: string;
     participants: string;
     segments?: MeetingSegment[];
+    sourceFile?: string;
+    jobId?: string;
+    topics?: string[];
+    actions?: string[];
+    outputFiles?: {
+        json?: string | null;
+        txt?: string | null;
+        md?: string | null;
+        docx?: string | null;
+    };
 }
 
 const DB_NAME = 'MeetingHistoryDB';

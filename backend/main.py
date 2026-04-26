@@ -7,9 +7,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
 from pipeline.audio_preprocess import convert_to_wav
@@ -68,12 +68,65 @@ async def get_settings() -> dict:
         "processing": config.get("processing", {}),
         "privacy": config.get("privacy", {}),
         "summary": config.get("summary", {}),
+        "diarization": config.get("diarization", {}),
+        "stt": config.get("stt", {}),
     }
+
+
+@app.patch("/api/settings")
+async def update_settings(payload: dict = Body(...)) -> dict:
+    config = load_config()
+
+    if "processing" in payload:
+        processing = payload["processing"] or {}
+        if "enable_long_audio_chunking" in processing:
+            config.setdefault("processing", {})["enable_long_audio_chunking"] = bool(processing["enable_long_audio_chunking"])
+        if "long_audio_chunk_seconds" in processing:
+            chunk_seconds = int(processing["long_audio_chunk_seconds"])
+            if chunk_seconds < 10 or chunk_seconds > 3600:
+                raise HTTPException(status_code=400, detail="long_audio_chunk_seconds must be between 10 and 3600")
+            config.setdefault("processing", {})["long_audio_chunk_seconds"] = chunk_seconds
+
+    if "diarization" in payload:
+        diarization = payload["diarization"] or {}
+        if "enabled" in diarization:
+            config.setdefault("diarization", {})["enabled"] = bool(diarization["enabled"])
+
+    if "stt" in payload:
+        stt = payload["stt"] or {}
+        if "device" in stt:
+            device = str(stt["device"])
+            if device not in {"auto", "cpu", "cuda"}:
+                raise HTTPException(status_code=400, detail="stt.device must be auto, cpu, or cuda")
+            config.setdefault("stt", {})["device"] = device
+
+    save_config(config)
+    return await get_settings()
 
 
 @app.get("/api/models/status")
 async def models_status() -> dict:
     return get_model_status(BASE_DIR)
+
+
+@app.get("/api/outputs/{job_id}/{kind}")
+async def download_output(job_id: str, kind: str) -> FileResponse:
+    allowed = {
+        "json": f"{job_id}_result.json",
+        "txt": f"{job_id}_transcript.txt",
+        "md": f"{job_id}_report.md",
+        "docx": f"{job_id}_report.docx",
+    }
+    if kind not in allowed:
+        raise HTTPException(status_code=404, detail="Unknown output type")
+
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    file_path = os.path.abspath(os.path.join(output_dir, allowed[kind]))
+    if not file_path.startswith(output_dir + os.sep) or not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    return FileResponse(file_path, filename=allowed[kind])
 
 
 @app.post("/api/models/download")
@@ -287,7 +340,7 @@ async def stream_real_analysis(
         report_progress("Cohere STT 모델 확인 중", 6)
         stt_spec = get_model_spec("stt_primary")
         if not model_exists(BASE_DIR, stt_spec):
-            raise RuntimeError("Cohere Transcribe 모델이 없습니다. 설정 화면에서 모델 다운로드를 먼저 활성화해 주세요.")
+            raise RuntimeError("Cohere Transcribe 모델이 없습니다. 설정 화면에서 모델 페이지를 열고 필요한 파일을 받은 뒤 다시 실행해 주세요.")
         config["paths"]["stt_model"] = stt_spec.local_dir
         report_progress("Cohere STT 모델 준비 완료", 8)
 
@@ -332,6 +385,13 @@ async def stream_real_analysis(
                     "participants": participants,
                     "source_file": file.filename,
                     "job_id": result["job_id"],
+                },
+                "outputs": {
+                    "job_id": result["job_id"],
+                    "json": f"/api/outputs/{result['job_id']}/json",
+                    "txt": f"/api/outputs/{result['job_id']}/txt",
+                    "md": f"/api/outputs/{result['job_id']}/md" if result.get("md_file") else None,
+                    "docx": f"/api/outputs/{result['job_id']}/docx" if result.get("docx_file") else None,
                 },
                 "summary": format_summary_for_ui(result_data.get("summary", {}), title, date, participants),
                 "topics": result_data.get("summary", {}).get("topics", []),
@@ -402,6 +462,13 @@ def load_config(config_path: str = "config.json") -> dict:
     full_path = os.path.join(BASE_DIR, config_path)
     with open(full_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def save_config(config: dict, config_path: str = "config.json") -> None:
+    full_path = os.path.join(BASE_DIR, config_path)
+    with open(full_path, "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+        f.write("\n")
 
 def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = None, progress_callback=None) -> dict:
     if config is None:

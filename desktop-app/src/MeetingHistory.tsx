@@ -3,6 +3,8 @@ import { Button } from './Button';
 import { Input } from './Input';
 import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepository';
 
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+
 export const MeetingHistory: React.FC = () => {
     const [searchTerm, setSearchTerm] = useState('');
     const [records, setRecords] = useState<MeetingRecord[]>([]);
@@ -58,6 +60,19 @@ export const MeetingHistory: React.FC = () => {
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
+    };
+
+    const handleDownloadArtifact = (kind: 'txt' | 'md' | 'docx' | 'json') => {
+        if (!selectedMeeting) return;
+
+        const outputUrl = selectedMeeting.outputFiles?.[kind];
+        if (!outputUrl) {
+            if (kind === 'md') handleDownloadMarkdown();
+            return;
+        }
+
+        const absoluteUrl = outputUrl.startsWith('http') ? outputUrl : `${API_BASE}${outputUrl}`;
+        window.open(absoluteUrl, '_blank', 'noopener,noreferrer');
     };
 
     const handleDelete = async (id: string) => {
@@ -143,8 +158,14 @@ export const MeetingHistory: React.FC = () => {
                         <div className="flex justify-between items-center p-6 border-b border-border">
                             <h3 className="text-h3 font-semibold text-foreground">{selectedMeeting.title}</h3>
                             <div className="flex items-center gap-4">
-                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={handleDownloadMarkdown}>
-                                    문서 다운로드
+                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('md')}>
+                                    MD
+                                </Button>
+                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')} disabled={!selectedMeeting.outputFiles?.txt}>
+                                    TXT
+                                </Button>
+                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('docx')} disabled={!selectedMeeting.outputFiles?.docx}>
+                                    DOCX
                                 </Button>
                                 <button onClick={() => setSelectedMeeting(null)} className="text-muted-foreground hover:text-foreground text-2xl leading-none">
                                     &times;
@@ -162,6 +183,18 @@ export const MeetingHistory: React.FC = () => {
                                     <span className="text-sm font-medium text-muted-foreground">참석자</span>
                                     <span>{selectedMeeting.participants}</span>
                                 </div>
+                                {selectedMeeting.sourceFile && (
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-sm font-medium text-muted-foreground">원본 파일</span>
+                                        <span>{selectedMeeting.sourceFile}</span>
+                                    </div>
+                                )}
+                                {selectedMeeting.jobId && (
+                                    <div className="flex flex-col gap-1">
+                                        <span className="text-sm font-medium text-muted-foreground">작업 ID</span>
+                                        <span className="text-xs">{selectedMeeting.jobId}</span>
+                                    </div>
+                                )}
                             </div>
 
                             <div className="flex border-b border-border mt-2">
@@ -174,8 +207,28 @@ export const MeetingHistory: React.FC = () => {
                             </div>
 
                             {modalTab === 'summary' ? (
-                                <div className="bg-muted/50 p-4 rounded-md whitespace-pre-wrap leading-relaxed text-sm">
-                                    {selectedMeeting.summary}
+                                <div className="flex flex-col gap-4">
+                                    <div className="bg-muted/50 p-4 rounded-md whitespace-pre-wrap leading-relaxed text-sm">
+                                        {selectedMeeting.summary}
+                                    </div>
+                                    {!!selectedMeeting.topics?.length && (
+                                        <div>
+                                            <h4 className="mb-2 text-sm font-semibold text-foreground">주요 주제</h4>
+                                            <div className="flex flex-wrap gap-2">
+                                                {selectedMeeting.topics.map(topic => (
+                                                    <span key={topic} className="rounded-md bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">{topic}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                    {!!selectedMeeting.actions?.length && (
+                                        <div>
+                                            <h4 className="mb-2 text-sm font-semibold text-foreground">할 일</h4>
+                                            <ul className="list-disc pl-5 text-sm text-foreground">
+                                                {selectedMeeting.actions.map(action => <li key={action}>{action}</li>)}
+                                            </ul>
+                                        </div>
+                                    )}
                                 </div>
                             ) : (
                                 <div className="flex flex-col gap-3">

@@ -12,6 +12,19 @@ interface AnalyzeResult {
     progress?: number;
     summary?: string;
     segments?: MeetingSegment[];
+    topics?: string[];
+    actions?: string[];
+    meeting?: {
+        source_file?: string;
+        job_id?: string;
+    };
+    outputs?: {
+        job_id?: string;
+        json?: string | null;
+        txt?: string | null;
+        md?: string | null;
+        docx?: string | null;
+    };
 }
 
 interface ModelsPayload {
@@ -182,6 +195,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 participants: participants.trim(),
                 summary: finalData.summary || '요약 결과가 없습니다.',
                 segments: finalData.segments || [],
+                sourceFile: finalData.meeting?.source_file || file.name,
+                jobId: finalData.outputs?.job_id || finalData.meeting?.job_id,
+                topics: finalData.topics || [],
+                actions: finalData.actions || [],
+                outputFiles: finalData.outputs,
             };
 
             await addMeeting(newRecord);
@@ -206,7 +224,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         <div className="flex flex-col h-full gap-6 max-w-3xl mx-auto w-full">
             <h2 className="text-h3 font-semibold text-primary mb-2">새 회의록 작성</h2>
             <p className="text-sm text-muted-foreground -mt-4">
-                음성 파일뿐 아니라 회의 녹화 영상도 업로드할 수 있습니다. 영상은 서버에서 음성만 추출해 분석하는 흐름으로 확장됩니다.
+                음성 파일과 회의 녹화 영상을 모두 업로드할 수 있습니다. 영상은 서버에서 음성 트랙만 추출한 뒤 분석합니다.
             </p>
 
             <div className="bg-background border border-border rounded-lg p-6 flex flex-col gap-5 shadow-sm">
@@ -237,7 +255,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         className="file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary/10 file:text-primary hover:file:bg-primary/20 cursor-pointer text-sm text-muted-foreground"
                     />
                     <p className="text-xs text-muted-foreground">
-                        지원 형식: MP3, WAV, M4A, MP4, MOV, MKV, AVI, WEBM. 큰 영상은 음성만 추출한 뒤 구간별로 나누어 분석하는 방식이 적합합니다.
+                        지원 형식: MP3, WAV, M4A, AAC, FLAC, MP4, MOV, MKV, AVI, WEBM. 큰 파일은 차단하지 않고 음성 변환 후 설정된 길이로 나누어 처리합니다.
                     </p>
                     {file && (
                         <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm text-foreground">
@@ -247,7 +265,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                             {file.size >= LARGE_FILE_WARNING_BYTES && (
                                 <div className="mt-2 text-xs text-amber-700">
-                                    큰 파일은 업로드와 음성 추출에 시간이 오래 걸릴 수 있습니다. 실제 분석 단계에서는 음성 트랙을 만든 뒤 긴 구간을 나누어 처리하는 흐름으로 확장할 예정입니다.
+                                    큰 파일은 업로드와 음성 추출에 시간이 오래 걸릴 수 있습니다. 분석은 음성 트랙을 만든 뒤 청크 단위로 나누어 진행합니다.
+                                </div>
+                            )}
+                            {getFileKind(file) === 'video' && (
+                                <div className="mt-2 text-xs text-muted-foreground">
+                                    영상 자체를 분석하지 않고 음성만 WAV로 변환합니다. 메모리 부담은 원본 영상 길이보다 추출된 음성 길이와 청크 설정의 영향을 더 크게 받습니다.
                                 </div>
                             )}
                         </div>

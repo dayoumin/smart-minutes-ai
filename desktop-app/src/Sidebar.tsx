@@ -41,7 +41,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'minutes', onTabCh
 
             {/* 하단 버전 정보 영역 */}
             <div className="mt-auto pl-3 mb-2">
-                <span className="text-caption">로컬 MVP · Mock 분석</span>
+                <span className="text-caption">로컬 MVP · FastAPI 연결</span>
             </div>
         </aside>
     );

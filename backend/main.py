@@ -1,8 +1,18 @@
 import argparse
+import asyncio
 import os
 import json
+import shutil
 from datetime import datetime
+from pathlib import Path
+from typing import AsyncIterator
+
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
+
 from pipeline.audio_preprocess import convert_to_wav
+from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
 from pipeline.transcribe import transcribe_audio
 from pipeline.export_txt import export_txt, save_result_json
 from pipeline.diarize import diarize_audio
@@ -12,6 +22,271 @@ from pipeline.export_docx import export_docx
 from pipeline.export_markdown import export_markdown
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+app = FastAPI(title="NIFS AI Meeting API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+def sse_event(payload: dict | str, event: str | None = None) -> str:
+    lines = []
+    if event:
+        lines.append(f"event: {event}")
+    if isinstance(payload, str):
+        data = payload
+    else:
+        data = json.dumps(payload, ensure_ascii=False)
+    lines.append(f"data: {data}")
+    return "\n".join(lines) + "\n\n"
+
+
+@app.get("/api/health")
+async def health_check() -> dict:
+    return {"ok": True, "service": "NIFS AI Meeting API"}
+
+
+@app.post("/api/analyze")
+async def analyze_meeting(
+    title: str = Form(...),
+    date: str = Form(...),
+    participants: str = Form(...),
+    file: UploadFile = File(...),
+    mode: str = Form("mock"),
+) -> StreamingResponse:
+    if mode not in {"mock", "real"}:
+        raise HTTPException(status_code=400, detail="mode must be 'mock' or 'real'")
+
+    if mode == "real":
+        return StreamingResponse(
+            stream_real_analysis(title, date, participants, file),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
+        )
+
+    async def event_generator() -> AsyncIterator[str]:
+        steps = [
+            (10, "파일 업로드 수신 완료"),
+            (25, "오디오 전처리 준비 중"),
+            (45, "음성 인식(STT) mock 처리 중"),
+            (65, "화자 분리 mock 처리 중"),
+            (85, "회의 요약 mock 생성 중"),
+        ]
+
+        for progress, message in steps:
+            await asyncio.sleep(0.35)
+            yield sse_event(
+                {
+                    "type": "progress",
+                    "progress": progress,
+                    "message": message,
+                    "status": "processing",
+                },
+                event="progress",
+            )
+
+        final_data = {
+            "type": "result",
+            "mode": "mock",
+            "progress": 100,
+            "status": "completed",
+            "meeting": {
+                "title": title,
+                "date": date,
+                "participants": participants,
+                "source_file": file.filename,
+            },
+            "summary": (
+                f"[Mock 회의록]\n"
+                f"- 회의명: {title}\n"
+                f"- 일시: {date}\n"
+                f"- 참석자: {participants}\n"
+                f"- 업로드 파일: {file.filename}\n\n"
+                "프론트엔드가 FastAPI 백엔드에 오디오 파일과 메타데이터를 전송했고, "
+                "백엔드는 SSE 스트리밍으로 진행률과 최종 회의록 결과를 반환했습니다."
+            ),
+            "topics": ["엔드투엔드 연결", "SSE 진행률 스트리밍", "실제 AI 파이프라인 연동 준비"],
+            "actions": ["Mock 응답을 실제 STT/요약 파이프라인으로 교체", "회의록 DB 저장 API 추가"],
+            "segments": [
+                {
+                    "start": "00:00:00",
+                    "end": "00:00:05",
+                    "speaker": "Speaker 1",
+                    "text": "FastAPI 서버가 업로드 요청을 정상적으로 받았습니다.",
+                },
+                {
+                    "start": "00:00:06",
+                    "end": "00:00:11",
+                    "speaker": "Speaker 2",
+                    "text": "프론트엔드는 SSE 스트림에서 진행률 이벤트를 수신하고 있습니다.",
+                },
+                {
+                    "start": "00:00:12",
+                    "end": "00:00:17",
+                    "speaker": "Speaker 1",
+                    "text": "이제 mock 결과를 실제 모델 출력으로 바꾸면 됩니다.",
+                },
+            ],
+        }
+
+        yield sse_event(final_data, event="result")
+        yield sse_event("[DONE]", event="done")
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+async def stream_real_analysis(
+    title: str,
+    date: str,
+    participants: str,
+    file: UploadFile,
+) -> AsyncIterator[str]:
+    queue: asyncio.Queue[dict | str] = asyncio.Queue()
+    loop = asyncio.get_running_loop()
+
+    def report_progress(step: str, progress: int) -> None:
+        loop.call_soon_threadsafe(
+            queue.put_nowait,
+            {
+                "type": "progress",
+                "mode": "real",
+                "progress": progress,
+                "message": step,
+                "status": "processing",
+            },
+        )
+
+    async def save_upload() -> str:
+        config = load_config()
+        temp_dir = resolve_config_path(config["paths"]["temp_dir"])
+        os.makedirs(temp_dir, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        suffix = Path(file.filename or "upload").suffix
+        upload_path = os.path.join(temp_dir, f"{timestamp}_upload{suffix}")
+
+        with open(upload_path, "wb") as buffer:
+            while chunk := await file.read(1024 * 1024):
+                buffer.write(chunk)
+
+        return upload_path
+
+    async def worker() -> None:
+        upload_path = ""
+        try:
+            upload_path = await save_upload()
+            await queue.put({
+                "type": "progress",
+                "mode": "real",
+                "progress": 5,
+                "message": "업로드 파일 저장 완료",
+                "status": "processing",
+            })
+
+            result = await asyncio.to_thread(
+                process_audio_pipeline,
+                upload_path,
+                None,
+                None,
+                report_progress,
+            )
+            result_data = result["result_data"]
+            final_data = {
+                "type": "result",
+                "mode": "real",
+                "progress": 100,
+                "status": "completed",
+                "meeting": {
+                    "title": title,
+                    "date": date,
+                    "participants": participants,
+                    "source_file": file.filename,
+                    "job_id": result["job_id"],
+                },
+                "summary": format_summary_for_ui(result_data.get("summary", {}), title, date, participants),
+                "topics": result_data.get("summary", {}).get("topics", []),
+                "actions": result_data.get("summary", {}).get("actions", []),
+                "segments": [
+                    {
+                        "start": seconds_to_timestamp(segment.get("start", 0.0)),
+                        "end": seconds_to_timestamp(segment.get("end", 0.0)),
+                        "speaker": segment.get("speaker_name") or segment.get("speaker") or "Speaker",
+                        "text": segment.get("text", ""),
+                    }
+                    for segment in result_data.get("segments", [])
+                ],
+            }
+            await queue.put(final_data)
+            await queue.put("[DONE]")
+        except Exception as exc:
+            await queue.put({
+                "type": "error",
+                "mode": "real",
+                "progress": 100,
+                "status": "error",
+                "message": str(exc),
+            })
+            await queue.put("[DONE]")
+        finally:
+            if upload_path:
+                config = load_config()
+                if not config["privacy"].get("save_original_audio_copy", False) and os.path.exists(upload_path):
+                    os.remove(upload_path)
+
+    task = asyncio.create_task(worker())
+
+    try:
+        while True:
+            payload = await queue.get()
+            if payload == "[DONE]":
+                yield sse_event("[DONE]", event="done")
+                break
+            event = payload.get("type") if isinstance(payload, dict) else None
+            yield sse_event(payload, event=event)
+    finally:
+        await task
+
+
+def resolve_config_path(path_value: str) -> str:
+    if os.path.isabs(path_value):
+        return path_value
+    return os.path.normpath(os.path.join(BASE_DIR, path_value))
+
+
+def seconds_to_timestamp(seconds: float) -> str:
+    seconds = max(0, int(float(seconds)))
+    h = seconds // 3600
+    m = (seconds % 3600) // 60
+    s = seconds % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
+
+
+def format_summary_for_ui(summary: dict, title: str, date: str, participants: str) -> str:
+    overview = summary.get("overview") if isinstance(summary, dict) else None
+    if overview:
+        return overview
+    return f"{title} 회의({date}, {participants}) 분석이 완료되었습니다."
 
 def load_config(config_path: str = "config.json") -> dict:
     # Resolve relative to script location for sidecar stability
@@ -28,11 +303,8 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         if progress_callback:
             progress_callback(step, prog)
 
-    out_dir_raw = config["paths"]["output_dir"]
-    output_dir = out_dir_raw if os.path.isabs(out_dir_raw) else os.path.normpath(os.path.join(BASE_DIR, out_dir_raw))
-
-    temp_dir_raw = config["paths"]["temp_dir"]
-    temp_dir = temp_dir_raw if os.path.isabs(temp_dir_raw) else os.path.normpath(os.path.join(BASE_DIR, temp_dir_raw))
+    output_dir = resolve_config_path(config["paths"]["output_dir"])
+    temp_dir = resolve_config_path(config["paths"]["temp_dir"])
     
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(temp_dir, exist_ok=True)
@@ -60,12 +332,34 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     convert_to_wav(input_file, temp_wav_path, ffmpeg_path)
     
     # 2. STT (Transcribe)
-    _report_progress("Transcribing audio...", 30)
+    _report_progress("Preparing audio chunks...", 25)
     stt_model_path = config["paths"]["stt_model"]
-    # If stt_model_path looks like a local relative path, resolve it
     if stt_model_path.startswith((".", "..")):
-        stt_model_path = os.path.normpath(os.path.join(BASE_DIR, stt_model_path))
-    segments = transcribe_audio(temp_wav_path, stt_model_path)
+        stt_model_path = resolve_config_path(stt_model_path)
+
+    processing_config = config.get("processing", {})
+    enable_chunking = processing_config.get("enable_long_audio_chunking", True)
+    long_chunk_seconds = int(processing_config.get("long_audio_chunk_seconds", 900))
+    chunk_dir = os.path.join(temp_dir, f"{job_id}_chunks")
+    chunks = (
+        split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
+        if enable_chunking
+        else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
+    )
+
+    segments = []
+    total_chunks = len(chunks)
+    for idx, chunk in enumerate(chunks):
+        progress = 30 + int((idx / max(total_chunks, 1)) * 35)
+        _report_progress(f"Transcribing chunk {idx + 1}/{total_chunks}...", progress)
+        chunk_segments = transcribe_audio(
+            chunk["path"],
+            stt_model_path,
+            language=config["stt"].get("language", "ko"),
+            device=config["stt"].get("device", "auto"),
+            chunk_seconds=config["stt"].get("chunk_seconds", 30),
+        )
+        segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
     
     # 3. Diarization (Optional)
     if config.get("diarization", {}).get("enabled", True):
@@ -120,6 +414,8 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     if config["privacy"].get("auto_delete_temp_audio", True):
         if os.path.exists(temp_wav_path):
             os.remove(temp_wav_path)
+        if os.path.isdir(chunk_dir):
+            shutil.rmtree(chunk_dir, ignore_errors=True)
             
     return {
         "success": True,
@@ -133,9 +429,15 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
 
 def main():
     parser = argparse.ArgumentParser(description="Local Meeting AI - CLI MVP")
-    parser.add_argument("--input", required=True, help="Input audio/video file path")
+    parser.add_argument("--input", help="Input audio/video file path")
     parser.add_argument("--mode", default="standard", help="Processing mode: fast, standard, accurate")
+    parser.add_argument("--serve", action="store_true", help="Run the FastAPI server")
     args = parser.parse_args()
+
+    if args.serve or not args.input:
+        import uvicorn
+        uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
+        return
 
     results = process_audio_pipeline(args.input)
     

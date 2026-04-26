@@ -18,6 +18,10 @@
     "device": "auto",
     "chunk_seconds": 30
   },
+  "processing": {
+    "long_audio_chunk_seconds": 900,
+    "enable_long_audio_chunking": true
+  },
   "diarization": {
     "enabled": true,
     "min_speakers": null,

@@ -1,6 +1,12 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { Button } from './Button';
+import {
+    DEFAULT_DOWNLOAD_FORMAT,
+    DownloadFormat,
+    getDownloadFormatPreference,
+    setDownloadFormatPreference,
+} from './downloadPreferences';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -67,6 +73,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [chunkingEnabled, setChunkingEnabled] = useState(true);
     const [diarizationEnabled, setDiarizationEnabled] = useState(true);
     const [sttDevice, setSttDevice] = useState<'auto' | 'cpu' | 'cuda'>('auto');
+    const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
 
     const missingModels = useMemo(
         () => (models?.models || []).filter(model => model.required && !model.installed),
@@ -107,6 +114,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     };
 
     useEffect(() => {
+        setDownloadFormat(getDownloadFormatPreference());
         loadSettings();
     }, []);
 
@@ -145,6 +153,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setIsSaving(true);
         setErrorMessage('');
         setMessage('');
+        setDownloadFormatPreference(downloadFormat);
 
         try {
             const response = await fetch(`${API_BASE}/api/settings`, {
@@ -171,7 +180,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(nextSettings);
-            setMessage('저장했습니다. 다음 분석부터 적용됩니다.');
+            setMessage('저장했습니다. 다음 분석과 다운로드부터 적용됩니다.');
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');
         } finally {
@@ -340,6 +349,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     />
                                     <span className="text-sm text-muted-foreground">초</span>
                                 </div>
+                            </label>
+
+                            <label className="rounded-md border border-border bg-muted/20 p-4">
+                                <span className="block font-medium text-foreground">다운로드 형식</span>
+                                <select
+                                    value={downloadFormat}
+                                    onChange={event => setDownloadFormat(event.target.value as DownloadFormat)}
+                                    className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2"
+                                >
+                                    <option value="hwpx">HWPX</option>
+                                    <option value="txt">TXT</option>
+                                    <option value="docx">DOCX</option>
+                                </select>
+                                <span className="mt-2 block text-sm text-muted-foreground">
+                                    회의 상세의 다운로드 아이콘은 이 형식으로 저장합니다.
+                                </span>
                             </label>
 
                             <label className="rounded-md border border-border bg-muted/20 p-4">

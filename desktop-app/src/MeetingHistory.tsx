@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { Download, Trash2 } from 'lucide-react';
 import { Button } from './Button';
 import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepository';
+import { getDownloadFormatPreference } from './downloadPreferences';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
@@ -116,12 +118,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (!selectedMeeting) return;
         setErrorMessage('');
 
-        if (kind === 'txt' && !selectedMeeting.outputFiles?.txt && !selectedMeeting.jobId) {
+        const downloadLocalText = () => {
             downloadBlob(
                 buildTranscriptText(selectedMeeting),
                 `회의록_${safeFileName(selectedMeeting.title)}_transcript.txt`,
                 'text/plain;charset=utf-8;',
             );
+        };
+
+        if (kind === 'txt' && !selectedMeeting.outputFiles?.txt && !selectedMeeting.jobId) {
+            downloadLocalText();
             return;
         }
 
@@ -129,7 +135,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             ?? (selectedMeeting.jobId ? `/api/outputs/${selectedMeeting.jobId}/${kind}` : null);
 
         if (!outputUrl) {
-            setErrorMessage('이 형식은 실제 분석 결과에서만 다운로드할 수 있습니다.');
+            downloadLocalText();
+            setErrorMessage(`${kind.toUpperCase()} 파일이 없는 이전 기록이라 TXT로 다운로드했습니다.`);
             return;
         }
 
@@ -138,7 +145,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         try {
             const response = await fetch(absoluteUrl);
             if (!response.ok) {
-                throw new Error(`${kind.toUpperCase()} 파일을 아직 만들 수 없습니다. 실제 분석 결과가 저장된 회의인지 확인해 주세요.`);
+                downloadLocalText();
+                setErrorMessage(`${kind.toUpperCase()} 파일을 아직 만들 수 없어 TXT로 다운로드했습니다.`);
+                return;
             }
 
             const blob = await response.blob();
@@ -163,6 +172,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             const message = error instanceof Error ? error.message : '회의록 삭제 중 오류가 발생했습니다.';
             setErrorMessage(message);
         }
+    };
+
+    const handlePreferredDownload = () => {
+        handleDownloadArtifact(getDownloadFormatPreference());
     };
 
     return (
@@ -191,18 +204,24 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
                                     </div>
                                 </div>
-                                <div className="flex shrink-0 flex-wrap gap-2">
-                                    <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('hwpx')}>
-                                        HWPX 다운로드
+                                <div className="flex shrink-0 gap-2">
+                                    <Button
+                                        variant="outline"
+                                        className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                        onClick={handlePreferredDownload}
+                                        title="설정한 형식으로 다운로드"
+                                        aria-label="회의록 다운로드"
+                                    >
+                                        <Download size={18} />
                                     </Button>
-                                    <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')}>
-                                        TXT 다운로드
-                                    </Button>
-                                    <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('docx')} disabled={!selectedMeeting.outputFiles?.docx && !selectedMeeting.jobId}>
-                                        DOCX 다운로드
-                                    </Button>
-                                    <Button variant="outline" className="text-sm py-1.5 px-3 text-red-500 hover:bg-red-50 border-red-200" onClick={() => handleDelete(selectedMeeting.id)}>
-                                        삭제
+                                    <Button
+                                        variant="outline"
+                                        className="inline-flex h-10 w-10 items-center justify-center border-red-200 p-0 text-red-500 hover:bg-red-50"
+                                        onClick={() => handleDelete(selectedMeeting.id)}
+                                        title="회의록 삭제"
+                                        aria-label="회의록 삭제"
+                                    >
+                                        <Trash2 size={18} />
                                     </Button>
                                 </div>
                             </div>

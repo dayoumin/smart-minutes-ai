@@ -4,7 +4,7 @@ import { Input } from './Input';
 import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
-const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'mock';
+const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
 const BACKEND_READY_TIMEOUT_MS = 90_000;
 const BACKEND_READY_INTERVAL_MS = 3_000;

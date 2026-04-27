@@ -210,7 +210,7 @@ async def analyze_meeting(
     date: str = Form(...),
     participants: str = Form(...),
     file: UploadFile = File(...),
-    mode: str = Form("mock"),
+    mode: str = Form("real"),
 ) -> StreamingResponse:
     if mode not in {"mock", "real"}:
         raise HTTPException(status_code=400, detail="mode must be 'mock' or 'real'")

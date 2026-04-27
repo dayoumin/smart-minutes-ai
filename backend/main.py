@@ -15,7 +15,7 @@ from fastapi.responses import FileResponse, StreamingResponse
 from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
 from pipeline.audio_preprocess import convert_to_wav
 from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
-from pipeline.transcribe import transcribe_audio
+from pipeline.transcribe import is_cohere_model, transcribe_audio
 from pipeline.export_txt import export_txt, save_result_json
 from pipeline.diarize import diarize_audio
 from pipeline.align_speakers import align_segments_with_speakers
@@ -408,6 +408,7 @@ async def stream_real_analysis(
                         "end": seconds_to_timestamp(segment.get("end", 0.0)),
                         "speaker": segment.get("speaker_name") or segment.get("speaker") or "Speaker",
                         "text": segment.get("text", ""),
+                        "timingApproximate": bool(segment.get("timing_approximate", False)),
                     }
                     for segment in result_data.get("segments", [])
                 ],
@@ -440,7 +441,12 @@ async def stream_real_analysis(
             event = payload.get("type") if isinstance(payload, dict) else None
             yield sse_event(payload, event=event)
     finally:
-        await task
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 def resolve_config_path(path_value: str) -> str:
@@ -528,26 +534,62 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     enable_chunking = processing_config.get("enable_long_audio_chunking", True)
     long_chunk_seconds = int(processing_config.get("long_audio_chunk_seconds", 900))
     chunk_dir = os.path.join(temp_dir, f"{job_id}_chunks")
-    chunks = (
-        split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
-        if enable_chunking
-        else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
-    )
-
-    segments = []
-    total_chunks = len(chunks)
-    for idx, chunk in enumerate(chunks):
-        progress = 30 + int((idx / max(total_chunks, 1)) * 35)
-        _report_progress(f"Transcribing chunk {idx + 1}/{total_chunks}...", progress)
-        chunk_segments = transcribe_audio(
-            chunk["path"],
-            stt_model_path,
-            language=config["stt"].get("language", "ko"),
-            device=config["stt"].get("device", "auto"),
-            chunk_seconds=config["stt"].get("chunk_seconds", 30),
-            fallback_model_path=fallback_stt_model_path,
+    use_cohere_native_long_form = is_cohere_model(stt_model_path)
+    if use_cohere_native_long_form:
+        chunks = [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
+    else:
+        chunks = (
+            split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
+            if enable_chunking
+            else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
         )
-        segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
+
+    stt_language = config["stt"].get("language", "ko")
+    stt_device = config["stt"].get("device", "auto")
+    stt_chunk_seconds = int(config["stt"].get("chunk_seconds", 90))
+
+    def _transcribe_chunks(chunks_to_process, model_path, allow_internal_fallback):
+        collected_segments = []
+        total = len(chunks_to_process)
+        for idx, chunk in enumerate(chunks_to_process):
+            progress = 30 + int((idx / max(total, 1)) * 35)
+            message = (
+                "Transcribing with Cohere native long-form..."
+                if use_cohere_native_long_form and model_path == stt_model_path
+                else f"Transcribing chunk {idx + 1}/{total}..."
+            )
+            _report_progress(message, progress)
+            chunk_segments = transcribe_audio(
+                chunk["path"],
+                model_path,
+                language=stt_language,
+                device=stt_device,
+                chunk_seconds=stt_chunk_seconds,
+                fallback_model_path=fallback_stt_model_path if allow_internal_fallback else None,
+            )
+            collected_segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
+        return collected_segments
+
+    try:
+        segments = _transcribe_chunks(
+            chunks,
+            stt_model_path,
+            allow_internal_fallback=not use_cohere_native_long_form,
+        )
+    except Exception:
+        if not (use_cohere_native_long_form and fallback_stt_model_path):
+            raise
+        _report_progress("Cohere failed; falling back to chunked STT...", 30)
+        fallback_chunks = (
+            split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
+            if enable_chunking
+            else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
+        )
+        segments = _transcribe_chunks(
+            fallback_chunks,
+            fallback_stt_model_path,
+            allow_internal_fallback=False,
+        )
     
     # 3. Diarization (Optional)
     if config.get("diarization", {}).get("enabled", True):

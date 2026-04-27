@@ -17,6 +17,9 @@ EMPTY_SUMMARY = {
     "needs_check": [],
 }
 
+MAX_DIRECT_SUMMARY_CHARS = 8000
+SUMMARY_CHUNK_CHARS = 6000
+
 
 def _parse_llm_json(result_text: str) -> dict:
     text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result_text).strip()
@@ -55,9 +58,11 @@ def _normalize_summary(data: dict) -> dict:
     return summary
 
 
-def _build_prompt(transcript_text: str) -> str:
-    return f"""You are a meeting-minutes assistant.
-Summarize the transcript into strict JSON only. Do not wrap it in Markdown.
+def _build_prompt(transcript_text: str, partial: bool = False) -> str:
+    scope = "partial transcript" if partial else "transcript"
+    return f"""You are a Korean meeting-minutes assistant.
+Summarize the {scope} into strict JSON only. Do not wrap it in Markdown.
+Write all JSON values in Korean unless a source term must remain in English.
 Do not invent facts. If the transcript is too short or unclear, put that in needs_check.
 
 Required JSON schema:
@@ -73,6 +78,27 @@ Required JSON schema:
 Transcript:
 {transcript_text}
 """
+
+
+def _summary_has_content(summary: dict) -> bool:
+    return bool(
+        str(summary.get("overview", "")).strip()
+        or summary.get("topics")
+        or summary.get("decisions")
+        or summary.get("actions")
+    )
+
+
+def _fallback_extract_summary(transcript_text: str) -> dict:
+    compact = re.sub(r"\s+", " ", transcript_text).strip()
+    return {
+        "title": "회의록",
+        "overview": compact[:500] + ("..." if len(compact) > 500 else ""),
+        "topics": [],
+        "decisions": [],
+        "actions": [],
+        "needs_check": ["LLM 요약 결과가 비어 있어 transcript 앞부분을 임시 개요로 사용했습니다."],
+    }
 
 
 def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
@@ -95,7 +121,8 @@ def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
 
 def _generate_with_ollama_cli(model_name: str, prompt: str) -> str:
     response = subprocess.run(
-        [find_ollama_executable(), "run", model_name, prompt],
+        [find_ollama_executable(), "run", model_name],
+        input=prompt,
         check=True,
         capture_output=True,
         text=True,
@@ -105,6 +132,49 @@ def _generate_with_ollama_cli(model_name: str, prompt: str) -> str:
     )
     return response.stdout
 
+
+def _generate_summary_once(model_name: str, prompt: str) -> dict:
+    try:
+        result_text = _generate_with_ollama_http(model_name, prompt)
+    except (urllib.error.URLError, TimeoutError, ConnectionError):
+        result_text = _generate_with_ollama_cli(model_name, prompt)
+    return _normalize_summary(_parse_llm_json(result_text))
+
+
+def _split_text_for_summary(transcript_text: str, max_chars: int = SUMMARY_CHUNK_CHARS) -> list[str]:
+    def split_long_line(line: str) -> list[str]:
+        if len(line) <= max_chars:
+            return [line]
+        parts = []
+        remaining = line.strip()
+        while len(remaining) > max_chars:
+            split_at = remaining.rfind(" ", 0, max_chars)
+            if split_at < max_chars // 2:
+                split_at = max_chars
+            parts.append(remaining[:split_at].strip())
+            remaining = remaining[split_at:].strip()
+        if remaining:
+            parts.append(remaining)
+        return [part for part in parts if part]
+
+    lines = [line for line in transcript_text.splitlines() if line.strip()]
+    chunks: list[str] = []
+    current: list[str] = []
+    current_len = 0
+
+    for raw_line in lines:
+        for line in split_long_line(raw_line):
+            line_len = len(line) + 1
+            if current and current_len + line_len > max_chars:
+                chunks.append("\n".join(current))
+                current = []
+                current_len = 0
+            current.append(line)
+            current_len += line_len
+
+    if current:
+        chunks.append("\n".join(current))
+    return chunks or [transcript_text]
 
 def _error_summary(title: str, overview: str) -> dict:
     return {
@@ -138,11 +208,15 @@ def summarize_meeting(
     if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
         try:
             print(f"[LLM] Generating summary with Ollama model: {model_name_or_path} ...")
-            try:
-                result_text = _generate_with_ollama_http(model_name_or_path, prompt)
-            except (urllib.error.URLError, TimeoutError, ConnectionError):
-                result_text = _generate_with_ollama_cli(model_name_or_path, prompt)
-            return _normalize_summary(_parse_llm_json(result_text))
+            if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:
+                partial_summaries = []
+                for index, chunk in enumerate(_split_text_for_summary(transcript_text), start=1):
+                    partial = _generate_summary_once(model_name_or_path, _build_prompt(chunk, partial=True))
+                    partial_summaries.append(f"부분 {index}: {json.dumps(partial, ensure_ascii=False)}")
+                summary = _generate_summary_once(model_name_or_path, _build_prompt("\n".join(partial_summaries)))
+            else:
+                summary = _generate_summary_once(model_name_or_path, prompt)
+            return summary if _summary_has_content(summary) else _fallback_extract_summary(transcript_text)
         except FileNotFoundError:
             return _error_summary(
                 "회의록 (생성 실패)",

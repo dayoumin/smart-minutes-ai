@@ -44,11 +44,16 @@ export const MeetingHistory: React.FC = () => {
     const handleDownloadMarkdown = () => {
         if (!selectedMeeting) return;
 
-        const script = selectedMeeting.segments?.map(segment =>
-            `- ${segment.start}-${segment.end} ${segment.speaker}: ${segment.text}`
-        ).join('\n') || '발화 스크립트가 없습니다.';
+        const hasApproximateTiming = selectedMeeting.segments?.some(segment => segment.timingApproximate);
+        const script = selectedMeeting.segments?.map(segment => {
+            const timingLabel = segment.timingApproximate ? ' (시간 추정)' : '';
+            return `- ${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
+        }).join('\n') || '발화 스크립트가 없습니다.';
 
-        const markdownContent = `# ${selectedMeeting.title}\n\n- **일시:** ${selectedMeeting.date}\n- **참석자:** ${selectedMeeting.participants}\n\n## 요약\n\n${selectedMeeting.summary}\n\n## 발화 스크립트\n\n${script}\n`;
+        const timingNote = hasApproximateTiming
+            ? '\n> 일부 시간표는 STT 모델의 전체 문장을 음성 길이에 맞춰 나눈 추정값입니다.\n'
+            : '';
+        const markdownContent = `# ${selectedMeeting.title}\n\n- **일시:** ${selectedMeeting.date}\n- **참석자:** ${selectedMeeting.participants}\n${timingNote}\n## 요약\n\n${selectedMeeting.summary}\n\n## 발화 스크립트\n\n${script}\n`;
         const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8;' });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
@@ -232,12 +237,22 @@ export const MeetingHistory: React.FC = () => {
                                 </div>
                             ) : (
                                 <div className="flex flex-col gap-3">
+                                    {selectedMeeting.segments?.some(seg => seg.timingApproximate) && (
+                                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                            이 회의록의 시간표는 음성 길이에 맞춰 나눈 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
+                                        </div>
+                                    )}
                                     {selectedMeeting.segments?.length ? (
                                         selectedMeeting.segments.map((seg, idx) => (
                                             <div key={`${seg.start}-${idx}`} className="flex gap-4 p-3 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
                                                 <div className="w-28 shrink-0 flex flex-col text-xs text-muted-foreground">
                                                     <span className="font-semibold text-primary">{seg.speaker}</span>
                                                     <span>{seg.start} - {seg.end}</span>
+                                                    {seg.timingApproximate && (
+                                                        <span className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
+                                                            시간 추정
+                                                        </span>
+                                                    )}
                                                 </div>
                                                 <div className="flex-1 text-sm text-foreground">{seg.text}</div>
                                             </div>

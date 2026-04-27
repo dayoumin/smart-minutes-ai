@@ -36,10 +36,15 @@
 - [x] Cohere Transcribe, Pyannote Community-1, Ollama Gemma 준비 상태 확인 및 Cohere 데모 음성 STT 검증
 - [x] Ollama 실행 파일을 PATH 없이도 찾도록 백엔드 자동 탐색 추가
 - [x] 모델 폴더가 일부만 다운로드된 상태를 설치 완료로 오판하지 않도록 모델 payload 검사 강화
-- [ ] 1순위: Cohere STT 결과를 화자 분리와 맞게 더 작은 시간 조각으로 만들기
-  - 현재 위험: Cohere가 청크당 1개 세그먼트를 반환하면 긴 청크 전체가 한 화자에게 붙을 수 있음
-  - 단기 개선: 기본 STT 청크를 30초 수준으로 줄여 화자 정렬 품질 확보
-  - 중기 개선: 문장 단위 분할 또는 Cohere/대체 STT의 안정적인 타임스탬프 전략 검토
+- [x] 1순위: Cohere STT 결과를 화자 분리와 맞게 더 작은 시간 조각으로 만들기
+  - 공식 `model.transcribe()` long-form 경로로 장문 한국어 품질을 개선
+  - Cohere가 정확한 단어 타임스탬프를 제공하지 않으므로 텍스트 길이 기반 추정 세그먼트를 생성
+  - 추정 세그먼트가 여러 화자 구간과 겹치면 overlap 비중에 따라 텍스트를 나눠 화자 정렬
+  - API/UI에 `timingApproximate`를 전달해 시간표가 추정값임을 표시
+- [ ] Cohere 장문 STT 품질 후속 개선
+  - 현재 일부 구간에서 로마자/영어식 오인식이 남는다.
+  - 공식 문서, 모델 옵션, 언어 프롬프트, 후처리 전략을 추가 검토한다.
+  - 필요하면 faster-whisper/Whisper 계열과 품질 비교 테스트 세트를 만든다.
 - [ ] 모델/의존성 설치 재현성 개선
   - requirements.txt에 Cohere 실행에 필요한 librosa, soundfile, sentencepiece, protobuf 반영
   - Python venv 런처와 네이티브 패키지 버전 정리 필요

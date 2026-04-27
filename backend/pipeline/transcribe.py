@@ -117,11 +117,74 @@ def _clean_repeated_text(text: str) -> str:
     return cleaned
 
 
+def is_cohere_model(model_path: str) -> bool:
+    return "cohere-transcribe" in model_path.lower()
+
+
+def _split_long_text(text: str, max_chars: int) -> List[str]:
+    if len(text) <= max_chars:
+        return [text]
+
+    parts: List[str] = []
+    remaining = text.strip()
+    while len(remaining) > max_chars:
+        split_at = remaining.rfind(" ", 0, max_chars)
+        if split_at < max_chars // 2:
+            split_at = max_chars
+        parts.append(remaining[:split_at].strip())
+        remaining = remaining[split_at:].strip()
+    if remaining:
+        parts.append(remaining)
+    return [part for part in parts if part]
+
+
+def _split_text_into_timed_segments(text: str, duration: float, target_seconds: int) -> List[Dict]:
+    text = text.strip()
+    if not text:
+        return []
+
+    target_seconds = max(30, int(target_seconds or 90))
+    target_count = max(1, round(duration / float(target_seconds))) if duration > target_seconds else 1
+    sentences = [item.strip() for item in re.split(r"(?<=[.!?。！？])\s+", text) if item.strip()]
+    if not sentences:
+        sentences = [text]
+
+    total_chars = max(1, sum(len(sentence) for sentence in sentences))
+    target_chars = max(1, total_chars // target_count)
+    bounded_sentences: List[str] = []
+    for sentence in sentences:
+        bounded_sentences.extend(_split_long_text(sentence, max(200, target_chars)))
+
+    chunks: List[str] = []
+    current: List[str] = []
+    current_chars = 0
+
+    for sentence in bounded_sentences:
+        current.append(sentence)
+        current_chars += len(sentence)
+        if current_chars >= target_chars and len(chunks) < target_count - 1:
+            chunks.append(" ".join(current).strip())
+            current = []
+            current_chars = 0
+
+    if current:
+        chunks.append(" ".join(current).strip())
+
+    segment_duration = duration / max(1, len(chunks)) if duration > 0 else float(target_seconds)
+    segments = []
+    for index, chunk in enumerate(chunks):
+        start = index * segment_duration
+        end = duration if index == len(chunks) - 1 and duration > 0 else (index + 1) * segment_duration
+        segments.append({"start": start, "end": end, "text": chunk, "timing_approximate": True})
+    return segments
+
+
 def transcribe_audio_cohere(
     wav_path: str,
     model_path: str,
     language: str = "ko",
     device: str = "auto",
+    chunk_seconds: int = 90,
 ) -> List[Dict]:
     _ensure_hf_module_cache()
 
@@ -137,14 +200,13 @@ def transcribe_audio_cohere(
         pipeline_detokenization=False,
     )
     text = _clean_repeated_text(texts[0] if texts else "")
-
-    return [
-        {
-            "start": 0.0,
-            "end": _audio_duration_seconds(wav_path),
-            "text": text.strip(),
-        }
-    ]
+    if not text.strip():
+        raise RuntimeError("Cohere transcription returned empty text.")
+    duration = _audio_duration_seconds(wav_path)
+    segments = _split_text_into_timed_segments(text, duration, chunk_seconds)
+    if not segments:
+        raise RuntimeError("Cohere transcription returned no usable segments.")
+    return segments
 
 
 def transcribe_audio(
@@ -160,7 +222,7 @@ def transcribe_audio(
         return transcribe_audio_fallback_whisper(wav_path, model_path, language, device)
 
     try:
-        return transcribe_audio_cohere(wav_path, model_path, language, device)
+        return transcribe_audio_cohere(wav_path, model_path, language, device, chunk_seconds)
     except Exception as exc:
         print(f"[STT] Failed to load or run Cohere model ({model_path}): {exc}")
         if not fallback_model_path:

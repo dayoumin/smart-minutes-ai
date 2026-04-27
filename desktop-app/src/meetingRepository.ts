@@ -3,6 +3,7 @@ export interface MeetingSegment {
     end: string;
     speaker: string;
     text: string;
+    timingApproximate?: boolean;
 }
 
 export interface MeetingRecord {

@@ -114,9 +114,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         const handleKeyDown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') onClose();
         };
+        const previousOverflow = document.body.style.overflow;
 
+        document.body.style.overflow = 'hidden';
         window.addEventListener('keydown', handleKeyDown);
-        return () => window.removeEventListener('keydown', handleKeyDown);
+        return () => {
+            document.body.style.overflow = previousOverflow;
+            window.removeEventListener('keydown', handleKeyDown);
+        };
     }, [onClose]);
 
     const handleOpenDownloadPages = () => {
@@ -181,8 +186,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     ];
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
-            <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-black/45 p-4">
+            <div className="flex h-[88vh] max-h-[760px] min-h-[520px] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl">
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
                         <h2 className="text-lg font-semibold text-foreground">시스템 설정</h2>

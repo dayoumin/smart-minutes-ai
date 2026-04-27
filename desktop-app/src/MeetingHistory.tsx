@@ -67,12 +67,45 @@ export const MeetingHistory: React.FC = () => {
         URL.revokeObjectURL(url);
     };
 
+    const handleDownloadTranscriptText = () => {
+        if (!selectedMeeting) return;
+
+        const safeTitle = selectedMeeting.title.replace(/[/\\?%*:|"<>]/g, '-');
+        const lines = [
+            selectedMeeting.title,
+            `일시: ${selectedMeeting.date}`,
+            `참석자: ${selectedMeeting.participants}`,
+            '',
+            '[요약]',
+            selectedMeeting.summary,
+            '',
+            '[화자 분리 / 발화 스크립트]',
+            ...(selectedMeeting.segments?.length
+                ? selectedMeeting.segments.map(segment => {
+                    const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
+                    return `${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
+                })
+                : ['발화 스크립트 데이터가 없습니다. 실제 분석 모드로 다시 분석해 주세요.']),
+        ];
+        const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+
+        link.href = url;
+        link.download = `회의록_${safeTitle}_transcript.txt`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
     const handleDownloadArtifact = (kind: 'txt' | 'md' | 'docx' | 'json') => {
         if (!selectedMeeting) return;
 
         const outputUrl = selectedMeeting.outputFiles?.[kind];
         if (!outputUrl) {
             if (kind === 'md') handleDownloadMarkdown();
+            if (kind === 'txt') handleDownloadTranscriptText();
             return;
         }
 
@@ -166,7 +199,7 @@ export const MeetingHistory: React.FC = () => {
                                 <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('md')}>
                                     MD
                                 </Button>
-                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')} disabled={!selectedMeeting.outputFiles?.txt}>
+                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')}>
                                     TXT
                                 </Button>
                                 <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('docx')} disabled={!selectedMeeting.outputFiles?.docx}>

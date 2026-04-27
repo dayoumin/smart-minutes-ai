@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Button } from './Button';
-import { Input } from './Input';
 import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepository';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
@@ -14,9 +13,15 @@ type DownloadKind = 'hwpx' | 'txt' | 'docx' | 'md' | 'json';
 type DetailTab = 'summary' | 'script';
 
 const safeFileName = (title: string): string => title.replace(/[/\\?%*:|"<>]/g, '-');
+const extensionByKind: Record<DownloadKind, string> = {
+    hwpx: 'hwpx',
+    txt: 'txt',
+    docx: 'docx',
+    md: 'md',
+    json: 'json',
+};
 
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled }) => {
-    const [searchTerm, setSearchTerm] = useState('');
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
@@ -61,15 +66,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         }
     }, [selectedMeetingId, records, onSelectedMeetingHandled]);
 
-    const filteredRecords = useMemo(() => {
-        const keyword = searchTerm.trim().toLowerCase();
-        if (!keyword) return records;
-
-        return records.filter(record =>
-            [record.title, record.summary, record.participants]
-                .some(value => value.toLowerCase().includes(keyword))
-        );
-    }, [records, searchTerm]);
+    const recordCountLabel = useMemo(() => `${records.length}개 회의 저장됨`, [records.length]);
 
     const buildTranscriptText = (meeting: MeetingRecord): string => {
         const lines = [
@@ -92,8 +89,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         return lines.filter(Boolean).join('\n');
     };
 
-    const downloadBlob = (content: string, filename: string, type: string) => {
-        const blob = new Blob([content], { type });
+    const downloadBlob = (content: BlobPart | Blob, filename: string, type?: string) => {
+        const blob = content instanceof Blob ? content : new Blob([content], { type });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
 
@@ -102,11 +99,22 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
-        URL.revokeObjectURL(url);
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 
-    const handleDownloadArtifact = (kind: DownloadKind) => {
+    const filenameFromDisposition = (disposition: string | null, fallback: string): string => {
+        if (!disposition) return fallback;
+
+        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
+        if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
+
+        const plainMatch = disposition.match(/filename="?([^"]+)"?/i);
+        return plainMatch?.[1] ?? fallback;
+    };
+
+    const handleDownloadArtifact = async (kind: DownloadKind) => {
         if (!selectedMeeting) return;
+        setErrorMessage('');
 
         if (kind === 'txt' && !selectedMeeting.outputFiles?.txt && !selectedMeeting.jobId) {
             downloadBlob(
@@ -126,7 +134,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         }
 
         const absoluteUrl = outputUrl.startsWith('http') ? outputUrl : `${API_BASE}${outputUrl}`;
-        window.open(absoluteUrl, '_blank', 'noopener,noreferrer');
+
+        try {
+            const response = await fetch(absoluteUrl);
+            if (!response.ok) {
+                throw new Error(`${kind.toUpperCase()} 파일을 아직 만들 수 없습니다. 실제 분석 결과가 저장된 회의인지 확인해 주세요.`);
+            }
+
+            const blob = await response.blob();
+            const fallbackName = `회의록_${safeFileName(selectedMeeting.title)}.${extensionByKind[kind]}`;
+            const filename = filenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
+            downloadBlob(blob, filename);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
+            setErrorMessage(message);
+        }
     };
 
     const handleDelete = async (id: string) => {
@@ -144,65 +166,19 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     };
 
     return (
-        <div className="grid h-full min-h-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(360px,0.95fr)_minmax(520px,1.4fr)]">
-            <section className="flex min-h-0 flex-col gap-4">
-                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                    <h2 className="text-h3 font-semibold text-primary">이전 회의 기록</h2>
-                    <div className="w-full md:w-72">
-                        <Input
-                            type="text"
-                            placeholder="회의 제목, 요약, 참석자 검색..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                    </div>
+        <div className="flex h-full min-h-0 flex-col gap-4">
+            {errorMessage && (
+                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                    {errorMessage}
                 </div>
+            )}
 
-                {errorMessage && (
-                    <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                        {errorMessage}
+            <section className="min-h-0 flex-1 rounded-lg border border-border bg-background">
+                {isLoading ? (
+                    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+                        회의 기록을 불러오는 중입니다...
                     </div>
-                )}
-
-                <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-background">
-                    <div className="max-h-full overflow-y-auto custom-scrollbar">
-                        {isLoading ? (
-                            <div className="p-10 text-center text-sm text-muted-foreground">회의 기록을 불러오는 중입니다...</div>
-                        ) : filteredRecords.length ? (
-                            <div className="divide-y divide-border">
-                                {filteredRecords.map(record => {
-                                    const isSelected = selectedMeeting?.id === record.id;
-                                    return (
-                                        <button
-                                            key={record.id}
-                                            type="button"
-                                            className={`block w-full p-4 text-left transition-colors ${isSelected ? 'bg-blue-50/80' : 'hover:bg-muted/30'}`}
-                                            onClick={() => {
-                                                setSelectedMeeting(record);
-                                                setDetailTab('summary');
-                                            }}
-                                        >
-                                            <div className="flex items-start justify-between gap-3">
-                                                <div className="min-w-0">
-                                                    <div className="truncate font-medium text-foreground">{record.title}</div>
-                                                    <div className="mt-1 text-xs text-muted-foreground">{record.date} · {record.participants}</div>
-                                                </div>
-                                                <span className="shrink-0 text-xs text-muted-foreground">{record.segments?.length ?? 0}개 발화</span>
-                                            </div>
-                                            <div className="mt-2 line-clamp-2 text-sm text-muted-foreground">{record.summary}</div>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        ) : (
-                            <div className="p-10 text-center text-sm text-muted-foreground">검색된 회의 기록이 없습니다.</div>
-                        )}
-                    </div>
-                </div>
-            </section>
-
-            <section className="min-h-0 rounded-lg border border-border bg-background">
-                {selectedMeeting ? (
+                ) : selectedMeeting ? (
                     <div className="flex h-full min-h-0 flex-col">
                         <div className="border-b border-border p-5">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -211,18 +187,19 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-muted-foreground md:grid-cols-2">
                                         <span>일시: {selectedMeeting.date}</span>
                                         <span>참석자: {selectedMeeting.participants}</span>
+                                        <span>{recordCountLabel}</span>
                                         {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
                                     </div>
                                 </div>
                                 <div className="flex shrink-0 flex-wrap gap-2">
                                     <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('hwpx')}>
-                                        HWPX
+                                        HWPX 다운로드
                                     </Button>
                                     <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')}>
-                                        TXT
+                                        TXT 다운로드
                                     </Button>
                                     <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('docx')} disabled={!selectedMeeting.outputFiles?.docx && !selectedMeeting.jobId}>
-                                        DOCX
+                                        DOCX 다운로드
                                     </Button>
                                     <Button variant="outline" className="text-sm py-1.5 px-3 text-red-500 hover:bg-red-50 border-red-200" onClick={() => handleDelete(selectedMeeting.id)}>
                                         삭제

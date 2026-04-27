@@ -4,6 +4,9 @@ import wave
 from typing import Dict, List
 
 
+MIN_TRAILING_CHUNK_SECONDS = 1.0
+
+
 def get_wav_duration_seconds(wav_path: str) -> float:
     with wave.open(wav_path, "rb") as wav_file:
         frames = wav_file.getnframes()
@@ -31,6 +34,9 @@ def split_wav_by_duration(
     for index in range(chunk_count):
         offset = float(index * chunk_seconds)
         chunk_duration = min(float(chunk_seconds), max(0.0, duration - offset))
+        if index > 0 and chunk_duration < MIN_TRAILING_CHUNK_SECONDS:
+            continue
+
         chunk_path = os.path.join(output_dir, f"{base_name}_chunk_{index + 1:03d}.wav")
 
         stream = ffmpeg.input(wav_path, ss=offset, t=chunk_duration)

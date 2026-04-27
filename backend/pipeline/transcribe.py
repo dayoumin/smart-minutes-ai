@@ -1,4 +1,5 @@
 import os
+import re
 from pathlib import Path
 from typing import Dict, List
 
@@ -103,6 +104,19 @@ def _audio_duration_seconds(wav_path: str) -> float:
         return 0.0
 
 
+def _clean_repeated_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", text.replace("\ufffd", "")).strip()
+    if not cleaned:
+        return ""
+
+    for size in range(1, 7):
+        pattern = re.compile(rf"((?:[\w가-힣%]+[,.!?]?\s+){{{size}}})(?:\1){{3,}}", re.IGNORECASE)
+        cleaned = pattern.sub(r"\1", cleaned + " ").strip()
+
+    cleaned = re.sub(r"([.?!,])\1{3,}", r"\1\1\1", cleaned)
+    return cleaned
+
+
 def transcribe_audio_cohere(
     wav_path: str,
     model_path: str,
@@ -110,40 +124,19 @@ def transcribe_audio_cohere(
     device: str = "auto",
 ) -> List[Dict]:
     _ensure_hf_module_cache()
-    import librosa
 
     processor, model = _load_cohere_model(model_path, device)
 
     print(f"[STT] Transcribing {wav_path} with Cohere Transcribe...")
-    audio, _sample_rate = librosa.load(wav_path, sr=16000, mono=True)
-    inputs = processor(audio, sampling_rate=16000, return_tensors="pt", language=language)
-    audio_chunk_index = inputs.get("audio_chunk_index")
-    inputs.to(model.device, dtype=model.dtype)
-
-    generation_inputs = {
-        key: value
-        for key, value in inputs.items()
-        if key not in {"audio_chunk_index", "length"}
-    }
-    import torch
-
-    decoder_start_token_id = model.generation_config.decoder_start_token_id or model.generation_config.bos_token_id
-    decoder_input_ids = torch.tensor([[decoder_start_token_id]], device=model.device)
-    decoder_attention_mask = torch.ones_like(decoder_input_ids)
-    outputs = model.generate(
-        **generation_inputs,
-        decoder_input_ids=decoder_input_ids,
-        decoder_attention_mask=decoder_attention_mask,
-        max_new_tokens=256,
-    )
-    token_ids = outputs[0] if getattr(outputs, "ndim", 1) > 1 else outputs
-    decoded = processor.decode(
-        token_ids,
-        skip_special_tokens=True,
-        audio_chunk_index=audio_chunk_index,
+    texts = model.transcribe(
+        processor=processor,
         language=language,
+        audio_files=[wav_path],
+        punctuation=True,
+        compile=False,
+        pipeline_detokenization=False,
     )
-    text = decoded[0] if isinstance(decoded, list) else decoded
+    text = _clean_repeated_text(texts[0] if texts else "")
 
     return [
         {

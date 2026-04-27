@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
+import { X } from 'lucide-react';
 import { Button } from './Button';
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
@@ -20,22 +21,9 @@ interface ModelStatus {
 }
 
 interface SettingsPayload {
-    app_name?: string;
-    offline_mode?: boolean;
-    analysis_mode?: string;
-    paths?: {
-        stt_model?: string;
-        diarization_model?: string;
-        output_dir?: string;
-        temp_dir?: string;
-    };
     processing?: {
         long_audio_chunk_seconds?: number;
         enable_long_audio_chunking?: boolean;
-    };
-    privacy?: {
-        auto_delete_temp_audio?: boolean;
-        save_original_audio_copy?: boolean;
     };
     summary?: {
         provider?: string;
@@ -55,13 +43,20 @@ interface ModelsPayload {
     models: ModelStatus[];
 }
 
+interface SettingsProps {
+    onClose: () => void;
+}
+
+type SettingsTab = 'models' | 'analysis' | 'about';
+
 const modelPageUrl = (model: ModelStatus): string | null => {
     if (model.license_url) return model.license_url;
     if (model.repo_id) return `https://huggingface.co/${model.repo_id}`;
     return null;
 };
 
-export const Settings: React.FC = () => {
+export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
+    const [activeTab, setActiveTab] = useState<SettingsTab>('models');
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -75,8 +70,14 @@ export const Settings: React.FC = () => {
 
     const missingModels = useMemo(
         () => (models?.models || []).filter(model => model.required && !model.installed),
-        [models]
+        [models],
     );
+
+    const modelSummary = useMemo(() => {
+        if (!models) return '확인 중';
+        if (models.ready) return '필수 모델 준비됨';
+        return `${missingModels.length}개 모델 필요`;
+    }, [models, missingModels.length]);
 
     const loadSettings = async () => {
         setIsLoading(true);
@@ -88,7 +89,7 @@ export const Settings: React.FC = () => {
             ]);
 
             if (!settingsResponse.ok || !modelsResponse.ok) {
-                throw new Error('설정 정보를 불러오지 못했습니다.');
+                throw new Error('설정 정보를 불러오지 못했습니다. 백엔드 서버가 실행 중인지 확인해 주세요.');
             }
 
             const nextSettings = await settingsResponse.json() as SettingsPayload;
@@ -109,19 +110,30 @@ export const Settings: React.FC = () => {
         loadSettings();
     }, []);
 
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') onClose();
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [onClose]);
+
     const handleOpenDownloadPages = () => {
-        const targets = missingModels.length ? missingModels : (models?.models || []).filter(model => model.downloadable || model.license_url);
-        if (!targets.length) {
+        const candidates = missingModels.length
+            ? missingModels
+            : (models?.models || []).filter(model => model.downloadable || model.license_url || model.repo_id);
+
+        if (!candidates.length) {
             setMessage('필수 모델이 모두 준비되어 있습니다.');
             return;
         }
 
-        window.alert('모델 파일은 자동으로 내려받지 않습니다. 열리는 모델 페이지에서 약관을 확인하고 필요한 파일을 받은 뒤 표시된 경로에 배치해 주세요.');
-        targets.slice(0, 3).forEach(model => {
+        candidates.slice(0, 3).forEach(model => {
             const url = modelPageUrl(model);
             if (url) window.open(url, '_blank', 'noopener,noreferrer');
         });
-        setMessage('모델 다운로드 페이지를 열었습니다. 다운로드 후 새로고침을 눌러 상태를 확인하세요.');
+        setMessage('모델 페이지를 열었습니다. 받은 파일을 지정된 models 폴더에 넣은 뒤 상태를 새로고침하세요.');
     };
 
     const handleSaveSettings = async () => {
@@ -154,7 +166,7 @@ export const Settings: React.FC = () => {
 
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(nextSettings);
-            setMessage('설정을 저장했습니다. 다음 분석부터 적용됩니다.');
+            setMessage('저장했습니다. 다음 분석부터 적용됩니다.');
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');
         } finally {
@@ -162,207 +174,202 @@ export const Settings: React.FC = () => {
         }
     };
 
+    const tabs: Array<{ key: SettingsTab; label: string }> = [
+        { key: 'models', label: '모델' },
+        { key: 'analysis', label: '분석' },
+        { key: 'about', label: '정보' },
+    ];
+
     return (
-        <div className="flex flex-col gap-6 max-w-5xl mx-auto w-full">
-            <div>
-                <h2 className="text-h3 font-semibold text-primary">시스템 설정</h2>
-                <p className="mt-2 text-sm text-muted-foreground">
-                    로컬 분석 서버, 모델 준비 상태, 파일 분할 방식과 실행 장치를 관리합니다.
-                </p>
-            </div>
-
-            {errorMessage && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {errorMessage}
-                </div>
-            )}
-            {message && (
-                <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
-                    {message}
-                </div>
-            )}
-
-            <section className="bg-background border border-border rounded-lg p-6">
-                <div className="flex items-center justify-between gap-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/45 p-4">
+            <div className="flex max-h-[88vh] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl">
+                <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
-                        <h3 className="text-lg font-semibold text-foreground">분석 서버</h3>
-                        <p className="text-sm text-muted-foreground">FastAPI 서버와 프론트엔드가 사용하는 기본 API 주소입니다.</p>
+                        <h2 className="text-lg font-semibold text-foreground">시스템 설정</h2>
+                        <p className="mt-1 text-xs text-muted-foreground">{modelSummary}</p>
                     </div>
-                    <Button variant="outline" onClick={loadSettings} disabled={isLoading || isSaving}>
-                        새로고침
-                    </Button>
-                </div>
-                <div className="mt-4 grid grid-cols-1 md:grid-cols-3 gap-3 text-sm">
-                    <div className="rounded-md bg-muted/30 p-3">
-                        <div className="text-muted-foreground">API 주소</div>
-                        <div className="font-medium text-foreground break-all">{API_BASE}</div>
-                    </div>
-                    <div className="rounded-md bg-muted/30 p-3">
-                        <div className="text-muted-foreground">분석 모드</div>
-                        <div className="font-medium text-foreground">{settings?.analysis_mode || 'mock'}</div>
-                    </div>
-                    <div className="rounded-md bg-muted/30 p-3">
-                        <div className="text-muted-foreground">저장 위치</div>
-                        <div className="font-medium text-foreground break-all">{settings?.paths?.output_dir || './outputs'}</div>
-                    </div>
-                </div>
-            </section>
-
-            <section className="bg-background border border-border rounded-lg p-6">
-                <div className="flex items-center justify-between gap-4">
-                    <div>
-                        <h3 className="text-lg font-semibold text-foreground">모델 준비 상태</h3>
-                        <p className="text-sm text-muted-foreground">
-                            Cohere Transcribe는 음성 인식, Pyannote Community-1은 화자 분리를 담당합니다.
-                        </p>
-                    </div>
-                    <Button onClick={handleOpenDownloadPages} disabled={isLoading}>
-                        다운로드 페이지 열기
-                    </Button>
+                    <button
+                        type="button"
+                        onClick={onClose}
+                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                        aria-label="설정 닫기"
+                        title="닫기"
+                    >
+                        <X size={18} />
+                    </button>
                 </div>
 
-                <div className="mt-5 overflow-hidden rounded-md border border-border">
-                    <table className="w-full text-left text-sm">
-                        <thead className="bg-muted text-foreground">
-                            <tr>
-                                <th className="p-3">모델</th>
-                                <th className="p-3">상태</th>
-                                <th className="p-3">요구 사항</th>
-                                <th className="p-3">받는 곳</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {(models?.models || []).map(model => (
-                                <tr key={model.key} className="border-t border-border">
-                                    <td className="p-3">
-                                        <div className="font-medium text-foreground">{model.label}</div>
-                                        <div className="text-xs text-muted-foreground truncate max-w-xl">{model.path}</div>
-                                    </td>
-                                    <td className="p-3">
-                                        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${model.installed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
-                                            {model.installed ? '준비됨' : '누락'}
-                                        </span>
-                                    </td>
-                                    <td className="p-3 text-muted-foreground">
-                                        <div>{model.required ? '필수' : '선택'}</div>
-                                        {model.requires_token && (
-                                            <div className={model.token_available ? 'text-green-700' : 'text-amber-700'}>
-                                                HF 토큰 {model.token_available ? '확인됨' : '필요'}
+                <div className="flex border-b border-border px-5">
+                    {tabs.map(tab => (
+                        <button
+                            key={tab.key}
+                            type="button"
+                            onClick={() => setActiveTab(tab.key)}
+                            className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${activeTab === tab.key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
+                    {errorMessage && (
+                        <div className="mb-4 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                            {errorMessage}
+                        </div>
+                    )}
+                    {message && (
+                        <div className="mb-4 rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                            {message}
+                        </div>
+                    )}
+
+                    {activeTab === 'models' && (
+                        <section className="flex flex-col gap-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 className="text-base font-semibold text-foreground">모델 준비</h3>
+                                    <p className="mt-1 text-sm text-muted-foreground">
+                                        사용자는 모델이 준비됐는지만 알면 됩니다. 부족한 모델은 다운로드 페이지에서 받아 넣으면 됩니다.
+                                    </p>
+                                </div>
+                                <div className="flex gap-2">
+                                    <Button variant="outline" onClick={loadSettings} disabled={isLoading || isSaving}>
+                                        상태 새로고침
+                                    </Button>
+                                    <Button onClick={handleOpenDownloadPages} disabled={isLoading}>
+                                        다운로드
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div className="grid grid-cols-1 gap-3">
+                                {(models?.models || []).map(model => (
+                                    <div key={model.key} className="rounded-md border border-border bg-muted/20 p-4">
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                            <div>
+                                                <div className="font-medium text-foreground">{model.label}</div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {model.required ? '필수' : '선택'} · {model.gated ? '약관 확인 필요' : '공개 모델'}
+                                                </div>
+                                            </div>
+                                            <span className={`w-fit rounded-md px-2.5 py-1 text-xs font-semibold ${model.installed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
+                                                {model.installed ? '준비됨' : '필요함'}
+                                            </span>
+                                        </div>
+                                        {!model.installed && (
+                                            <div className="mt-3 text-xs leading-relaxed text-muted-foreground">
+                                                {model.manual_note || '모델 페이지에서 파일을 받은 뒤 앱의 models 폴더에 배치하세요.'}
                                             </div>
                                         )}
-                                        {model.license_name && <div>{model.license_name}</div>}
-                                    </td>
-                                    <td className="p-3 text-muted-foreground">
-                                        <div>{model.gated ? '약관 수락 후 수동 배치' : model.downloadable ? '모델 페이지에서 다운로드' : '수동 배치 필요'}</div>
-                                        {model.manual_note && <div className="mt-1 text-xs">{model.manual_note}</div>}
-                                        {modelPageUrl(model) && (
-                                            <a className="mt-1 inline-block text-primary underline" href={modelPageUrl(model) || ''} target="_blank" rel="noreferrer">
-                                                모델 페이지
-                                            </a>
-                                        )}
-                                    </td>
-                                </tr>
-                            ))}
-                            {!models?.models.length && (
-                                <tr>
-                                    <td colSpan={4} className="p-6 text-center text-muted-foreground">
+                                    </div>
+                                ))}
+                                {!models?.models.length && (
+                                    <div className="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
                                         모델 상태를 불러오는 중입니다.
-                                    </td>
-                                </tr>
-                            )}
-                        </tbody>
-                    </table>
+                                    </div>
+                                )}
+                            </div>
+                        </section>
+                    )}
+
+                    {activeTab === 'analysis' && (
+                        <section className="flex flex-col gap-4">
+                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 className="text-base font-semibold text-foreground">분석 방식</h3>
+                                    <p className="mt-1 text-sm text-muted-foreground">
+                                        대부분은 기본값으로 충분합니다. 문제가 있을 때만 조정하세요.
+                                    </p>
+                                </div>
+                                <Button onClick={handleSaveSettings} disabled={isLoading || isSaving}>
+                                    {isSaving ? '저장 중...' : '저장'}
+                                </Button>
+                            </div>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={diarizationEnabled}
+                                    onChange={event => setDiarizationEnabled(event.target.checked)}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">화자 분리 사용</span>
+                                    <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={chunkingEnabled}
+                                    onChange={event => setChunkingEnabled(event.target.checked)}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">긴 파일 자동 분할</span>
+                                    <span className="text-sm text-muted-foreground">긴 음성/영상을 작은 구간으로 나누어 메모리 부담을 줄입니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="rounded-md border border-border bg-muted/20 p-4">
+                                <span className="block font-medium text-foreground">분할 길이</span>
+                                <div className="mt-3 flex items-center gap-3">
+                                    <input
+                                        type="range"
+                                        min={10}
+                                        max={300}
+                                        step={10}
+                                        value={chunkSeconds}
+                                        onChange={event => setChunkSeconds(Number(event.target.value))}
+                                        className="w-full"
+                                        disabled={!chunkingEnabled}
+                                    />
+                                    <input
+                                        type="number"
+                                        min={10}
+                                        max={3600}
+                                        value={chunkSeconds}
+                                        onChange={event => setChunkSeconds(Number(event.target.value))}
+                                        className="w-24 rounded-md border border-input bg-background px-3 py-2"
+                                        disabled={!chunkingEnabled}
+                                    />
+                                    <span className="text-sm text-muted-foreground">초</span>
+                                </div>
+                            </label>
+
+                            <label className="rounded-md border border-border bg-muted/20 p-4">
+                                <span className="block font-medium text-foreground">실행 장치</span>
+                                <select
+                                    value={sttDevice}
+                                    onChange={event => setSttDevice(event.target.value as 'auto' | 'cpu' | 'cuda')}
+                                    className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2"
+                                >
+                                    <option value="auto">자동</option>
+                                    <option value="cpu">CPU</option>
+                                    <option value="cuda">CUDA</option>
+                                </select>
+                            </label>
+                        </section>
+                    )}
+
+                    {activeTab === 'about' && (
+                        <section className="flex flex-col gap-4 text-sm">
+                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                                <div className="font-medium text-foreground">요약 엔진</div>
+                                <div className="mt-1 text-muted-foreground">
+                                    {settings?.summary?.provider || 'ollama'} · {settings?.summary?.model || 'gemma4:e2b'}
+                                </div>
+                            </div>
+                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                                <div className="font-medium text-foreground">데스크톱 앱에서 숨긴 항목</div>
+                                <p className="mt-1 leading-relaxed text-muted-foreground">
+                                    API 주소, 내부 저장 경로, 임시 파일 정책, 모델 세부 경로는 일반 사용자가 매번 볼 필요가 없어 기본 화면에서 제외했습니다. 배포판에서는 앱이 정한 폴더와 백엔드 실행 환경을 사용하면 됩니다.
+                                </p>
+                            </div>
+                        </section>
+                    )}
                 </div>
-            </section>
-
-            <section className="bg-background border border-border rounded-lg p-6">
-                <div className="flex items-start justify-between gap-4">
-                    <div>
-                        <h3 className="text-lg font-semibold text-foreground">분석 옵션</h3>
-                        <p className="text-sm text-muted-foreground">긴 파일은 음성으로 변환한 뒤 청크 단위로 나누어 처리합니다.</p>
-                    </div>
-                    <Button onClick={handleSaveSettings} disabled={isLoading || isSaving}>
-                        {isSaving ? '저장 중...' : '설정 저장'}
-                    </Button>
-                </div>
-
-                <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
-                    <label className="flex items-center gap-3 rounded-md bg-muted/30 p-3">
-                        <input
-                            type="checkbox"
-                            checked={chunkingEnabled}
-                            onChange={event => setChunkingEnabled(event.target.checked)}
-                        />
-                        <span>
-                            <span className="block font-medium text-foreground">긴 파일 청크 분할</span>
-                            <span className="text-muted-foreground">큰 음성/영상 파일을 작은 구간으로 나누어 분석합니다.</span>
-                        </span>
-                    </label>
-
-                    <label className="rounded-md bg-muted/30 p-3">
-                        <span className="block text-muted-foreground">청크 길이</span>
-                        <div className="mt-2 flex items-center gap-3">
-                            <input
-                                type="range"
-                                min={10}
-                                max={300}
-                                step={10}
-                                value={chunkSeconds}
-                                onChange={event => setChunkSeconds(Number(event.target.value))}
-                                className="w-full"
-                                disabled={!chunkingEnabled}
-                            />
-                            <input
-                                type="number"
-                                min={10}
-                                max={3600}
-                                value={chunkSeconds}
-                                onChange={event => setChunkSeconds(Number(event.target.value))}
-                                className="w-24 rounded-md border border-input bg-background px-3 py-2"
-                                disabled={!chunkingEnabled}
-                            />
-                            <span>초</span>
-                        </div>
-                    </label>
-
-                    <label className="flex items-center gap-3 rounded-md bg-muted/30 p-3">
-                        <input
-                            type="checkbox"
-                            checked={diarizationEnabled}
-                            onChange={event => setDiarizationEnabled(event.target.checked)}
-                        />
-                        <span>
-                            <span className="block font-medium text-foreground">화자 분리 사용</span>
-                            <span className="text-muted-foreground">누가 언제 말했는지 Pyannote로 정렬합니다.</span>
-                        </span>
-                    </label>
-
-                    <label className="rounded-md bg-muted/30 p-3">
-                        <span className="block text-muted-foreground">STT 실행 장치</span>
-                        <select
-                            value={sttDevice}
-                            onChange={event => setSttDevice(event.target.value as 'auto' | 'cpu' | 'cuda')}
-                            className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2"
-                        >
-                            <option value="auto">Auto</option>
-                            <option value="cpu">CPU</option>
-                            <option value="cuda">CUDA</option>
-                        </select>
-                    </label>
-
-                    <div className="rounded-md bg-muted/30 p-3">
-                        <div className="text-muted-foreground">요약 엔진</div>
-                        <div className="font-medium text-foreground">{settings?.summary?.provider || 'ollama'} · {settings?.summary?.model || 'gemma4:e2b'}</div>
-                    </div>
-
-                    <div className="rounded-md bg-muted/30 p-3">
-                        <div className="text-muted-foreground">임시 파일 정책</div>
-                        <div className="font-medium text-foreground">
-                            {settings?.privacy?.auto_delete_temp_audio ? '분석 후 임시 음성 삭제' : '임시 음성 보관'}
-                        </div>
-                    </div>
-                </div>
-            </section>
+            </div>
         </div>
     );
 };

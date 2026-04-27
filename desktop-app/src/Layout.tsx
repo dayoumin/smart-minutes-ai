@@ -7,14 +7,15 @@ export interface LayoutProps {
     activeTab?: string;
     onTabChange?: (tab: string) => void;
     onSelectMeeting?: (id: string) => void;
+    onOpenSettings?: () => void;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, onSelectMeeting }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, onTabChange, onSelectMeeting, onOpenSettings }) => {
     return (
         <div className="flex h-screen bg-background text-foreground overflow-hidden">
             <Sidebar activeTab={activeTab} onTabChange={onTabChange} onSelectMeeting={onSelectMeeting} />
             <div className="flex flex-col flex-1 min-w-0">
-                <Header onOpenSettings={() => onTabChange?.('settings')} />
+                <Header onOpenSettings={onOpenSettings} />
                 <main className="flex-1 overflow-auto p-6 custom-scrollbar bg-page">
                     {children}
                 </main>

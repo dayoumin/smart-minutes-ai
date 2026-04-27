@@ -21,6 +21,7 @@ backend/output/
 backend/outputs/
 backend/build/
 backend/*.spec
+Smart_Minutes_AI_Portable*.zip
 
 # Node / Frontend
 node_modules/

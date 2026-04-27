@@ -45,6 +45,7 @@ class AnalyzeApiTest(unittest.TestCase):
                     "title": "테스트 회의",
                     "date": "2026-04-26T17:00",
                     "participants": "홍길동, 김철수",
+                    "mode": "mock",
                 },
                 files={"file": ("test_audio.wav", audio_file, "audio/wav")},
                 headers={"Accept": "text/event-stream"},

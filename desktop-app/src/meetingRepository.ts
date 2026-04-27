@@ -22,6 +22,7 @@ export interface MeetingRecord {
         txt?: string | null;
         md?: string | null;
         docx?: string | null;
+        hwpx?: string | null;
     };
 }
 

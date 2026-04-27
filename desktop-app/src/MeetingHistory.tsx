@@ -10,30 +10,44 @@ interface MeetingHistoryProps {
     onSelectedMeetingHandled?: () => void;
 }
 
+type DownloadKind = 'hwpx' | 'txt' | 'docx' | 'md' | 'json';
+type DetailTab = 'summary' | 'script';
+
+const safeFileName = (title: string): string => title.replace(/[/\\?%*:|"<>]/g, '-');
+
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
-    const [modalTab, setModalTab] = useState<'summary' | 'script'>('summary');
+    const [detailTab, setDetailTab] = useState<DetailTab>('summary');
+
+    const loadRecords = async () => {
+        try {
+            setIsLoading(true);
+            setErrorMessage('');
+            const data = await getAllMeetings();
+            const sorted = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            setRecords(sorted);
+            setSelectedMeeting(prev => {
+                if (prev && sorted.some(record => record.id === prev.id)) {
+                    return sorted.find(record => record.id === prev.id) ?? prev;
+                }
+                return sorted[0] ?? null;
+            });
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '회의 기록을 불러오지 못했습니다.';
+            setErrorMessage(message);
+        } finally {
+            setIsLoading(false);
+        }
+    };
 
     useEffect(() => {
-        const fetchRecords = async () => {
-            try {
-                setIsLoading(true);
-                setErrorMessage('');
-                const data = await getAllMeetings();
-                setRecords(data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()));
-            } catch (error) {
-                const message = error instanceof Error ? error.message : '회의록을 불러오지 못했습니다.';
-                setErrorMessage(message);
-            } finally {
-                setIsLoading(false);
-            }
-        };
-
-        fetchRecords();
+        loadRecords();
+        window.addEventListener('meetings:updated', loadRecords);
+        return () => window.removeEventListener('meetings:updated', loadRecords);
     }, []);
 
     useEffect(() => {
@@ -42,7 +56,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const meeting = records.find(record => record.id === selectedMeetingId);
         if (meeting) {
             setSelectedMeeting(meeting);
-            setModalTab('summary');
+            setDetailTab('summary');
             onSelectedMeetingHandled?.();
         }
     }, [selectedMeetingId, records, onSelectedMeetingHandled]);
@@ -57,71 +71,57 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         );
     }, [records, searchTerm]);
 
-    const handleDownloadMarkdown = () => {
-        if (!selectedMeeting) return;
-
-        const hasApproximateTiming = selectedMeeting.segments?.some(segment => segment.timingApproximate);
-        const script = selectedMeeting.segments?.map(segment => {
-            const timingLabel = segment.timingApproximate ? ' (시간 추정)' : '';
-            return `- ${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
-        }).join('\n') || '발화 스크립트가 없습니다.';
-
-        const timingNote = hasApproximateTiming
-            ? '\n> 일부 시간표는 STT 모델의 전체 문장을 음성 길이에 맞춰 나눈 추정값입니다.\n'
-            : '';
-        const markdownContent = `# ${selectedMeeting.title}\n\n- **일시:** ${selectedMeeting.date}\n- **참석자:** ${selectedMeeting.participants}\n${timingNote}\n## 요약\n\n${selectedMeeting.summary}\n\n## 발화 스크립트\n\n${script}\n`;
-        const blob = new Blob([markdownContent], { type: 'text/markdown;charset=utf-8;' });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-        const safeTitle = selectedMeeting.title.replace(/[/\\?%*:|"<>]/g, '-');
-
-        link.href = url;
-        link.download = `회의록_${safeTitle}.md`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        URL.revokeObjectURL(url);
-    };
-
-    const handleDownloadTranscriptText = () => {
-        if (!selectedMeeting) return;
-
-        const safeTitle = selectedMeeting.title.replace(/[/\\?%*:|"<>]/g, '-');
+    const buildTranscriptText = (meeting: MeetingRecord): string => {
         const lines = [
-            selectedMeeting.title,
-            `일시: ${selectedMeeting.date}`,
-            `참석자: ${selectedMeeting.participants}`,
+            meeting.title,
+            `일시: ${meeting.date}`,
+            `참석자: ${meeting.participants}`,
+            meeting.sourceFile ? `원본 파일: ${meeting.sourceFile}` : '',
             '',
             '[요약]',
-            selectedMeeting.summary,
+            meeting.summary,
             '',
             '[화자 분리 / 발화 스크립트]',
-            ...(selectedMeeting.segments?.length
-                ? selectedMeeting.segments.map(segment => {
+            ...(meeting.segments?.length
+                ? meeting.segments.map(segment => {
                     const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
                     return `${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
                 })
                 : ['발화 스크립트 데이터가 없습니다. 실제 분석 모드로 다시 분석해 주세요.']),
         ];
-        const blob = new Blob([lines.join('\n')], { type: 'text/plain;charset=utf-8;' });
+        return lines.filter(Boolean).join('\n');
+    };
+
+    const downloadBlob = (content: string, filename: string, type: string) => {
+        const blob = new Blob([content], { type });
         const url = URL.createObjectURL(blob);
         const link = document.createElement('a');
 
         link.href = url;
-        link.download = `회의록_${safeTitle}_transcript.txt`;
+        link.download = filename;
         document.body.appendChild(link);
         link.click();
         document.body.removeChild(link);
         URL.revokeObjectURL(url);
     };
 
-    const handleDownloadArtifact = (kind: 'txt' | 'md' | 'docx' | 'json') => {
+    const handleDownloadArtifact = (kind: DownloadKind) => {
         if (!selectedMeeting) return;
 
-        const outputUrl = selectedMeeting.outputFiles?.[kind];
+        if (kind === 'txt' && !selectedMeeting.outputFiles?.txt && !selectedMeeting.jobId) {
+            downloadBlob(
+                buildTranscriptText(selectedMeeting),
+                `회의록_${safeFileName(selectedMeeting.title)}_transcript.txt`,
+                'text/plain;charset=utf-8;',
+            );
+            return;
+        }
+
+        const outputUrl = selectedMeeting.outputFiles?.[kind]
+            ?? (selectedMeeting.jobId ? `/api/outputs/${selectedMeeting.jobId}/${kind}` : null);
+
         if (!outputUrl) {
-            if (kind === 'md') handleDownloadMarkdown();
-            if (kind === 'txt') handleDownloadTranscriptText();
+            setErrorMessage('이 형식은 실제 분석 결과에서만 다운로드할 수 있습니다.');
             return;
         }
 
@@ -135,7 +135,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         try {
             await deleteMeeting(id);
             setRecords(prev => prev.filter(record => record.id !== id));
-            if (selectedMeeting?.id === id) setSelectedMeeting(null);
+            setSelectedMeeting(prev => prev?.id === id ? null : prev);
+            window.dispatchEvent(new Event('meetings:updated'));
         } catch (error) {
             const message = error instanceof Error ? error.message : '회의록 삭제 중 오류가 발생했습니다.';
             setErrorMessage(message);
@@ -143,126 +144,106 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     };
 
     return (
-        <div className="flex flex-col h-full gap-6">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <h2 className="text-h3 font-semibold text-primary">이전 회의 기록</h2>
-                <div className="w-full md:w-72">
-                    <Input
-                        type="text"
-                        placeholder="회의 제목, 요약, 참석자 검색..."
-                        value={searchTerm}
-                        onChange={(e) => setSearchTerm(e.target.value)}
-                    />
+        <div className="grid h-full min-h-0 grid-cols-1 gap-5 xl:grid-cols-[minmax(360px,0.95fr)_minmax(520px,1.4fr)]">
+            <section className="flex min-h-0 flex-col gap-4">
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                    <h2 className="text-h3 font-semibold text-primary">이전 회의 기록</h2>
+                    <div className="w-full md:w-72">
+                        <Input
+                            type="text"
+                            placeholder="회의 제목, 요약, 참석자 검색..."
+                            value={searchTerm}
+                            onChange={(e) => setSearchTerm(e.target.value)}
+                        />
+                    </div>
                 </div>
-            </div>
 
-            {errorMessage && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-                    {errorMessage}
-                </div>
-            )}
+                {errorMessage && (
+                    <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                        {errorMessage}
+                    </div>
+                )}
 
-            <div className="bg-background border border-border rounded-lg overflow-hidden flex-1">
-                <table className="w-full text-left border-collapse">
-                    <thead className="bg-muted text-foreground border-b border-border">
-                        <tr>
-                            <th className="p-4 font-semibold w-1/5">일시</th>
-                            <th className="p-4 font-semibold w-1/4">회의 제목</th>
-                            <th className="p-4 font-semibold w-1/5">참석자</th>
-                            <th className="p-4 font-semibold">요약</th>
-                            <th className="p-4 font-semibold w-32 text-center">관리</th>
-                        </tr>
-                    </thead>
-                    <tbody>
+                <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-background">
+                    <div className="max-h-full overflow-y-auto custom-scrollbar">
                         {isLoading ? (
-                            <tr>
-                                <td colSpan={5} className="p-10 text-center text-muted-foreground">데이터를 불러오는 중입니다...</td>
-                            </tr>
-                        ) : filteredRecords.length > 0 ? (
-                            filteredRecords.map((record) => (
-                                <tr key={record.id} className="border-b border-border hover:bg-muted/30 transition-colors">
-                                    <td className="p-4 text-sm">{record.date}</td>
-                                    <td className="p-4 font-medium">{record.title}</td>
-                                    <td className="p-4 text-sm">{record.participants}</td>
-                                    <td className="p-4 text-sm text-muted-foreground truncate max-w-xs">{record.summary}</td>
-                                    <td className="p-4 text-center">
-                                        <div className="flex items-center justify-center gap-2">
-                                            <Button variant="outline" className="text-xs py-1.5 px-3" onClick={() => { setSelectedMeeting(record); setModalTab('summary'); }}>
-                                                상세
-                                            </Button>
-                                            <Button variant="outline" className="text-xs py-1.5 px-3 text-red-500 hover:bg-red-50 border-red-200" onClick={() => handleDelete(record.id)}>
-                                                삭제
-                                            </Button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            ))
+                            <div className="p-10 text-center text-sm text-muted-foreground">회의 기록을 불러오는 중입니다...</div>
+                        ) : filteredRecords.length ? (
+                            <div className="divide-y divide-border">
+                                {filteredRecords.map(record => {
+                                    const isSelected = selectedMeeting?.id === record.id;
+                                    return (
+                                        <button
+                                            key={record.id}
+                                            type="button"
+                                            className={`block w-full p-4 text-left transition-colors ${isSelected ? 'bg-blue-50/80' : 'hover:bg-muted/30'}`}
+                                            onClick={() => {
+                                                setSelectedMeeting(record);
+                                                setDetailTab('summary');
+                                            }}
+                                        >
+                                            <div className="flex items-start justify-between gap-3">
+                                                <div className="min-w-0">
+                                                    <div className="truncate font-medium text-foreground">{record.title}</div>
+                                                    <div className="mt-1 text-xs text-muted-foreground">{record.date} · {record.participants}</div>
+                                                </div>
+                                                <span className="shrink-0 text-xs text-muted-foreground">{record.segments?.length ?? 0}개 발화</span>
+                                            </div>
+                                            <div className="mt-2 line-clamp-2 text-sm text-muted-foreground">{record.summary}</div>
+                                        </button>
+                                    );
+                                })}
+                            </div>
                         ) : (
-                            <tr>
-                                <td colSpan={5} className="p-10 text-center text-muted-foreground">검색된 회의 기록이 없습니다.</td>
-                            </tr>
+                            <div className="p-10 text-center text-sm text-muted-foreground">검색된 회의 기록이 없습니다.</div>
                         )}
-                    </tbody>
-                </table>
-            </div>
+                    </div>
+                </div>
+            </section>
 
-            {selectedMeeting && (
-                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-                    <div className="bg-background border border-border rounded-xl shadow-xl w-full max-w-2xl flex flex-col max-h-[90vh]">
-                        <div className="flex justify-between items-center p-6 border-b border-border">
-                            <h3 className="text-h3 font-semibold text-foreground">{selectedMeeting.title}</h3>
-                            <div className="flex items-center gap-4">
-                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('md')}>
-                                    MD
-                                </Button>
-                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')}>
-                                    TXT
-                                </Button>
-                                <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('docx')} disabled={!selectedMeeting.outputFiles?.docx}>
-                                    DOCX
-                                </Button>
-                                <button onClick={() => setSelectedMeeting(null)} className="text-muted-foreground hover:text-foreground text-2xl leading-none">
-                                    &times;
+            <section className="min-h-0 rounded-lg border border-border bg-background">
+                {selectedMeeting ? (
+                    <div className="flex h-full min-h-0 flex-col">
+                        <div className="border-b border-border p-5">
+                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="min-w-0">
+                                    <h3 className="text-h3 font-semibold text-foreground">{selectedMeeting.title}</h3>
+                                    <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-muted-foreground md:grid-cols-2">
+                                        <span>일시: {selectedMeeting.date}</span>
+                                        <span>참석자: {selectedMeeting.participants}</span>
+                                        {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
+                                    </div>
+                                </div>
+                                <div className="flex shrink-0 flex-wrap gap-2">
+                                    <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('hwpx')}>
+                                        HWPX
+                                    </Button>
+                                    <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('txt')}>
+                                        TXT
+                                    </Button>
+                                    <Button variant="outline" className="text-sm py-1.5 px-3" onClick={() => handleDownloadArtifact('docx')} disabled={!selectedMeeting.outputFiles?.docx && !selectedMeeting.jobId}>
+                                        DOCX
+                                    </Button>
+                                    <Button variant="outline" className="text-sm py-1.5 px-3 text-red-500 hover:bg-red-50 border-red-200" onClick={() => handleDelete(selectedMeeting.id)}>
+                                        삭제
+                                    </Button>
+                                </div>
+                            </div>
+
+                            <div className="mt-5 flex border-b border-border">
+                                <button className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${detailTab === 'summary' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={() => setDetailTab('summary')}>
+                                    요약 내용
+                                </button>
+                                <button className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${detailTab === 'script' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={() => setDetailTab('script')}>
+                                    화자 분리 / 발화 스크립트
                                 </button>
                             </div>
                         </div>
 
-                        <div className="p-6 overflow-y-auto custom-scrollbar flex-1 flex flex-col gap-6 text-foreground">
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-sm font-medium text-muted-foreground">일시</span>
-                                    <span>{selectedMeeting.date}</span>
-                                </div>
-                                <div className="flex flex-col gap-1">
-                                    <span className="text-sm font-medium text-muted-foreground">참석자</span>
-                                    <span>{selectedMeeting.participants}</span>
-                                </div>
-                                {selectedMeeting.sourceFile && (
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-sm font-medium text-muted-foreground">원본 파일</span>
-                                        <span>{selectedMeeting.sourceFile}</span>
-                                    </div>
-                                )}
-                                {selectedMeeting.jobId && (
-                                    <div className="flex flex-col gap-1">
-                                        <span className="text-sm font-medium text-muted-foreground">작업 ID</span>
-                                        <span className="text-xs">{selectedMeeting.jobId}</span>
-                                    </div>
-                                )}
-                            </div>
-
-                            <div className="flex border-b border-border mt-2">
-                                <button className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${modalTab === 'summary' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={() => setModalTab('summary')}>
-                                    요약 내용
-                                </button>
-                                <button className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${modalTab === 'script' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={() => setModalTab('script')}>
-                                    발화 스크립트
-                                </button>
-                            </div>
-
-                            {modalTab === 'summary' ? (
-                                <div className="flex flex-col gap-4">
-                                    <div className="bg-muted/50 p-4 rounded-md whitespace-pre-wrap leading-relaxed text-sm">
+                        <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
+                            {detailTab === 'summary' ? (
+                                <div className="flex flex-col gap-5">
+                                    <div className="rounded-md bg-muted/50 p-4 text-sm leading-relaxed text-foreground whitespace-pre-wrap">
                                         {selectedMeeting.summary}
                                     </div>
                                     {!!selectedMeeting.topics?.length && (
@@ -293,30 +274,30 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     )}
                                     {selectedMeeting.segments?.length ? (
                                         selectedMeeting.segments.map((seg, idx) => (
-                                            <div key={`${seg.start}-${idx}`} className="flex gap-4 p-3 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors">
-                                                <div className="w-28 shrink-0 flex flex-col text-xs text-muted-foreground">
-                                                    <span className="font-semibold text-primary">{seg.speaker}</span>
-                                                    <span>{seg.start} - {seg.end}</span>
-                                                    {seg.timingApproximate && (
-                                                        <span className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">
-                                                            시간 추정
-                                                        </span>
-                                                    )}
+                                            <div key={`${seg.start}-${idx}`} className="flex gap-4 rounded-md bg-muted/30 p-3 transition-colors hover:bg-muted/50">
+                                                <div className="w-32 shrink-0 text-xs text-muted-foreground">
+                                                    <div className="font-semibold text-primary">{seg.speaker}</div>
+                                                    <div>{seg.start} - {seg.end}</div>
+                                                    {seg.timingApproximate && <div className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">시간 추정</div>}
                                                 </div>
-                                                <div className="flex-1 text-sm text-foreground">{seg.text}</div>
+                                                <div className="flex-1 text-sm leading-relaxed text-foreground">{seg.text}</div>
                                             </div>
                                         ))
                                     ) : (
-                                        <div className="p-8 text-center text-sm text-muted-foreground bg-muted/30 rounded-md">
-                                            발화 스크립트 데이터가 없습니다.
+                                        <div className="rounded-md bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+                                            발화 스크립트 데이터가 없습니다. 실제 분석 모드로 다시 분석해 주세요.
                                         </div>
                                     )}
                                 </div>
                             )}
                         </div>
                     </div>
-                </div>
-            )}
+                ) : (
+                    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
+                        왼쪽 목록에서 회의 기록을 선택하면 이 영역에서 바로 확인할 수 있습니다.
+                    </div>
+                )}
+            </section>
         </div>
     );
 };

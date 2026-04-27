@@ -21,6 +21,7 @@ from pipeline.diarize import diarize_audio
 from pipeline.align_speakers import align_segments_with_speakers
 from pipeline.summarize import summarize_meeting
 from pipeline.export_docx import export_docx
+from pipeline.export_hwpx import export_hwpx
 from pipeline.export_markdown import export_markdown
 
 BASE_DIR = os.path.abspath(
@@ -118,21 +119,28 @@ async def models_status() -> dict:
 @app.get("/api/outputs/{job_id}/{kind}")
 async def download_output(job_id: str, kind: str) -> FileResponse:
     allowed = {
-        "json": f"{job_id}_result.json",
-        "txt": f"{job_id}_transcript.txt",
-        "md": f"{job_id}_report.md",
-        "docx": f"{job_id}_report.docx",
+        "json": (f"{job_id}_result.json", "application/json"),
+        "txt": (f"{job_id}_transcript.txt", "text/plain; charset=utf-8"),
+        "md": (f"{job_id}_report.md", "text/markdown; charset=utf-8"),
+        "docx": (f"{job_id}_report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "hwpx": (f"{job_id}_report.hwpx", "application/hwp+zip"),
     }
     if kind not in allowed:
         raise HTTPException(status_code=404, detail="Unknown output type")
 
     config = load_config()
     output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
-    file_path = os.path.abspath(os.path.join(output_dir, allowed[kind]))
+    filename, media_type = allowed[kind]
+    file_path = os.path.abspath(os.path.join(output_dir, filename))
+    if kind == "hwpx" and file_path.startswith(output_dir + os.sep) and not os.path.exists(file_path):
+        json_path = os.path.abspath(os.path.join(output_dir, allowed["json"][0]))
+        if json_path.startswith(output_dir + os.sep) and os.path.exists(json_path):
+            with open(json_path, "r", encoding="utf-8") as f:
+                export_hwpx(json.load(f), file_path)
     if not file_path.startswith(output_dir + os.sep) or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Output file not found")
 
-    return FileResponse(file_path, filename=allowed[kind])
+    return FileResponse(file_path, filename=filename, media_type=media_type)
 
 
 @app.post("/api/models/download")
@@ -398,6 +406,7 @@ async def stream_real_analysis(
                     "txt": f"/api/outputs/{result['job_id']}/txt",
                     "md": f"/api/outputs/{result['job_id']}/md" if result.get("md_file") else None,
                     "docx": f"/api/outputs/{result['job_id']}/docx" if result.get("docx_file") else None,
+                    "hwpx": f"/api/outputs/{result['job_id']}/hwpx" if result.get("hwpx_file") else None,
                 },
                 "summary": format_summary_for_ui(result_data.get("summary", {}), title, date, participants),
                 "topics": result_data.get("summary", {}).get("topics", []),
@@ -507,6 +516,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     out_txt_path = os.path.join(output_dir, f"{job_id}_transcript.txt")
     out_md_path = os.path.join(output_dir, f"{job_id}_report.md")
     out_docx_path = os.path.join(output_dir, f"{job_id}_report.docx")
+    out_hwpx_path = os.path.join(output_dir, f"{job_id}_report.hwpx")
 
     print(f"--- Local Meeting AI Pipeline ---")
     print(f"Input: {input_file}")
@@ -634,11 +644,9 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     export_txt(segments, out_txt_path)
     
     if summary_data:
-        # FUTURE HOOK (HWPX Export): 
-        # config["export_templates"]["use_custom_template"] 가 true일 경우, 
-        # 여기서 export_hwpx(result_data, template_path)를 호출하도록 리팩토링하세요.
         export_markdown(result_data, out_md_path)
         export_docx(result_data, out_docx_path)
+        export_hwpx(result_data, out_hwpx_path)
     
     # Cleanup temp wav
     if config["privacy"].get("auto_delete_temp_audio", True):
@@ -654,6 +662,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         "txt_file": out_txt_path,
         "md_file": out_md_path if summary_data else None,
         "docx_file": out_docx_path if summary_data else None,
+        "hwpx_file": out_hwpx_path if summary_data else None,
         "result_data": result_data
     }
 

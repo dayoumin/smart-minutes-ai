@@ -3,8 +3,7 @@ import { Download, Trash2 } from 'lucide-react';
 import { Button } from './Button';
 import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepository';
 import { getDownloadFormatPreference } from './downloadPreferences';
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
+import { toApiUrl } from './apiBase';
 
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
@@ -140,7 +139,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             return;
         }
 
-        const absoluteUrl = outputUrl.startsWith('http') ? outputUrl : `${API_BASE}${outputUrl}`;
+        const absoluteUrl = toApiUrl(outputUrl);
 
         try {
             const response = await fetch(absoluteUrl);
@@ -155,8 +154,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             const filename = filenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
             downloadBlob(blob, filename);
         } catch (error) {
+            downloadLocalText();
             const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
-            setErrorMessage(message);
+            setErrorMessage(`${message} TXT로 다운로드했습니다.`);
         }
     };
 

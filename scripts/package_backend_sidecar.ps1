@@ -19,6 +19,8 @@ try {
         --clean `
         --onefile `
         --name "meeting-backend-$TargetTriple" `
+        --collect-submodules "pyannote.audio" `
+        --collect-data "pyannote.audio" `
         --distpath $TauriBinDir `
         --workpath (Join-Path $BackendDir "build") `
         --specpath (Join-Path $BackendDir "build") `

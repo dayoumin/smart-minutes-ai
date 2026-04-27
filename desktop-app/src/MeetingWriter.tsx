@@ -6,6 +6,8 @@ import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'mock';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
+const BACKEND_READY_TIMEOUT_MS = 90_000;
+const BACKEND_READY_INTERVAL_MS = 3_000;
 
 interface AnalyzeResult {
     status?: string;
@@ -61,6 +63,8 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
     return 'unknown';
 };
 
+const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
+
 interface MeetingWriterProps {
     onOpenSettings?: () => void;
 }
@@ -76,8 +80,33 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const [errorMessage, setErrorMessage] = useState('');
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
+    const waitForBackendReady = async (): Promise<void> => {
+        const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
+
+        while (Date.now() < deadline) {
+            try {
+                const controller = new AbortController();
+                const timeoutId = window.setTimeout(() => controller.abort(), 2_500);
+                const response = await fetch(`${API_BASE}/api/health`, { signal: controller.signal });
+                window.clearTimeout(timeoutId);
+
+                if (response.ok) return;
+            } catch {
+                // The desktop sidecar can take tens of seconds to warm up after app launch.
+            }
+
+            const remainingSeconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+            setStatusMessage(`로컬 분석 서버를 준비하고 있습니다. 잠시만 기다려 주세요. (${remainingSeconds}초)`);
+            await sleep(BACKEND_READY_INTERVAL_MS);
+        }
+
+        throw new Error('로컬 분석 서버가 아직 준비되지 않았습니다. 앱을 잠시 기다린 뒤 다시 시도해 주세요.');
+    };
+
     const ensureModelsReady = async (): Promise<boolean> => {
         if (ANALYSIS_MODE !== 'real') return true;
+
+        await waitForBackendReady();
 
         const response = await fetch(`${API_BASE}/api/models/status`);
         if (!response.ok) {

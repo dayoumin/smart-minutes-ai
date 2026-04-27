@@ -40,7 +40,7 @@ Run this from the repository root before a release build:
 .\scripts\prepare_tauri_resources.ps1
 ```
 
-This copies `backend/config.json`, `backend/templates`, and `backend/models` into `desktop-app/src-tauri/resources/backend`. It excludes Hugging Face `.git` and `.cache` folders so the packaged app contains only runtime model payloads.
+This copies `backend/config.json`, `backend/ffmpeg.exe`, `backend/templates`, and `backend/models` into `desktop-app/src-tauri/resources/backend`. It excludes Hugging Face `.git` and `.cache` folders so the packaged app contains only runtime model payloads.
 
 ## Model Policy
 

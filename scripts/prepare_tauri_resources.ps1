@@ -12,6 +12,30 @@ New-Item -ItemType Directory -Force -Path $ResourceBackendDir | Out-Null
 
 Copy-Item -Force (Join-Path $BackendDir "config.json") (Join-Path $ResourceBackendDir "config.json")
 
+$BackendSourceFiles = @(
+    "main.py",
+    "model_manager.py",
+    "ollama_utils.py"
+)
+foreach ($FileName in $BackendSourceFiles) {
+    Copy-Item -Force (Join-Path $BackendDir $FileName) (Join-Path $ResourceBackendDir $FileName)
+}
+
+$PipelineSource = Join-Path $BackendDir "pipeline"
+$PipelineTarget = Join-Path $ResourceBackendDir "pipeline"
+if (Test-Path $PipelineTarget) {
+    Remove-Item -Recurse -Force $PipelineTarget
+}
+Copy-Item -Recurse -Force $PipelineSource $PipelineTarget
+
+$FfmpegSource = Join-Path $BackendDir "ffmpeg.exe"
+if (Test-Path $FfmpegSource) {
+    Copy-Item -Force $FfmpegSource (Join-Path $ResourceBackendDir "ffmpeg.exe")
+}
+else {
+    Write-Warning "ffmpeg.exe was not found at $FfmpegSource. MP4/video input will require ffmpeg on PATH."
+}
+
 $TemplateSource = Join-Path $BackendDir "templates"
 $TemplateTarget = Join-Path $ResourceBackendDir "templates"
 if (Test-Path $TemplateSource) {

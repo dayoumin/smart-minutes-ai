@@ -71,14 +71,22 @@ def _load_cohere_model(model_path: str, device: str):
 
     _ensure_hf_module_cache()
 
-    from transformers import AutoProcessor, CohereAsrForConditionalGeneration
+    from transformers import AutoModelForSpeechSeq2Seq, AutoProcessor
 
     print(f"[STT] Loading Cohere Transcribe model: {model_path} on {torch_device}")
     _COHERE_PROCESSOR = AutoProcessor.from_pretrained(model_path, trust_remote_code=True)
-    _COHERE_MODEL = CohereAsrForConditionalGeneration.from_pretrained(
+    _COHERE_MODEL = AutoModelForSpeechSeq2Seq.from_pretrained(
         model_path,
         trust_remote_code=True,
     )
+    if getattr(_COHERE_MODEL.generation_config, "cache_implementation", None) == "static":
+        _COHERE_MODEL.generation_config.cache_implementation = None
+    decoder_config = getattr(_COHERE_MODEL.config, "transf_decoder", {}).get("config_dict", {})
+    if not hasattr(_COHERE_MODEL.config, "hidden_size") and "hidden_size" in decoder_config:
+        _COHERE_MODEL.config.hidden_size = decoder_config["hidden_size"]
+    if not hasattr(_COHERE_MODEL.config, "num_attention_heads") and "num_attention_heads" in decoder_config:
+        _COHERE_MODEL.config.num_attention_heads = decoder_config["num_attention_heads"]
+    _COHERE_MODEL._can_compile_fullgraph = True
     _COHERE_MODEL = _COHERE_MODEL.to(torch_device)
     _COHERE_MODEL.eval()
     _COHERE_MODEL_CACHE_KEY = cache_key
@@ -110,8 +118,6 @@ def transcribe_audio_cohere(
     audio, _sample_rate = librosa.load(wav_path, sr=16000, mono=True)
     inputs = processor(audio, sampling_rate=16000, return_tensors="pt", language=language)
     audio_chunk_index = inputs.get("audio_chunk_index")
-    if "input_features" in inputs and inputs["input_features"].ndim == 3 and inputs["input_features"].shape[1] == 128:
-        inputs["input_features"] = inputs["input_features"].transpose(1, 2)
     inputs.to(model.device, dtype=model.dtype)
 
     generation_inputs = {
@@ -119,9 +125,20 @@ def transcribe_audio_cohere(
         for key, value in inputs.items()
         if key not in {"audio_chunk_index", "length"}
     }
-    outputs = model.generate(**generation_inputs, max_new_tokens=256)
+    import torch
+
+    decoder_start_token_id = model.generation_config.decoder_start_token_id or model.generation_config.bos_token_id
+    decoder_input_ids = torch.tensor([[decoder_start_token_id]], device=model.device)
+    decoder_attention_mask = torch.ones_like(decoder_input_ids)
+    outputs = model.generate(
+        **generation_inputs,
+        decoder_input_ids=decoder_input_ids,
+        decoder_attention_mask=decoder_attention_mask,
+        max_new_tokens=256,
+    )
+    token_ids = outputs[0] if getattr(outputs, "ndim", 1) > 1 else outputs
     decoded = processor.decode(
-        outputs,
+        token_ids,
         skip_special_tokens=True,
         audio_chunk_index=audio_chunk_index,
         language=language,

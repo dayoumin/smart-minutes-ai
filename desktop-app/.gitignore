@@ -13,7 +13,10 @@ dist-ssr
 src-tauri/target
 src-tauri/gen/schemas
 src-tauri/resources/backend/config.json
+src-tauri/resources/backend/ffmpeg.exe
+src-tauri/resources/backend/*.py
 src-tauri/resources/backend/models/
+src-tauri/resources/backend/pipeline/
 src-tauri/resources/backend/templates/
 src-tauri/binaries/*.exe
 src-tauri/binaries/*-x86_64*

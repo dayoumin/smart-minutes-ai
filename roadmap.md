@@ -21,6 +21,8 @@
 ## 🖥️ Desktop Packaging Notes
 - [x] **Portable 배포 채택**: Cohere 모델의 대용량 파일 때문에 MSI/NSIS 설치 파일 대신 portable 폴더 배포를 기본으로 사용한다.
 - [x] **회사 전달용 no-Cohere 패키지 생성**: 앱, 백엔드 sidecar, Pyannote 모델은 포함하고 Cohere STT 모델은 회사 PC에서 별도 다운로드한다.
+- [ ] **no-Cohere 패키지 재생성 주의**: 최신 PyInstaller 백엔드 sidecar 자체가 약 3.45GB라 Cohere 모델을 제외해도 메일 첨부용으로는 부적합하다. 회사 전달은 USB, 사내 파일 공유, 외장 저장소를 기본 경로로 잡는다.
+- [ ] **Portable 압축 해제 위치 안내**: `Program Files`처럼 쓰기 권한이 엄격한 위치가 아니라 `문서\Smart Minutes AI`, 바탕화면, 또는 사용자 쓰기 가능한 업무 폴더에 압축 해제한다.
 - [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\backend\models\stt\cohere-transcribe-03-2026\model.safetensors` 경로가 존재해야 실제 분석이 가능하다.
 - [ ] **AppData 저장소 분리**: 향후 설치형 배포를 지원하려면 `config.json`, `outputs`, `temp`를 앱 리소스 폴더가 아니라 사용자 쓰기 가능한 AppData/localData 경로로 분리한다.
 - [ ] **로컬 API 보안 개선**: 현재는 `127.0.0.1:8000` 고정 포트를 사용한다. 포트 충돌과 로컬 호출 오용을 줄이기 위해 랜덤 포트와 세션 토큰 구조를 검토한다.

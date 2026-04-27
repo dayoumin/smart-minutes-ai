@@ -5,7 +5,12 @@ import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepositor
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000';
 
-export const MeetingHistory: React.FC = () => {
+interface MeetingHistoryProps {
+    selectedMeetingId?: string | null;
+    onSelectedMeetingHandled?: () => void;
+}
+
+export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled }) => {
     const [searchTerm, setSearchTerm] = useState('');
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -30,6 +35,17 @@ export const MeetingHistory: React.FC = () => {
 
         fetchRecords();
     }, []);
+
+    useEffect(() => {
+        if (!selectedMeetingId || !records.length) return;
+
+        const meeting = records.find(record => record.id === selectedMeetingId);
+        if (meeting) {
+            setSelectedMeeting(meeting);
+            setModalTab('summary');
+            onSelectedMeetingHandled?.();
+        }
+    }, [selectedMeetingId, records, onSelectedMeetingHandled]);
 
     const filteredRecords = useMemo(() => {
         const keyword = searchTerm.trim().toLowerCase();

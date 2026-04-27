@@ -1,41 +1,24 @@
-import React, { useEffect, useState } from 'react';
+import React from 'react';
+import { Settings } from 'lucide-react';
 
-export const Header: React.FC = () => {
-    const [isDark, setIsDark] = useState(false);
+interface HeaderProps {
+    onOpenSettings?: () => void;
+}
 
-    useEffect(() => {
-        if (document.documentElement.classList.contains('dark')) {
-            setIsDark(true);
-        }
-    }, []);
-
-    const toggleTheme = () => {
-        setIsDark(!isDark);
-        document.documentElement.classList.toggle('dark');
-    };
-
+export const Header: React.FC<HeaderProps> = ({ onOpenSettings }) => {
     return (
         <header className="h-16 border-b border-border flex items-center justify-between px-6 glass-card border-x-0 border-t-0 rounded-none z-10 relative">
-            {/* 타이포그래피 계층: Header 제목 */}
             <h1 className="text-h3 text-primary">Smart Minutes AI</h1>
 
-            <div className="flex items-center gap-4">
-                {/* 타이포그래피 계층: 부가 설명 */}
-                <span className="text-caption hidden sm:inline-block">관리자님 환영합니다</span>
-
-                {/* 다크 모드 토글 버튼 */}
-                <button
-                    onClick={toggleTheme}
-                    className="text-sm font-semibold text-interactive mr-2"
-                >
-                    {isDark ? '☀️ 라이트 모드' : '🌙 다크 모드'}
-                </button>
-
-                {/* 인터랙티브 상태가 적용된 텍스트 버튼 */}
-                <button className="text-sm font-semibold text-interactive">
-                    로그아웃
-                </button>
-            </div>
+            <button
+                type="button"
+                onClick={onOpenSettings}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/40 hover:text-primary"
+                title="시스템 설정"
+                aria-label="시스템 설정"
+            >
+                <Settings size={18} />
+            </button>
         </header>
     );
 };

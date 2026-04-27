@@ -232,6 +232,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             };
 
             await addMeeting(newRecord);
+            window.dispatchEvent(new Event('meetings:updated'));
             setProgress(100);
             setStatusMessage('회의록 저장이 완료되었습니다.');
             setTitle('');

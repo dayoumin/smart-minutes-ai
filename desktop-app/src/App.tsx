@@ -5,13 +5,25 @@ import { MeetingHistory } from './MeetingHistory';
 import { Settings } from './Settings';
 
 export const App: React.FC = () => {
-    // 기본 활성화 탭을 'minutes'(회의록 작성)로 설정
     const [activeTab, setActiveTab] = useState('minutes');
+    const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
 
     return (
-        <Layout activeTab={activeTab} onTabChange={setActiveTab}>
+        <Layout
+            activeTab={activeTab}
+            onTabChange={setActiveTab}
+            onSelectMeeting={(id) => {
+                setSelectedMeetingId(id);
+                setActiveTab('history');
+            }}
+        >
             {activeTab === 'minutes' && <MeetingWriter onOpenSettings={() => setActiveTab('settings')} />}
-            {activeTab === 'history' && <MeetingHistory />}
+            {activeTab === 'history' && (
+                <MeetingHistory
+                    selectedMeetingId={selectedMeetingId}
+                    onSelectedMeetingHandled={() => setSelectedMeetingId(null)}
+                />
+            )}
             {activeTab === 'settings' && <Settings />}
         </Layout>
     );

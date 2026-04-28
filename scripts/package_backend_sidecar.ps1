@@ -18,6 +18,7 @@ try {
     & $Python -m PyInstaller `
         --clean `
         --onefile `
+        --noconsole `
         --name "meeting-backend-$TargetTriple" `
         --collect-submodules "pyannote.audio" `
         --collect-data "pyannote.audio" `

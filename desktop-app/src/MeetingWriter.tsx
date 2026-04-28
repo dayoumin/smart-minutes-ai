@@ -1,8 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useMemo, useRef, useState } from 'react';
+import { AlertCircle, Copy, RefreshCw, Settings } from 'lucide-react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
-import { API_BASE } from './apiBase';
+import { getApiBase } from './apiBase';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
@@ -30,13 +31,24 @@ interface AnalyzeResult {
     };
 }
 
+interface ModelStatus {
+    label: string;
+    installed: boolean;
+    required: boolean;
+    path?: string;
+}
+
 interface ModelsPayload {
     ready: boolean;
-    models: Array<{
-        label: string;
-        installed: boolean;
-        required: boolean;
-    }>;
+    models: ModelStatus[];
+}
+
+type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
+
+interface ReadinessCheck {
+    state: ReadinessState;
+    message: string;
+    models?: ModelsPayload;
 }
 
 const parseSseChunk = (chunk: string): string[] => {
@@ -64,6 +76,7 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
     return 'unknown';
 };
 
+const displayPath = (path = ''): string => path.replace(/^\\\\\?\\/, '');
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
 
 interface MeetingWriterProps {
@@ -79,58 +92,117 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const [progress, setProgress] = useState(0);
     const [statusMessage, setStatusMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
+    const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
+    const [readinessMessage, setReadinessMessage] = useState('분석 서버를 확인하고 있습니다.');
+    const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-    const waitForBackendReady = async (): Promise<void> => {
+    const missingRequiredModels = useMemo(
+        () => (modelsPayload?.models || []).filter(model => model.required && !model.installed),
+        [modelsPayload],
+    );
+    const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
+
+    const refreshReadiness = async (): Promise<ReadinessCheck> => {
+        if (ANALYSIS_MODE !== 'real') {
+            setReadinessState('ready');
+            setReadinessMessage('');
+            return { state: 'ready', message: '' };
+        }
+
+        try {
+            const apiBase = await getApiBase();
+            const healthResponse = await fetch(`${apiBase}/api/health`);
+            if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
+
+            const healthPayload = await healthResponse.json().catch(() => null) as { ok?: boolean; service?: string } | null;
+            if (!healthPayload?.ok || healthPayload.service !== 'NIFS AI Meeting API') {
+                const message = '8000번 포트를 다른 서버가 사용 중입니다. 실행 중인 Python/FastAPI 서버를 종료하고 앱을 다시 실행해 주세요.';
+                setReadinessState('error');
+                setReadinessMessage(message);
+                return { state: 'error', message };
+            }
+
+            const modelsResponse = await fetch(`${apiBase}/api/models/status`);
+            if (!modelsResponse.ok) {
+                const message = '모델 상태 API를 찾지 못했습니다. 이전 버전 백엔드가 실행 중일 수 있으니 앱과 Python 서버를 모두 종료한 뒤 다시 실행해 주세요.';
+                setReadinessState('error');
+                setReadinessMessage(message);
+                return { state: 'error', message };
+            }
+
+            const payload = await modelsResponse.json() as ModelsPayload;
+            setModelsPayload(payload);
+
+            if (payload.ready) {
+                setReadinessState('ready');
+                setReadinessMessage('');
+                return { state: 'ready', message: '', models: payload };
+            }
+
+            const missing = payload.models
+                .filter(model => model.required && !model.installed)
+                .map(model => model.label)
+                .join(', ');
+            const message = `필수 모델이 없습니다: ${missing}`;
+            setReadinessState('missing-models');
+            setReadinessMessage(message);
+            return { state: 'missing-models', message, models: payload };
+        } catch {
+            const message = '분석 서버를 준비하고 있습니다. 첫 실행은 30초 이상 걸릴 수 있습니다.';
+            setReadinessState('server-waiting');
+            setReadinessMessage(message);
+            return { state: 'server-waiting', message };
+        }
+    };
+
+    const waitForBackendReady = async (): Promise<ReadinessCheck> => {
         const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
 
         while (Date.now() < deadline) {
-            try {
-                const controller = new AbortController();
-                const timeoutId = window.setTimeout(() => controller.abort(), 2_500);
-                const response = await fetch(`${API_BASE}/api/health`, { signal: controller.signal });
-                window.clearTimeout(timeoutId);
-
-                if (response.ok) return;
-            } catch {
-                // The desktop sidecar can take tens of seconds to warm up after app launch.
-            }
+            const check = await refreshReadiness();
+            if (check.state === 'ready') return check;
+            if (check.state === 'missing-models' || check.state === 'error') return check;
 
             const remainingSeconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-            setStatusMessage(`로컬 분석 서버를 준비하고 있습니다. 잠시만 기다려 주세요. (${remainingSeconds}초)`);
+            setStatusMessage(`분석 서버를 준비하고 있습니다. 잠시 기다려 주세요. (${remainingSeconds}초)`);
             await sleep(BACKEND_READY_INTERVAL_MS);
         }
 
-        throw new Error('로컬 분석 서버가 아직 준비되지 않았습니다. 앱을 닫았다가 다시 실행한 뒤 2~3분 정도 기다려 주세요.');
+        const message = '분석 서버가 아직 준비되지 않았습니다. 앱을 닫았다가 다시 실행하고 2~3분 정도 기다려 주세요.';
+        setErrorMessage(message);
+        return { state: 'error', message };
     };
 
     const ensureModelsReady = async (): Promise<boolean> => {
         if (ANALYSIS_MODE !== 'real') return true;
 
-        await waitForBackendReady();
-
-        const response = await fetch(`${API_BASE}/api/models/status`);
-        if (!response.ok) {
-            throw new Error('모델 준비 상태를 확인하지 못했습니다.');
+        setStatusMessage('분석 환경을 확인하고 있습니다.');
+        const check = await waitForBackendReady();
+        if (check.state !== 'ready') {
+            setErrorMessage(check.message);
+            return false;
         }
 
-        const payload = await response.json() as ModelsPayload;
-        if (payload.ready) return true;
+        const missingModels = (check.models?.models || [])
+            .filter(model => model.required && !model.installed);
+        if (missingModels.length === 0) return true;
 
-        const missing = payload.models
-            .filter(model => model.required && !model.installed)
-            .map(model => model.label)
-            .join(', ');
-        const message = `실제 로컬 분석에 필요한 모델이 없습니다. 설정에서 다운로드를 활성화해 주세요: ${missing}`;
-        setErrorMessage(message);
-        window.alert(message);
-        onOpenSettings?.();
+        const missing = missingModels.map(model => model.label).join(', ');
+        setErrorMessage(`실제 로컬 분석에 필요한 모델이 없습니다: ${missing}`);
         return false;
+    };
+
+    const handleCopyPath = async (path?: string) => {
+        if (!path) return;
+        await navigator.clipboard.writeText(displayPath(path));
+        setStatusMessage('모델 배치 경로를 복사했습니다.');
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0] ?? null;
         setErrorMessage('');
+        setStatusMessage('');
 
         if (!selectedFile) {
             setFile(null);
@@ -148,7 +220,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
         setIsAnalyzing(true);
         setProgress(0);
-        setStatusMessage('분석 요청을 전송하고 있습니다.');
+        setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
 
         try {
@@ -162,7 +234,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             formData.append('mode', ANALYSIS_MODE);
             formData.append('file', file);
 
-            const response = await fetch(`${API_BASE}/api/analyze`, {
+            const apiBase = await getApiBase();
+            const response = await fetch(`${apiBase}/api/analyze`, {
                 method: 'POST',
                 body: formData,
                 headers: { Accept: 'text/event-stream' },
@@ -251,6 +324,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         }
     };
 
+    const buttonLabel = (() => {
+        if (isAnalyzing) return `분석 진행 중... (${progress}%)`;
+        return 'AI 분석 시작';
+    })();
+
+    const showReadinessIssue = hasBlockingReadinessIssue;
+    const progressBarClass = errorMessage
+        ? 'bg-red-500'
+        : isAnalyzing
+            ? 'bg-primary'
+            : 'bg-primary';
+
     return (
         <div className="flex flex-col h-full gap-6 max-w-3xl mx-auto w-full">
             <h2 className="text-h3 font-semibold text-primary mb-2">새 회의록 작성</h2>
@@ -309,6 +394,60 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 </div>
             </div>
 
+            {showReadinessIssue && (
+                <div className={`rounded-md border px-4 py-3 text-sm ${hasBlockingReadinessIssue ? 'border-red-200 bg-red-50 text-red-700' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex gap-2">
+                            <AlertCircle size={18} />
+                            <div>
+                                <div className="font-semibold">{hasBlockingReadinessIssue ? '분석을 시작할 수 없습니다' : '분석 서버 준비 중'}</div>
+                                <div className="mt-1">{readinessMessage}</div>
+                            </div>
+                        </div>
+                        <div className="flex shrink-0 gap-2">
+                            <Button variant="outline" onClick={() => void refreshReadiness()} disabled={isAnalyzing}>
+                                <RefreshCw size={15} />
+                                새로고침
+                            </Button>
+                            {hasBlockingReadinessIssue && (
+                                <Button variant="outline" onClick={onOpenSettings} disabled={isAnalyzing}>
+                                    <Settings size={15} />
+                                    설정
+                                </Button>
+                            )}
+                        </div>
+                    </div>
+
+                    {missingRequiredModels.length > 0 && (
+                        <div className="mt-3 space-y-2">
+                            {missingRequiredModels.map(model => (
+                                <div key={model.label} className="rounded-md border border-red-200 bg-white/70 p-3 text-xs text-red-800">
+                                    <div className="font-semibold">{model.label} 배치 필요</div>
+                                    <div className="mt-1 break-all">{displayPath(model.path)}</div>
+                                    <div className="mt-2 flex flex-wrap gap-2">
+                                        <button
+                                            type="button"
+                                            onClick={() => handleCopyPath(model.path)}
+                                            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 font-medium"
+                                        >
+                                            <Copy size={13} />
+                                            경로 복사
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={onOpenSettings}
+                                            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-white px-2 py-1 font-medium"
+                                        >
+                                            설정에서 보기
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             {errorMessage && (
                 <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
                     {errorMessage}
@@ -322,12 +461,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             )}
 
             <Button className="w-full py-3 text-base" onClick={handleStartAnalysis} disabled={isAnalyzing}>
-                {isAnalyzing ? `분석 진행 중... (${progress}%)` : 'AI 분석 시작'}
+                {buttonLabel}
             </Button>
 
-            {isAnalyzing && (
+            {(isAnalyzing || progress > 0 || errorMessage) && (
                 <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
-                    <div className="bg-primary h-2.5 rounded-full transition-all duration-300 ease-in-out" style={{ width: `${progress}%` }} />
+                    <div className={`${progressBarClass} h-2.5 rounded-full transition-all duration-300 ease-in-out`} style={{ width: `${errorMessage ? Math.max(progress, 8) : progress}%` }} />
                 </div>
             )}
         </div>

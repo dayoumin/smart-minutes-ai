@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { X } from 'lucide-react';
+import { Copy, ExternalLink, X } from 'lucide-react';
 import { Button } from './Button';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
@@ -7,7 +7,7 @@ import {
     getDownloadFormatPreference,
     setDownloadFormatPreference,
 } from './downloadPreferences';
-import { API_BASE } from './apiBase';
+import { getApiBase } from './apiBase';
 
 interface ModelStatus {
     key: string;
@@ -60,6 +60,8 @@ const modelPageUrl = (model: ModelStatus): string | null => {
     return null;
 };
 
+const displayPath = (path: string): string => path.replace(/^\\\\\?\\/, '');
+
 export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('models');
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
@@ -89,13 +91,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setIsLoading(true);
         setErrorMessage('');
         try {
+            const apiBase = await getApiBase();
             const [settingsResponse, modelsResponse] = await Promise.all([
-                fetch(`${API_BASE}/api/settings`),
-                fetch(`${API_BASE}/api/models/status`),
+                fetch(`${apiBase}/api/settings`),
+                fetch(`${apiBase}/api/models/status`),
             ]);
 
             if (!settingsResponse.ok || !modelsResponse.ok) {
-                throw new Error('설정 정보를 불러오지 못했습니다. 백엔드 서버가 실행 중인지 확인해 주세요.');
+                throw new Error('설정 정보를 불러오지 못했습니다. 앱을 다시 실행하거나 실행 중인 다른 Python/FastAPI 서버를 종료해 주세요.');
             }
 
             const nextSettings = await settingsResponse.json() as SettingsPayload;
@@ -145,7 +148,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             const url = modelPageUrl(model);
             if (url) window.open(url, '_blank', 'noopener,noreferrer');
         });
-        setMessage('모델 페이지를 열었습니다. 받은 파일을 지정된 models 폴더에 넣은 뒤 상태를 새로고침하세요.');
+        setMessage('모델 페이지를 열었습니다. 다운로드한 모델은 각 항목의 배치 위치에 넣고 상태 새로고침을 눌러 주세요.');
+    };
+
+    const handleCopyPath = async (path: string) => {
+        await navigator.clipboard.writeText(displayPath(path));
+        setMessage('모델 배치 경로를 복사했습니다.');
     };
 
     const handleSaveSettings = async () => {
@@ -155,7 +163,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setDownloadFormatPreference(downloadFormat);
 
         try {
-            const response = await fetch(`${API_BASE}/api/settings`, {
+            const apiBase = await getApiBase();
+            const response = await fetch(`${apiBase}/api/settings`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -179,7 +188,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(nextSettings);
-            setMessage('저장했습니다. 다음 분석과 다운로드부터 적용됩니다.');
+            setMessage('저장했습니다. 다음 분석부터 적용됩니다.');
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');
         } finally {
@@ -243,7 +252,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 <div>
                                     <h3 className="text-base font-semibold text-foreground">모델 준비</h3>
                                     <p className="mt-1 text-sm text-muted-foreground">
-                                        사용자는 모델이 준비됐는지만 알면 됩니다. 부족한 모델은 다운로드 페이지에서 받아 넣으면 됩니다.
+                                        다른 PC에서는 zip을 푼 폴더 전체를 유지하고, 부족한 모델만 아래 배치 위치에 넣으면 됩니다.
                                     </p>
                                 </div>
                                 <div className="flex gap-2">
@@ -251,9 +260,18 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                         상태 새로고침
                                     </Button>
                                     <Button onClick={handleOpenDownloadPages} disabled={isLoading}>
+                                        <ExternalLink size={16} />
                                         다운로드
                                     </Button>
                                 </div>
+                            </div>
+
+                            <div className="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
+                                <div className="font-medium text-foreground">회사 PC 사용 요약</div>
+                                <p className="mt-1">
+                                    `Smart Minutes AI.exe`만 따로 옮기지 말고 `Smart Minutes AI` 폴더 전체를 옮기세요.
+                                    Cohere 모델은 `backend\models\stt\cohere-transcribe-03-2026` 폴더에 넣습니다.
+                                </p>
                             </div>
 
                             <div className="grid grid-cols-1 gap-3">
@@ -263,16 +281,38 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                             <div>
                                                 <div className="font-medium text-foreground">{model.label}</div>
                                                 <div className="mt-1 text-xs text-muted-foreground">
-                                                    {model.required ? '필수' : '선택'} · {model.gated ? '약관 확인 필요' : '공개 모델'}
+                                                    {model.required ? '필수' : '선택'} · {model.gated ? '권한 확인 필요' : '공개 모델'}
+                                                    {model.license_name ? ` · ${model.license_name}` : ''}
                                                 </div>
                                             </div>
                                             <span className={`w-fit rounded-md px-2.5 py-1 text-xs font-semibold ${model.installed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                                                 {model.installed ? '준비됨' : '필요함'}
                                             </span>
                                         </div>
+
+                                        <div className="mt-3">
+                                            <div className="mb-1 text-xs font-medium text-foreground">배치 위치</div>
+                                            <div className="flex items-start gap-2">
+                                                <code className="min-w-0 flex-1 break-all rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                                                    {displayPath(model.path)}
+                                                </code>
+                                                {!model.path.startsWith('ollama:') && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => handleCopyPath(model.path)}
+                                                        className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border bg-background text-muted-foreground hover:text-foreground"
+                                                        title="경로 복사"
+                                                        aria-label="경로 복사"
+                                                    >
+                                                        <Copy size={15} />
+                                                    </button>
+                                                )}
+                                            </div>
+                                        </div>
+
                                         {!model.installed && (
                                             <div className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                                                {model.manual_note || '모델 페이지에서 파일을 받은 뒤 앱의 models 폴더에 배치하세요.'}
+                                                {model.manual_note || '모델 페이지에서 파일을 받은 뒤 위 배치 위치에 넣어 주세요.'}
                                             </div>
                                         )}
                                     </div>
@@ -390,9 +430,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 </div>
                             </div>
                             <div className="rounded-md border border-border bg-muted/20 p-4">
-                                <div className="font-medium text-foreground">데스크톱 앱에서 숨긴 항목</div>
+                                <div className="font-medium text-foreground">portable 배포 주의 사항</div>
                                 <p className="mt-1 leading-relaxed text-muted-foreground">
-                                    API 주소, 내부 저장 경로, 임시 파일 정책, 모델 세부 경로는 일반 사용자가 매번 볼 필요가 없어 기본 화면에서 제외했습니다. 배포판에서는 앱이 정한 폴더와 백엔드 실행 환경을 사용하면 됩니다.
+                                    회사 PC에서는 zip을 풀고 폴더 전체를 같은 위치에 둡니다. Cohere STT 모델이 없으면 실제 음성 인식은 시작하지 않습니다.
+                                    Pyannote와 ffmpeg는 현재 portable 패키지에 포함되어 있습니다.
                                 </p>
                             </div>
                         </section>

@@ -32,7 +32,10 @@ MODEL_SPECS = [
         license_name="Apache-2.0",
         license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
         requires_token=True,
-        manual_note="Hugging Face에서 접근 권한을 받은 뒤 HF_TOKEN으로 인증해야 다운로드할 수 있습니다.",
+        manual_note=(
+            "Hugging Face에서 접근 권한을 받은 뒤 다운로드하세요. "
+            "portable 배포본에서는 이 폴더에 모델 파일을 직접 넣으면 토큰 없이 사용할 수 있습니다."
+        ),
     ),
     ModelSpec(
         key="stt_fallback",
@@ -50,7 +53,10 @@ MODEL_SPECS = [
         gated=True,
         license_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
-        manual_note="Hugging Face에서 사용자 조건을 수락한 뒤 다운로드할 수 있습니다. git-lfs clone 후 이 경로에 배치해도 됩니다.",
+        manual_note=(
+            "Hugging Face에서 사용자 조건을 수락한 뒤 다운로드할 수 있습니다. "
+            "git-lfs clone 후 이 경로에 배치해도 됩니다."
+        ),
     ),
     ModelSpec(
         key="llm",
@@ -58,7 +64,7 @@ MODEL_SPECS = [
         repo_id=None,
         local_dir="ollama:gemma4:e2b",
         required=False,
-        manual_note="Ollama에 gemma4:e2b 또는 호환 Gemma 모델이 있어야 합니다.",
+        manual_note="Ollama에 gemma4:e2b 또는 호환 Gemma 모델이 있어야 요약 품질이 좋아집니다.",
     ),
 ]
 

@@ -139,7 +139,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             return;
         }
 
-        const absoluteUrl = toApiUrl(outputUrl);
+        const absoluteUrl = await toApiUrl(outputUrl);
 
         try {
             const response = await fetch(absoluteUrl);

@@ -10,6 +10,7 @@ $ReleaseDir = Join-Path $TauriDir "target\$Configuration"
 $PortableDir = Join-Path $ReleaseDir "portable\Smart Minutes AI"
 $AppExe = Join-Path $ReleaseDir "smart-minutes-ai.exe"
 $SidecarExe = Join-Path $TauriDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
+$SidecarDepsDir = Join-Path $TauriDir "binaries\_internal"
 $ResourceBackendDir = Join-Path $TauriDir "resources\backend"
 
 if (-not (Test-Path $AppExe)) {
@@ -31,6 +32,9 @@ New-Item -ItemType Directory -Force -Path (Join-Path $PortableDir "binaries") | 
 
 Copy-Item -Force $AppExe (Join-Path $PortableDir "Smart Minutes AI.exe")
 Copy-Item -Force $SidecarExe (Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe")
+if (Test-Path $SidecarDepsDir) {
+    Copy-Item -Recurse -Force $SidecarDepsDir (Join-Path $PortableDir "binaries\_internal")
+}
 Copy-Item -Recurse -Force $ResourceBackendDir (Join-Path $PortableDir "backend")
 
 Write-Host "Created portable desktop package:"

@@ -159,8 +159,10 @@ def get_model_status(base_dir: str) -> Dict:
     }
 
 
-def missing_downloadable_models(base_dir: str) -> Iterable[ModelSpec]:
+def missing_downloadable_models(base_dir: str, required_only: bool = True) -> Iterable[ModelSpec]:
     for spec in MODEL_SPECS:
+        if required_only and not spec.required:
+            continue
         if spec.repo_id and not model_exists(base_dir, spec):
             yield spec
 

@@ -13,16 +13,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
 from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
-from pipeline.audio_preprocess import convert_to_wav
-from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
-from pipeline.transcribe import is_cohere_model, transcribe_audio
-from pipeline.export_txt import export_txt, save_result_json
-from pipeline.diarize import diarize_audio
-from pipeline.align_speakers import align_segments_with_speakers
-from pipeline.summarize import summarize_meeting
-from pipeline.export_docx import export_docx
-from pipeline.export_hwpx import export_hwpx
-from pipeline.export_markdown import export_markdown
 
 BASE_DIR = os.path.abspath(
     os.environ.get(
@@ -139,6 +129,8 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
     if kind == "hwpx" and file_path.startswith(output_dir + os.sep) and not os.path.exists(file_path):
         json_path = os.path.abspath(os.path.join(output_dir, allowed["json"][0]))
         if json_path.startswith(output_dir + os.sep) and os.path.exists(json_path):
+            from pipeline.export_hwpx import export_hwpx
+
             with open(json_path, "r", encoding="utf-8") as f:
                 export_hwpx(json.load(f), file_path)
     if not file_path.startswith(output_dir + os.sep) or not os.path.exists(file_path):
@@ -148,16 +140,21 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
 
 
 @app.post("/api/models/download")
-async def download_missing_models() -> StreamingResponse:
+async def download_missing_models(payload: dict | None = Body(default=None)) -> StreamingResponse:
     async def event_generator() -> AsyncIterator[str]:
         token = os.environ.get("HF_TOKEN")
-        missing = list(missing_downloadable_models(BASE_DIR))
+        requested_keys = set((payload or {}).get("models") or [])
+        if requested_keys:
+            candidates = [get_model_spec(key) for key in requested_keys]
+            missing = [spec for spec in candidates if not model_exists(BASE_DIR, spec)]
+        else:
+            missing = list(missing_downloadable_models(BASE_DIR, required_only=True))
 
         if not missing:
             yield sse_event({
                 "type": "result",
                 "status": "completed",
-                "message": "모든 자동 다운로드 대상 모델이 준비되어 있습니다.",
+                "message": "필수 모델이 이미 준비되어 있습니다.",
                 "models": get_model_status(BASE_DIR)["models"],
             }, event="result")
             yield sse_event("[DONE]", event="done")
@@ -170,9 +167,10 @@ async def download_missing_models() -> StreamingResponse:
                 "type": "progress",
                 "status": "processing",
                 "progress": progress,
-                "message": f"{spec.label} 다운로드 준비 중",
+                "message": f"{spec.label} 다운로드를 준비하고 있습니다.",
                 "model": spec.key,
                 "gated": spec.gated,
+                "path": os.path.abspath(resolve_config_path(spec.local_dir)),
             }, event="progress")
 
             try:
@@ -204,7 +202,6 @@ async def download_missing_models() -> StreamingResponse:
             "models": get_model_status(BASE_DIR)["models"],
         }, event="result")
         yield sse_event("[DONE]", event="done")
-
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -358,7 +355,10 @@ async def stream_real_analysis(
         report_progress("Cohere STT 모델 확인 중", 6)
         stt_spec = get_model_spec("stt_primary")
         if not model_exists(BASE_DIR, stt_spec):
-            raise RuntimeError("Cohere Transcribe 모델이 없습니다. 설정 화면에서 모델 페이지를 열고 필요한 파일을 받은 뒤 다시 실행해 주세요.")
+            raise RuntimeError(
+                "Cohere Transcribe 모델이 없습니다. 설정 화면에서 다운로드하거나 "
+                "모델 파일을 준비한 뒤 다시 실행해 주세요."
+            )
         config["paths"]["stt_model"] = stt_spec.local_dir
         report_progress("Cohere STT 모델 준비 완료", 8)
 
@@ -367,7 +367,7 @@ async def stream_real_analysis(
 
         if not diarization_ready:
             config["diarization"]["enabled"] = False
-            report_progress("화자 분리 모델이 없어 STT 중심 분석으로 진행합니다", 10)
+            report_progress("화자 분리 모델이 없어 STT 중심 분석으로 진행합니다.", 10)
 
         return config
 
@@ -496,6 +496,17 @@ def save_config(config: dict, config_path: str = "config.json") -> None:
         f.write("\n")
 
 def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = None, progress_callback=None) -> dict:
+    from pipeline.align_speakers import align_segments_with_speakers
+    from pipeline.audio_preprocess import convert_to_wav
+    from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
+    from pipeline.diarize import diarize_audio
+    from pipeline.export_docx import export_docx
+    from pipeline.export_hwpx import export_hwpx
+    from pipeline.export_markdown import export_markdown
+    from pipeline.export_txt import export_txt, save_result_json
+    from pipeline.summarize import summarize_meeting
+    from pipeline.transcribe import is_cohere_model, transcribe_audio
+
     if config is None:
         config = load_config()
         

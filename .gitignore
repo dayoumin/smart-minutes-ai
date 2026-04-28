@@ -20,8 +20,10 @@ backend/temp/
 backend/output/
 backend/outputs/
 backend/build/
+backend/dist-sidecar/
 backend/*.spec
 Smart_Minutes_AI_Portable*.zip
+desktop-app/src-tauri/binaries/_internal/
 
 # Node / Frontend
 node_modules/

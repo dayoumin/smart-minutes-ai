@@ -35,6 +35,33 @@ D:\Apps\Smart Minutes AI\
 
 실행할 때는 폴더 안의 `Smart Minutes AI.exe`를 실행합니다. 단, exe 하나만 따로 빼서 실행하면 백엔드와 모델 파일을 찾지 못하므로 폴더 전체를 함께 유지해야 합니다.
 
+## Cohere 음성 인식 모델 넣는 위치
+
+Cohere 모델은 `Smart Minutes AI.exe`와 같은 폴더 아래에 넣습니다.
+
+```text
+Smart Minutes AI\
+├─ Smart Minutes AI.exe
+├─ backend\
+│  └─ models\
+│     └─ stt\
+│        └─ cohere-transcribe-03-2026\
+│           ├─ config.json
+│           ├─ model.safetensors
+│           ├─ preprocessor_config.json
+│           └─ ...
+├─ binaries\
+└─ ...
+```
+
+즉 예시 경로는 아래와 같습니다.
+
+```text
+D:\Apps\Smart Minutes AI\backend\models\stt\cohere-transcribe-03-2026\
+```
+
+앱 오른쪽 위 톱니바퀴의 `모델` 탭에서도 이 배치 위치를 확인하고 복사할 수 있습니다.
+
 ## 실행 방법
 
 1. `Smart Minutes AI.exe`를 실행합니다.

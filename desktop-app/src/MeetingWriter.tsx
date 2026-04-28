@@ -6,7 +6,7 @@ import { API_BASE } from './apiBase';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
-const BACKEND_READY_TIMEOUT_MS = 90_000;
+const BACKEND_READY_TIMEOUT_MS = 240_000;
 const BACKEND_READY_INTERVAL_MS = 3_000;
 
 interface AnalyzeResult {
@@ -101,7 +101,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             await sleep(BACKEND_READY_INTERVAL_MS);
         }
 
-        throw new Error('로컬 분석 서버가 아직 준비되지 않았습니다. 앱을 잠시 기다린 뒤 다시 시도해 주세요.');
+        throw new Error('로컬 분석 서버가 아직 준비되지 않았습니다. 앱을 닫았다가 다시 실행한 뒤 2~3분 정도 기다려 주세요.');
     };
 
     const ensureModelsReady = async (): Promise<boolean> => {

@@ -25,6 +25,7 @@ export const App: React.FC = () => {
                     <MeetingHistory
                         selectedMeetingId={selectedMeetingId}
                         onSelectedMeetingHandled={() => setSelectedMeetingId(null)}
+                        onCreateMeeting={() => setActiveTab('minutes')}
                     />
                 )}
             </Layout>

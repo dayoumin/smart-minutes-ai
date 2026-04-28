@@ -39,16 +39,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'minutes', onTabCh
     );
 
     return (
-        <aside className="w-72 border-r border-border h-screen bg-background flex flex-col p-4 z-10 relative">
-            <div className="mb-6 pl-3 mt-2">
+        <aside className="relative z-10 flex max-h-[42vh] shrink-0 flex-col border-b border-border bg-background p-4 lg:h-screen lg:max-h-none lg:w-72 lg:border-b-0 lg:border-r">
+            <div className="mb-4 pl-1 sm:pl-3 lg:mt-2 lg:mb-6">
                 <span className="text-overline">NIFS AI</span>
                 <div className="mt-2 text-sm font-semibold text-foreground">스마트 회의록</div>
-                <div className="mt-1 text-xs text-muted-foreground leading-relaxed">
+                <div className="mt-1 hidden text-xs leading-relaxed text-muted-foreground sm:block">
                     음성/영상 회의 자료를 요약하고 기록합니다.
                 </div>
             </div>
 
-            <nav className="flex flex-col gap-1">
+            <nav className="grid grid-cols-2 gap-1 lg:flex lg:flex-col">
                 <button
                     className={`${activeTab === 'minutes' ? 'nav-item-active' : 'nav-item'} flex w-full items-center gap-2 border-none text-left`}
                     onClick={() => onTabChange?.('minutes')}
@@ -67,7 +67,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'minutes', onTabCh
                 </button>
             </nav>
 
-            <div className="mt-4 min-h-0 flex-1 border-t border-border pt-4">
+            <div className="mt-4 hidden min-h-0 flex-1 border-t border-border pt-4 sm:block">
                 <div className="mb-2 px-3 text-xs font-semibold text-muted-foreground">최근 회의</div>
                 <div className="flex max-h-full flex-col gap-1 overflow-y-auto pr-1 custom-scrollbar">
                     {recentRecords.length ? (
@@ -96,7 +96,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'minutes', onTabCh
                 </div>
             </div>
 
-            <div className="mt-4 pl-3 text-caption">
+            <div className="mt-4 hidden pl-3 text-caption lg:block">
                 로컬 MVP · FastAPI 연결
             </div>
         </aside>

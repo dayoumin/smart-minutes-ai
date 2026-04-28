@@ -9,6 +9,8 @@ import {
 } from './downloadPreferences';
 import { getApiBase } from './apiBase';
 
+const SETTINGS_FETCH_TIMEOUT_MS = 5000;
+
 interface ModelStatus {
     key: string;
     label: string;
@@ -62,6 +64,17 @@ const modelPageUrl = (model: ModelStatus): string | null => {
 
 const displayPath = (path: string): string => path.replace(/^\\\\\?\\/, '');
 
+const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Response> => {
+    const controller = new AbortController();
+    const timeoutId = window.setTimeout(() => controller.abort(), SETTINGS_FETCH_TIMEOUT_MS);
+
+    try {
+        return await fetch(url, { ...init, signal: controller.signal });
+    } finally {
+        window.clearTimeout(timeoutId);
+    }
+};
+
 export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('models');
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
@@ -82,23 +95,26 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     );
 
     const modelSummary = useMemo(() => {
-        if (!models) return '확인 중';
+        if (isLoading) return '확인 중';
+        if (errorMessage) return '연결 확인 필요';
+        if (!models) return '상태를 확인할 수 없음';
         if (models.ready) return '필수 모델 준비됨';
         return `${missingModels.length}개 모델 필요`;
-    }, [models, missingModels.length]);
+    }, [errorMessage, isLoading, models, missingModels.length]);
 
     const loadSettings = async () => {
         setIsLoading(true);
         setErrorMessage('');
+        setMessage('');
         try {
             const apiBase = await getApiBase();
             const [settingsResponse, modelsResponse] = await Promise.all([
-                fetch(`${apiBase}/api/settings`),
-                fetch(`${apiBase}/api/models/status`),
+                fetchWithTimeout(`${apiBase}/api/settings`),
+                fetchWithTimeout(`${apiBase}/api/models/status`),
             ]);
 
             if (!settingsResponse.ok || !modelsResponse.ok) {
-                throw new Error('설정 정보를 불러오지 못했습니다. 앱을 다시 실행하거나 실행 중인 다른 Python/FastAPI 서버를 종료해 주세요.');
+                throw new Error('분석 서버와 연결하지 못했습니다. 앱을 다시 실행하거나 8000번 포트를 사용 중인 다른 Python/FastAPI 서버를 종료한 뒤 상태 새로고침을 눌러 주세요.');
             }
 
             const nextSettings = await settingsResponse.json() as SettingsPayload;
@@ -109,7 +125,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             setDiarizationEnabled(nextSettings.diarization?.enabled ?? true);
             setSttDevice(nextSettings.stt?.device ?? 'auto');
         } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.');
+            setModels(null);
+            const message = error instanceof Error && !['AbortError', 'TypeError'].includes(error.name)
+                ? error.message
+                : '분석 서버에 연결할 수 없습니다. 앱을 다시 실행하거나 8000번 포트를 사용 중인 다른 서버를 종료한 뒤 상태 새로고침을 눌러 주세요.';
+            setErrorMessage(message);
         } finally {
             setIsLoading(false);
         }
@@ -164,7 +184,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
         try {
             const apiBase = await getApiBase();
-            const response = await fetch(`${apiBase}/api/settings`, {
+            const response = await fetchWithTimeout(`${apiBase}/api/settings`, {
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -317,9 +337,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                         )}
                                     </div>
                                 ))}
-                                {!models?.models.length && (
+                                {isLoading && !models?.models.length && (
                                     <div className="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
                                         모델 상태를 불러오는 중입니다.
+                                    </div>
+                                )}
+                                {!isLoading && !models?.models.length && !errorMessage && (
+                                    <div className="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
+                                        모델 상태 정보가 없습니다. 상태 새로고침을 눌러 다시 확인해 주세요.
                                     </div>
                                 )}
                             </div>

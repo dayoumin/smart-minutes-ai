@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, Trash2 } from 'lucide-react';
+import { Download, FileText, PlusCircle, Trash2 } from 'lucide-react';
 import { Button } from './Button';
 import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepository';
 import { getDownloadFormatPreference } from './downloadPreferences';
@@ -8,6 +8,7 @@ import { toApiUrl } from './apiBase';
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
     onSelectedMeetingHandled?: () => void;
+    onCreateMeeting?: () => void;
 }
 
 type DownloadKind = 'hwpx' | 'txt' | 'docx' | 'md' | 'json';
@@ -22,7 +23,7 @@ const extensionByKind: Record<DownloadKind, string> = {
     json: 'json',
 };
 
-export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled }) => {
+export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled, onCreateMeeting }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
@@ -286,6 +287,24 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     )}
                                 </div>
                             )}
+                        </div>
+                    </div>
+                ) : records.length === 0 ? (
+                    <div className="flex h-full items-center justify-center p-8 text-center">
+                        <div className="flex max-w-sm flex-col items-center gap-4">
+                            <div className="flex h-12 w-12 items-center justify-center rounded-md bg-muted/50 text-primary">
+                                <FileText size={22} />
+                            </div>
+                            <div>
+                                <h3 className="text-base font-semibold text-foreground">아직 저장된 회의록이 없습니다</h3>
+                                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                                    첫 회의 자료를 업로드하면 요약과 발화 스크립트가 이곳에 저장됩니다.
+                                </p>
+                            </div>
+                            <Button onClick={onCreateMeeting}>
+                                <PlusCircle size={16} />
+                                새 회의록 작성
+                            </Button>
                         </div>
                     </div>
                 ) : (

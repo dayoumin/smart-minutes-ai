@@ -424,7 +424,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 <div className="font-medium text-foreground">회사 PC 사용 요약</div>
                                 <p className="mt-1">
                                     `Smart Minutes AI.exe`만 따로 옮기지 말고 `Smart Minutes AI` 폴더 전체를 옮기세요.
-                                    Cohere 모델은 실행 파일 옆 `models\cohere-transcribe-03-2026` 폴더에 들어갑니다.
+                                    Cohere 모델은 실행 파일 옆 `models` 폴더 바로 아래에 넣습니다.
                                 </p>
                             </div>
 

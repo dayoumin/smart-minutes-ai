@@ -359,8 +359,8 @@ async def stream_real_analysis(
         stt_spec = get_model_spec("stt_primary")
         if not model_exists(BASE_DIR, stt_spec):
             raise RuntimeError(
-                "Cohere Transcribe 모델이 없습니다. 실행 파일 옆 "
-                "models\\cohere-transcribe-03-2026 폴더에 모델 파일을 넣은 뒤 다시 실행해 주세요."
+                "Cohere Transcribe 모델이 없습니다. 실행 파일 옆 models 폴더 바로 아래에 "
+                "config.json, model.safetensors 등 Cohere 모델 파일을 넣은 뒤 다시 실행해 주세요."
             )
         config["paths"]["stt_model"] = resolve_model_path(BASE_DIR, stt_spec)
         report_progress("Cohere STT 모델 준비 완료", 8)

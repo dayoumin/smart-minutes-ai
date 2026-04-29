@@ -44,31 +44,37 @@ New-Item -ItemType Directory -Force -Path $PortableModelsDir | Out-Null
 $ModelReadme = @"
 Smart Minutes AI model folder
 
-Put speech and diarization model folders directly here.
+Put the default Cohere speech model files directly in this folder.
+Pyannote diarization files can also live directly here.
 
 Examples:
-- models\cohere-transcribe-03-2026
+- models\config.json
+- models\model.safetensors
+- models\preprocessor_config.json
+- models\tokenizer_config.json
+- models\config.yaml
+- models\embedding\pytorch_model.bin
+- models\segmentation\pytorch_model.bin
+- models\plda\plda.npz
+
+Optional alternate model folders:
 - models\faster-whisper-large-v3
 - models\qwen-asr
-- models\speaker-diarization-community-1
 
-Do not add an extra nested models folder inside a model folder.
+Older layouts are still recognized, but the simplest layout is to keep
+the default model files directly under this models folder.
 "@
 Set-Content -Path (Join-Path $PortableModelsDir "README.txt") -Value $ModelReadme -Encoding UTF8
 
 $PyannoteSource = Join-Path $ModelSourceRoot "diarization\speaker-diarization-community-1"
 if (Test-Path $PyannoteSource) {
-    $PyannoteTarget = Join-Path $PortableModelsDir "speaker-diarization-community-1"
-    if (Test-Path $PyannoteTarget) {
-        Remove-Item -LiteralPath $PyannoteTarget -Recurse -Force
-    }
-    robocopy $PyannoteSource $PyannoteTarget /E /XD .git .cache /XF *.lock | Out-Host
+    robocopy $PyannoteSource $PortableModelsDir /E /XD .git .cache /XF *.lock | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while copying Pyannote model with exit code $LASTEXITCODE"
     }
 }
 else {
-    Write-Warning "Pyannote model was not found at $PyannoteSource. Place it in models\speaker-diarization-community-1 before distribution if diarization is required."
+    Write-Warning "Pyannote model was not found at $PyannoteSource. Place it directly in the portable models folder before distribution if diarization is required."
 }
 
 Write-Host "Created portable desktop package:"

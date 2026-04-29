@@ -27,7 +27,7 @@
 - [x] **normalize 1차 적용**: `backend/pipeline/audio_preprocess.py`에 선택형 ffmpeg `loudnorm` 기반 normalize를 추가하고 `config.json`의 `preprocessing` 설정으로 제어할 수 있게 했다.
 - [ ] **no-Cohere 패키지 재생성 주의**: 최신 PyInstaller 백엔드 sidecar 자체가 약 3.45GB라 Cohere 모델을 제외해도 메일 첨부용으로는 부적합하다. 회사 전달은 USB, 사내 파일 공유, 외장 저장소를 기본 경로로 잡는다.
 - [ ] **Portable 압축 해제 위치 안내**: `Program Files`처럼 쓰기 권한이 엄격한 위치가 아니라 `문서\Smart Minutes AI`, 바탕화면, 또는 사용자 쓰기 가능한 업무 폴더에 압축 해제한다.
-- [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\backend\models\stt\cohere-transcribe-03-2026\model.safetensors` 경로가 존재해야 실제 분석이 가능하다.
+- [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\models\model.safetensors`와 `Smart Minutes AI\models\config.json`이 보이도록 Cohere 모델 파일을 `models` 바로 아래에 둬야 실제 분석이 가능하다. 기존 `models\cohere-transcribe-03-2026` 폴더 방식은 호환 경로로만 유지한다.
 - [ ] **AppData 저장소 분리**: 향후 설치형 배포를 지원하려면 `config.json`, `outputs`, `temp`를 앱 리소스 폴더가 아니라 사용자 쓰기 가능한 AppData/localData 경로로 분리한다.
 - [ ] **로컬 API 보안 개선**: 현재는 `127.0.0.1:8000` 고정 포트를 사용한다. 포트 충돌과 로컬 호출 오용을 줄이기 위해 랜덤 포트와 세션 토큰 구조를 검토한다.
 - [ ] **라이선스/고지 정리**: Cohere, Pyannote, Gemma/Ollama, FFmpeg 및 Python/npm/cargo 의존성에 대한 배포 고지와 라이선스 문서를 릴리스 전에 정리한다.

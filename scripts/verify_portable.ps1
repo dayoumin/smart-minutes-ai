@@ -61,8 +61,10 @@ $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-window
 $backendDir = Join-Path $portablePath "backend"
 $ffmpegExe = Join-Path $backendDir "ffmpeg.exe"
 $modelsDir = Join-Path $portablePath "models"
-$cohereDir = Join-Path $modelsDir "cohere-transcribe-03-2026"
-$pyannoteDir = Join-Path $modelsDir "speaker-diarization-community-1"
+$cohereModelFile = Join-Path $modelsDir "model.safetensors"
+$cohereConfigFile = Join-Path $modelsDir "config.json"
+$pyannoteConfigFile = Join-Path $modelsDir "config.yaml"
+$pyannoteEmbeddingFile = Join-Path $modelsDir "embedding\pytorch_model.bin"
 
 Add-Result "portable folder exists" (Test-Path -LiteralPath $portablePath) $portablePath
 Add-Result "app exe exists" (Test-Path -LiteralPath $appExe) $appExe
@@ -70,13 +72,13 @@ Add-Result "sidecar exe exists" (Test-Path -LiteralPath $sidecarExe) $sidecarExe
 Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backendDir
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
-Add-Result "pyannote model exists" (Test-Path -LiteralPath $pyannoteDir) $pyannoteDir
+Add-Result "pyannote direct layout" ((Test-Path -LiteralPath $pyannoteConfigFile) -and (Test-Path -LiteralPath $pyannoteEmbeddingFile)) $modelsDir
 
 if ($RequireCohere) {
-    Add-Result "cohere model exists" (Test-Path -LiteralPath $cohereDir) $cohereDir
+    Add-Result "cohere direct layout" ((Test-Path -LiteralPath $cohereConfigFile) -and (Test-Path -LiteralPath $cohereModelFile)) $modelsDir
 }
 else {
-    Add-Result "cohere model location" $true $cohereDir
+    Add-Result "cohere direct location" $true $modelsDir
 }
 
 if (Test-Path -LiteralPath $appExe) {

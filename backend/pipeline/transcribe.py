@@ -118,7 +118,19 @@ def _clean_repeated_text(text: str) -> str:
 
 
 def is_cohere_model(model_path: str) -> bool:
-    return "cohere-transcribe" in model_path.lower()
+    normalized = model_path.lower()
+    if "cohere-transcribe" in normalized:
+        return True
+    if os.path.isdir(model_path):
+        return any(
+            os.path.exists(os.path.join(model_path, marker))
+            for marker in (
+                "configuration_cohere_asr.py",
+                "modeling_cohere_asr.py",
+                "processing_cohere_asr.py",
+            )
+        )
+    return False
 
 
 def _split_long_text(text: str, max_chars: int) -> List[str]:

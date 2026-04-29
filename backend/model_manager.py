@@ -15,6 +15,7 @@ class ModelSpec:
     repo_id: Optional[str]
     local_dir: str
     aliases: tuple[str, ...] = field(default_factory=tuple)
+    marker_files: tuple[str, ...] = field(default_factory=tuple)
     required: bool = True
     gated: bool = False
     license_name: str = ""
@@ -28,15 +29,21 @@ MODEL_SPECS = [
         key="stt_primary",
         label="Cohere Transcribe 03-2026",
         repo_id="CohereLabs/cohere-transcribe-03-2026",
-        local_dir="../models/cohere-transcribe-03-2026",
-        aliases=("./models/stt/cohere-transcribe-03-2026",),
+        local_dir="../models",
+        aliases=("../models/cohere-transcribe-03-2026", "./models/stt/cohere-transcribe-03-2026"),
+        marker_files=(
+            "config.json",
+            "model.safetensors",
+            "preprocessor_config.json",
+            "tokenizer_config.json",
+        ),
         gated=True,
         license_name="Apache-2.0",
         license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
         requires_token=True,
         manual_note=(
-            "실행 파일 옆 models\\cohere-transcribe-03-2026 폴더에 모델 파일을 넣으세요. "
-            "Hugging Face에서 직접 받거나 사내 공유 저장소에서 받은 폴더를 그대로 복사하면 됩니다."
+            "실행 파일 옆 models 폴더 바로 아래에 Cohere 모델 파일을 넣으세요. "
+            "config.json, model.safetensors 등이 models 폴더 안에 바로 보여야 합니다."
         ),
     ),
     ModelSpec(
@@ -45,6 +52,7 @@ MODEL_SPECS = [
         repo_id="Systran/faster-whisper-large-v3",
         local_dir="../models/faster-whisper-large-v3",
         aliases=("./models/stt/faster-whisper-large-v3",),
+        marker_files=("model.bin", "model.safetensors", "tokenizer.json"),
         required=False,
         license_url="https://huggingface.co/Systran/faster-whisper-large-v3",
     ),
@@ -52,14 +60,20 @@ MODEL_SPECS = [
         key="diarization",
         label="Pyannote Community-1 Diarization",
         repo_id="pyannote/speaker-diarization-community-1",
-        local_dir="../models/speaker-diarization-community-1",
-        aliases=("./models/diarization/speaker-diarization-community-1",),
+        local_dir="../models",
+        aliases=("../models/speaker-diarization-community-1", "./models/diarization/speaker-diarization-community-1"),
+        marker_files=(
+            "config.yaml",
+            "embedding/pytorch_model.bin",
+            "segmentation/pytorch_model.bin",
+            "plda/plda.npz",
+        ),
         gated=True,
         license_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
         manual_note=(
-            "실행 파일 옆 models\\speaker-diarization-community-1 폴더에 모델 파일을 넣으세요. "
-            "기존 backend\\models\\diarization 위치도 호환용으로 인식합니다."
+            "Pyannote 화자 분리 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
+            "기존 models\\speaker-diarization-community-1 폴더 방식도 함께 인식합니다."
         ),
     ),
     ModelSpec(
@@ -109,10 +123,12 @@ def directory_has_model_payload(path: str) -> bool:
     return False
 
 
-def path_has_model_payload(path: str) -> bool:
+def path_has_model_payload(path: str, spec: Optional[ModelSpec] = None) -> bool:
     if os.path.isfile(path):
         return os.path.getsize(path) > 0
     if os.path.isdir(path):
+        if spec and spec.marker_files:
+            return all(os.path.exists(os.path.join(path, *marker.split("/"))) for marker in spec.marker_files)
         return directory_has_model_payload(path)
     return False
 
@@ -123,7 +139,7 @@ def resolve_model_path(base_dir: str, spec: ModelSpec) -> str:
 
     paths = candidate_paths(base_dir, spec)
     for path in paths:
-        if path_has_model_payload(path):
+        if path_has_model_payload(path, spec):
             return path
     return paths[0]
 
@@ -131,7 +147,7 @@ def resolve_model_path(base_dir: str, spec: ModelSpec) -> str:
 def model_exists(base_dir: str, spec: ModelSpec) -> bool:
     if spec.local_dir.startswith("ollama:"):
         return ollama_model_exists(spec.local_dir.removeprefix("ollama:"))
-    return any(path_has_model_payload(path) for path in candidate_paths(base_dir, spec))
+    return any(path_has_model_payload(path, spec) for path in candidate_paths(base_dir, spec))
 
 
 def hf_token_available() -> bool:
@@ -201,7 +217,7 @@ def ensure_model(base_dir: str, key: str, token: Optional[str] = None) -> str:
     if model_exists(base_dir, spec):
         return resolve_model_path(base_dir, spec)
     if not spec.repo_id:
-        raise ValueError(f"{spec.label}은 자동 다운로드 대상이 아닙니다.")
+        raise ValueError(f"{spec.label}는 자동 다운로드 대상이 아닙니다.")
     token = token or get_token()
     if spec.requires_token and not token:
         raise ValueError(f"{spec.label} 다운로드에는 HF_TOKEN이 필요합니다.")

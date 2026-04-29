@@ -22,6 +22,13 @@
     "long_audio_chunk_seconds": 30,
     "enable_long_audio_chunking": true
   },
+  "preprocessing": {
+    "enabled": true,
+    "normalize_audio": true,
+    "normalization_mode": "auto",
+    "trim_silence": false,
+    "denoise": false
+  },
   "diarization": {
     "enabled": true,
     "min_speakers": null,

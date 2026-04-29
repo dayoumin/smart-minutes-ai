@@ -1,0 +1,4 @@
+sample_id,file_path,reference_transcript_path,duration_seconds,recording_device,recording_location,speaker_count,primary_conditions,expected_issues,language_mix,has_reference_transcript,notes
+sample_001,D:\AudioSamples\sample_001.wav,,,"phone","meeting_room",10,"quiet;large_meeting","speaker_overlap;proper_nouns","ko+en",false,
+sample_002,D:\AudioSamples\sample_002.wav,,,"usb_mic","office",3,"low_volume","quiet_speech","ko",false,
+sample_003,D:\AudioSamples\sample_003.wav,,,"laptop_mic","conference_room",6,"aircon_noise;reverb","hallucination_risk","ko+abbr",false,

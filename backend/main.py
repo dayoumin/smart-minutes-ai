@@ -67,6 +67,7 @@ async def get_settings() -> dict:
         "analysis_mode": os.environ.get("ANALYSIS_MODE", "mock"),
         "paths": config.get("paths", {}),
         "processing": config.get("processing", {}),
+        "preprocessing": config.get("preprocessing", {}),
         "privacy": config.get("privacy", {}),
         "summary": config.get("summary", {}),
         "diarization": config.get("diarization", {}),
@@ -87,6 +88,19 @@ async def update_settings(payload: dict = Body(...)) -> dict:
             if chunk_seconds < 10 or chunk_seconds > 3600:
                 raise HTTPException(status_code=400, detail="long_audio_chunk_seconds must be between 10 and 3600")
             config.setdefault("processing", {})["long_audio_chunk_seconds"] = chunk_seconds
+
+    if "preprocessing" in payload:
+        preprocessing = payload["preprocessing"] or {}
+        target = config.setdefault("preprocessing", {})
+        if "enabled" in preprocessing:
+            target["enabled"] = bool(preprocessing["enabled"])
+        if "normalize_audio" in preprocessing:
+            target["normalize_audio"] = bool(preprocessing["normalize_audio"])
+        if "normalization_mode" in preprocessing:
+            mode = str(preprocessing["normalization_mode"]).lower()
+            if mode not in {"auto", "loudnorm", "dynaudnorm"}:
+                raise HTTPException(status_code=400, detail="preprocessing.normalization_mode must be auto, loudnorm, or dynaudnorm")
+            target["normalization_mode"] = mode
 
     if "diarization" in payload:
         diarization = payload["diarization"] or {}
@@ -533,7 +547,13 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     ffmpeg_path = config["paths"]["ffmpeg"]
     if not ffmpeg_path.lower() == "ffmpeg" and not os.path.isabs(ffmpeg_path):
         ffmpeg_path = os.path.normpath(os.path.join(BASE_DIR, ffmpeg_path))
-    convert_to_wav(input_file, temp_wav_path, ffmpeg_path)
+    preprocess_result = convert_to_wav(
+        input_file,
+        temp_wav_path,
+        ffmpeg_path,
+        preprocessing=config.get("preprocessing", {}),
+    )
+    preprocessing_applied = preprocess_result.get("preprocessing", {}) if isinstance(preprocess_result, dict) else {}
     
     # 2. STT (Transcribe)
     _report_progress("Preparing audio chunks...", 25)
@@ -640,7 +660,8 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
             "diarization_model": config["paths"].get("diarization_model"),
             "llm_model": config["paths"].get("llm_model"),
             "diarization": config.get("diarization", {}).get("enabled", True),
-            "summary": config.get("summary", {}).get("enabled", True)
+            "summary": config.get("summary", {}).get("enabled", True),
+            "preprocessing": preprocessing_applied,
         },
         "segments": segments,
         "summary": summary_data

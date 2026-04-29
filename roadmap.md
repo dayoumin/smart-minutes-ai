@@ -23,6 +23,8 @@
 - [x] **회사 전달용 no-Cohere 패키지 생성**: 앱, 백엔드 sidecar, Pyannote 모델은 포함하고 Cohere STT 모델은 회사 PC에서 별도 다운로드한다.
 - [x] **2026-04-27 실제 MP4 포터블 검증**: `Smart Minutes AI\backend` sidecar를 직접 실행해 루트 MP4를 `/api/analyze`로 업로드했고, `event: result`/`event: done` 응답과 Cohere native long-form 경로를 확인했다.
 - [x] **Cohere STT 경로 수정**: 직접 `generate()` 또는 외부 30초 청크 방식은 한국어 장문 품질이 불안정했다. 공식 `model.transcribe(..., language="ko")` long-form 경로를 기본으로 사용한다.
+- [x] **오디오 전처리 현황 문서화**: 전처리 범위와 Cohere 경계, 검증 기준을 `docs/audio-preprocessing-notes.md`에 정리했다.
+- [x] **normalize 1차 적용**: `backend/pipeline/audio_preprocess.py`에 선택형 ffmpeg `loudnorm` 기반 normalize를 추가하고 `config.json`의 `preprocessing` 설정으로 제어할 수 있게 했다.
 - [ ] **no-Cohere 패키지 재생성 주의**: 최신 PyInstaller 백엔드 sidecar 자체가 약 3.45GB라 Cohere 모델을 제외해도 메일 첨부용으로는 부적합하다. 회사 전달은 USB, 사내 파일 공유, 외장 저장소를 기본 경로로 잡는다.
 - [ ] **Portable 압축 해제 위치 안내**: `Program Files`처럼 쓰기 권한이 엄격한 위치가 아니라 `문서\Smart Minutes AI`, 바탕화면, 또는 사용자 쓰기 가능한 업무 폴더에 압축 해제한다.
 - [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\backend\models\stt\cohere-transcribe-03-2026\model.safetensors` 경로가 존재해야 실제 분석이 가능하다.
@@ -38,4 +40,5 @@
 - **curl 업로드 주의**: 한글/특수문자 파일명은 CLI 테스트에서 업로드 인자 처리가 꼬일 수 있다. 자동 테스트에서는 임시 ASCII 파일명으로 복사해 업로드한다.
 - **Mock 결과 혼동 주의**: 프론트/백엔드 기본 분석 모드가 mock이면 영상 업로드가 즉시 끝나고 실제 STT/화자분리 없이 `[Mock 회의록]`만 저장된다. 개발/데스크탑 기본값은 `real`로 두고, mock 레코드는 실제 transcript가 없는 테스트 데이터로 취급한다.
 - **torchcodec 경고**: pyannote import 시 torchcodec 경고가 나오지만 현재 diarization은 `soundfile`로 읽은 waveform을 직접 넘기므로 실제 분석은 성공했다. 파일 경로를 pyannote에 직접 넘기는 코드로 바꾸면 다시 문제가 될 수 있다.
+- **전처리 범위 주의**: 현재 Cohere 경로에는 denoise / silence trim이 없고, normalize만 1차 적용돼 있다. 품질 개선은 전처리 on/off 비교 결과를 보고 다음 단계를 정한다.
 - **검색 필요성 판단**: Cohere 품질 문제는 공식 모델 코드/모델 카드와 로컬 재현으로 원인이 확인됐다. 추가 검색은 성능 최적화, GPU/CPU 속도 개선, PyInstaller 크기 축소를 할 때 진행한다.

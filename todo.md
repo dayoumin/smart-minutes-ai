@@ -25,6 +25,30 @@
 - [ ] 한글(HWPX) 템플릿 지원 (미리 지정된 사내 회의록 양식에 맞게 결과 매핑)
 - [ ] 표 형식을 포함한 깔끔한 DOCX 내보내기 스타일(python-docx) 개선
 
+## 4-1. 오디오 전처리 품질 개선
+- [x] 현재 전처리 현황 문서화 (`docs/audio-preprocessing-notes.md`)
+- [x] 오디오 전처리 테스트 계획 문서화 (`docs/audio-preprocessing-test-plan.md`)
+- [x] `backend/pipeline/audio_preprocess.py`에 선택형 볼륨 정규화(normalize) 1차 적용
+- [x] 입력 음량 측정 기반 `auto normalization` 1차 적용
+- [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)
+- [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
+- [ ] 필요 시 `speechnorm` 추가 비교
+- [ ] 대체 STT 모델 비교 검토
+  - faster-whisper-large-v3
+  - Qwen3-ASR 계열
+  - WhisperX 계열
+  - 비교 기준: timestamp 구조, diarization 정합성, 한국어 회의 정확도, 처리시간, 로컬 배포 난이도
+- [ ] 무음 제거는 ffmpeg `silenceremove` 또는 별도 VAD 기반 방식으로 비교 검토
+- [ ] denoise는 한국어 자음/말끝 손실 위험이 있어 별도 품질 테스트 세트로 신중 검증
+- [ ] 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
+- [ ] 사용자 설정 UI에 전처리 옵션 추가
+  - 자동
+  - 끔
+  - 표준 정규화(`loudnorm`)
+  - 동적 정규화(`dynaudnorm`)
+  - 고급 옵션은 기본 숨김 처리 검토
+- [ ] 사용자에게 현재 적용된 전처리 모드와 자동 선택 결과를 분석 화면/결과 메타데이터에 표시
+
 ## 5. 대용량 음성/영상 처리
 - [x] 영상 파일 업로드 시 ffmpeg로 음성 트랙만 추출하고 원본 영상은 설정에 따라 보관/삭제
 - [x] 긴 음성 파일을 시간 기준 청크(예: 10~15분)로 분할해 STT 메모리 사용량을 제한하는 백엔드 뼈대 추가

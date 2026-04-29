@@ -29,6 +29,7 @@
 - `config.json`의 `preprocessing.normalize_audio=true`이면 ffmpeg normalize 필터를 적용할 수 있다.
 - `normalization_mode=auto`이면 입력 파일의 `mean_volume`을 먼저 측정한 뒤 `off / loudnorm` 중 하나를 선택한다.
 - `dynaudnorm`은 자동 기본 선택이 아니라 수동 실험 모드로 유지한다.
+- 현재 파이프라인 결과 JSON의 `settings.preprocessing`에 요청 모드, 실제 선택 모드, 측정된 mean volume이 기록된다.
 - 긴 파일은 `split_wav_by_duration()`에서 시간 기준으로 chunk를 나눈다.
 - Cohere 경로는 long-form `model.transcribe(..., language="ko")`를 우선 사용한다.
 - fallback faster-whisper 경로에는 `vad_filter=True`가 들어가 있어 STT 단계에서 일정 수준의 무음 필터링이 적용된다.

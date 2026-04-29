@@ -33,6 +33,11 @@
 - [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)
 - [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
 - [ ] 필요 시 `speechnorm` 추가 비교
+- [ ] 대체 STT 모델 비교 검토
+  - faster-whisper-large-v3
+  - Qwen3-ASR 계열
+  - WhisperX 계열
+  - 비교 기준: timestamp 구조, diarization 정합성, 한국어 회의 정확도, 처리시간, 로컬 배포 난이도
 - [ ] 무음 제거는 ffmpeg `silenceremove` 또는 별도 VAD 기반 방식으로 비교 검토
 - [ ] denoise는 한국어 자음/말끝 손실 위험이 있어 별도 품질 테스트 세트로 신중 검증
 - [ ] 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리

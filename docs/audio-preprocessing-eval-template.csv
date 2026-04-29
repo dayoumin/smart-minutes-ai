@@ -1,0 +1,5 @@
+sample_id,mode,stt_quality,proper_noun_accuracy,small_voice_retention,romanized_error_risk,speaker_alignment,summary_quality,processing_time_sec,regression_found,notes
+sample_001,off,,,,,,,,,
+sample_001,auto,,,,,,,,,
+sample_001,loudnorm,,,,,,,,,
+sample_001,speechnorm,,,,,,,,,

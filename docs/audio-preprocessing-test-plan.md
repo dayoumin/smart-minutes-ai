@@ -107,6 +107,41 @@
    - 전처리 시간 증가량
    - 전체 분석 시간 증가량
 
+## 4-1. 과거 문제 재확인 체크리스트
+
+이 프로젝트에서 이미 실제로 문제였던 항목은 비교 테스트 때 반드시 다시 확인한다.
+
+1. Cohere 경로의 timestamp 한계
+   - Cohere는 현재 코드상 정확한 word/segment timestamp가 아니라 추정 timestamp를 사용한다.
+   - 전처리 후에도 `timingApproximate` 기반 정렬 품질이 더 나빠지지 않는지 확인한다.
+
+2. 화자 정렬 붕괴 여부
+   - pyannote diarization 구간과 STT 문장 구간이 과도하게 어긋나지 않는지 본다.
+   - 다화자 구간에서 문장 분할이 더 부자연스러워지지 않는지 확인한다.
+
+3. 영어/로마자식 오인식
+   - 기존 메모에서 일부 구간의 로마자/영어식 오인식이 남아 있었다.
+   - 전처리가 이 문제를 줄이는지, 또는 오히려 키우는지 비교한다.
+
+4. 비음성/저음량 구간 hallucination
+   - Cohere 모델 카드는 non-speech에도 eager하게 전사할 수 있다고 명시한다.
+   - 조용한 구간, 바닥잡음, 에어컨 소리에서 허위 전사가 늘지 않는지 확인한다.
+
+5. 작은 목소리 손실
+   - normalize/denoise/silence 처리로 작은 목소리나 말끝이 사라지지 않는지 본다.
+
+6. 화자 분리 모델과의 상호작용
+   - 전처리 후 diarization error가 커지지 않는지 확인한다.
+   - overlap 구간에서 speaker assignment가 더 불안정해지지 않는지 본다.
+
+7. 긴 파일 처리 안정성
+   - chunking, 메모리 사용량, 처리 시간, 출력 일관성을 같이 본다.
+   - 짧은 샘플에서는 좋아 보여도 긴 회의 파일에서 무너지지 않는지 확인한다.
+
+8. 결과물 품질
+   - transcript뿐 아니라 summary, action item, 결정사항 추출까지 같이 본다.
+   - STT가 조금 좋아져도 요약이 흔들리면 기본값 채택을 다시 본다.
+
 ## 5. 평가 방식
 
 정량 평가:
@@ -136,20 +171,26 @@
 2. 화자 분리 품질 저하가 없어야 함
 3. 긴 파일에서 처리시간 증가가 과도하지 않아야 함
 4. 특정 샘플에서만 좋아지고 전체적으로 불안정하면 기본값으로 채택하지 않음
+5. 과거 문제 재확인 체크리스트에서 치명적인 회귀가 없어야 함
 
 ## 7. 실행 순서
 
-1. 현재 로컬 샘플 정리
-2. 부족한 유형 샘플 수집
-3. `off / auto / loudnorm` 1차 비교
-4. 필요 시 `speechnorm` 추가
-5. 승자 모드를 기본값 후보로 지정
-6. 그 결과를 UI 설정 문구와 도움말에 반영
+1. 비교는 집 PC 등 성능이 충분한 환경에서 진행한다.
+2. 샘플 폴더를 모은 뒤 Codex가 `scripts/analyze_audio_inventory.py`로 인벤토리 CSV를 생성한다.
+3. Codex가 `docs/audio-testset-manifest-template.csv`를 기준으로 실제 manifest를 채운다.
+4. 부족한 유형 샘플 수집
+5. `off / auto / loudnorm` 1차 비교
+6. 필요 시 `speechnorm` 추가
+7. 승자 모드를 기본값 후보로 지정
+8. 그 결과를 UI 설정 문구와 도움말에 반영
 
 ## 8. 결과 기록 위치
 
 - 테스트 계획: `docs/audio-preprocessing-test-plan.md`
 - 전처리 설계 메모: `docs/audio-preprocessing-notes.md`
+- 샘플 메타데이터 템플릿: `docs/audio-testset-manifest-template.csv`
+- 평가 결과 템플릿: `docs/audio-preprocessing-eval-template.csv`
+- 오디오 인벤토리 리포트 스크립트: `scripts/analyze_audio_inventory.py`
 - 개발 작업 추적: `todo.md`
 
 ## 9. 현재 판단
@@ -160,3 +201,14 @@
 - 현재 짧은 저음량 샘플에서는 `loudnorm` 효과가 확인됐다.
 - 현재 짧은 저음량 샘플에서는 `dynaudnorm` 효과를 확인하지 못했다.
 - 따라서 다음 비교의 중심은 `off / auto / loudnorm`이다.
+
+## 10. 문서 역할 구분
+
+- `todo.md`
+  - 해야 할 작업 목록
+
+- `docs/audio-preprocessing-notes.md`
+  - 현재 구조, 설계 판단, 전처리 범위 메모
+
+- `docs/audio-preprocessing-test-plan.md`
+  - 비교 대상, 테스트셋 구성, 평가 기준, 과거 문제 재확인 체크리스트

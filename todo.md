@@ -1,3 +1,10 @@
+# 0. 회사 PC에서 가장 먼저 할 일
+- [ ] `Smart_Minutes_AI_Portable_no_Cohere.zip`을 풀고 `Smart Minutes AI` 폴더 전체를 그대로 둔다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
+- [ ] Cohere 음성 인식 모델은 별도로 받아서 `Smart Minutes AI\models` 바로 아래에 복사한다.
+- [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`.
+- [ ] Pyannote 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
+- [ ] 앱 실행 후 시스템 설정 > 모델에서 Cohere만 누락으로 표시되는지 확인하고, Cohere 복사 후 상태 새로고침을 누른다.
+
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)
 
 ## 1. 프론트엔드 연동 및 메타데이터 지원

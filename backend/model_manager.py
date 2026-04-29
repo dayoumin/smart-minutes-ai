@@ -1,6 +1,6 @@
 import os
 import subprocess
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, Iterable, Optional
 
 from huggingface_hub import get_token, snapshot_download
@@ -14,6 +14,7 @@ class ModelSpec:
     label: str
     repo_id: Optional[str]
     local_dir: str
+    aliases: tuple[str, ...] = field(default_factory=tuple)
     required: bool = True
     gated: bool = False
     license_name: str = ""
@@ -27,21 +28,23 @@ MODEL_SPECS = [
         key="stt_primary",
         label="Cohere Transcribe 03-2026",
         repo_id="CohereLabs/cohere-transcribe-03-2026",
-        local_dir="./models/stt/cohere-transcribe-03-2026",
+        local_dir="../models/cohere-transcribe-03-2026",
+        aliases=("./models/stt/cohere-transcribe-03-2026",),
         gated=True,
         license_name="Apache-2.0",
         license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
         requires_token=True,
         manual_note=(
-            "Hugging Face에서 접근 권한을 받은 뒤 다운로드하세요. "
-            "portable 배포본에서는 이 폴더에 모델 파일을 직접 넣으면 토큰 없이 사용할 수 있습니다."
+            "실행 파일 옆 models\\cohere-transcribe-03-2026 폴더에 모델 파일을 넣으세요. "
+            "Hugging Face에서 직접 받거나 사내 공유 저장소에서 받은 폴더를 그대로 복사하면 됩니다."
         ),
     ),
     ModelSpec(
         key="stt_fallback",
         label="Faster Whisper Large v3",
         repo_id="Systran/faster-whisper-large-v3",
-        local_dir="./models/stt/faster-whisper-large-v3",
+        local_dir="../models/faster-whisper-large-v3",
+        aliases=("./models/stt/faster-whisper-large-v3",),
         required=False,
         license_url="https://huggingface.co/Systran/faster-whisper-large-v3",
     ),
@@ -49,13 +52,14 @@ MODEL_SPECS = [
         key="diarization",
         label="Pyannote Community-1 Diarization",
         repo_id="pyannote/speaker-diarization-community-1",
-        local_dir="./models/diarization/speaker-diarization-community-1",
+        local_dir="../models/speaker-diarization-community-1",
+        aliases=("./models/diarization/speaker-diarization-community-1",),
         gated=True,
         license_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
         manual_note=(
-            "Hugging Face에서 사용자 조건을 수락한 뒤 다운로드할 수 있습니다. "
-            "git-lfs clone 후 이 경로에 배치해도 됩니다."
+            "실행 파일 옆 models\\speaker-diarization-community-1 폴더에 모델 파일을 넣으세요. "
+            "기존 backend\\models\\diarization 위치도 호환용으로 인식합니다."
         ),
     ),
     ModelSpec(
@@ -64,7 +68,7 @@ MODEL_SPECS = [
         repo_id=None,
         local_dir="ollama:gemma4:e2b",
         required=False,
-        manual_note="Ollama에 gemma4:e2b 또는 호환 Gemma 모델이 있어야 요약 품질이 좋아집니다.",
+        manual_note="Ollama에 gemma4:e2b 또는 호환 Gemma 모델이 있으면 요약 품질이 좋아집니다.",
     ),
 ]
 
@@ -75,16 +79,10 @@ def resolve_backend_path(base_dir: str, path_value: str) -> str:
     return os.path.normpath(os.path.join(base_dir, path_value))
 
 
-def model_exists(base_dir: str, spec: ModelSpec) -> bool:
+def candidate_paths(base_dir: str, spec: ModelSpec) -> list[str]:
     if spec.local_dir.startswith("ollama:"):
-        return ollama_model_exists(spec.local_dir.removeprefix("ollama:"))
-
-    path = resolve_backend_path(base_dir, spec.local_dir)
-    if os.path.isfile(path):
-        return os.path.getsize(path) > 0
-    if os.path.isdir(path):
-        return directory_has_model_payload(path)
-    return False
+        return [spec.local_dir]
+    return [resolve_backend_path(base_dir, path) for path in (spec.local_dir, *spec.aliases)]
 
 
 def directory_has_model_payload(path: str) -> bool:
@@ -111,6 +109,31 @@ def directory_has_model_payload(path: str) -> bool:
     return False
 
 
+def path_has_model_payload(path: str) -> bool:
+    if os.path.isfile(path):
+        return os.path.getsize(path) > 0
+    if os.path.isdir(path):
+        return directory_has_model_payload(path)
+    return False
+
+
+def resolve_model_path(base_dir: str, spec: ModelSpec) -> str:
+    if spec.local_dir.startswith("ollama:"):
+        return spec.local_dir
+
+    paths = candidate_paths(base_dir, spec)
+    for path in paths:
+        if path_has_model_payload(path):
+            return path
+    return paths[0]
+
+
+def model_exists(base_dir: str, spec: ModelSpec) -> bool:
+    if spec.local_dir.startswith("ollama:"):
+        return ollama_model_exists(spec.local_dir.removeprefix("ollama:"))
+    return any(path_has_model_payload(path) for path in candidate_paths(base_dir, spec))
+
+
 def hf_token_available() -> bool:
     return bool(os.environ.get("HF_TOKEN") or get_token())
 
@@ -134,13 +157,12 @@ def ollama_model_exists(model_name: str) -> bool:
 def get_model_status(base_dir: str) -> Dict:
     models = []
     for spec in MODEL_SPECS:
-        path = spec.local_dir if spec.local_dir.startswith("ollama:") else resolve_backend_path(base_dir, spec.local_dir)
         installed = model_exists(base_dir, spec)
         models.append({
             "key": spec.key,
             "label": spec.label,
             "repo_id": spec.repo_id,
-            "path": path,
+            "path": resolve_model_path(base_dir, spec),
             "installed": installed,
             "required": spec.required,
             "gated": spec.gated,
@@ -177,14 +199,13 @@ def get_model_spec(key: str) -> ModelSpec:
 def ensure_model(base_dir: str, key: str, token: Optional[str] = None) -> str:
     spec = get_model_spec(key)
     if model_exists(base_dir, spec):
-        return spec.local_dir
+        return resolve_model_path(base_dir, spec)
     if not spec.repo_id:
         raise ValueError(f"{spec.label}은 자동 다운로드 대상이 아닙니다.")
     token = token or get_token()
     if spec.requires_token and not token:
         raise ValueError(f"{spec.label} 다운로드에는 HF_TOKEN이 필요합니다.")
-    download_model(base_dir, spec, token=token)
-    return spec.local_dir
+    return download_model(base_dir, spec, token=token)
 
 
 def download_model(base_dir: str, spec: ModelSpec, token: Optional[str] = None) -> str:
@@ -194,6 +215,9 @@ def download_model(base_dir: str, spec: ModelSpec, token: Optional[str] = None) 
     local_dir = resolve_backend_path(base_dir, spec.local_dir)
     os.makedirs(local_dir, exist_ok=True)
     token = token or get_token()
+    if spec.requires_token and not token:
+        raise ValueError(f"{spec.label} 다운로드에는 Hugging Face 토큰이 필요합니다.")
+
     snapshot_download(
         repo_id=spec.repo_id,
         local_dir=local_dir,

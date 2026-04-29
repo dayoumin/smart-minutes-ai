@@ -61,5 +61,11 @@ if ($IncludeModels) {
         throw "robocopy failed with exit code $LASTEXITCODE"
     }
 }
+else {
+    $ModelTarget = Join-Path $ResourceBackendDir "models"
+    if (Test-Path $ModelTarget) {
+        Remove-Item -LiteralPath $ModelTarget -Recurse -Force
+    }
+}
 
 Write-Host "Prepared Tauri backend resources: $ResourceBackendDir"

@@ -1,4 +1,4 @@
-import argparse
+﻿import argparse
 import asyncio
 import os
 import json
@@ -12,7 +12,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
-from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec
+from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec, resolve_model_path
 
 BASE_DIR = os.path.abspath(
     os.environ.get(
@@ -142,66 +142,64 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
 @app.post("/api/models/download")
 async def download_missing_models(payload: dict | None = Body(default=None)) -> StreamingResponse:
     async def event_generator() -> AsyncIterator[str]:
-        token = os.environ.get("HF_TOKEN")
-        requested_keys = set((payload or {}).get("models") or [])
-        if requested_keys:
-            candidates = [get_model_spec(key) for key in requested_keys]
-            missing = [spec for spec in candidates if not model_exists(BASE_DIR, spec)]
-        else:
-            missing = list(missing_downloadable_models(BASE_DIR, required_only=True))
+        steps = [
+            (10, "파일 업로드 수신 완료"),
+            (25, "오디오 전처리 준비 중"),
+            (45, "음성 인식(STT) mock 처리 중"),
+            (65, "화자 분리 mock 처리 중"),
+            (85, "회의 요약 mock 생성 중"),
+        ]
 
-        if not missing:
-            yield sse_event({
-                "type": "result",
-                "status": "completed",
-                "message": "필수 모델이 이미 준비되어 있습니다.",
-                "models": get_model_status(BASE_DIR)["models"],
-            }, event="result")
-            yield sse_event("[DONE]", event="done")
-            return
-
-        total = len(missing)
-        for index, spec in enumerate(missing, start=1):
-            progress = int(((index - 1) / total) * 100)
+        for progress, message in steps:
+            await asyncio.sleep(0.35)
             yield sse_event({
                 "type": "progress",
-                "status": "processing",
                 "progress": progress,
-                "message": f"{spec.label} 다운로드를 준비하고 있습니다.",
-                "model": spec.key,
-                "gated": spec.gated,
-                "path": os.path.abspath(resolve_config_path(spec.local_dir)),
-            }, event="progress")
-
-            try:
-                await asyncio.to_thread(download_model, BASE_DIR, spec, token)
-            except Exception as exc:
-                yield sse_event({
-                    "type": "error",
-                    "status": "error",
-                    "progress": progress,
-                    "message": f"{spec.label} 다운로드 실패: {exc}",
-                    "model": spec.key,
-                }, event="error")
-                yield sse_event("[DONE]", event="done")
-                return
-
-            yield sse_event({
-                "type": "progress",
+                "message": message,
                 "status": "processing",
-                "progress": int((index / total) * 100),
-                "message": f"{spec.label} 다운로드 완료",
-                "model": spec.key,
             }, event="progress")
 
-        yield sse_event({
+        final_data = {
             "type": "result",
-            "status": "completed",
+            "mode": "mock",
             "progress": 100,
-            "message": "모델 다운로드가 완료되었습니다.",
-            "models": get_model_status(BASE_DIR)["models"],
-        }, event="result")
+            "status": "completed",
+            "meeting": {
+                "title": title,
+                "date": date,
+                "participants": participants,
+                "source_file": file.filename,
+            },
+            "summary": (
+                f"[Mock 회의록]\n"
+                f"- 회의명: {title}\n"
+                f"- 일시: {date}\n"
+                f"- 참석자: {participants}\n"
+                f"- 업로드 파일: {file.filename}\n\n"
+                "프론트엔드가 FastAPI 백엔드에 파일과 메타데이터를 전송했고, "
+                "백엔드는 SSE 스트리밍으로 진행률과 최종 회의록 결과를 반환했습니다."
+            ),
+            "topics": ["엔드투엔드 연결", "SSE 진행률 스트리밍", "실제 AI 파이프라인 연동 준비"],
+            "actions": ["Mock 응답을 실제 STT/요약 파이프라인으로 교체", "회의록 DB 저장 API 추가"],
+            "segments": [
+                {
+                    "start": "00:00:00",
+                    "end": "00:00:05",
+                    "speaker": "Speaker 1",
+                    "text": "FastAPI 서버가 업로드 요청을 정상적으로 받았습니다.",
+                },
+                {
+                    "start": "00:00:06",
+                    "end": "00:00:11",
+                    "speaker": "Speaker 2",
+                    "text": "프론트엔드는 SSE 스트림에서 진행률 이벤트를 수신하고 있습니다.",
+                },
+            ],
+        }
+
+        yield sse_event(final_data, event="result")
         yield sse_event("[DONE]", event="done")
+
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
@@ -246,15 +244,12 @@ async def analyze_meeting(
 
         for progress, message in steps:
             await asyncio.sleep(0.35)
-            yield sse_event(
-                {
-                    "type": "progress",
-                    "progress": progress,
-                    "message": message,
-                    "status": "processing",
-                },
-                event="progress",
-            )
+            yield sse_event({
+                "type": "progress",
+                "progress": progress,
+                "message": message,
+                "status": "processing",
+            }, event="progress")
 
         final_data = {
             "type": "result",
@@ -273,7 +268,7 @@ async def analyze_meeting(
                 f"- 일시: {date}\n"
                 f"- 참석자: {participants}\n"
                 f"- 업로드 파일: {file.filename}\n\n"
-                "프론트엔드가 FastAPI 백엔드에 오디오 파일과 메타데이터를 전송했고, "
+                "프론트엔드가 FastAPI 백엔드에 파일과 메타데이터를 전송했고, "
                 "백엔드는 SSE 스트리밍으로 진행률과 최종 회의록 결과를 반환했습니다."
             ),
             "topics": ["엔드투엔드 연결", "SSE 진행률 스트리밍", "실제 AI 파이프라인 연동 준비"],
@@ -290,12 +285,6 @@ async def analyze_meeting(
                     "end": "00:00:11",
                     "speaker": "Speaker 2",
                     "text": "프론트엔드는 SSE 스트림에서 진행률 이벤트를 수신하고 있습니다.",
-                },
-                {
-                    "start": "00:00:12",
-                    "end": "00:00:17",
-                    "speaker": "Speaker 1",
-                    "text": "이제 mock 결과를 실제 모델 출력으로 바꾸면 됩니다.",
                 },
             ],
         }
@@ -356,16 +345,18 @@ async def stream_real_analysis(
         stt_spec = get_model_spec("stt_primary")
         if not model_exists(BASE_DIR, stt_spec):
             raise RuntimeError(
-                "Cohere Transcribe 모델이 없습니다. 설정 화면에서 다운로드하거나 "
-                "모델 파일을 준비한 뒤 다시 실행해 주세요."
+                "Cohere Transcribe 모델이 없습니다. 실행 파일 옆 "
+                "models\\cohere-transcribe-03-2026 폴더에 모델 파일을 넣은 뒤 다시 실행해 주세요."
             )
-        config["paths"]["stt_model"] = stt_spec.local_dir
+        config["paths"]["stt_model"] = resolve_model_path(BASE_DIR, stt_spec)
         report_progress("Cohere STT 모델 준비 완료", 8)
 
         diarization_spec = get_model_spec("diarization")
         diarization_ready = model_exists(BASE_DIR, diarization_spec)
 
-        if not diarization_ready:
+        if diarization_ready:
+            config["paths"]["diarization_model"] = resolve_model_path(BASE_DIR, diarization_spec)
+        else:
             config["diarization"]["enabled"] = False
             report_progress("화자 분리 모델이 없어 STT 중심 분석으로 진행합니다.", 10)
 
@@ -553,7 +544,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     fallback_stt_model_path = None
     fallback_stt_spec = get_model_spec("stt_fallback")
     if model_exists(BASE_DIR, fallback_stt_spec):
-        fallback_stt_model_path = resolve_config_path(fallback_stt_spec.local_dir)
+        fallback_stt_model_path = resolve_model_path(BASE_DIR, fallback_stt_spec)
 
     processing_config = config.get("processing", {})
     enable_chunking = processing_config.get("enable_long_audio_chunking", True)

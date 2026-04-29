@@ -60,13 +60,15 @@ $appExe = Join-Path $portablePath "Smart Minutes AI.exe"
 $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $backendDir = Join-Path $portablePath "backend"
 $ffmpegExe = Join-Path $backendDir "ffmpeg.exe"
-$cohereDir = Join-Path $backendDir "models\stt\cohere-transcribe-03-2026"
-$pyannoteDir = Join-Path $backendDir "models\diarization\speaker-diarization-community-1"
+$modelsDir = Join-Path $portablePath "models"
+$cohereDir = Join-Path $modelsDir "cohere-transcribe-03-2026"
+$pyannoteDir = Join-Path $modelsDir "speaker-diarization-community-1"
 
 Add-Result "portable folder exists" (Test-Path -LiteralPath $portablePath) $portablePath
 Add-Result "app exe exists" (Test-Path -LiteralPath $appExe) $appExe
 Add-Result "sidecar exe exists" (Test-Path -LiteralPath $sidecarExe) $sidecarExe
 Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backendDir
+Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "pyannote model exists" (Test-Path -LiteralPath $pyannoteDir) $pyannoteDir
 

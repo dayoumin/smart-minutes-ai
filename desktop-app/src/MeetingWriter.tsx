@@ -57,6 +57,10 @@ interface ReadinessCheck {
     models?: ModelsPayload;
 }
 
+interface ReadinessOptions {
+    soft?: boolean;
+}
+
 const parseSseChunk = (chunk: string): string[] => {
     return chunk
         .split('\n\n')
@@ -158,11 +162,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
         let cancelled = false;
         const syncReadiness = async () => {
-            const check = await refreshReadiness();
-            if (!cancelled && check.state === 'ready') {
-                setErrorMessage('');
-                setStatusMessage('');
-                setAnalysisPhase('idle');
+            const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
+
+            while (!cancelled && Date.now() < deadline) {
+                const check = await refreshReadiness({ soft: true });
+                if (cancelled) return;
+
+                if (check.state === 'ready') {
+                    setErrorMessage('');
+                    setStatusMessage('');
+                    setAnalysisPhase('idle');
+                    return;
+                }
+
+                if (check.state === 'missing-models') return;
+                await sleep(BACKEND_READY_INTERVAL_MS);
+            }
+
+            if (!cancelled) {
+                const check = await refreshReadiness();
+                if (check.state === 'ready') {
+                    setErrorMessage('');
+                    setStatusMessage('');
+                    setAnalysisPhase('idle');
+                }
             }
         };
 
@@ -190,7 +213,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
 
-    const refreshReadiness = async (): Promise<ReadinessCheck> => {
+    const refreshReadiness = async (options: ReadinessOptions = {}): Promise<ReadinessCheck> => {
         if (ANALYSIS_MODE !== 'real') {
             setReadinessState('ready');
             setReadinessMessage('');
@@ -206,10 +229,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
             const modelsResponse = await fetch(`${apiBase}/api/models/status`);
             if (!modelsResponse.ok) {
-                const message = '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
-                setReadinessState('error');
+                const message = options.soft
+                    ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
+                    : '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
+                setReadinessState(options.soft ? 'server-waiting' : 'error');
                 setReadinessMessage(message);
-                return { state: 'error', message };
+                return { state: options.soft ? 'server-waiting' : 'error', message };
             }
 
             const payload = await modelsResponse.json() as ModelsPayload;
@@ -229,8 +254,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             setReadinessState('missing-models');
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
-        } catch {
-            const message = '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
+        } catch (error) {
+            const message = error instanceof Error && !options.soft
+                ? `분석 기능을 준비하고 있습니다. ${error.message}`
+                : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
             setReadinessState('server-waiting');
             setReadinessMessage(message);
             return { state: 'server-waiting', message };

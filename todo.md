@@ -65,13 +65,15 @@
 - [x] 성능 개선 작업 로그와 시행착오 기록 문서화 (`docs/audio-performance-improvement-log.md`)
 - [x] `backend/pipeline/audio_preprocess.py`에 선택형 볼륨 정규화(normalize) 1차 적용
 - [x] 입력 음량 측정 기반 `auto normalization` 1차 적용
-- [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)
+- [x] 테스트셋 1차 manifest 구성 (`docs/audio-testset-manifest.csv`, 현재 4개 영상)
+- [ ] 테스트셋 보강 (6~10개, 실제 작은 목소리/잡음/기기/길이 편차 포함)
 - [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
 - [x] `speechnorm` 선택형 모드 추가
 - [x] `speechnorm` 60초 샘플 1차 비교
 - [x] `Smart Minutes AI\video` 폴더 4개 영상 60초 비교
 - [x] 성능 비교 자동화 스크립트 추가 (`scripts/run_audio_performance_eval.py`)
 - [x] 성능 비교 스크립트에 `off` 기준, portable 모델 경로 탐색, 긴 파일 전체 후보 선택, `--clean` 옵션 반영
+- [x] 성능 비교 스크립트에 manifest 기반 테스트셋 실행 옵션 추가 (`--manifest docs\audio-testset-manifest.csv`)
 - [x] `speechnorm` 작은 목소리/잡음 변형 샘플 1차 비교
 - [ ] 실제 작은 목소리/잡음 원본 샘플 추가 비교
 - [ ] AGC 자동 게인 보정 후보 검토

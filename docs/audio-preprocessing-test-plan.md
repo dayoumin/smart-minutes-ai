@@ -178,7 +178,7 @@
 
 1. 비교는 집 PC 등 성능이 충분한 환경에서 진행한다.
 2. 샘플 폴더를 모은 뒤 Codex가 `scripts/analyze_audio_inventory.py`로 인벤토리 CSV를 생성한다.
-3. Codex가 `docs/audio-testset-manifest-template.csv`를 기준으로 실제 manifest를 채운다.
+3. Codex가 `docs/audio-testset-manifest-template.csv`를 기준으로 실제 manifest를 채운다. 현재 1차 manifest는 `docs/audio-testset-manifest.csv`다.
 4. 부족한 유형 샘플 수집
 5. `off / auto / loudnorm` 1차 비교
 6. 필요 시 `speechnorm` 추가
@@ -190,6 +190,7 @@
 - 테스트 계획: `docs/audio-preprocessing-test-plan.md`
 - 전처리 설계 메모: `docs/audio-preprocessing-notes.md`
 - 샘플 메타데이터 템플릿: `docs/audio-testset-manifest-template.csv`
+- 현재 1차 테스트셋 manifest: `docs/audio-testset-manifest.csv`
 - 평가 결과 템플릿: `docs/audio-preprocessing-eval-template.csv`
 - 오디오 인벤토리 리포트 스크립트: `scripts/analyze_audio_inventory.py`
 - 개발 작업 추적: `todo.md`
@@ -253,7 +254,9 @@
 
 ```powershell
 python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --output backend\temp\audio_performance_eval\stt_eval_limit2.json
+python scripts\run_audio_performance_eval.py --manifest docs\audio-testset-manifest.csv --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --clean --output backend\temp\audio_performance_eval\manifest_stt_eval.json
 ```
 
 이 스크립트는 작은 목소리/잡음 변형, `off / auto / loudnorm / speechnorm` 비교, 긴 파일 청크 측정을 같은 JSON 형식으로 남긴다.
+기준 샘플을 고정해서 비교할 때는 `--manifest docs\audio-testset-manifest.csv`를 사용한다.
 반복 실행으로 산출물이 커질 수 있으므로 임시 결과를 새로 만들 때는 `--clean`을 붙인다.

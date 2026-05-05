@@ -7,6 +7,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Read `docs/audio-performance-improvement-log.md` before changing code.
 - Update `docs/audio-performance-improvement-log.md` with lessons, failed attempts, and comparison results.
 - Prefer `scripts/run_audio_performance_eval.py` for repeated preprocessing comparisons so future runs use the same report shape. Include `off` in comparisons and use `--clean` when starting a fresh run.
+- Use `docs/audio-testset-manifest.csv` for fixed sample comparisons. Add or replace sample rows there before changing evaluation assumptions.
 - Keep detailed experiments in the docs, not in this file.
 - Do not make a preprocessing mode the default based on one sample.
 - Compare STT quality, diarization impact, processing time, and failure risk together.
@@ -17,5 +18,6 @@ Related docs:
 - `docs/audio-performance-improvement-log.md`
 - `docs/audio-preprocessing-notes.md`
 - `docs/audio-preprocessing-test-plan.md`
+- `docs/audio-testset-manifest.csv`
 - `docs/audio-preprocessing-eval-template.csv`
 - `todo.md`

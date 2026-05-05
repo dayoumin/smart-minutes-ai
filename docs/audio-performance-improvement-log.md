@@ -114,6 +114,7 @@
 추가한 스크립트:
 
 - `scripts/run_audio_performance_eval.py`
+- `docs/audio-testset-manifest.csv`
 
 목적:
 
@@ -129,12 +130,14 @@
 ```powershell
 python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --output backend\temp\audio_performance_eval\stt_eval_limit2.json
 python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 1 --sample-seconds 60 --run-diarization --long-seconds 1800 --output backend\temp\audio_performance_eval\diarization_eval_limit1.json
+python scripts\run_audio_performance_eval.py --manifest docs\audio-testset-manifest.csv --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --clean --output backend\temp\audio_performance_eval\manifest_stt_eval.json
 ```
 
 운영 주의:
 
 - 반복 실행 전 기존 평가 산출물을 지우려면 `--clean`을 붙인다.
 - `--limit`은 STT/diarization을 돌릴 샘플 개수만 제한한다. 긴 파일 측정은 폴더 전체에서 가장 큰 파일을 고른다.
+- 공식 테스트셋은 `docs/audio-testset-manifest.csv`를 우선 사용한다. 파일을 새로 넣거나 기준 샘플을 바꿀 때는 이 CSV만 갱신하면 같은 조건으로 재실행할 수 있다.
 - 스크립트 JSON만 보고 기본값을 바꾸지 않는다. 사람이 청취한 품질 메모와 요약 품질 확인이 같이 필요하다.
 
 ### 작은 목소리/잡음 변형

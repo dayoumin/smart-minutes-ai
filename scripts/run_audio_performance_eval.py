@@ -1,4 +1,5 @@
 import argparse
+import csv
 import json
 import os
 import re
@@ -115,6 +116,41 @@ def collect_media_files(media_dir: Path) -> list[Path]:
     )
 
 
+def resolve_manifest_path(root: Path, media_dir: Path, row: dict[str, str]) -> Path | None:
+    raw_path = (row.get("file_path") or "").strip()
+    if raw_path:
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = root / path
+        return path if path.exists() else None
+
+    raw_name = (row.get("file_name") or "").strip()
+    if raw_name:
+        matches = [path for path in collect_media_files(media_dir) if path.name == raw_name]
+        return matches[0] if matches else None
+
+    return None
+
+
+def load_manifest_samples(root: Path, media_dir: Path, manifest_path: Path) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    with manifest_path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for index, row in enumerate(reader, start=2):
+            normalized = {str(key or "").strip(): str(value or "").strip() for key, value in row.items()}
+            if not any(normalized.values()):
+                continue
+            path = resolve_manifest_path(root, media_dir, normalized)
+            if path is None:
+                identifier = normalized.get("sample_id") or normalized.get("file_path") or normalized.get("file_name") or f"line {index}"
+                raise SystemExit(f"Manifest sample not found at line {index}: {identifier}")
+            samples.append({
+                "path": path,
+                "manifest": normalized,
+            })
+    return samples
+
+
 def make_variant(ffmpeg: str, source_wav: Path, output: Path, variant: str) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     if variant == "normal":
@@ -194,6 +230,7 @@ def summarize_text(segments: list[dict[str, Any]]) -> tuple[int, str]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run reusable audio performance comparisons.")
     parser.add_argument("--video-dir", default=r"Smart Minutes AI\video", help="Directory containing audio/video samples.")
+    parser.add_argument("--manifest", default=None, help="CSV manifest listing samples to evaluate.")
     parser.add_argument("--sample-seconds", type=int, default=60)
     parser.add_argument("--limit", type=int, default=2)
     parser.add_argument("--run-stt", action="store_true")
@@ -226,7 +263,11 @@ def main() -> int:
 
     ffmpeg = find_ffmpeg(root)
     video_dir = root / args.video_dir
-    all_media = collect_media_files(video_dir)
+    manifest_path = (root / args.manifest) if args.manifest else None
+    if manifest_path and not manifest_path.exists():
+        raise SystemExit(f"Manifest file not found: {manifest_path}")
+    manifest_samples = load_manifest_samples(root, video_dir, manifest_path) if manifest_path else None
+    all_media = [sample["path"] for sample in manifest_samples] if manifest_samples is not None else collect_media_files(video_dir)
     videos = list(all_media)
     if args.limit > 0:
         videos = videos[: args.limit]
@@ -253,6 +294,7 @@ def main() -> int:
     report: dict[str, Any] = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "video_dir": str(video_dir),
+        "manifest": str(manifest_path) if manifest_path else None,
         "sample_seconds": args.sample_seconds,
         "stt_model": str(stt_model),
         "diarization_model": str(diarization_model),
@@ -261,8 +303,10 @@ def main() -> int:
     }
 
     for index, video in enumerate(videos, start=1):
-        sample_id = f"{index:02d}_{safe_slug(video.stem, 'sample')}"
-        sample_dir = work_dir / sample_id
+        manifest_row = manifest_samples[index - 1]["manifest"] if manifest_samples is not None else None
+        manifest_sample_id = manifest_row.get("sample_id") if manifest_row else ""
+        sample_id = manifest_sample_id or f"{index:02d}_{safe_slug(video.stem, 'sample')}"
+        sample_dir = work_dir / safe_slug(sample_id, f"{index:02d}_sample")
         source_wav = sample_dir / "source_60s.wav"
         extract_wav(ffmpeg, video, source_wav, args.sample_seconds)
         video_item: dict[str, Any] = {
@@ -272,6 +316,8 @@ def main() -> int:
             "source_mean_volume_db": _probe_mean_volume(str(source_wav), ffmpeg),
             "variants": [],
         }
+        if manifest_row is not None:
+            video_item["manifest"] = manifest_row
 
         for variant in variants:
             variant_wav = sample_dir / f"{variant}.wav"

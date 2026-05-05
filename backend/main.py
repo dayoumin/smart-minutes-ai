@@ -159,6 +159,20 @@ def _validate_job_id(job_id: str) -> str:
     return job_id
 
 
+def _artifact_belongs_to_job(name: str, job_id: str) -> bool:
+    exact_names = {
+        f"{job_id}.wav",
+        f"{job_id}_original.wav",
+        f"{job_id}_chunks",
+        f"{job_id}_result.json",
+        f"{job_id}_transcript.txt",
+        f"{job_id}_report.md",
+        f"{job_id}_report.docx",
+        f"{job_id}_report.hwpx",
+    }
+    return name in exact_names or name.startswith(f"{job_id}_original.") or name.startswith(f"{job_id}_export_")
+
+
 @app.delete("/api/outputs/{job_id}")
 async def delete_outputs(job_id: str) -> dict:
     job_id = _validate_job_id(job_id)
@@ -167,22 +181,18 @@ async def delete_outputs(job_id: str) -> dict:
     temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
     deleted: list[str] = []
 
-    output_suffixes = [
-        "_result.json",
-        "_transcript.txt",
-        "_report.md",
-        "_report.docx",
-        "_report.hwpx",
-    ]
-    for suffix in output_suffixes:
-        file_path = os.path.abspath(os.path.join(output_dir, f"{job_id}{suffix}"))
-        if file_path.startswith(output_dir + os.sep) and os.path.exists(file_path):
-            os.remove(file_path)
-            deleted.append(os.path.basename(file_path))
+    if os.path.isdir(output_dir):
+        for name in os.listdir(output_dir):
+            if not _artifact_belongs_to_job(name, job_id):
+                continue
+            file_path = os.path.abspath(os.path.join(output_dir, name))
+            if file_path.startswith(output_dir + os.sep) and os.path.isfile(file_path):
+                os.remove(file_path)
+                deleted.append(os.path.basename(file_path))
 
     if os.path.isdir(temp_dir):
         for name in os.listdir(temp_dir):
-            if not name.startswith(job_id):
+            if not _artifact_belongs_to_job(name, job_id):
                 continue
             path = os.path.abspath(os.path.join(temp_dir, name))
             if not path.startswith(temp_dir + os.sep):
@@ -268,7 +278,8 @@ async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
 
     result_data = _meeting_record_to_export_result(payload)
     extension, media_type = allowed[kind]
-    export_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{payload.get('id', 'record')}"
+    record_id = _validate_job_id(str(payload.get("jobId") or payload.get("id") or "record"))
+    export_id = f"{record_id}_export_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     output_path = os.path.abspath(os.path.join(output_dir, f"{export_id}_current.{extension}"))
     if not output_path.startswith(output_dir + os.sep):
         raise HTTPException(status_code=400, detail="Invalid export path")

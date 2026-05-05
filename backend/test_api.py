@@ -109,23 +109,49 @@ class AnalyzeApiTest(unittest.TestCase):
         os.makedirs(temp_dir, exist_ok=True)
         job_id = "unit_delete_outputs"
         output_path = os.path.join(output_dir, f"{job_id}_result.json")
+        export_path = os.path.join(output_dir, f"{job_id}_export_20260505_current.txt")
+        collision_output_path = os.path.join(output_dir, f"{job_id}_other_result.json")
         temp_path = os.path.join(temp_dir, f"{job_id}.wav")
         chunk_dir = os.path.join(temp_dir, f"{job_id}_chunks")
+        collision_temp_path = os.path.join(temp_dir, f"{job_id}_other.wav")
         os.makedirs(chunk_dir, exist_ok=True)
 
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump({"ok": True}, f)
-        with open(temp_path, "w", encoding="utf-8") as f:
-            f.write("temp")
-        with open(os.path.join(chunk_dir, "chunk.wav"), "w", encoding="utf-8") as f:
-            f.write("chunk")
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump({"ok": True}, f)
+            with open(export_path, "w", encoding="utf-8") as f:
+                f.write("export")
+            with open(collision_output_path, "w", encoding="utf-8") as f:
+                json.dump({"keep": True}, f)
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write("temp")
+            with open(os.path.join(chunk_dir, "chunk.wav"), "w", encoding="utf-8") as f:
+                f.write("chunk")
+            with open(collision_temp_path, "w", encoding="utf-8") as f:
+                f.write("keep")
 
-        response = self.client.delete(f"/api/outputs/{job_id}")
+            response = self.client.delete(f"/api/outputs/{job_id}")
 
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(os.path.exists(output_path))
-        self.assertFalse(os.path.exists(temp_path))
-        self.assertFalse(os.path.exists(chunk_dir))
+            self.assertEqual(response.status_code, 200)
+            self.assertFalse(os.path.exists(output_path))
+            self.assertFalse(os.path.exists(export_path))
+            self.assertFalse(os.path.exists(temp_path))
+            self.assertFalse(os.path.exists(chunk_dir))
+            self.assertTrue(os.path.exists(collision_output_path))
+            self.assertTrue(os.path.exists(collision_temp_path))
+        finally:
+            for path in [output_path, export_path, collision_output_path, temp_path, collision_temp_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+            if os.path.isdir(chunk_dir):
+                import shutil
+
+                shutil.rmtree(chunk_dir)
+
+    def test_delete_outputs_rejects_invalid_job_id(self) -> None:
+        response = self.client.delete("/api/outputs/bad..job")
+
+        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == "__main__":

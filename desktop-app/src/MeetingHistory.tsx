@@ -187,21 +187,28 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (!window.confirm('정말로 이 회의록을 삭제하시겠습니까? 저장된 분석 파일도 함께 삭제됩니다.')) return;
 
         try {
+            await deleteMeeting(id);
+            setRecords(prev => prev.filter(record => record.id !== id));
+            setSelectedMeeting(prev => prev?.id === id ? null : prev);
+            window.dispatchEvent(new Event('meetings:updated'));
+            setErrorMessage('');
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '회의록 삭제 중 오류가 발생했습니다.';
+            setErrorMessage(message);
+            return;
+        }
+
+        try {
             if (meeting?.jobId) {
                 const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(meeting.jobId)}`), {
                     method: 'DELETE',
                 });
                 if (!response.ok && response.status !== 404) {
-                    throw new Error('분석 파일을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                    setErrorMessage('회의록은 삭제했지만 일부 분석 파일을 정리하지 못했습니다. 앱을 다시 실행한 뒤 다시 확인해 주세요.');
                 }
             }
-            await deleteMeeting(id);
-            setRecords(prev => prev.filter(record => record.id !== id));
-            setSelectedMeeting(prev => prev?.id === id ? null : prev);
-            window.dispatchEvent(new Event('meetings:updated'));
         } catch (error) {
-            const message = error instanceof Error ? error.message : '회의록 삭제 중 오류가 발생했습니다.';
-            setErrorMessage(message);
+            setErrorMessage('회의록은 삭제했지만 분석 파일 정리 상태를 확인하지 못했습니다. 앱을 다시 실행한 뒤 다시 확인해 주세요.');
         }
     };
 

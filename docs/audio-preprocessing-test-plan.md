@@ -246,3 +246,13 @@
 - `auto`는 현재 기준에서 가장 보수적이다.
 - `loudnorm`은 작은 음량 샘플에서 안정적이었다.
 - `speechnorm`은 일부 샘플에서 전사량이 줄거나 표기가 흔들려 기본값 후보로 보기 어렵다.
+
+## 13. 자동화 스크립트
+
+반복 비교는 아래 스크립트를 사용한다.
+
+```powershell
+python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --output backend\temp\audio_performance_eval\stt_eval_limit2.json
+```
+
+이 스크립트는 작은 목소리/잡음 변형, `auto / loudnorm / speechnorm` 비교, 긴 파일 청크 측정을 같은 JSON 형식으로 남긴다.

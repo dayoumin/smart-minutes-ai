@@ -70,7 +70,9 @@
 - [x] `speechnorm` 선택형 모드 추가
 - [x] `speechnorm` 60초 샘플 1차 비교
 - [x] `Smart Minutes AI\video` 폴더 4개 영상 60초 비교
-- [ ] `speechnorm` 작은 목소리/잡음 샘플 추가 비교
+- [x] 성능 비교 자동화 스크립트 추가 (`scripts/run_audio_performance_eval.py`)
+- [x] `speechnorm` 작은 목소리/잡음 변형 샘플 1차 비교
+- [ ] 실제 작은 목소리/잡음 원본 샘플 추가 비교
 - [ ] AGC 자동 게인 보정 후보 검토
   - ffmpeg `speechnorm` 선택형 모드 추가 완료, 샘플 비교 필요
   - ffmpeg `dynaudnorm`
@@ -80,9 +82,11 @@
   - Qwen3-ASR 계열
   - WhisperX 계열
   - 비교 기준: timestamp 구조, diarization 정합성, 한국어 회의 정확도, 처리시간, 로컬 배포 난이도
-- [ ] 무음 제거는 ffmpeg `silenceremove` 또는 별도 VAD 기반 방식으로 비교 검토
+- [x] 무음 제거는 ffmpeg `silenceremove` 후보로 60초 샘플 1차 비교
+- [ ] 무음 제거 청취 검증 및 실제 회의 샘플 추가 비교
 - [ ] 음성 강화(speech enhancement)는 별도 후보 모델/라이브러리 조사 후 실험 여부 결정
-- [ ] denoise는 한국어 자음/말끝 손실 위험이 있어 별도 품질 테스트 세트로 신중 검증
+- [x] denoise는 ffmpeg `afftdn` 후보로 60초 샘플 1차 비교
+- [ ] denoise 청취 검증 및 실제 잡음 샘플 추가 비교
 - [ ] 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
 - [ ] 사용자 설정 UI에 전처리 옵션 추가
   - 자동
@@ -97,7 +101,8 @@
 - [x] 긴 음성 파일을 시간 기준 청크(예: 10~15분)로 분할해 STT 메모리 사용량을 제한하는 백엔드 뼈대 추가
 - [x] 청크별 STT 결과를 타임스탬프 오프셋으로 병합하는 기본 유틸 추가
 - [x] 청크별 진행률을 SSE로 전송해 사용자가 긴 파일 처리 상태를 확인할 수 있게 개선
-- [ ] 30분/1시간/2시간/5시간 파일 실전 테스트로 처리 시간과 임시 용량 기록
+- [x] 30분 파일 전처리/청크 생성 시간과 임시 용량 기록
+- [ ] 1시간/2시간/5시간 파일 실전 테스트로 처리 시간과 임시 용량 기록
 - [ ] 실패한 청크만 재시도할 수 있도록 임시 작업 상태와 partial result 저장
 
 ## 6. 2026-04-26 Agent Review Notes

@@ -31,7 +31,14 @@ def probe_volume(ffmpeg_path: str, audio_path: Path) -> tuple[str, str]:
         "null",
         "NUL" if os.name == "nt" else "/dev/null",
     ]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    completed = subprocess.run(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
     mean_match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", output)
     max_match = re.search(r"max_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", output)

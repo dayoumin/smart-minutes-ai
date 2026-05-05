@@ -109,7 +109,85 @@
 - `speechnorm`은 기본값 후보가 아니다. 비교용 옵션으로 유지한다.
 - 다음 단계는 사람이 들어서 작은 목소리/잡음 샘플을 더 골라 비교하는 것이다.
 
-## 6. 관련 문서
+## 6. 2026-05-05 자동화 평가 스크립트와 추가 실험
+
+추가한 스크립트:
+
+- `scripts/run_audio_performance_eval.py`
+
+목적:
+
+- 같은 샘플에서 `normal / quiet / noise / silence_trim / denoise` 변형을 만든다.
+- `auto / loudnorm / speechnorm` 전처리를 같은 방식으로 비교한다.
+- 선택적으로 STT와 diarization을 실행해 결과를 JSON으로 남긴다.
+- 긴 파일은 일정 길이만 WAV로 추출한 뒤 청크 개수와 임시 파일 용량을 기록한다.
+
+실행한 명령:
+
+```powershell
+python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --output backend\temp\audio_performance_eval\stt_eval_limit2.json
+python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 1 --sample-seconds 60 --run-diarization --long-seconds 1800 --output backend\temp\audio_performance_eval\diarization_eval_limit1.json
+```
+
+### 작은 목소리/잡음 변형
+
+요약:
+
+- `quiet` 변형은 원본을 -15 dB 낮춘 실험 샘플이다.
+- `noise` 변형은 낮은 백색 잡음을 섞은 실험 샘플이다.
+- `quiet`에서 `speechnorm`은 글자 수를 크게 늘린 경우가 있었지만, 품질 개선인지 환각/반복 증가인지는 청취 확인이 필요하다.
+- `noise`에서 `auto/loudnorm`은 안정적이었고, `speechnorm`은 명확한 우위를 보이지 않았다.
+
+판단:
+
+- 작은 목소리와 잡음에서도 `speechnorm`을 기본값으로 올릴 근거는 아직 없다.
+- 다음에는 실제 작은 목소리/잡음 원본 샘플을 사람이 골라 비교해야 한다.
+
+### 긴 파일 전처리/청크 측정
+
+30분 샘플 결과:
+
+| 샘플 | 요청 길이 | 실제 길이 | WAV 크기 | 청크 | 추출 시간 | 청크 생성 시간 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 대선 TV 토론 | 1800초 | 1800초 | 약 57.6 MB | 60개 | 0.857초 | 2.772초 |
+| Hermes Agent | 1800초 | 1611초 | 약 51.6 MB | 54개 | 1.045초 | 2.318초 |
+
+판단:
+
+- WAV 추출과 30초 청크 생성은 병목이 아니다.
+- 장시간 처리 병목은 STT, diarization, summary 쪽으로 봐야 한다.
+- 따라서 긴 파일 개선은 "청크 생성 최적화"보다 "청크별 실패 복구, partial result 저장, 진행 상태 노출"이 우선이다.
+
+### 화자 분리 영향
+
+Hermes Agent 60초 샘플:
+
+| 모드 | 화자 수 | diarization 세그먼트 | 처리 시간 |
+| --- | ---: | ---: | ---: |
+| auto | 3 | 11 | 8.03초 |
+| loudnorm | 3 | 11 | 0.91초 |
+| speechnorm | 3 | 11 | 0.85초 |
+
+판단:
+
+- 이 샘플에서는 전처리 모드가 화자 수/세그먼트 수를 바꾸지 않았다.
+- 첫 실행은 모델 로딩 때문에 느리고, 이후 실행은 1초 안팎이었다.
+- 화자분리 영향은 다화자 회의 샘플에서 추가 확인이 필요하다.
+
+### silence trim / denoise 후보
+
+초기 신호:
+
+- `silence_trim`은 60초 샘플을 약 55~59초로 줄였다.
+- `denoise`와 `silence_trim` 모두 STT 글자 수가 늘어난 경우가 있었다.
+
+판단:
+
+- 글자 수 증가는 품질 개선이 아니라 반복/환각 증가일 수 있다.
+- 두 기능 모두 기본값 후보가 아니다.
+- 특히 denoise는 한국어 자음과 말끝 손실 위험이 있어 별도 청취 검증 전에는 도입하지 않는다.
+
+## 7. 관련 문서
 
 - 전처리 현황: `docs/audio-preprocessing-notes.md`
 - 테스트 계획: `docs/audio-preprocessing-test-plan.md`

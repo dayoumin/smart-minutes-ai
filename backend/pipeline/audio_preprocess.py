@@ -57,6 +57,10 @@ def resolve_preprocessing_plan(
         plan["resolved_mode"] = "dynaudnorm"
         plan["audio_filter"] = "dynaudnorm"
         return plan
+    if requested_mode == "speechnorm":
+        plan["resolved_mode"] = "speechnorm"
+        plan["audio_filter"] = "speechnorm"
+        return plan
     if requested_mode != "auto":
         raise ValueError(f"Unsupported normalization_mode: {requested_mode}")
 

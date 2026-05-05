@@ -159,6 +159,7 @@
 - 현재는 `enabled`, `normalize_audio`, `normalization_mode`만 실제 코드에서 사용한다.
 - `normalization_mode`는 `auto`, `loudnorm`, `dynaudnorm`를 지원한다.
 - 현재 `auto`는 `mean_volume <= -18 dB`일 때 `loudnorm`, 그보다 크면 `off`로 동작한다.
+- `speechnorm`은 작은 목소리 보정 비교용 선택 모드로 추가됐다. 기본값은 아니며 샘플셋 품질 비교가 필요하다.
 - `trim_silence`, `denoise`는 아직 예약 필드다.
 - `trim_silence`와 `denoise`는 기본값을 `false`로 두는 편이 안전하다.
 - 배포용 기본 설정은 보수적으로 유지하고, 실험 기능은 명시적으로 켜는 구조가 낫다.

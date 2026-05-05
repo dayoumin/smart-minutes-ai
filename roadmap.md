@@ -27,6 +27,7 @@
 - [x] **긴 파일 청크 STT 경로 정리**: 음성/영상 입력을 WAV로 표준화한 뒤 길이에 따라 청크로 나누어 STT를 수행한다. 5시간 파일 같은 장시간 입력은 차단하지 않고 시간과 용량을 안내한다.
 - [x] **오디오 전처리 현황 문서화**: 전처리 범위와 Cohere 경계, 검증 기준을 `docs/audio-preprocessing-notes.md`에 정리했다.
 - [x] **normalize 1차 적용**: `backend/pipeline/audio_preprocess.py`에 선택형 ffmpeg `loudnorm` 기반 normalize를 추가하고 `config.json`의 `preprocessing` 설정으로 제어할 수 있게 했다.
+- [x] **작은 목소리 보정 후보 추가**: ffmpeg `speechnorm`을 선택형 전처리 모드로 추가했다. 기본값은 자동 보정이며, `speechnorm`은 샘플셋 비교 후 기본값 여부를 판단한다.
 - [ ] **no-Cohere 패키지 재생성 주의**: 최신 PyInstaller 백엔드 sidecar 자체가 약 3.45GB라 Cohere 모델을 제외해도 메일 첨부용으로는 부적합하다. 회사 전달은 USB, 사내 파일 공유, 외장 저장소를 기본 경로로 잡는다.
 - [ ] **Portable 압축 해제 위치 안내**: `Program Files`처럼 쓰기 권한이 엄격한 위치가 아니라 `문서\Smart Minutes AI`, 바탕화면, 또는 사용자 쓰기 가능한 업무 폴더에 압축 해제한다.
 - [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\models\model.safetensors`와 `Smart Minutes AI\models\config.json`이 보이도록 Cohere 모델 파일을 `models` 바로 아래에 둬야 실제 분석이 가능하다. 기존 `models\cohere-transcribe-03-2026` 폴더 방식은 호환 경로로만 유지한다.

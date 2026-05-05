@@ -98,8 +98,8 @@ async def update_settings(payload: dict = Body(...)) -> dict:
             target["normalize_audio"] = bool(preprocessing["normalize_audio"])
         if "normalization_mode" in preprocessing:
             mode = str(preprocessing["normalization_mode"]).lower()
-            if mode not in {"auto", "loudnorm", "dynaudnorm"}:
-                raise HTTPException(status_code=400, detail="preprocessing.normalization_mode must be auto, loudnorm, or dynaudnorm")
+            if mode not in {"auto", "loudnorm", "dynaudnorm", "speechnorm"}:
+                raise HTTPException(status_code=400, detail="preprocessing.normalization_mode must be auto, loudnorm, dynaudnorm, or speechnorm")
             target["normalization_mode"] = mode
 
     if "diarization" in payload:

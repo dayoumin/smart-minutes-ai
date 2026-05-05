@@ -43,6 +43,11 @@ interface SettingsPayload {
         language?: string;
         device?: 'auto' | 'cpu' | 'cuda';
     };
+    preprocessing?: {
+        enabled?: boolean;
+        normalize_audio?: boolean;
+        normalization_mode?: 'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm';
+    };
 }
 
 interface ModelsPayload {
@@ -95,6 +100,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [diarizationEnabled, setDiarizationEnabled] = useState(true);
     const [sttDevice, setSttDevice] = useState<'auto' | 'cpu' | 'cuda'>('auto');
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
+    const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
+    const [normalizeAudio, setNormalizeAudio] = useState(true);
+    const [normalizationMode, setNormalizationMode] = useState<'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm'>('auto');
 
     const missingModels = useMemo(
         () => (models?.models || []).filter(model => model.required && !model.installed && model.key !== 'stt_fallback'),
@@ -138,6 +146,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             setChunkingEnabled(nextSettings.processing?.enable_long_audio_chunking ?? true);
             setDiarizationEnabled(nextSettings.diarization?.enabled ?? true);
             setSttDevice(nextSettings.stt?.device ?? 'auto');
+            setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
+            setNormalizeAudio(nextSettings.preprocessing?.normalize_audio ?? true);
+            setNormalizationMode(nextSettings.preprocessing?.normalization_mode ?? 'auto');
         } catch (error) {
             setModels(null);
             const isTimeout = error instanceof Error && error.name === 'AbortError';
@@ -213,6 +224,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                     },
                     stt: {
                         device: sttDevice,
+                    },
+                    preprocessing: {
+                        enabled: preprocessingEnabled,
+                        normalize_audio: normalizeAudio,
+                        normalization_mode: normalizationMode,
                     },
                 }),
             });
@@ -404,6 +420,49 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 <span>
                                     <span className="block font-medium text-foreground">긴 파일 자동 분할</span>
                                     <span className="text-sm text-muted-foreground">긴 음성/영상을 작은 구간으로 나누어 메모리 부담을 줄입니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={preprocessingEnabled}
+                                    onChange={event => setPreprocessingEnabled(event.target.checked)}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">음성 전처리 사용</span>
+                                    <span className="text-sm text-muted-foreground">입력 음성을 분석하기 좋은 형태로 정리합니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={normalizeAudio}
+                                    onChange={event => setNormalizeAudio(event.target.checked)}
+                                    disabled={!preprocessingEnabled}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">음량 자동 보정</span>
+                                    <span className="text-sm text-muted-foreground">작은 음성은 키우고 과한 처리는 피합니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="rounded-md border border-border bg-muted/20 p-4">
+                                <span className="block font-medium text-foreground">음량 보정 방식</span>
+                                <select
+                                    value={normalizationMode}
+                                    onChange={event => setNormalizationMode(event.target.value as typeof normalizationMode)}
+                                    disabled={!preprocessingEnabled || !normalizeAudio}
+                                    className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2 disabled:opacity-60"
+                                >
+                                    <option value="auto">자동</option>
+                                    <option value="loudnorm">표준 보정</option>
+                                    <option value="speechnorm">작은 목소리 보정</option>
+                                    <option value="dynaudnorm">동적 보정</option>
+                                </select>
+                                <span className="mt-2 block text-sm text-muted-foreground">
+                                    기본값은 자동입니다. 작은 목소리 보정은 녹음이 작을 때만 비교용으로 사용하세요.
                                 </span>
                             </label>
 

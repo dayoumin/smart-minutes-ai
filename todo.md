@@ -66,9 +66,10 @@
 - [x] 입력 음량 측정 기반 `auto normalization` 1차 적용
 - [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)
 - [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
-- [ ] 필요 시 `speechnorm` 추가 비교
+- [x] `speechnorm` 선택형 모드 추가
+- [ ] `speechnorm` 실제 샘플 비교
 - [ ] AGC 자동 게인 보정 후보 검토
-  - ffmpeg `speechnorm`
+  - ffmpeg `speechnorm` 선택형 모드 추가 완료, 샘플 비교 필요
   - ffmpeg `dynaudnorm`
   - 작은 목소리 보정 효과와 잡음 증폭 부작용 비교
 - [ ] 대체 STT 모델 비교 검토

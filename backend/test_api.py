@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.dirname(__file__))
 
 from main import app
+from pipeline.audio_preprocess import resolve_preprocessing_plan
 
 BACKEND_DIR = os.path.dirname(__file__)
 TEST_AUDIO_PATH = os.path.join(BACKEND_DIR, "test_audio.wav")
@@ -86,6 +87,20 @@ class AnalyzeApiTest(unittest.TestCase):
             )
 
         self.assertEqual(response.status_code, 400)
+
+    def test_speechnorm_preprocessing_plan(self) -> None:
+        plan = resolve_preprocessing_plan(
+            input_path="unused.wav",
+            ffmpeg_path="ffmpeg",
+            preprocessing={
+                "enabled": True,
+                "normalize_audio": True,
+                "normalization_mode": "speechnorm",
+            },
+        )
+
+        self.assertEqual(plan["resolved_mode"], "speechnorm")
+        self.assertEqual(plan["audio_filter"], "speechnorm")
 
 
 if __name__ == "__main__":

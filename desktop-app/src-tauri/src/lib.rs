@@ -9,6 +9,8 @@ use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const BACKEND_SIDECAR: &str = "meeting-backend-x86_64-pc-windows-msvc.exe";
+const PREFERRED_BACKEND_PORT: u16 = 17863;
+const PREFERRED_BACKEND_PORT_ATTEMPTS: u16 = 100;
 
 #[derive(Clone)]
 struct BackendConfig {
@@ -21,6 +23,13 @@ fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
 }
 
 fn find_available_port() -> Result<u16, String> {
+    for offset in 0..PREFERRED_BACKEND_PORT_ATTEMPTS {
+        let candidate = PREFERRED_BACKEND_PORT + offset;
+        if TcpListener::bind(("127.0.0.1", candidate)).is_ok() {
+            return Ok(candidate);
+        }
+    }
+
     let listener = TcpListener::bind("127.0.0.1:0")
         .map_err(|error| format!("Could not reserve an analysis port: {error}"))?;
     let port = listener
@@ -73,7 +82,7 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, String> {
 }
 
 pub fn run() {
-    let backend_port = find_available_port().unwrap_or(8000);
+    let backend_port = find_available_port().unwrap_or(PREFERRED_BACKEND_PORT);
     let backend_base_url = format!("http://127.0.0.1:{backend_port}");
     let backend_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
     let setup_backend_child = Arc::clone(&backend_child);

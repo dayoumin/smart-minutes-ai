@@ -11,8 +11,8 @@ declare global {
 }
 
 const fallbackApiBase = (): string => {
-    if (typeof window === 'undefined') return 'http://127.0.0.1:8000';
-    return 'http://127.0.0.1:8000';
+    if (typeof window === 'undefined') return 'http://127.0.0.1:17863';
+    return 'http://127.0.0.1:17863';
 };
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));

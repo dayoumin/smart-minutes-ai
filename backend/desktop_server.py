@@ -39,7 +39,7 @@ def main() -> None:
     ensure_standard_streams()
     log_path = configure_file_logging()
     os.environ.setdefault("ANALYSIS_MODE", "real")
-    port = int(os.environ.get("PORT", "8000"))
+    port = int(os.environ.get("PORT", "17863"))
     logging.info("Starting Smart Minutes AI analysis service on 127.0.0.1:%s", port)
     try:
         uvicorn.run(

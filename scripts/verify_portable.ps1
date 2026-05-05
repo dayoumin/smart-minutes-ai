@@ -1,5 +1,5 @@
 param(
-    [string]$PortableDir = "desktop-app\src-tauri\target\release\portable\Smart Minutes AI",
+    [string]$PortableDir = "Smart Minutes AI",
     [switch]$RequireCohere,
     [int]$TimeoutSeconds = 240
 )
@@ -61,6 +61,7 @@ $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-window
 $backendDir = Join-Path $portablePath "backend"
 $ffmpegExe = Join-Path $backendDir "ffmpeg.exe"
 $modelsDir = Join-Path $portablePath "models"
+$manifestFile = Join-Path $portablePath "release-manifest.json"
 $cohereModelFile = Join-Path $modelsDir "model.safetensors"
 $cohereConfigFile = Join-Path $modelsDir "config.json"
 $pyannoteConfigFile = Join-Path $modelsDir "config.yaml"
@@ -72,6 +73,7 @@ Add-Result "sidecar exe exists" (Test-Path -LiteralPath $sidecarExe) $sidecarExe
 Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backendDir
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
+Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
 Add-Result "pyannote direct layout" ((Test-Path -LiteralPath $pyannoteConfigFile) -and (Test-Path -LiteralPath $pyannoteEmbeddingFile)) $modelsDir
 
 if ($RequireCohere) {

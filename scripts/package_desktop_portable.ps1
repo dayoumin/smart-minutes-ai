@@ -84,7 +84,7 @@ Set-Content -Path (Join-Path $PortableModelsDir "README.txt") -Value $ModelReadm
 
 $PyannoteSource = Join-Path $ModelSourceRoot "diarization\speaker-diarization-community-1"
 if (Test-Path $PyannoteSource) {
-    robocopy $PyannoteSource $PortableModelsDir /E /XD .git .cache /XF *.lock | Out-Host
+    robocopy $PyannoteSource $PortableModelsDir /E /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while copying Pyannote model with exit code $LASTEXITCODE"
     }

@@ -1,4 +1,10 @@
 # 0. 다음 우선순위
+- [ ] 0순위: 배포 혼돈 방지 기준 유지
+  - 새 portable 배포는 `scripts\release_portable.ps1`로만 갱신한다.
+  - 실제 실행 기준은 루트 `Smart Minutes AI` 폴더 하나로 고정한다.
+  - `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 중간 산출물로만 본다.
+  - 이상 상태가 보이면 `scripts\diagnose_portable.ps1` 결과와 `release-manifest.json` 해시를 먼저 확인한다.
+  - WebView 캐시는 필요할 때 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
 - [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
   - `Smart Minutes AI` 폴더 전체를 옮긴 뒤 실행한다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
   - 기본 음성 인식 모델은 `Smart Minutes AI\models` 바로 아래에 복사한다.

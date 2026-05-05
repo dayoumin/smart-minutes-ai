@@ -67,3 +67,25 @@ Smart_Minutes_AI_Portable*.zip
 회사 PC에는 실행용이면 `Smart Minutes AI` 폴더 전체를 옮기면 됩니다. 기본 음성 인식 모델은 로그인 권한 문제로 자동 다운로드가 막힐 수 있으므로, 구글 드라이브/웹하드/사내 공유 저장소에 올린 모델 파일을 받아 `Smart Minutes AI\models` 바로 아래에 복사하는 방식을 우선 사용합니다.
 
 자세한 내용은 [Smart_Minutes_AI_Portable_회사_PC_사용법.md](Smart_Minutes_AI_Portable_회사_PC_사용법.md)를 봅니다.
+
+## 배포 정리 기준
+
+헷갈리지 않도록 새 배포본은 한 명령으로 만들고 검증합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -RequireCohere -ClearWebViewCache
+```
+
+이미 Tauri exe와 sidecar를 새로 빌드한 직후라면 빠른 동기화/검증만 할 수 있습니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild -RequireCohere
+```
+
+배포 후 기준 실행 폴더는 항상 `D:\Projects\audio\Smart Minutes AI`입니다. `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
+
+상태가 이상하면 먼저 아래 진단 스크립트를 실행합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps1
+```

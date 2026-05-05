@@ -59,3 +59,34 @@
 - `/api/health`, `/api/settings`, `/api/models/status` 응답 확인
 - 필수 모델 누락 목록 출력
 - 테스트 후 앱/sidecar 프로세스 종료
+
+## 7. 이 프로젝트의 단일 배포 흐름
+
+혼돈을 줄이기 위해 실제 배포 기준은 루트의 `Smart Minutes AI` 폴더 하나로 고정한다. Tauri target 폴더는 중간 산출물이며 사용자가 직접 실행할 기준 폴더가 아니다.
+
+정식 배포 갱신:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -RequireCohere -ClearWebViewCache
+```
+
+이미 exe와 sidecar를 새로 만든 뒤 복사/검증만 다시 할 때:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild -RequireCohere
+```
+
+배포 스크립트가 하는 일:
+
+- 실행 중인 앱, sidecar, 관련 WebView 프로세스를 종료한다.
+- 필요 시 WebView 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
+- Tauri 리소스와 portable 폴더를 다시 구성한다.
+- 루트 `Smart Minutes AI` 폴더로 동기화한다.
+- `release-manifest.json`에 exe, sidecar, backend 파일 해시를 기록한다.
+- `scripts\verify_portable.ps1`로 실행 smoke test를 한다.
+
+문제가 반복될 때는 먼저 진단 스크립트로 실제 실행 파일, 프로세스, 포트, 모델, manifest를 확인한다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps1
+```

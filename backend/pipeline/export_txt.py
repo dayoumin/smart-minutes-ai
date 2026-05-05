@@ -33,6 +33,10 @@ def export_txt(segments: List[Dict], output_path: str) -> str:
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     with open(output_path, "w", encoding="utf-8") as f:
+        if not segments:
+            f.write("발화 스크립트 데이터가 없습니다.\n")
+            return output_path
+
         for seg in segments:
             text = seg.get("text", "")
             speaker = seg.get("speaker_name") or seg.get("speaker") or ""

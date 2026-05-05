@@ -161,17 +161,29 @@ def _validate_job_id(job_id: str) -> str:
 
 
 def _artifact_belongs_to_job(name: str, job_id: str) -> bool:
+    job_ids = {job_id, _safe_export_id(job_id)}
     exact_names = {
-        f"{job_id}.wav",
-        f"{job_id}_original.wav",
-        f"{job_id}_chunks",
-        f"{job_id}_result.json",
-        f"{job_id}_transcript.txt",
-        f"{job_id}_report.md",
-        f"{job_id}_report.docx",
-        f"{job_id}_report.hwpx",
+        f"{candidate}.wav"
+        for candidate in job_ids
     }
-    return name in exact_names or name.startswith(f"{job_id}_original.") or name.startswith(f"{job_id}_export_")
+    exact_names.update(
+        artifact
+        for candidate in job_ids
+        for artifact in {
+            f"{candidate}_original.wav",
+            f"{candidate}_chunks",
+            f"{candidate}_result.json",
+            f"{candidate}_transcript.txt",
+            f"{candidate}_report.md",
+            f"{candidate}_report.docx",
+            f"{candidate}_report.hwpx",
+        }
+    )
+    return (
+        name in exact_names
+        or any(name.startswith(f"{candidate}_original.") for candidate in job_ids)
+        or any(name.startswith(f"{candidate}_export_") for candidate in job_ids)
+    )
 
 
 @app.delete("/api/outputs/{job_id}")

@@ -91,6 +91,58 @@ export const addMeeting = async (meeting: MeetingRecord): Promise<void> => {
     });
 };
 
+export const getMeetingById = async (id: string): Promise<MeetingRecord | undefined> => {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readonly');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.get(id);
+        let result: MeetingRecord | undefined;
+        request.onsuccess = () => {
+            result = request.result as MeetingRecord | undefined;
+        };
+        transaction.oncomplete = () => {
+            db.close();
+            resolve(result);
+        };
+        transaction.onerror = () => {
+            db.close();
+            reject(transaction.error ?? request.error);
+        };
+        transaction.onabort = () => {
+            db.close();
+            reject(transaction.error ?? request.error);
+        };
+    });
+};
+
+export const updateMeeting = async (meeting: MeetingRecord): Promise<void> => {
+    const existing = await getMeetingById(meeting.id);
+    if (!existing) {
+        throw new Error('수정할 회의록을 찾을 수 없습니다.');
+    }
+
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(STORE_NAME, 'readwrite');
+        const store = transaction.objectStore(STORE_NAME);
+        const request = store.put(meeting);
+        request.onerror = () => transaction.abort();
+        transaction.oncomplete = () => {
+            db.close();
+            resolve();
+        };
+        transaction.onerror = () => {
+            db.close();
+            reject(transaction.error ?? request.error);
+        };
+        transaction.onabort = () => {
+            db.close();
+            reject(transaction.error ?? request.error);
+        };
+    });
+};
+
 export const deleteMeeting = async (id: string): Promise<void> => {
     const db = await initDB();
     return new Promise((resolve, reject) => {

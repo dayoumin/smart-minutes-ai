@@ -103,6 +103,8 @@ const translateStatusMessage = (message: string): string => {
     const normalized = message.trim();
     const statusMap: Record<string, string> = {
         '업로드 파일 저장 완료': '파일을 안전하게 저장했습니다.',
+        '음성 인식 모델 확인 중': '음성 인식 모델을 확인하고 있습니다.',
+        '음성 인식 모델 준비 완료': '음성 인식 모델 준비가 끝났습니다.',
         'Cohere STT 모델 확인 중': '음성 인식 모델을 확인하고 있습니다.',
         'Cohere STT 모델 준비 완료': '음성 인식 모델 준비가 끝났습니다.',
         'Converting to WAV...': '영상에서 음성을 추출하고 WAV로 변환하고 있습니다.',
@@ -178,7 +180,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
             const healthPayload = await healthResponse.json().catch(() => null) as { ok?: boolean; service?: string } | null;
             if (!healthPayload?.ok || healthPayload.service !== 'NIFS AI Meeting API') {
-                const message = '분석 기능 주소를 다른 프로그램이 사용 중입니다. 앱을 다시 실행하거나 8000번 포트를 사용하는 프로그램을 종료해 주세요.';
+                const message = '분석 기능 주소를 다른 프로그램이 사용 중입니다. 앱을 다시 실행하거나 실행 중인 다른 Smart Minutes AI 창을 닫아 주세요.';
                 setReadinessState('error');
                 setReadinessMessage(message);
                 return { state: 'error', message };
@@ -628,7 +630,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                     </p>
                     {file && (file.size >= LARGE_FILE_WARNING_BYTES || isLongMedia) && (
                         <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                            긴 파일은 음성만 추출해 나누어 분석합니다. 5시간 영상도 처리할 수 있지만 시간이 오래 걸릴 수 있습니다.
+                            긴 파일은 음성만 추출해 나누어 분석하도록 설계되어 있습니다. 실제 처리 시간과 안정성은 파일 길이와 PC 성능에 따라 달라집니다.
                         </div>
                     )}
                 </div>

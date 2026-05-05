@@ -39,9 +39,9 @@ const assertVisible = async (locator, label, timeout = 10000) => {
     }
 
     console.log('ok - /api/analyze returned real completed SSE result');
-    await assertVisible(page.getByText(/완료|저장|completed/), 'analysis produced a visible completion status', 30000);
+    await assertVisible(page.getByText('회의록 저장이 완료되었습니다.'), 'analysis produced a visible completion status', 60000);
 
-    await page.getByRole('button', { name: /기록|History|회의/ }).last().click();
+    await page.getByRole('button', { name: '이전 회의 기록' }).click();
     await assertVisible(page.getByText('Real E2E Smoke Test'), 'history shows saved real meeting', 30000);
   } finally {
     await browser.close();

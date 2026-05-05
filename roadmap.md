@@ -7,6 +7,8 @@
 - [x] 라이트/다크 모드 및 멀티 포맷 다운로드 지원
 
 ## 🔥 Phase 2: 실시간 지능 고도화 (Next)
+- [ ] **여러 파일 선택 분석**: 파일 선택에서 여러 음성/영상 파일을 받아 큐로 표시하고 순차 분석한다.
+- [ ] **폴더 선택 일괄 분석**: 회의 녹음 폴더를 선택하면 지원 형식만 모아 목록으로 보여주고 사용자가 확인한 뒤 일괄 분석한다.
 - [ ] **실시간 음성 인식 (Live Transcription)**: 회의 진행 중 실시간으로 대화 내용이 텍스트로 노출
 - [ ] **실시간 요약 및 인사이트**: 회의 중 실시간으로 논의 주제를 파악하고 중간 요약 제공
 - [ ] **참여자 감정 분석**: 회의 분위기와 참여자들의 긍정/부정 뉘앙스 파악
@@ -21,15 +23,17 @@
 ## 🖥️ Desktop Packaging Notes
 - [x] **Portable 배포 채택**: Cohere 모델의 대용량 파일 때문에 MSI/NSIS 설치 파일 대신 portable 폴더 배포를 기본으로 사용한다.
 - [x] **회사 전달용 no-Cohere 패키지 생성**: 앱, 백엔드 sidecar, Pyannote 모델은 포함하고 Cohere STT 모델은 회사 PC에서 별도 다운로드한다.
-- [x] **2026-04-27 실제 MP4 포터블 검증**: `Smart Minutes AI\backend` sidecar를 직접 실행해 루트 MP4를 `/api/analyze`로 업로드했고, `event: result`/`event: done` 응답과 Cohere native long-form 경로를 확인했다.
-- [x] **Cohere STT 경로 수정**: 직접 `generate()` 또는 외부 30초 청크 방식은 한국어 장문 품질이 불안정했다. 공식 `model.transcribe(..., language="ko")` long-form 경로를 기본으로 사용한다.
+- [x] **2026-04-27 실제 MP4 포터블 검증**: `Smart Minutes AI\backend` sidecar를 직접 실행해 루트 MP4를 `/api/analyze`로 업로드했고, `event: result`/`event: done` 응답을 확인했다.
+- [x] **긴 파일 청크 STT 경로 정리**: 음성/영상 입력을 WAV로 표준화한 뒤 길이에 따라 청크로 나누어 STT를 수행한다. 5시간 파일 같은 장시간 입력은 차단하지 않고 시간과 용량을 안내한다.
 - [x] **오디오 전처리 현황 문서화**: 전처리 범위와 Cohere 경계, 검증 기준을 `docs/audio-preprocessing-notes.md`에 정리했다.
 - [x] **normalize 1차 적용**: `backend/pipeline/audio_preprocess.py`에 선택형 ffmpeg `loudnorm` 기반 normalize를 추가하고 `config.json`의 `preprocessing` 설정으로 제어할 수 있게 했다.
 - [ ] **no-Cohere 패키지 재생성 주의**: 최신 PyInstaller 백엔드 sidecar 자체가 약 3.45GB라 Cohere 모델을 제외해도 메일 첨부용으로는 부적합하다. 회사 전달은 USB, 사내 파일 공유, 외장 저장소를 기본 경로로 잡는다.
 - [ ] **Portable 압축 해제 위치 안내**: `Program Files`처럼 쓰기 권한이 엄격한 위치가 아니라 `문서\Smart Minutes AI`, 바탕화면, 또는 사용자 쓰기 가능한 업무 폴더에 압축 해제한다.
 - [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\models\model.safetensors`와 `Smart Minutes AI\models\config.json`이 보이도록 Cohere 모델 파일을 `models` 바로 아래에 둬야 실제 분석이 가능하다. 기존 `models\cohere-transcribe-03-2026` 폴더 방식은 호환 경로로만 유지한다.
+- [ ] **HWPX 실열기 검증**: 현재 자동 테스트는 HWPX zip 구조와 XML 파싱까지만 확인한다. 배포 전 한글/HWPX 뷰어에서 실제 파일 열기, 서식, 본문 표시를 별도로 검증한다.
 - [ ] **AppData 저장소 분리**: 향후 설치형 배포를 지원하려면 `config.json`, `outputs`, `temp`를 앱 리소스 폴더가 아니라 사용자 쓰기 가능한 AppData/localData 경로로 분리한다.
-- [ ] **로컬 API 보안 개선**: 현재는 `127.0.0.1:8000` 고정 포트를 사용한다. 포트 충돌과 로컬 호출 오용을 줄이기 위해 랜덤 포트와 세션 토큰 구조를 검토한다.
+- [x] **로컬 분석 포트 자동 할당**: 앱 실행 시 빈 로컬 포트를 잡아 sidecar에 전달하고 UI는 Tauri command로 받은 실제 주소를 사용한다.
+- [ ] **로컬 API 보안 개선**: 로컬 호출 오용을 더 줄이기 위해 세션 토큰 구조를 검토한다.
 - [ ] **라이선스/고지 정리**: Cohere, Pyannote, Gemma/Ollama, FFmpeg 및 Python/npm/cargo 의존성에 대한 배포 고지와 라이선스 문서를 릴리스 전에 정리한다.
 - [ ] **SQLite 저장소 전환**: IndexedDB 히스토리는 MVP용이다. 데스크탑 앱에서는 SQLite 기반의 영구 저장소로 이전한다.
 

@@ -1,11 +1,12 @@
 import html
 import os
 import zipfile
+from typing import Any
 
 
 def _paragraph(text: str) -> str:
     escaped = html.escape(text or "")
-    return f"<hp:p><hp:run><hp:t>{escaped}</hp:t></hp:run></hp:p>"
+    return f'<hp:p><hp:run><hp:t xml:space="preserve">{escaped}</hp:t></hp:run></hp:p>'
 
 
 def _line_items(title: str, items: list[str]) -> list[str]:
@@ -15,6 +16,20 @@ def _line_items(title: str, items: list[str]) -> list[str]:
     else:
         paragraphs.append(_paragraph("- 없음"))
     return paragraphs
+
+
+def _format_time(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    try:
+        seconds = max(0.0, float(value or 0.0))
+    except (TypeError, ValueError):
+        return "00:00:00"
+
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
 def export_hwpx(result: dict, output_path: str) -> str:
@@ -40,12 +55,12 @@ def export_hwpx(result: dict, output_path: str) -> str:
 
     if segments:
         for segment in segments:
-            start = float(segment.get("start", 0.0) or 0.0)
-            end = float(segment.get("end", 0.0) or 0.0)
+            start = _format_time(segment.get("start", 0.0))
+            end = _format_time(segment.get("end", 0.0))
             speaker = segment.get("speaker_name") or segment.get("speaker") or "Speaker"
             text = segment.get("text", "")
             timing = " 시간 추정" if segment.get("timing_approximate") else ""
-            paragraphs.append(_paragraph(f"[{start:0.1f}-{end:0.1f}{timing}] {speaker}: {text}"))
+            paragraphs.append(_paragraph(f"[{start}-{end}{timing}] {speaker}: {text}"))
     else:
         paragraphs.append(_paragraph("발화 스크립트 데이터가 없습니다."))
 
@@ -65,9 +80,17 @@ def export_hwpx(result: dict, output_path: str) -> str:
   <opf:spine><opf:itemref idref="section0"/></opf:spine>
 </opf:package>
 '''
+    container_xml = '''<?xml version="1.0" encoding="UTF-8"?>
+<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container">
+  <rootfiles>
+    <rootfile full-path="Contents/content.hpf" media-type="application/hwpml-package+xml"/>
+  </rootfiles>
+</container>
+'''
 
     with zipfile.ZipFile(output_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("mimetype", "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+        archive.writestr("META-INF/container.xml", container_xml)
         archive.writestr("version.xml", version_xml)
         archive.writestr("Contents/content.hpf", content_hpf)
         archive.writestr("Contents/section0.xml", section_xml)

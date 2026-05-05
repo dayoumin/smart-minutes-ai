@@ -153,6 +153,104 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
     return FileResponse(file_path, filename=filename, media_type=media_type)
 
 
+def _safe_export_name(title: str, extension: str) -> str:
+    safe = "".join("-" if ch in '/\\?%*:|"<> ' else ch for ch in title.strip())
+    return f"{safe or 'meeting-minutes'}.{extension}"
+
+
+def _time_to_seconds(value) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return 0.0
+
+    parts = value.strip().split(":")
+    try:
+        if len(parts) == 3:
+            hours, minutes, seconds = parts
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        if len(parts) == 2:
+            minutes, seconds = parts
+            return int(minutes) * 60 + float(seconds)
+        return float(value)
+    except ValueError:
+        return 0.0
+
+
+def _meeting_record_to_export_result(payload: dict) -> dict:
+    segments = []
+    for segment in payload.get("segments") or []:
+        speaker = segment.get("speaker_name") or segment.get("speaker") or ""
+        segments.append({
+            "start": _time_to_seconds(segment.get("start", 0.0)),
+            "end": _time_to_seconds(segment.get("end", 0.0)),
+            "speaker": speaker,
+            "speaker_name": speaker,
+            "text": segment.get("text", ""),
+            "timing_approximate": bool(segment.get("timingApproximate") or segment.get("timing_approximate")),
+        })
+
+    title = str(payload.get("title") or "회의록")
+    return {
+        "job_id": payload.get("jobId") or payload.get("id") or datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "source_file": payload.get("sourceFile") or "",
+        "created_at": payload.get("date") or datetime.now().isoformat(timespec="seconds"),
+        "participants": payload.get("participants") or "",
+        "segments": segments,
+        "summary": {
+            "title": title,
+            "overview": payload.get("summary") or "",
+            "topics": payload.get("topics") or [],
+            "actions": payload.get("actions") or [],
+            "decisions": payload.get("decisions") or [],
+            "needs_check": payload.get("needs_check") or payload.get("needsCheck") or [],
+        },
+    }
+
+
+@app.post("/api/export-record/{kind}")
+async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
+    allowed = {
+        "txt": ("txt", "text/plain; charset=utf-8"),
+        "md": ("md", "text/markdown; charset=utf-8"),
+        "docx": ("docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
+        "hwpx": ("hwpx", "application/hwp+zip"),
+    }
+    if kind not in allowed:
+        raise HTTPException(status_code=404, detail="Unknown export type")
+
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    os.makedirs(output_dir, exist_ok=True)
+
+    result_data = _meeting_record_to_export_result(payload)
+    extension, media_type = allowed[kind]
+    export_id = f"{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}_{payload.get('id', 'record')}"
+    output_path = os.path.abspath(os.path.join(output_dir, f"{export_id}_current.{extension}"))
+    if not output_path.startswith(output_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid export path")
+
+    if kind == "txt":
+        from pipeline.export_txt import export_txt
+
+        export_txt(result_data["segments"], output_path)
+    elif kind == "md":
+        from pipeline.export_markdown import export_markdown
+
+        export_markdown(result_data, output_path)
+    elif kind == "docx":
+        from pipeline.export_docx import export_docx
+
+        export_docx(result_data, output_path)
+    else:
+        from pipeline.export_hwpx import export_hwpx
+
+        export_hwpx(result_data, output_path)
+
+    filename = _safe_export_name(result_data["summary"]["title"], extension)
+    return FileResponse(output_path, filename=filename, media_type=media_type)
+
+
 @app.post("/api/models/download")
 async def download_missing_models(payload: dict | None = Body(default=None)) -> StreamingResponse:
     async def event_generator() -> AsyncIterator[str]:
@@ -355,15 +453,15 @@ async def stream_real_analysis(
     async def prepare_real_config() -> dict:
         config = load_config()
 
-        report_progress("Cohere STT 모델 확인 중", 6)
+        report_progress("음성 인식 모델 확인 중", 6)
         stt_spec = get_model_spec("stt_primary")
         if not model_exists(BASE_DIR, stt_spec):
             raise RuntimeError(
-                "Cohere Transcribe 모델이 없습니다. 실행 파일 옆 models 폴더 바로 아래에 "
-                "config.json, model.safetensors 등 Cohere 모델 파일을 넣은 뒤 다시 실행해 주세요."
+                "기본 음성 인식 모델이 없습니다. 실행 파일 옆 models 폴더 바로 아래에 "
+                "config.json, model.safetensors 등 모델 파일을 넣은 뒤 다시 실행해 주세요."
             )
         config["paths"]["stt_model"] = resolve_model_path(BASE_DIR, stt_spec)
-        report_progress("Cohere STT 모델 준비 완료", 8)
+        report_progress("음성 인식 모델 준비 완료", 8)
 
         diarization_spec = get_model_spec("diarization")
         diarization_ready = model_exists(BASE_DIR, diarization_spec)

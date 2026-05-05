@@ -415,6 +415,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2"
                                 >
                                     <option value="hwpx">HWPX</option>
+                                    <option value="md">MD</option>
                                     <option value="txt">TXT</option>
                                     <option value="docx">DOCX</option>
                                 </select>

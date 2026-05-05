@@ -1,10 +1,35 @@
-# 0. 회사 PC에서 가장 먼저 할 일
-- [ ] `Smart_Minutes_AI_Portable_no_Cohere.zip`을 풀고 `Smart Minutes AI` 폴더 전체를 그대로 둔다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
-- [ ] Cohere 음성 인식 모델은 별도로 받아서 `Smart Minutes AI\models` 바로 아래에 복사한다.
+# 0. 다음 우선순위
+- [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
+  - `Smart Minutes AI` 폴더 전체를 옮긴 뒤 실행한다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
+  - 기본 음성 인식 모델은 `Smart Minutes AI\models` 바로 아래에 복사한다.
+  - 복사 후 `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`가 바로 보여야 한다.
+  - 화자 분리 모델은 `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
+- [ ] 2순위: 긴 파일 실전 테스트
+  - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
+  - 실패 시 `Smart Minutes AI\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
+- [ ] 3순위: 품질 기준 샘플셋 만들기
+  - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
+  - STT 정확도, 화자 분리 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.
+- [ ] 3-1순위: 내보내기 파일 실사용 검증
+  - HWPX는 zip/XML 생성 smoke test뿐 아니라 한글 또는 HWPX 뷰어에서 실제 열기 검증을 한다.
+  - Codex 자동 테스트로는 HWPX 구조와 XML 파싱까지만 확인했다. 한글/뷰어에서 직접 열기, 본문 표시, 서식 깨짐 여부는 사람이 확인해야 한다.
+  - 화면에서 제목/일시/참석자를 수정한 뒤 HWPX, MD, TXT, DOCX 다운로드 내용도 같은 값으로 반영되는지 확인한다.
+- [ ] 4순위: 전처리 품질 개선 순서대로 검증
+  - 이미 적용됨: WAV 표준화, 긴 파일 청크, 자동 볼륨 정규화.
+  - 다음 후보: AGC/`speechnorm` 자동 게인 보정, 무음 제거, 음성 강화, denoise.
+  - denoise는 한국어 자음/말끝 손실 위험이 있어 마지막에 별도 검증한다.
+- [ ] 5순위: 실패/취소 UX 개선
+  - 분석 중 취소, 실패한 청크만 재시도, partial result 저장, 임시 파일 정리를 추가한다.
+- [ ] 6순위: 최종 배포 zip 재생성
+  - 모델 미포함/포함 기준을 명확히 하고, 회사 PC용 설명 md와 함께 다시 묶는다.
+
+# 0-1. 회사 PC에서 가장 먼저 할 일
+- [ ] `Smart Minutes AI` 폴더 전체를 그대로 둔다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
+- [ ] 기본 음성 인식 모델은 별도로 받아서 `Smart Minutes AI\models` 바로 아래에 복사한다.
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`.
-- [ ] Pyannote 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
-- [ ] 앱 실행 후 시스템 설정 > 모델에서 Cohere만 누락으로 표시되는지 확인하고, Cohere 복사 후 상태 새로고침을 누른다.
-- [ ] 모델 다운로드 버튼은 Hugging Face 직접 다운로드 대신 구글 드라이브/웹하드/사내 공유 링크를 열도록 바꾼다.
+- [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
+- [ ] 앱 실행 후 시스템 설정 > 모델에서 누락 모델이 있는지 확인하고, 모델 복사 후 상태 새로고침을 누른다.
+- [ ] 모델 다운로드 버튼은 직접 다운로드 대신 구글 드라이브/웹하드/사내 공유 링크를 열도록 바꾼다.
 - [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `Smart Minutes AI` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
 
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)
@@ -42,12 +67,17 @@
 - [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)
 - [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
 - [ ] 필요 시 `speechnorm` 추가 비교
+- [ ] AGC 자동 게인 보정 후보 검토
+  - ffmpeg `speechnorm`
+  - ffmpeg `dynaudnorm`
+  - 작은 목소리 보정 효과와 잡음 증폭 부작용 비교
 - [ ] 대체 STT 모델 비교 검토
   - faster-whisper-large-v3
   - Qwen3-ASR 계열
   - WhisperX 계열
   - 비교 기준: timestamp 구조, diarization 정합성, 한국어 회의 정확도, 처리시간, 로컬 배포 난이도
 - [ ] 무음 제거는 ffmpeg `silenceremove` 또는 별도 VAD 기반 방식으로 비교 검토
+- [ ] 음성 강화(speech enhancement)는 별도 후보 모델/라이브러리 조사 후 실험 여부 결정
 - [ ] denoise는 한국어 자음/말끝 손실 위험이 있어 별도 품질 테스트 세트로 신중 검증
 - [ ] 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
 - [ ] 사용자 설정 UI에 전처리 옵션 추가
@@ -63,6 +93,7 @@
 - [x] 긴 음성 파일을 시간 기준 청크(예: 10~15분)로 분할해 STT 메모리 사용량을 제한하는 백엔드 뼈대 추가
 - [x] 청크별 STT 결과를 타임스탬프 오프셋으로 병합하는 기본 유틸 추가
 - [x] 청크별 진행률을 SSE로 전송해 사용자가 긴 파일 처리 상태를 확인할 수 있게 개선
+- [ ] 30분/1시간/2시간/5시간 파일 실전 테스트로 처리 시간과 임시 용량 기록
 - [ ] 실패한 청크만 재시도할 수 있도록 임시 작업 상태와 partial result 저장
 
 ## 6. 2026-04-26 Agent Review Notes
@@ -81,8 +112,12 @@
 - [ ] 모델/의존성 설치 재현성 개선
   - requirements.txt에 Cohere 실행에 필요한 librosa, soundfile, sentencepiece, protobuf 반영
   - Python venv 런처와 네이티브 패키지 버전 정리 필요
-- [ ] 데스크탑 패키징 설계
-  - FastAPI sidecar 시작/종료, 포트 충돌, ffmpeg/model 경로, Python 런타임 포함 전략 결정
+- [x] 데스크탑 패키징 설계 1차 정리
+  - 내부 분석 기능은 빈 로컬 포트를 자동 할당하고 Tauri command로 UI에 전달
+  - sidecar 터미널 노출 방지, 로그 파일 저장, ffmpeg/model 경로 기준 정리
+- [ ] 데스크탑 패키징 후속 안정화
+  - 새 portable zip 생성 후 회사 PC와 유사한 경로에서 재검증
+  - 모델 미포함 배포와 모델 포함 배포 기준을 문서화
 - [ ] 저장소 기준 정리
   - 백엔드 JSON/MD/DOCX 결과와 UI IndexedDB 저장 구조를 SQLite 전환 전에 단일 기준으로 정리
 

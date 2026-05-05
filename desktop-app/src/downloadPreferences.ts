@@ -1,10 +1,10 @@
-export type DownloadFormat = 'hwpx' | 'txt' | 'docx';
+export type DownloadFormat = 'hwpx' | 'md' | 'txt' | 'docx';
 
 export const DEFAULT_DOWNLOAD_FORMAT: DownloadFormat = 'hwpx';
 export const DOWNLOAD_FORMAT_STORAGE_KEY = 'smart-minutes-download-format';
 
 export const isDownloadFormat = (value: unknown): value is DownloadFormat =>
-    value === 'hwpx' || value === 'txt' || value === 'docx';
+    value === 'hwpx' || value === 'md' || value === 'txt' || value === 'docx';
 
 export const getDownloadFormatPreference = (): DownloadFormat => {
     if (typeof window === 'undefined') return DEFAULT_DOWNLOAD_FORMAT;

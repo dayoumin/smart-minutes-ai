@@ -2,6 +2,21 @@ import os
 from docx import Document
 from docx.shared import Pt, Inches
 
+
+def _format_time(value) -> str:
+    if isinstance(value, str):
+        return value
+
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = 0.0
+
+    minutes = int(seconds // 60)
+    sec = int(seconds % 60)
+    return f"{minutes:02d}:{sec:02d}"
+
+
 def export_docx(
     result: dict,
     output_path: str,
@@ -55,12 +70,8 @@ def export_docx(
     doc.add_heading("6. 화자별 원문", level=1)
     segments = result.get("segments", [])
     for seg in segments:
-        start = seg.get("start", 0.0)
-        start_min = int(start // 60)
-        start_sec = int(start % 60)
-        time_str = f"[{start_min:02d}:{start_sec:02d}]"
-        
-        speaker = seg.get("speaker_name", "")
+        time_str = f"[{_format_time(seg.get('start', 0.0))}]"
+        speaker = seg.get("speaker_name") or seg.get("speaker") or ""
         text = seg.get("text", "")
         
         p = doc.add_paragraph()

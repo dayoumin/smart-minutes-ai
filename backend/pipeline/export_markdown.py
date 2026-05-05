@@ -1,5 +1,20 @@
 import os
 
+
+def _format_time(value) -> str:
+    if isinstance(value, str):
+        return value
+
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        seconds = 0.0
+
+    minutes = int(seconds // 60)
+    sec = int(seconds % 60)
+    return f"{minutes:02d}:{sec:02d}"
+
+
 def export_markdown(result: dict, output_path: str) -> str:
     """
     result.json 기반으로 Markdown 파일을 생성한다.
@@ -37,12 +52,8 @@ def export_markdown(result: dict, output_path: str) -> str:
         
     md_content += "## 6. 화자별 원문\n\n"
     for seg in result.get("segments", []):
-        start = seg.get("start", 0.0)
-        start_min = int(start // 60)
-        start_sec = int(start % 60)
-        time_str = f"[{start_min:02d}:{start_sec:02d}]"
-        
-        speaker = seg.get("speaker_name", "")
+        time_str = f"[{_format_time(seg.get('start', 0.0))}]"
+        speaker = seg.get("speaker_name") or seg.get("speaker") or ""
         text = seg.get("text", "")
         
         if speaker:

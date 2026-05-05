@@ -1,9 +1,10 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, FileText, PlusCircle, Trash2 } from 'lucide-react';
+import { Download, Edit3, FileText, PlusCircle, Save, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
-import { deleteMeeting, getAllMeetings, MeetingRecord } from './meetingRepository';
-import { getDownloadFormatPreference } from './downloadPreferences';
+import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
+import { DownloadFormat, getDownloadFormatPreference, setDownloadFormatPreference } from './downloadPreferences';
 import { toApiUrl } from './apiBase';
+import { Input } from './Input';
 
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
@@ -11,16 +12,20 @@ interface MeetingHistoryProps {
     onCreateMeeting?: () => void;
 }
 
-type DownloadKind = 'hwpx' | 'txt' | 'docx' | 'md' | 'json';
 type DetailTab = 'summary' | 'script';
 
 const safeFileName = (title: string): string => title.replace(/[/\\?%*:|"<>]/g, '-');
-const extensionByKind: Record<DownloadKind, string> = {
+const extensionByKind: Record<DownloadFormat, string> = {
     hwpx: 'hwpx',
+    md: 'md',
     txt: 'txt',
     docx: 'docx',
-    md: 'md',
-    json: 'json',
+};
+const downloadFormatLabels: Record<DownloadFormat, string> = {
+    hwpx: 'HWPX',
+    md: 'MD',
+    txt: 'TXT',
+    docx: 'DOCX',
 };
 
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled, onCreateMeeting }) => {
@@ -29,6 +34,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [errorMessage, setErrorMessage] = useState('');
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
     const [detailTab, setDetailTab] = useState<DetailTab>('summary');
+    const [downloadKind, setDownloadKind] = useState<DownloadFormat>(() => getDownloadFormatPreference());
+    const [isEditing, setIsEditing] = useState(false);
+    const [editTitle, setEditTitle] = useState('');
+    const [editDate, setEditDate] = useState('');
+    const [editParticipants, setEditParticipants] = useState('');
 
     const loadRecords = async () => {
         try {
@@ -67,6 +77,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             onSelectedMeetingHandled?.();
         }
     }, [selectedMeetingId, records, onSelectedMeetingHandled]);
+
+    useEffect(() => {
+        if (!selectedMeeting) return;
+        setEditTitle(selectedMeeting.title);
+        setEditDate(selectedMeeting.date.replace(' ', 'T'));
+        setEditParticipants(selectedMeeting.participants);
+        setIsEditing(false);
+    }, [selectedMeeting?.id]);
 
     const recordCountLabel = useMemo(() => `${records.length}개 회의 저장됨`, [records.length]);
 
@@ -114,7 +132,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         return plainMatch?.[1] ?? fallback;
     };
 
-    const handleDownloadArtifact = async (kind: DownloadKind) => {
+    const handleDownloadArtifact = async (kind: DownloadFormat) => {
         if (!selectedMeeting) return;
         setErrorMessage('');
 
@@ -126,32 +144,20 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             );
         };
 
-        if (kind === 'txt' && !selectedMeeting.outputFiles?.txt && !selectedMeeting.jobId) {
-            downloadLocalText();
-            return;
-        }
-
-        const outputUrl = selectedMeeting.outputFiles?.[kind]
-            ?? (selectedMeeting.jobId ? `/api/outputs/${selectedMeeting.jobId}/${kind}` : null);
-
-        if (!outputUrl) {
-            downloadLocalText();
-            setErrorMessage(`${kind.toUpperCase()} 파일이 없는 이전 기록이라 TXT로 다운로드했습니다.`);
-            return;
-        }
-
-        const absoluteUrl = await toApiUrl(outputUrl);
-
         try {
-            const response = await fetch(absoluteUrl);
+            const response = await fetch(await toApiUrl(`/api/export-record/${kind}`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(selectedMeeting),
+            });
             if (!response.ok) {
                 downloadLocalText();
-                setErrorMessage(`${kind.toUpperCase()} 파일을 아직 만들 수 없어 TXT로 다운로드했습니다.`);
+                setErrorMessage(`${kind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.`);
                 return;
             }
 
             const blob = await response.blob();
-            const fallbackName = `회의록_${safeFileName(selectedMeeting.title)}.${extensionByKind[kind]}`;
+            const fallbackName = `${safeFileName(selectedMeeting.title)}.${extensionByKind[kind]}`;
             const filename = filenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
             downloadBlob(blob, filename);
         } catch (error) {
@@ -176,7 +182,46 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     };
 
     const handlePreferredDownload = () => {
-        handleDownloadArtifact(getDownloadFormatPreference());
+        setDownloadFormatPreference(downloadKind);
+        handleDownloadArtifact(downloadKind);
+    };
+
+    const handleSaveEdit = async () => {
+        if (!selectedMeeting) return;
+
+        const nextTitle = editTitle.trim();
+        const nextParticipants = editParticipants.trim();
+        if (!nextTitle || !editDate || !nextParticipants) {
+            setErrorMessage('회의 제목, 일시, 참석자를 모두 입력해 주세요.');
+            return;
+        }
+
+        const nextMeeting: MeetingRecord = {
+            ...selectedMeeting,
+            title: nextTitle,
+            date: editDate.replace('T', ' '),
+            participants: nextParticipants,
+        };
+
+        try {
+            await updateMeeting(nextMeeting);
+            setSelectedMeeting(nextMeeting);
+            setRecords(prev => prev.map(record => record.id === nextMeeting.id ? nextMeeting : record));
+            setIsEditing(false);
+            setErrorMessage('');
+            window.dispatchEvent(new Event('meetings:updated'));
+        } catch (error) {
+            const message = error instanceof Error ? error.message : '회의록 정보를 저장하지 못했습니다.';
+            setErrorMessage(message);
+        }
+    };
+
+    const handleCancelEdit = () => {
+        if (!selectedMeeting) return;
+        setEditTitle(selectedMeeting.title);
+        setEditDate(selectedMeeting.date.replace(' ', 'T'));
+        setEditParticipants(selectedMeeting.participants);
+        setIsEditing(false);
     };
 
     return (
@@ -196,25 +241,86 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     <div className="flex h-full min-h-0 flex-col">
                         <div className="border-b border-border p-5">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div className="min-w-0">
-                                    <h3 className="text-h3 font-semibold text-foreground">{selectedMeeting.title}</h3>
-                                    <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-muted-foreground md:grid-cols-2">
-                                        <span>일시: {selectedMeeting.date}</span>
-                                        <span>참석자: {selectedMeeting.participants}</span>
-                                        <span>{recordCountLabel}</span>
-                                        {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
-                                    </div>
+                                <div className="min-w-0 flex-1">
+                                    {isEditing ? (
+                                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+                                            <label className="md:col-span-2 text-xs font-medium text-muted-foreground">
+                                                회의 제목
+                                                <Input className="mt-1" value={editTitle} onChange={event => setEditTitle(event.target.value)} />
+                                            </label>
+                                            <label className="text-xs font-medium text-muted-foreground">
+                                                일시
+                                                <Input className="mt-1" type="datetime-local" value={editDate} onChange={event => setEditDate(event.target.value)} />
+                                            </label>
+                                            <label className="text-xs font-medium text-muted-foreground">
+                                                참석자
+                                                <Input className="mt-1" value={editParticipants} onChange={event => setEditParticipants(event.target.value)} />
+                                            </label>
+                                        </div>
+                                    ) : (
+                                        <>
+                                            <h3 className="text-h3 font-semibold text-foreground">{selectedMeeting.title}</h3>
+                                            <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-muted-foreground md:grid-cols-2">
+                                                <span>일시: {selectedMeeting.date}</span>
+                                                <span>참석자: {selectedMeeting.participants}</span>
+                                                <span>{recordCountLabel}</span>
+                                                {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
+                                            </div>
+                                        </>
+                                    )}
                                 </div>
-                                <div className="flex shrink-0 gap-2">
+                                <div className="flex shrink-0 flex-wrap justify-end gap-2">
+                                    <select
+                                        value={downloadKind}
+                                        onChange={event => setDownloadKind(event.target.value as DownloadFormat)}
+                                        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
+                                        aria-label="다운로드 형식 선택"
+                                    >
+                                        {Object.entries(downloadFormatLabels).map(([value, label]) => (
+                                            <option key={value} value={value}>{label}</option>
+                                        ))}
+                                    </select>
                                     <Button
                                         variant="outline"
                                         className="inline-flex h-10 w-10 items-center justify-center p-0"
                                         onClick={handlePreferredDownload}
-                                        title="설정한 형식으로 다운로드"
+                                        title={`${downloadFormatLabels[downloadKind]} 다운로드`}
                                         aria-label="회의록 다운로드"
                                     >
                                         <Download size={18} />
                                     </Button>
+                                    {isEditing ? (
+                                        <>
+                                            <Button
+                                                variant="outline"
+                                                className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                                onClick={handleSaveEdit}
+                                                title="수정 저장"
+                                                aria-label="수정 저장"
+                                            >
+                                                <Save size={18} />
+                                            </Button>
+                                            <Button
+                                                variant="outline"
+                                                className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                                onClick={handleCancelEdit}
+                                                title="수정 취소"
+                                                aria-label="수정 취소"
+                                            >
+                                                <X size={18} />
+                                            </Button>
+                                        </>
+                                    ) : (
+                                        <Button
+                                            variant="outline"
+                                            className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                            onClick={() => setIsEditing(true)}
+                                            title="회의 정보 수정"
+                                            aria-label="회의 정보 수정"
+                                        >
+                                            <Edit3 size={18} />
+                                        </Button>
+                                    )}
                                     <Button
                                         variant="outline"
                                         className="inline-flex h-10 w-10 items-center justify-center border-red-200 p-0 text-red-500 hover:bg-red-50"

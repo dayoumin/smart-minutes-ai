@@ -3,8 +3,8 @@
   "offline_mode": true,
   "paths": {
     "ffmpeg": "ffmpeg.exe",
-    "stt_model": "./models/stt/cohere-transcribe-03-2026",
-    "diarization_model": "./models/diarization/speaker-diarization-community-1",
+    "stt_model": "../models",
+    "diarization_model": "../models",
     "segmentation_model": "",
     "llm_model": "./models/llm/gemma.gguf",
     "output_dir": "./outputs",

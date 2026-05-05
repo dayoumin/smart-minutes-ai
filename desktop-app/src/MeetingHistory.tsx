@@ -186,8 +186,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 body: JSON.stringify(selectedMeeting),
             });
             if (!response.ok) {
+                const detail = await response.text().catch(() => '');
                 downloadLocalText();
-                setErrorMessage(`${kind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.`);
+                setErrorMessage(`${kind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
                 return;
             }
 

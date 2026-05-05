@@ -2,6 +2,7 @@
 import asyncio
 import os
 import json
+import re
 import shutil
 import sys
 from datetime import datetime
@@ -211,6 +212,12 @@ def _safe_export_name(title: str, extension: str) -> str:
     return f"{safe or 'meeting-minutes'}.{extension}"
 
 
+def _safe_export_id(value: str) -> str:
+    safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
+    safe = safe.strip("._-")
+    return safe[:80] or "record"
+
+
 def _time_to_seconds(value) -> float:
     if isinstance(value, (int, float)):
         return float(value)
@@ -278,7 +285,7 @@ async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
 
     result_data = _meeting_record_to_export_result(payload)
     extension, media_type = allowed[kind]
-    record_id = _validate_job_id(str(payload.get("jobId") or payload.get("id") or "record"))
+    record_id = _safe_export_id(str(payload.get("jobId") or payload.get("id") or "record"))
     export_id = f"{record_id}_export_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
     output_path = os.path.abspath(os.path.join(output_dir, f"{export_id}_current.{extension}"))
     if not output_path.startswith(output_dir + os.sep):

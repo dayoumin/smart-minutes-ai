@@ -67,7 +67,8 @@
 - [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)
 - [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
 - [x] `speechnorm` 선택형 모드 추가
-- [ ] `speechnorm` 실제 샘플 비교
+- [x] `speechnorm` 60초 샘플 1차 비교
+- [ ] `speechnorm` 작은 목소리/잡음 샘플 추가 비교
 - [ ] AGC 자동 게인 보정 후보 검토
   - ffmpeg `speechnorm` 선택형 모드 추가 완료, 샘플 비교 필요
   - ffmpeg `dynaudnorm`

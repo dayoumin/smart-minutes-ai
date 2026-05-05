@@ -20,7 +20,14 @@ def _probe_mean_volume(input_path: str, ffmpeg_path: str) -> float | None:
         "null",
         null_sink,
     ]
-    completed = run_hidden(command, capture_output=True, text=True, check=False)
+    completed = run_hidden(
+        command,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        check=False,
+    )
     output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
     match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", output)
     if not match:

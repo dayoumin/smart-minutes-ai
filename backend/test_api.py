@@ -102,6 +102,31 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(plan["resolved_mode"], "speechnorm")
         self.assertEqual(plan["audio_filter"], "speechnorm")
 
+    def test_delete_outputs_removes_job_artifacts(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        temp_dir = os.path.join(BACKEND_DIR, "temp")
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(temp_dir, exist_ok=True)
+        job_id = "unit_delete_outputs"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+        temp_path = os.path.join(temp_dir, f"{job_id}.wav")
+        chunk_dir = os.path.join(temp_dir, f"{job_id}_chunks")
+        os.makedirs(chunk_dir, exist_ok=True)
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump({"ok": True}, f)
+        with open(temp_path, "w", encoding="utf-8") as f:
+            f.write("temp")
+        with open(os.path.join(chunk_dir, "chunk.wav"), "w", encoding="utf-8") as f:
+            f.write("chunk")
+
+        response = self.client.delete(f"/api/outputs/{job_id}")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(os.path.exists(output_path))
+        self.assertFalse(os.path.exists(temp_path))
+        self.assertFalse(os.path.exists(chunk_dir))
+
 
 if __name__ == "__main__":
     unittest.main()

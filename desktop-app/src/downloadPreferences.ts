@@ -2,6 +2,7 @@ export type DownloadFormat = 'hwpx' | 'md' | 'txt' | 'docx';
 
 export const DEFAULT_DOWNLOAD_FORMAT: DownloadFormat = 'hwpx';
 export const DOWNLOAD_FORMAT_STORAGE_KEY = 'smart-minutes-download-format';
+export const DOWNLOAD_FORMAT_CHANGE_EVENT = 'smart-minutes-download-format:changed';
 
 export const isDownloadFormat = (value: unknown): value is DownloadFormat =>
     value === 'hwpx' || value === 'md' || value === 'txt' || value === 'docx';
@@ -15,4 +16,5 @@ export const getDownloadFormatPreference = (): DownloadFormat => {
 
 export const setDownloadFormatPreference = (format: DownloadFormat) => {
     window.localStorage.setItem(DOWNLOAD_FORMAT_STORAGE_KEY, format);
+    window.dispatchEvent(new CustomEvent(DOWNLOAD_FORMAT_CHANGE_EVENT, { detail: format }));
 };

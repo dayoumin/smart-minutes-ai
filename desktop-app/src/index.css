@@ -73,7 +73,7 @@
 
   /* Effects */
   --blur-glass: 20px;
-  --radius-card: 1.5rem;
+  --radius-card: 0.75rem;
   --radius-btn: 0.75rem;
   --radius-pill: 999px;
 }
@@ -279,5 +279,54 @@
   /* Inputs */
   .input-field {
     @apply flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 transition-colors duration-200;
+  }
+
+  /* Product surfaces */
+  .app-panel {
+    @apply rounded-[var(--radius-card)] border border-border bg-background shadow-sm;
+  }
+
+  .app-panel-header {
+    @apply border-b border-border px-5 py-4;
+  }
+
+  .section-title {
+    @apply text-base font-semibold text-foreground;
+  }
+
+  .section-description {
+    @apply mt-1 text-sm leading-relaxed text-muted-foreground;
+  }
+
+  .tab-list {
+    @apply flex gap-1 border-b border-border;
+  }
+
+  .tab-button {
+    @apply border-b-2 border-transparent px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground;
+  }
+
+  .tab-button-active {
+    @apply border-primary text-primary;
+  }
+
+  .summary-block {
+    @apply rounded-[var(--radius-card)] border border-border bg-muted/20 p-4 text-sm leading-relaxed text-foreground whitespace-pre-wrap;
+  }
+
+  .topic-chip {
+    @apply rounded-full bg-muted/60 px-3 py-1 text-xs font-medium text-muted-foreground;
+  }
+
+  .speaker-turn {
+    @apply grid gap-3 rounded-[var(--radius-card)] border border-border bg-background p-3 transition-colors hover:bg-muted/20 md:grid-cols-[8rem_1fr];
+  }
+
+  .speaker-meta {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .status-note {
+    @apply rounded-md border px-3 py-2 text-xs leading-relaxed;
   }
 }

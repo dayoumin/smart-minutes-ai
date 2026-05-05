@@ -94,8 +94,8 @@ const displayPath = (path = ''): string => path.replace(/^\\\\\?\\/, '');
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
 
 const getUserModelLabel = (model: ModelStatus): string => {
-    if (model.key === 'stt_primary') return '음성 인식 모델';
-    if (model.key === 'diarization') return '화자 분리 모델';
+    if (model.key === 'stt_primary') return '음성 인식';
+    if (model.key === 'diarization') return '발화자 구분';
     return model.label;
 };
 
@@ -538,11 +538,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const progressPercent = Math.min(100, Math.max(0, progress));
     const selectedFileMeta = file
         ? [
-            fileKind === 'video' ? '영상 파일' : fileKind === 'audio' ? '음성 파일' : '알 수 없는 형식',
+            fileKind === 'video' ? '영상' : fileKind === 'audio' ? '음성' : '파일',
             formatFileSize(file.size),
             fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
         ].filter(Boolean).join(' · ')
-        : '오디오 또는 영상 파일을 선택해 주세요.';
+        : '파일을 선택해 주세요.';
     const isLongMedia = Boolean(fileDurationSeconds && fileDurationSeconds >= 3 * 60 * 60);
     const currentStatusMessage = statusMessage || (
         analysisPhase === 'checking-server'
@@ -556,28 +556,28 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         <div className="flex flex-col h-full gap-6 max-w-3xl mx-auto w-full">
             <h2 className="text-h3 font-semibold text-primary mb-2">새 회의록 작성</h2>
             <p className="text-sm text-muted-foreground -mt-4">
-                음성 파일과 회의 녹화 영상을 모두 업로드할 수 있습니다. 영상은 서버에서 음성 트랙만 추출한 뒤 분석합니다.
+                음성 파일과 회의 녹화 영상을 업로드해 회의록을 만듭니다.
             </p>
 
-            <div className="bg-background border border-border rounded-lg p-4 flex flex-col gap-5 shadow-sm sm:p-6">
+            <div className="app-panel p-4 flex flex-col gap-5 sm:p-6">
                 <div className="flex flex-col gap-2">
-                    <label className="text-sm font-medium text-foreground">회의 제목 *</label>
-                    <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2026년 상반기 기획 회의" disabled={isAnalyzing} />
+                    <label className="text-sm font-medium text-foreground" htmlFor="meeting-title">회의 제목 *</label>
+                    <Input id="meeting-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2026년 상반기 기획 회의" disabled={isAnalyzing} />
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                     <div className="flex flex-col gap-2">
-                        <label className="text-sm font-medium text-foreground">일시 *</label>
-                        <Input type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
+                        <label className="text-sm font-medium text-foreground" htmlFor="meeting-date">일시 *</label>
+                        <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
                     </div>
                     <div className="flex flex-col gap-2">
-                        <label className="text-sm font-medium text-foreground">참석자 *</label>
-                        <Input value={participants} onChange={e => setParticipants(e.target.value)} placeholder="예: 홍길동, 김철수" disabled={isAnalyzing} />
+                        <label className="text-sm font-medium text-foreground" htmlFor="meeting-participants">참석자 *</label>
+                        <Input id="meeting-participants" value={participants} onChange={e => setParticipants(e.target.value)} placeholder="예: 홍길동, 김철수" disabled={isAnalyzing} />
                     </div>
                 </div>
 
                 <div className="flex flex-col gap-2 mt-2">
-                    <label className="text-sm font-medium text-foreground">음성/영상 파일 첨부 *</label>
+                    <label className="text-sm font-medium text-foreground">회의 파일 *</label>
                     <input
                         type="file"
                         ref={fileInputRef}
@@ -625,12 +625,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                         </div>
                     </div>
-                    <p className="text-xs text-muted-foreground">
-                        MP3, WAV, M4A, AAC, FLAC, MP4, MOV, MKV, AVI, WEBM
-                    </p>
+                    <p className="text-xs text-muted-foreground">지원 형식: MP3, WAV, M4A, AAC, FLAC, MP4, MOV, MKV, AVI, WEBM</p>
                     {file && (file.size >= LARGE_FILE_WARNING_BYTES || isLongMedia) && (
-                        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
-                            긴 파일은 음성만 추출해 나누어 분석하도록 설계되어 있습니다. 실제 처리 시간과 안정성은 파일 길이와 PC 성능에 따라 달라집니다.
+                        <div className="status-note border-amber-200 bg-amber-50 text-amber-800">
+                            긴 파일은 음성만 추출한 뒤 나누어 분석합니다. 처리 시간은 파일 길이와 PC 성능에 따라 달라집니다.
                         </div>
                     )}
                 </div>
@@ -705,7 +703,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             )}
 
             {showAnalysisPanel && (
-                <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 shadow-sm">
+                <div className="app-panel border-primary/20 bg-primary/5 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex min-w-0 gap-3">
                             <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
@@ -713,7 +711,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                             <div className="min-w-0">
                                 <div className="text-sm font-semibold text-foreground">
-                                    {analysisPhase === 'downloading-models' ? '모델을 준비하고 있습니다' : '회의록을 분석하고 있습니다'}
+                                    {analysisPhase === 'downloading-models' ? '분석 준비 중입니다' : '회의록을 분석하고 있습니다'}
                                 </div>
                                 <div className="mt-1 text-sm text-muted-foreground">
                                     {currentStatusMessage}

@@ -13,6 +13,12 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Compare STT quality, diarization impact, processing time, and failure risk together.
 - Treat denoise and silence trimming as late-stage experiments because they can remove Korean consonants, endings, or quiet speech.
 
+## UI and Copy Work
+
+- Read `docs/design-system.md` before changing repeated UI surfaces.
+- Prefer user-facing terms such as `회의 파일`, `회의 요약`, `발화 기록`, and `분석 준비`.
+- Avoid exposing implementation terms such as model names, server details, or pipeline names in common user flows.
+
 Related docs:
 
 - `docs/audio-performance-improvement-log.md`
@@ -20,4 +26,5 @@ Related docs:
 - `docs/audio-preprocessing-test-plan.md`
 - `docs/audio-testset-manifest.csv`
 - `docs/audio-preprocessing-eval-template.csv`
+- `docs/design-system.md`
 - `todo.md`

@@ -2,7 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Edit3, FileText, PlusCircle, Save, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
-import { DownloadFormat, getDownloadFormatPreference, setDownloadFormatPreference } from './downloadPreferences';
+import {
+    DownloadFormat,
+    DOWNLOAD_FORMAT_CHANGE_EVENT,
+    getDownloadFormatPreference,
+    setDownloadFormatPreference,
+} from './downloadPreferences';
 import { toApiUrl } from './apiBase';
 import { Input } from './Input';
 
@@ -68,6 +73,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, []);
 
     useEffect(() => {
+        const syncDownloadPreference = () => setDownloadKind(getDownloadFormatPreference());
+        window.addEventListener(DOWNLOAD_FORMAT_CHANGE_EVENT, syncDownloadPreference);
+        window.addEventListener('focus', syncDownloadPreference);
+        return () => {
+            window.removeEventListener(DOWNLOAD_FORMAT_CHANGE_EVENT, syncDownloadPreference);
+            window.removeEventListener('focus', syncDownloadPreference);
+        };
+    }, []);
+
+    useEffect(() => {
         if (!selectedMeetingId || !records.length) return;
 
         const meeting = records.find(record => record.id === selectedMeetingId);
@@ -98,13 +113,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             '[요약]',
             meeting.summary,
             '',
-            '[화자 분리 / 발화 스크립트]',
+            '[발화 기록]',
             ...(meeting.segments?.length
                 ? meeting.segments.map(segment => {
                     const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
                     return `${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
                 })
-                : ['발화 스크립트 데이터가 없습니다. 실제 분석 모드로 다시 분석해 주세요.']),
+                : ['발화 기록이 없습니다. 다시 분석해 주세요.']),
         ];
         return lines.filter(Boolean).join('\n');
     };
@@ -168,9 +183,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     };
 
     const handleDelete = async (id: string) => {
-        if (!window.confirm('정말로 이 회의록을 삭제하시겠습니까? 삭제한 데이터는 복구할 수 없습니다.')) return;
+        const meeting = records.find(record => record.id === id);
+        if (!window.confirm('정말로 이 회의록을 삭제하시겠습니까? 저장된 분석 파일도 함께 삭제됩니다.')) return;
 
         try {
+            if (meeting?.jobId) {
+                const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(meeting.jobId)}`), {
+                    method: 'DELETE',
+                });
+                if (!response.ok && response.status !== 404) {
+                    throw new Error('분석 파일을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                }
+            }
             await deleteMeeting(id);
             setRecords(prev => prev.filter(record => record.id !== id));
             setSelectedMeeting(prev => prev?.id === id ? null : prev);
@@ -232,14 +256,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 </div>
             )}
 
-            <section className="min-h-0 flex-1 rounded-lg border border-border bg-background">
+            <section className="app-panel min-h-0 flex-1">
                 {isLoading ? (
                     <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
                         회의 기록을 불러오는 중입니다...
                     </div>
                 ) : selectedMeeting ? (
                     <div className="flex h-full min-h-0 flex-col">
-                        <div className="border-b border-border p-5">
+                        <div className="app-panel-header">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0 flex-1">
                                     {isEditing ? (
@@ -333,35 +357,51 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 </div>
                             </div>
 
-                            <div className="mt-5 flex border-b border-border">
-                                <button className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${detailTab === 'summary' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={() => setDetailTab('summary')}>
-                                    요약 내용
+                            <div className="tab-list mt-5" role="tablist" aria-label="회의록 상세">
+                                <button
+                                    type="button"
+                                    id="meeting-summary-tab"
+                                    role="tab"
+                                    aria-selected={detailTab === 'summary'}
+                                    aria-controls="meeting-summary-panel"
+                                    className={`tab-button ${detailTab === 'summary' ? 'tab-button-active' : ''}`}
+                                    onClick={() => setDetailTab('summary')}
+                                >
+                                    회의 요약
                                 </button>
-                                <button className={`pb-2 px-4 text-sm font-medium border-b-2 transition-colors ${detailTab === 'script' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={() => setDetailTab('script')}>
-                                    화자 분리 / 발화 스크립트
+                                <button
+                                    type="button"
+                                    id="meeting-script-tab"
+                                    role="tab"
+                                    aria-selected={detailTab === 'script'}
+                                    aria-controls="meeting-script-panel"
+                                    className={`tab-button ${detailTab === 'script' ? 'tab-button-active' : ''}`}
+                                    onClick={() => setDetailTab('script')}
+                                >
+                                    발화 기록
                                 </button>
                             </div>
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
                             {detailTab === 'summary' ? (
-                                <div className="flex flex-col gap-5">
-                                    <div className="rounded-md bg-muted/50 p-4 text-sm leading-relaxed text-foreground whitespace-pre-wrap">
+                                <div id="meeting-summary-panel" role="tabpanel" aria-labelledby="meeting-summary-tab" className="flex flex-col gap-5">
+                                    <div className="summary-block">
                                         {selectedMeeting.summary}
                                     </div>
                                     {!!selectedMeeting.topics?.length && (
                                         <div>
-                                            <h4 className="mb-2 text-sm font-semibold text-foreground">주요 주제</h4>
+                                            <h4 className="section-title mb-2">주요 주제</h4>
                                             <div className="flex flex-wrap gap-2">
                                                 {selectedMeeting.topics.map(topic => (
-                                                    <span key={topic} className="rounded-md bg-muted/50 px-2.5 py-1 text-xs text-muted-foreground">{topic}</span>
+                                                    <span key={topic} className="topic-chip">{topic}</span>
                                                 ))}
                                             </div>
                                         </div>
                                     )}
                                     {!!selectedMeeting.actions?.length && (
                                         <div>
-                                            <h4 className="mb-2 text-sm font-semibold text-foreground">할 일</h4>
+                                            <h4 className="section-title mb-2">할 일</h4>
                                             <ul className="list-disc pl-5 text-sm text-foreground">
                                                 {selectedMeeting.actions.map(action => <li key={action}>{action}</li>)}
                                             </ul>
@@ -369,26 +409,32 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     )}
                                 </div>
                             ) : (
-                                <div className="flex flex-col gap-3">
+                                <div id="meeting-script-panel" role="tabpanel" aria-labelledby="meeting-script-tab" className="flex flex-col gap-3">
                                     {selectedMeeting.segments?.some(seg => seg.timingApproximate) && (
-                                        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
-                                            이 회의록의 시간표는 음성 길이에 맞춰 나눈 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
+                                        <div className="status-note border-amber-200 bg-amber-50 text-amber-800">
+                                            일부 시간 정보는 음성 길이에 맞춘 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
                                         </div>
                                     )}
                                     {selectedMeeting.segments?.length ? (
-                                        selectedMeeting.segments.map((seg, idx) => (
-                                            <div key={`${seg.start}-${idx}`} className="flex gap-4 rounded-md bg-muted/30 p-3 transition-colors hover:bg-muted/50">
-                                                <div className="w-32 shrink-0 text-xs text-muted-foreground">
-                                                    <div className="font-semibold text-primary">{seg.speaker}</div>
-                                                    <div>{seg.start} - {seg.end}</div>
-                                                    {seg.timingApproximate && <div className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">시간 추정</div>}
+                                        <div className="flex flex-col gap-3">
+                                            {selectedMeeting.segments.map((seg, idx) => (
+                                                <div key={`${seg.start}-${idx}`} className="speaker-turn">
+                                                    <div className="speaker-meta">
+                                                        <div className="font-semibold text-primary">{seg.speaker}</div>
+                                                        <div>{seg.start} - {seg.end}</div>
+                                                        {seg.timingApproximate && <div className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">시간 추정</div>}
+                                                    </div>
+                                                    <div className="flex-1 text-sm leading-relaxed text-foreground">{seg.text}</div>
                                                 </div>
-                                                <div className="flex-1 text-sm leading-relaxed text-foreground">{seg.text}</div>
-                                            </div>
-                                        ))
+                                            ))}
+                                        </div>
                                     ) : (
                                         <div className="rounded-md bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-                                            발화 스크립트 데이터가 없습니다. 실제 분석 모드로 다시 분석해 주세요.
+                                            <div>발화 기록이 없습니다.</div>
+                                            <Button className="mt-4" variant="outline" onClick={onCreateMeeting}>
+                                                <PlusCircle size={16} />
+                                                새 회의록 작성
+                                            </Button>
                                         </div>
                                     )}
                                 </div>
@@ -404,7 +450,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             <div>
                                 <h3 className="text-base font-semibold text-foreground">아직 저장된 회의록이 없습니다</h3>
                                 <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                                    첫 회의 자료를 업로드하면 요약과 발화 스크립트가 이곳에 저장됩니다.
+                                    첫 회의 자료를 업로드하면 회의 요약과 발화 기록이 이곳에 저장됩니다.
                                 </p>
                             </div>
                             <Button onClick={onCreateMeeting}>

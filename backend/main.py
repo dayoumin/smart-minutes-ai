@@ -153,6 +153,49 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
     return FileResponse(file_path, filename=filename, media_type=media_type)
 
 
+def _validate_job_id(job_id: str) -> str:
+    if not job_id or os.path.basename(job_id) != job_id or ".." in job_id:
+        raise HTTPException(status_code=400, detail="Invalid job id")
+    return job_id
+
+
+@app.delete("/api/outputs/{job_id}")
+async def delete_outputs(job_id: str) -> dict:
+    job_id = _validate_job_id(job_id)
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    deleted: list[str] = []
+
+    output_suffixes = [
+        "_result.json",
+        "_transcript.txt",
+        "_report.md",
+        "_report.docx",
+        "_report.hwpx",
+    ]
+    for suffix in output_suffixes:
+        file_path = os.path.abspath(os.path.join(output_dir, f"{job_id}{suffix}"))
+        if file_path.startswith(output_dir + os.sep) and os.path.exists(file_path):
+            os.remove(file_path)
+            deleted.append(os.path.basename(file_path))
+
+    if os.path.isdir(temp_dir):
+        for name in os.listdir(temp_dir):
+            if not name.startswith(job_id):
+                continue
+            path = os.path.abspath(os.path.join(temp_dir, name))
+            if not path.startswith(temp_dir + os.sep):
+                continue
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+            deleted.append(os.path.basename(path))
+
+    return {"job_id": job_id, "deleted": deleted}
+
+
 def _safe_export_name(title: str, extension: str) -> str:
     safe = "".join("-" if ch in '/\\?%*:|"<> ' else ch for ch in title.strip())
     return f"{safe or 'meeting-minutes'}.{extension}"

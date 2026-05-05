@@ -70,8 +70,8 @@ const modelPageUrl = (model: ModelStatus): string | null => {
 const displayPath = (path: string): string => path.replace(/^\\\\\?\\/, '');
 
 const getUserModelLabel = (model: ModelStatus): string => {
-    if (model.key === 'stt_primary') return '음성 인식 모델';
-    if (model.key === 'diarization') return '화자 분리 모델';
+    if (model.key === 'stt_primary') return '음성 인식';
+    if (model.key === 'diarization') return '발화자 구분';
     return model.label;
 };
 
@@ -207,8 +207,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setIsSaving(true);
         setErrorMessage('');
         setMessage('');
-        setDownloadFormatPreference(downloadFormat);
-
         try {
             const base = apiBase || await getApiBase();
             const response = await fetchWithTimeout(`${base}/api/settings`, {
@@ -240,6 +238,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(nextSettings);
+            setDownloadFormatPreference(downloadFormat);
             setMessage('저장했습니다. 다음 분석부터 적용됩니다.');
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');
@@ -249,7 +248,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     };
 
     const tabs: Array<{ key: SettingsTab; label: string }> = [
-        { key: 'models', label: '모델' },
+        { key: 'models', label: '분석 준비' },
         { key: 'analysis', label: '분석' },
         { key: 'about', label: '정보' },
     ];
@@ -273,13 +272,17 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                     </button>
                 </div>
 
-                <div className="flex border-b border-border px-5">
+                <div className="tab-list px-5" role="tablist" aria-label="시스템 설정">
                     {tabs.map(tab => (
                         <button
                             key={tab.key}
                             type="button"
+                            id={`settings-${tab.key}-tab`}
+                            role="tab"
+                            aria-selected={activeTab === tab.key}
+                            aria-controls={`settings-${tab.key}-panel`}
                             onClick={() => setActiveTab(tab.key)}
-                            className={`border-b-2 px-4 py-3 text-sm font-medium transition-colors ${activeTab === tab.key ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
+                            className={`tab-button py-3 ${activeTab === tab.key ? 'tab-button-active' : ''}`}
                         >
                             {tab.label}
                         </button>
@@ -300,13 +303,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                     )}
 
                     {activeTab === 'models' && (
-                        <section className="flex flex-col gap-4">
+                        <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="flex flex-col gap-4">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
-                                    <h3 className="text-base font-semibold text-foreground">모델 준비</h3>
-                                    <p className="mt-1 text-sm text-muted-foreground">
-                                        필수 모델이 없으면 모델 페이지에서 받은 뒤 아래 위치에 넣습니다.
-                                    </p>
+                                    <h3 className="section-title">분석 준비</h3>
+                                    <p className="section-description">필수 모델이 준비되어야 분석을 시작할 수 있습니다.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
                                     <Button variant="outline" onClick={() => void loadSettings()} disabled={isLoading || isSaving}>
@@ -315,7 +316,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     </Button>
                                     <Button onClick={handleOpenModelPages} disabled={isLoading}>
                                         <ExternalLink size={16} />
-                                        모델 받는 곳
+                                        준비 파일 받기
                                     </Button>
                                 </div>
                             </div>
@@ -323,8 +324,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                             <div className="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                                 <div className="font-medium text-foreground">회사 PC 사용 요약</div>
                                 <p className="mt-1">
-                                    `Smart Minutes AI.exe`만 따로 옮기지 말고 `Smart Minutes AI` 폴더 전체를 옮기세요.
-                                    필요한 모델은 실행 파일 옆 `models` 폴더 바로 아래에 넣습니다.
+                                    `Smart Minutes AI` 폴더 전체를 옮기고, 필요한 모델은 실행 파일 옆 `models` 폴더에 넣습니다.
                                 </p>
                             </div>
 
@@ -334,9 +334,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
                                                 <div className="font-medium text-foreground">{getUserModelLabel(model)}</div>
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    회의록 분석에 필요한 모델입니다.
-                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">회의록 분석에 필요합니다.</div>
                                             </div>
                                             <span className={`inline-flex w-fit items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold ${model.installed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
                                                 {model.installed ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
@@ -345,7 +343,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                         </div>
 
                                         <div className="mt-3">
-                                            <div className="mb-1 text-xs font-medium text-foreground">배치 위치</div>
+                                            <div className="mb-1 text-xs font-medium text-foreground">넣을 위치</div>
                                             <div className="flex items-start gap-2">
                                                 <code className="min-w-0 flex-1 break-all rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
                                                     {displayPath(model.path)}
@@ -366,7 +364,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
                                         {!model.installed && (
                                             <div className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                                                {model.manual_note || '모델 페이지에서 파일을 받은 뒤 위 배치 위치에 넣어 주세요.'}
+                                                {model.manual_note || '모델 페이지에서 파일을 받은 뒤 위 위치에 넣어 주세요.'}
                                             </div>
                                         )}
                                     </div>
@@ -386,13 +384,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                     )}
 
                     {activeTab === 'analysis' && (
-                        <section className="flex flex-col gap-4">
+                        <section id="settings-analysis-panel" role="tabpanel" aria-labelledby="settings-analysis-tab" className="flex flex-col gap-4">
                             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                                 <div>
-                                    <h3 className="text-base font-semibold text-foreground">분석 방식</h3>
-                                    <p className="mt-1 text-sm text-muted-foreground">
-                                        대부분은 기본값으로 충분합니다. 긴 파일 처리나 다운로드 형식만 필요할 때 조정하세요.
-                                    </p>
+                                    <h3 className="section-title">분석 방식</h3>
+                                    <p className="section-description">대부분은 기본값으로 충분합니다. 필요할 때만 조정하세요.</p>
                                 </div>
                                 <Button onClick={handleSaveSettings} disabled={isLoading || isSaving}>
                                     {isSaving ? '저장 중...' : '저장'}
@@ -406,8 +402,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     onChange={event => setDiarizationEnabled(event.target.checked)}
                                 />
                                 <span>
-                                    <span className="block font-medium text-foreground">화자 분리 사용</span>
-                                    <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다.</span>
+                                    <span className="block font-medium text-foreground">발화자 구분</span>
+                                    <span className="text-sm text-muted-foreground">말한 사람을 자동으로 나눕니다.</span>
                                 </span>
                             </label>
 
@@ -418,8 +414,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     onChange={event => setChunkingEnabled(event.target.checked)}
                                 />
                                 <span>
-                                    <span className="block font-medium text-foreground">긴 파일 자동 분할</span>
-                                    <span className="text-sm text-muted-foreground">긴 음성/영상을 작은 구간으로 나누어 메모리 부담을 줄입니다.</span>
+                                    <span className="block font-medium text-foreground">긴 파일 나누기</span>
+                                    <span className="text-sm text-muted-foreground">긴 파일을 작은 구간으로 나눠 처리합니다.</span>
                                 </span>
                             </label>
 
@@ -430,8 +426,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     onChange={event => setPreprocessingEnabled(event.target.checked)}
                                 />
                                 <span>
-                                    <span className="block font-medium text-foreground">음성 전처리 사용</span>
-                                    <span className="text-sm text-muted-foreground">입력 음성을 분석하기 좋은 형태로 정리합니다.</span>
+                                    <span className="block font-medium text-foreground">음성 정리</span>
+                                    <span className="text-sm text-muted-foreground">분석하기 좋은 형태로 입력 음성을 정리합니다.</span>
                                 </span>
                             </label>
 
@@ -443,7 +439,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     disabled={!preprocessingEnabled}
                                 />
                                 <span>
-                                    <span className="block font-medium text-foreground">음량 자동 보정</span>
+                                    <span className="block font-medium text-foreground">음량 보정</span>
                                     <span className="text-sm text-muted-foreground">작은 음성은 키우고 과한 처리는 피합니다.</span>
                                 </span>
                             </label>
@@ -479,18 +475,18 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     <option value="docx">DOCX</option>
                                 </select>
                                 <span className="mt-2 block text-sm text-muted-foreground">
-                                    회의 상세의 다운로드 아이콘은 이 형식으로 저장합니다.
+                                    다운로드 아이콘을 누르면 이 형식으로 저장합니다.
                                 </span>
                             </label>
                         </section>
                     )}
 
                     {activeTab === 'about' && (
-                        <section className="flex flex-col gap-4 text-sm">
+                        <section id="settings-about-panel" role="tabpanel" aria-labelledby="settings-about-tab" className="flex flex-col gap-4 text-sm">
                             <div className="rounded-md border border-border bg-muted/20 p-4">
                                 <div className="font-medium text-foreground">Smart Minutes AI</div>
                                 <p className="mt-1 leading-relaxed text-muted-foreground">
-                                    음성 파일과 회의 녹화 영상에서 회의록, 화자별 발화, 다운로드 파일을 만드는 로컬 데스크탑 앱입니다.
+                                    음성 파일과 회의 녹화 영상에서 회의록과 발화 기록을 만드는 로컬 데스크탑 앱입니다.
                                 </p>
                             </div>
                             <div className="rounded-md border border-border bg-muted/20 p-4">

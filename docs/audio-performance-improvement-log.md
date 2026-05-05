@@ -118,9 +118,11 @@
 목적:
 
 - 같은 샘플에서 `normal / quiet / noise / silence_trim / denoise` 변형을 만든다.
-- `auto / loudnorm / speechnorm` 전처리를 같은 방식으로 비교한다.
+- `off / auto / loudnorm / speechnorm` 전처리를 같은 방식으로 비교한다.
 - 선택적으로 STT와 diarization을 실행해 결과를 JSON으로 남긴다.
 - 긴 파일은 일정 길이만 WAV로 추출한 뒤 청크 개수와 임시 파일 용량을 기록한다.
+- 기본 입력은 `Smart Minutes AI\video`지만, MP4뿐 아니라 WAV/MP3/M4A/FLAC 등 음성 파일도 같은 폴더에서 찾는다.
+- STT 모델은 portable 배포 구조인 `Smart Minutes AI\models`를 먼저 찾고, 없으면 개발용 `backend\models\stt\cohere-transcribe-03-2026`를 찾는다.
 
 실행한 명령:
 
@@ -128,6 +130,12 @@
 python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --output backend\temp\audio_performance_eval\stt_eval_limit2.json
 python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 1 --sample-seconds 60 --run-diarization --long-seconds 1800 --output backend\temp\audio_performance_eval\diarization_eval_limit1.json
 ```
+
+운영 주의:
+
+- 반복 실행 전 기존 평가 산출물을 지우려면 `--clean`을 붙인다.
+- `--limit`은 STT/diarization을 돌릴 샘플 개수만 제한한다. 긴 파일 측정은 폴더 전체에서 가장 큰 파일을 고른다.
+- 스크립트 JSON만 보고 기본값을 바꾸지 않는다. 사람이 청취한 품질 메모와 요약 품질 확인이 같이 필요하다.
 
 ### 작은 목소리/잡음 변형
 

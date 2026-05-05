@@ -255,4 +255,5 @@
 python scripts\run_audio_performance_eval.py --video-dir "Smart Minutes AI\video" --limit 2 --sample-seconds 60 --run-stt --long-seconds 1800 --output backend\temp\audio_performance_eval\stt_eval_limit2.json
 ```
 
-이 스크립트는 작은 목소리/잡음 변형, `auto / loudnorm / speechnorm` 비교, 긴 파일 청크 측정을 같은 JSON 형식으로 남긴다.
+이 스크립트는 작은 목소리/잡음 변형, `off / auto / loudnorm / speechnorm` 비교, 긴 파일 청크 측정을 같은 JSON 형식으로 남긴다.
+반복 실행으로 산출물이 커질 수 있으므로 임시 결과를 새로 만들 때는 `--clean`을 붙인다.

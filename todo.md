@@ -71,6 +71,7 @@
 - [x] `speechnorm` 60초 샘플 1차 비교
 - [x] `Smart Minutes AI\video` 폴더 4개 영상 60초 비교
 - [x] 성능 비교 자동화 스크립트 추가 (`scripts/run_audio_performance_eval.py`)
+- [x] 성능 비교 스크립트에 `off` 기준, portable 모델 경로 탐색, 긴 파일 전체 후보 선택, `--clean` 옵션 반영
 - [x] `speechnorm` 작은 목소리/잡음 변형 샘플 1차 비교
 - [ ] 실제 작은 목소리/잡음 원본 샘플 추가 비교
 - [ ] AGC 자동 게인 보정 후보 검토

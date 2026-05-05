@@ -2,6 +2,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
@@ -29,6 +30,48 @@ def find_ffmpeg(root: Path) -> str:
         if candidate.exists():
             return str(candidate)
     return "ffmpeg"
+
+
+def resolve_existing_path(root: Path, raw_path: str | None) -> Path | None:
+    if not raw_path:
+        return None
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = root / path
+    return path if path.exists() else None
+
+
+def find_stt_model(root: Path, override: str | None = None) -> Path:
+    override_path = resolve_existing_path(root, override)
+    if override_path:
+        return override_path
+
+    candidates = [
+        root / "Smart Minutes AI" / "models",
+        root / "backend" / "models" / "stt" / "cohere-transcribe-03-2026",
+        root / "backend" / "models",
+    ]
+    required = ["config.json", "model.safetensors"]
+    for candidate in candidates:
+        if candidate.exists() and all((candidate / item).exists() for item in required):
+            return candidate
+    return candidates[0]
+
+
+def find_diarization_model(root: Path, override: str | None = None) -> Path:
+    override_path = resolve_existing_path(root, override)
+    if override_path:
+        return override_path
+
+    candidates = [
+        root / "Smart Minutes AI" / "models",
+        root / "backend" / "models" / "diarization" / "speaker-diarization-community-1",
+    ]
+    required = ["config.yaml", "embedding", "segmentation", "plda"]
+    for candidate in candidates:
+        if candidate.exists() and all((candidate / item).exists() for item in required):
+            return candidate
+    return candidates[0]
 
 
 def safe_slug(value: str, fallback: str) -> str:
@@ -62,6 +105,14 @@ def extract_wav(ffmpeg: str, source: Path, output: Path, seconds: int, start: in
         str(output),
     ]
     run_ffmpeg(command)
+
+
+def collect_media_files(media_dir: Path) -> list[Path]:
+    extensions = {".mp3", ".wav", ".m4a", ".aac", ".flac", ".mp4", ".mov", ".mkv", ".avi", ".webm"}
+    return sorted(
+        (path for path in media_dir.rglob("*") if path.is_file() and path.suffix.lower() in extensions),
+        key=lambda path: path.stat().st_size,
+    )
 
 
 def make_variant(ffmpeg: str, source_wav: Path, output: Path, variant: str) -> None:
@@ -142,13 +193,17 @@ def summarize_text(segments: list[dict[str, Any]]) -> tuple[int, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run reusable audio performance comparisons.")
-    parser.add_argument("--video-dir", default=r"Smart Minutes AI\video")
+    parser.add_argument("--video-dir", default=r"Smart Minutes AI\video", help="Directory containing audio/video samples.")
     parser.add_argument("--sample-seconds", type=int, default=60)
     parser.add_argument("--limit", type=int, default=2)
     parser.add_argument("--run-stt", action="store_true")
     parser.add_argument("--run-diarization", action="store_true")
+    parser.add_argument("--diarization-all-variants", action="store_true")
     parser.add_argument("--long-seconds", type=int, default=1800)
     parser.add_argument("--output", default=r"backend\temp\audio_performance_eval\latest.json")
+    parser.add_argument("--stt-model", default=None)
+    parser.add_argument("--diarization-model", default=None)
+    parser.add_argument("--clean", action="store_true", help="Delete the output work directory before running.")
     args = parser.parse_args()
 
     root = repo_root()
@@ -171,22 +226,24 @@ def main() -> int:
 
     ffmpeg = find_ffmpeg(root)
     video_dir = root / args.video_dir
-    videos = sorted(video_dir.glob("*.mp4"), key=lambda path: path.stat().st_size)
+    all_media = collect_media_files(video_dir)
+    videos = list(all_media)
     if args.limit > 0:
         videos = videos[: args.limit]
     if not videos:
-        raise SystemExit(f"No MP4 files found in {video_dir}")
+        raise SystemExit(f"No audio/video files found in {video_dir}")
 
     output_path = root / args.output
     work_dir = output_path.parent
+    if args.clean and work_dir.exists():
+        shutil.rmtree(work_dir)
     work_dir.mkdir(parents=True, exist_ok=True)
 
-    stt_model = root / "backend" / "models" / "stt" / "cohere-transcribe-03-2026"
-    diarization_model = root / "Smart Minutes AI" / "models"
-    if not diarization_model.exists():
-        diarization_model = root / "backend" / "models" / "diarization" / "speaker-diarization-community-1"
+    stt_model = find_stt_model(root, args.stt_model)
+    diarization_model = find_diarization_model(root, args.diarization_model)
 
     preprocessing_modes = {
+        "off": {"enabled": False, "normalize_audio": False, "normalization_mode": "off"},
         "auto": {"enabled": True, "normalize_audio": True, "normalization_mode": "auto"},
         "loudnorm": {"enabled": True, "normalize_audio": True, "normalization_mode": "loudnorm"},
         "speechnorm": {"enabled": True, "normalize_audio": True, "normalization_mode": "speechnorm"},
@@ -197,6 +254,8 @@ def main() -> int:
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
         "video_dir": str(video_dir),
         "sample_seconds": args.sample_seconds,
+        "stt_model": str(stt_model),
+        "diarization_model": str(diarization_model),
         "videos": [],
         "long_file": None,
     }
@@ -225,7 +284,7 @@ def main() -> int:
                 "preprocessing": [],
             }
 
-            modes_to_run = preprocessing_modes if variant in {"normal", "quiet", "noise"} else {"none": {"enabled": False}}
+            modes_to_run = preprocessing_modes if variant in {"normal", "quiet", "noise"} else {"off": {"enabled": False}}
             for mode, preprocessing in modes_to_run.items():
                 processed_wav = sample_dir / f"{variant}_{mode}.wav"
                 start = time.perf_counter()
@@ -254,7 +313,11 @@ def main() -> int:
                     except Exception as exc:
                         mode_item.update({"stt_ok": False, "stt_error": str(exc)})
 
-                if diarize_audio is not None and variant == "normal" and mode in {"auto", "loudnorm", "speechnorm"}:
+                should_run_diarization = diarize_audio is not None and (
+                    (variant == "normal" and mode in {"off", "auto", "loudnorm", "speechnorm"})
+                    or args.diarization_all_variants
+                )
+                if should_run_diarization:
                     start = time.perf_counter()
                     try:
                         diarization_segments = diarize_audio(str(processed_wav), str(diarization_model))
@@ -272,7 +335,8 @@ def main() -> int:
             video_item["variants"].append(variant_item)
         report["videos"].append(video_item)
 
-    long_video = max(videos, key=lambda path: path.stat().st_size)
+    long_candidates = all_media or videos
+    long_video = max(long_candidates, key=lambda path: path.stat().st_size)
     long_dir = work_dir / "long_file"
     long_wav = long_dir / "long_sample.wav"
     long_dir.mkdir(parents=True, exist_ok=True)
@@ -294,11 +358,12 @@ def main() -> int:
     }
 
     output_path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(json.dumps({
+    summary_json = json.dumps({
         "output": str(output_path),
         "videos": len(report["videos"]),
         "long_file": report["long_file"],
-    }, ensure_ascii=False, indent=2))
+    }, ensure_ascii=False, indent=2)
+    sys.stdout.buffer.write((summary_json + "\n").encode("utf-8", errors="replace"))
     return 0
 
 

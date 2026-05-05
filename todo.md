@@ -62,6 +62,7 @@
 ## 4-1. 오디오 전처리 품질 개선
 - [x] 현재 전처리 현황 문서화 (`docs/audio-preprocessing-notes.md`)
 - [x] 오디오 전처리 테스트 계획 문서화 (`docs/audio-preprocessing-test-plan.md`)
+- [x] 성능 개선 작업 로그와 시행착오 기록 문서화 (`docs/audio-performance-improvement-log.md`)
 - [x] `backend/pipeline/audio_preprocess.py`에 선택형 볼륨 정규화(normalize) 1차 적용
 - [x] 입력 음량 측정 기반 `auto normalization` 1차 적용
 - [ ] 테스트셋 1차 구성 (6~10개, 음량/잡음/기기/길이 편차 포함)

@@ -1,9 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Copy, Loader2, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
 import { Button } from './Button';
+import { IconButton } from './IconButton';
 import { Input } from './Input';
 import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
 import { getApiBase, writeFrontendLog } from './apiBase';
+import { ProgressBar } from './ProgressBar';
+import { StatusBanner } from './StatusBanner';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
@@ -505,7 +508,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         return 'AI 분석 시작';
     })();
 
-    const progressBarClass = errorMessage ? 'bg-red-500' : 'bg-primary';
     const showProgressBar = isAnalyzing || progress > 0;
     const fileKind = file ? getFileKind(file) : null;
     const showAnalysisPanel = isAnalyzing;
@@ -585,25 +587,24 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                     파일 선택
                                 </Button>
                                 {file && (
-                                    <Button
+                                    <IconButton
                                         variant="outline"
-                                        className="h-10 w-10 border-red-200 p-0 text-red-500 hover:bg-red-50"
+                                        className="border-red-200 text-red-500 hover:bg-red-50"
+                                        icon={<X size={16} />}
                                         onClick={clearFile}
                                         disabled={isAnalyzing}
                                         aria-label="선택한 파일 제거"
                                         title="선택한 파일 제거"
-                                    >
-                                        <X size={16} />
-                                    </Button>
+                                    />
                                 )}
                             </div>
                         </div>
                     </div>
                     <p className="text-xs text-muted-foreground">지원 형식: MP3, WAV, M4A, AAC, FLAC, MP4, MOV, MKV, AVI, WEBM</p>
                     {file && (file.size >= LARGE_FILE_WARNING_BYTES || isLongMedia) && (
-                        <div className="status-note border-amber-200 bg-amber-50 text-amber-800">
+                        <StatusBanner tone="warning" className="py-2 text-xs shadow-none">
                             긴 파일은 음성만 추출한 뒤 나누어 분석합니다. 처리 시간은 파일 길이와 PC 성능에 따라 달라집니다.
-                        </div>
+                        </StatusBanner>
                     )}
                 </div>
             </div>
@@ -665,15 +666,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             )}
 
             {errorMessage && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <StatusBanner tone="error">
                     {errorMessage}
-                </div>
+                </StatusBanner>
             )}
 
             {statusMessage && !showAnalysisPanel && (
-                <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
+                <StatusBanner tone="neutral">
                     {statusMessage}
-                </div>
+                </StatusBanner>
             )}
 
             {showAnalysisPanel && (
@@ -698,12 +699,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         </div>
                     </div>
 
-                    <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-muted">
-                        <div
-                            className={`${progressBarClass} h-2.5 rounded-full transition-all duration-500 ease-out`}
-                            style={{ width: `${progressPercent}%` }}
-                        />
-                    </div>
+                    <ProgressBar
+                        value={progressPercent}
+                        tone={errorMessage ? 'error' : 'primary'}
+                        className="mt-4"
+                    />
                 </div>
             )}
 
@@ -712,9 +712,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             </Button>
 
             {showProgressBar && !showAnalysisPanel && (
-                <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
-                    <div className={`${progressBarClass} h-2.5 rounded-full transition-all duration-300 ease-in-out`} style={{ width: `${progress}%` }} />
-                </div>
+                <ProgressBar value={progress} tone={errorMessage ? 'error' : 'primary'} />
             )}
         </div>
     );

@@ -3,6 +3,8 @@ import { Layout } from './Layout';
 import { MeetingWriter } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
 import { Settings } from './Settings';
+import { ProgressBar } from './ProgressBar';
+import { StatusBanner } from './StatusBanner';
 
 interface AnalysisStatus {
     active: boolean;
@@ -48,14 +50,10 @@ export const App: React.FC = () => {
                 }}
             >
                 {analysisStatus.active && activeTab !== 'minutes' && (
-                    <div className="mb-4 rounded-md border border-blue-200 bg-blue-50 p-3 text-sm text-blue-900 shadow-sm">
-                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                            <div>
-                                <div className="font-semibold">회의록을 분석하고 있습니다.</div>
-                                <div className="mt-0.5 text-xs text-blue-700">
-                                    {analysisStatus.message || `분석 진행 중... (${analysisStatus.progress}%)`}
-                                </div>
-                            </div>
+                    <StatusBanner
+                        tone="info"
+                        className="mb-4"
+                        action={(
                             <button
                                 type="button"
                                 className="h-8 rounded-md border border-blue-200 bg-white px-3 text-xs font-medium text-blue-700 shadow-sm transition-colors hover:bg-blue-100"
@@ -63,14 +61,18 @@ export const App: React.FC = () => {
                             >
                                 진행 화면 보기
                             </button>
+                        )}
+                    >
+                        <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                            <div>
+                                <div className="font-semibold">회의록을 분석하고 있습니다.</div>
+                                <div className="mt-0.5 text-xs text-blue-700">
+                                    {analysisStatus.message || `분석 진행 중... (${analysisStatus.progress}%)`}
+                                </div>
+                            </div>
                         </div>
-                        <div className="mt-3 h-2 overflow-hidden rounded-full bg-blue-100">
-                            <div
-                                className="h-full rounded-full bg-blue-600 transition-all duration-300"
-                                style={{ width: `${analysisStatus.progress}%` }}
-                            />
-                        </div>
-                    </div>
+                        <ProgressBar value={analysisStatus.progress} tone="info" size="sm" className="mt-3 bg-blue-100" />
+                    </StatusBanner>
                 )}
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
                     <MeetingWriter onOpenSettings={() => setIsSettingsOpen(true)} />

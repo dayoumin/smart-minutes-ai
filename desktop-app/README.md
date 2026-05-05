@@ -1,16 +1,24 @@
-# React + Vite
+# Smart Minutes AI Desktop UI
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+## Active UI Path
 
-Currently, two official plugins are available:
+The desktop renderer starts from `src/main.jsx` and renders `src/App.tsx`.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+Use these project-local UI primitives for shared interface work:
 
-## React Compiler
+- `src/Button.tsx`
+- `src/Input.tsx`
+- `src/IconButton.tsx`
+- `src/ProgressBar.tsx`
+- `src/StatusBanner.tsx`
+- shared classes in `src/index.css`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Avoid adding a second UI kit unless the active entry path is changed deliberately.
 
-## Expanding the ESLint configuration
+## Commands
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+```bash
+pnpm lint
+pnpm typecheck
+pnpm build
+```

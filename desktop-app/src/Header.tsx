@@ -1,5 +1,6 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
+import { ProgressBar } from './ProgressBar';
 
 interface AnalysisStatus {
     active: boolean;
@@ -31,12 +32,7 @@ export const Header: React.FC<HeaderProps> = ({ onOpenSettings, analysisStatus, 
                             <span className="font-semibold">분석 중</span>
                             <span>{analysisStatus.progress}%</span>
                         </div>
-                        <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-blue-100">
-                            <div
-                                className="h-full rounded-full bg-blue-600 transition-all duration-300"
-                                style={{ width: `${analysisStatus.progress}%` }}
-                            />
-                        </div>
+                        <ProgressBar value={analysisStatus.progress} tone="info" size="sm" className="mt-1 bg-blue-100" />
                     </button>
                 )}
                 <button

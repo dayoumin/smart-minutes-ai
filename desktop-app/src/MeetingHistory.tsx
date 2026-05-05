@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Download, Edit3, FileText, PlusCircle, Save, Search, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
+import { IconButton } from './IconButton';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import {
     DownloadFormat,
@@ -10,6 +11,7 @@ import {
 } from './downloadPreferences';
 import { toApiUrl } from './apiBase';
 import { Input } from './Input';
+import { StatusBanner } from './StatusBanner';
 
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
@@ -120,7 +122,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         setEditDate(selectedMeeting.date.replace(' ', 'T'));
         setEditParticipants(selectedMeeting.participants);
         setIsEditing(false);
-    }, [selectedMeeting?.id]);
+    }, [selectedMeeting]);
 
     const recordCountLabel = useMemo(() => `${records.length}개 회의 저장됨`, [records.length]);
     const filteredRecords = useMemo(() => {
@@ -240,7 +242,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     setErrorMessage('회의록은 삭제했지만 일부 분석 파일을 정리하지 못했습니다. 앱을 다시 실행한 뒤 다시 확인해 주세요.');
                 }
             }
-        } catch (error) {
+        } catch {
             setErrorMessage('회의록은 삭제했지만 분석 파일 정리 상태를 확인하지 못했습니다. 앱을 다시 실행한 뒤 다시 확인해 주세요.');
         }
     };
@@ -291,9 +293,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     return (
         <div className="flex h-full min-h-0 flex-col gap-4">
             {errorMessage && (
-                <div className="rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+                <StatusBanner tone="error">
                     {errorMessage}
-                </div>
+                </StatusBanner>
             )}
 
             <section className="app-panel min-h-0 flex-1">
@@ -380,56 +382,47 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <option key={value} value={value}>{label}</option>
                                         ))}
                                     </select>
-                                    <Button
+                                    <IconButton
                                         variant="outline"
-                                        className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                        icon={<Download size={18} />}
                                         onClick={handlePreferredDownload}
                                         title={`${downloadFormatLabels[downloadKind]} 다운로드`}
                                         aria-label="회의록 다운로드"
-                                    >
-                                        <Download size={18} />
-                                    </Button>
+                                    />
                                     {isEditing ? (
                                         <>
-                                            <Button
+                                            <IconButton
                                                 variant="outline"
-                                                className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                                icon={<Save size={18} />}
                                                 onClick={handleSaveEdit}
                                                 title="수정 저장"
                                                 aria-label="수정 저장"
-                                            >
-                                                <Save size={18} />
-                                            </Button>
-                                            <Button
+                                            />
+                                            <IconButton
                                                 variant="outline"
-                                                className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                                icon={<X size={18} />}
                                                 onClick={handleCancelEdit}
                                                 title="수정 취소"
                                                 aria-label="수정 취소"
-                                            >
-                                                <X size={18} />
-                                            </Button>
+                                            />
                                         </>
                                     ) : (
-                                        <Button
+                                        <IconButton
                                             variant="outline"
-                                            className="inline-flex h-10 w-10 items-center justify-center p-0"
+                                            icon={<Edit3 size={18} />}
                                             onClick={() => setIsEditing(true)}
                                             title="회의 정보 수정"
                                             aria-label="회의 정보 수정"
-                                        >
-                                            <Edit3 size={18} />
-                                        </Button>
+                                        />
                                     )}
-                                    <Button
+                                    <IconButton
                                         variant="outline"
-                                        className="inline-flex h-10 w-10 items-center justify-center border-red-200 p-0 text-red-500 hover:bg-red-50"
+                                        className="border-red-200 text-red-500 hover:bg-red-50"
+                                        icon={<Trash2 size={18} />}
                                         onClick={() => handleDelete(selectedMeeting.id)}
                                         title="회의록 삭제"
                                         aria-label="회의록 삭제"
-                                    >
-                                        <Trash2 size={18} />
-                                    </Button>
+                                    />
                                 </div>
                             </div>
 
@@ -488,14 +481,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 <div id="meeting-script-panel" role="tabpanel" aria-labelledby="meeting-script-tab" className="flex flex-col gap-3">
                                     <div className="flex flex-col gap-2">
                                         {selectedMeeting.segments?.some(seg => seg.timingApproximate) && (
-                                            <div className="status-note border-amber-200 bg-amber-50 text-amber-800">
+                                            <StatusBanner tone="warning" className="py-2 text-xs shadow-none">
                                                 일부 시간 정보는 음성 길이에 맞춘 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
-                                            </div>
+                                            </StatusBanner>
                                         )}
                                         {selectedMeeting.segments?.some(seg => looksLikeKoreanMisrecognition(seg.text)) && (
-                                            <div className="status-note border-red-200 bg-red-50 text-red-700">
+                                            <StatusBanner tone="error" className="py-2 text-xs shadow-none">
                                                 일부 구간은 음성 인식 품질 확인이 필요합니다. 원본 음성과 대조해 주세요.
-                                            </div>
+                                            </StatusBanner>
                                         )}
                                     </div>
                                     {selectedMeeting.segments?.length ? (

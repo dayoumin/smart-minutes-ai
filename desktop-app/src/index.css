@@ -378,7 +378,4 @@
     --speaker-soft: theme(colors.violet.50);
   }
 
-  .status-note {
-    @apply rounded-md border px-3 py-2 text-xs leading-relaxed;
-  }
 }

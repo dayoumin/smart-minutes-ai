@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Copy, Download, ExternalLink, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, ExternalLink, RefreshCw, X } from 'lucide-react';
 import { Button } from './Button';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
@@ -50,33 +50,11 @@ interface ModelsPayload {
     models: ModelStatus[];
 }
 
-interface DownloadEvent {
-    type?: string;
-    status?: string;
-    progress?: number;
-    message?: string;
-    model?: string;
-    models?: ModelStatus[];
-}
-
 interface SettingsProps {
     onClose: () => void;
 }
 
 type SettingsTab = 'models' | 'analysis' | 'about';
-
-const parseSseChunk = (chunk: string): string[] => {
-    return chunk
-        .split('\n\n')
-        .map(block =>
-            block
-                .split('\n')
-                .filter(line => line.startsWith('data:'))
-                .map(line => line.slice(5).trim())
-                .join('\n')
-        )
-        .filter(Boolean);
-};
 
 const modelPageUrl = (model: ModelStatus): string | null => {
     if (model.license_url) return model.license_url;
@@ -85,6 +63,12 @@ const modelPageUrl = (model: ModelStatus): string | null => {
 };
 
 const displayPath = (path: string): string => path.replace(/^\\\\\?\\/, '');
+
+const getUserModelLabel = (model: ModelStatus): string => {
+    if (model.key === 'stt_primary') return '음성 인식 모델';
+    if (model.key === 'diarization') return '화자 분리 모델';
+    return model.label;
+};
 
 const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Response> => {
     const controller = new AbortController();
@@ -99,13 +83,11 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
 
 export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('models');
-    const [settings, setSettings] = useState<SettingsPayload | null>(null);
+    const [, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
     const [apiBase, setApiBase] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
-    const [isDownloading, setIsDownloading] = useState(false);
-    const [downloadProgress, setDownloadProgress] = useState(0);
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [chunkSeconds, setChunkSeconds] = useState(30);
@@ -115,13 +97,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
 
     const missingModels = useMemo(
-        () => (models?.models || []).filter(model => model.required && !model.installed),
+        () => (models?.models || []).filter(model => model.required && !model.installed && model.key !== 'stt_fallback'),
         [models],
     );
 
-    const downloadableMissingModels = useMemo(
-        () => missingModels.filter(model => model.downloadable),
-        [missingModels],
+    const userVisibleModels = useMemo(
+        () => (models?.models || []).filter(model => model.required && model.key !== 'stt_fallback'),
+        [models],
     );
 
     const modelSummary = useMemo(() => {
@@ -145,7 +127,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             ]);
 
             if (!settingsResponse.ok || !modelsResponse.ok) {
-                throw new Error(`분석 서버 응답을 확인하지 못했습니다. settings=${settingsResponse.status}, models=${modelsResponse.status}`);
+                throw new Error(`분석 기능 응답을 확인하지 못했습니다. settings=${settingsResponse.status}, models=${modelsResponse.status}`);
             }
 
             const nextSettings = await settingsResponse.json() as SettingsPayload;
@@ -161,8 +143,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             const isTimeout = error instanceof Error && error.name === 'AbortError';
             setErrorMessage(
                 isTimeout
-                    ? '로컬 분석 서버 응답이 지연되고 있습니다. 앱을 켠 직후라면 잠시 후 상태 새로고침을 눌러 주세요.'
-                    : '로컬 분석 서버에 연결할 수 없습니다. 데스크탑 앱을 다시 실행하거나, 실행 중인 다른 Smart Minutes AI/Python 서버를 종료한 뒤 상태 새로고침을 눌러 주세요.',
+                    ? '분석 기능 응답이 지연되고 있습니다. 앱을 켠 직후라면 잠시 후 상태 새로고침을 눌러 주세요.'
+                    : '분석 기능에 연결할 수 없습니다. 앱을 다시 실행한 뒤 상태 새로고침을 눌러 주세요.',
             );
         } finally {
             setIsLoading(false);
@@ -208,94 +190,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const handleCopyPath = async (path: string) => {
         await navigator.clipboard.writeText(displayPath(path));
         setMessage('모델 배치 경로를 복사했습니다.');
-    };
-
-    const handleDownloadMissingModels = async () => {
-        if (!downloadableMissingModels.length) {
-            setMessage(models?.ready ? '필수 모델이 모두 준비되어 있습니다.' : '자동 다운로드할 수 있는 누락 모델이 없습니다.');
-            return;
-        }
-
-        const modelList = downloadableMissingModels
-            .map(model => `- ${model.label}\n  ${displayPath(model.path)}`)
-            .join('\n');
-        const confirmed = window.confirm(
-            `누락된 필수 모델을 다운로드합니다.\n\n확인을 누르면 프로그램 하위에 아래 폴더가 생성됩니다.\n\n${modelList}\n\n다운로드에는 시간이 오래 걸릴 수 있습니다. 진행할까요?`,
-        );
-        if (!confirmed) {
-            setMessage('모델 다운로드를 취소했습니다.');
-            return;
-        }
-
-        setIsDownloading(true);
-        setDownloadProgress(0);
-        setErrorMessage('');
-        setMessage('모델 다운로드를 시작합니다.');
-
-        try {
-            const base = apiBase || await getApiBase();
-            setApiBase(base);
-            const response = await fetch(`${base}/api/models/download`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'text/event-stream',
-                },
-                body: JSON.stringify({ models: downloadableMissingModels.map(model => model.key) }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`모델 다운로드 요청 실패: ${response.status}`);
-            }
-
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('모델 다운로드 응답을 읽을 수 없습니다.');
-
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
-            let completed = false;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const boundary = buffer.lastIndexOf('\n\n');
-                if (boundary === -1) continue;
-
-                const completeChunk = buffer.slice(0, boundary + 2);
-                buffer = buffer.slice(boundary + 2);
-
-                for (const dataStr of parseSseChunk(completeChunk)) {
-                    if (dataStr === '[DONE]') continue;
-                    const parsed = JSON.parse(dataStr) as DownloadEvent;
-                    if (typeof parsed.progress === 'number') {
-                        setDownloadProgress(Math.min(100, Math.max(0, parsed.progress)));
-                    }
-                    if (parsed.message) {
-                        setMessage(parsed.message);
-                    }
-                    if (parsed.type === 'error' || parsed.status === 'error') {
-                        throw new Error(parsed.message || '모델 다운로드에 실패했습니다.');
-                    }
-                    if (parsed.status === 'completed') {
-                        completed = true;
-                    }
-                }
-            }
-
-            if (!completed) {
-                throw new Error('모델 다운로드 완료 응답을 받지 못했습니다.');
-            }
-
-            setDownloadProgress(100);
-            setMessage('모델 다운로드가 완료되었습니다. 상태를 다시 확인합니다.');
-            await loadSettings();
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '모델 다운로드 중 오류가 발생했습니다.');
-        } finally {
-            setIsDownloading(false);
-        }
     };
 
     const handleSaveSettings = async () => {
@@ -395,49 +289,37 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 <div>
                                     <h3 className="text-base font-semibold text-foreground">모델 준비</h3>
                                     <p className="mt-1 text-sm text-muted-foreground">
-                                        필수 모델이 없으면 자동 다운로드하거나, 회사망 제한 시 수동으로 받은 뒤 아래 위치에 넣습니다.
+                                        필수 모델이 없으면 모델 페이지에서 받은 뒤 아래 위치에 넣습니다.
                                     </p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
-                                    <Button variant="outline" onClick={() => void loadSettings()} disabled={isLoading || isSaving || isDownloading}>
+                                    <Button variant="outline" onClick={() => void loadSettings()} disabled={isLoading || isSaving}>
                                         <RefreshCw size={16} />
                                         상태 새로고침
                                     </Button>
-                                    <Button onClick={handleDownloadMissingModels} disabled={isLoading || isDownloading || !downloadableMissingModels.length}>
-                                        <Download size={16} />
-                                        {isDownloading ? `다운로드 중 (${downloadProgress}%)` : '누락 모델 다운로드'}
-                                    </Button>
-                                    <Button variant="outline" onClick={handleOpenModelPages} disabled={isLoading || isDownloading}>
+                                    <Button onClick={handleOpenModelPages} disabled={isLoading}>
                                         <ExternalLink size={16} />
-                                        모델 페이지
+                                        모델 받는 곳
                                     </Button>
                                 </div>
                             </div>
-
-                            {isDownloading && (
-                                <div className="h-2.5 w-full overflow-hidden rounded-full bg-muted">
-                                    <div className="h-2.5 rounded-full bg-primary transition-all duration-300" style={{ width: `${downloadProgress}%` }} />
-                                </div>
-                            )}
 
                             <div className="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                                 <div className="font-medium text-foreground">회사 PC 사용 요약</div>
                                 <p className="mt-1">
                                     `Smart Minutes AI.exe`만 따로 옮기지 말고 `Smart Minutes AI` 폴더 전체를 옮기세요.
-                                    Cohere 모델은 실행 파일 옆 `models` 폴더 바로 아래에 넣습니다.
+                                    필요한 모델은 실행 파일 옆 `models` 폴더 바로 아래에 넣습니다.
                                 </p>
                             </div>
 
                             <div className="grid grid-cols-1 gap-3">
-                                {(models?.models || []).map(model => (
+                                {userVisibleModels.map(model => (
                                     <div key={model.key} className="rounded-md border border-border bg-muted/20 p-4">
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
-                                                <div className="font-medium text-foreground">{model.label}</div>
+                                                <div className="font-medium text-foreground">{getUserModelLabel(model)}</div>
                                                 <div className="mt-1 text-xs text-muted-foreground">
-                                                    {model.required ? '필수' : '선택'} · {model.gated ? '권한 확인 필요' : '공개 모델'}
-                                                    {model.license_name ? ` · ${model.license_name}` : ''}
-                                                    {model.requires_token ? ' · Hugging Face 토큰 필요' : ''}
+                                                    회의록 분석에 필요한 모델입니다.
                                                 </div>
                                             </div>
                                             <span className={`inline-flex w-fit items-center gap-1 rounded-md px-2.5 py-1 text-xs font-semibold ${model.installed ? 'bg-green-100 text-green-700' : 'bg-amber-100 text-amber-700'}`}>
@@ -473,12 +355,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                         )}
                                     </div>
                                 ))}
-                                {isLoading && !models?.models.length && (
+                                {isLoading && !userVisibleModels.length && (
                                     <div className="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
                                         모델 상태를 불러오는 중입니다.
                                     </div>
                                 )}
-                                {!isLoading && !models?.models.length && !errorMessage && (
+                                {!isLoading && !userVisibleModels.length && !errorMessage && (
                                     <div className="rounded-md border border-border p-8 text-center text-sm text-muted-foreground">
                                         모델 상태 정보가 없습니다. 상태 새로고침을 눌러 다시 확인해 주세요.
                                     </div>
@@ -493,7 +375,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 <div>
                                     <h3 className="text-base font-semibold text-foreground">분석 방식</h3>
                                     <p className="mt-1 text-sm text-muted-foreground">
-                                        대부분은 기본값으로 충분합니다. 긴 파일 처리나 실행 장치만 필요할 때 조정하세요.
+                                        대부분은 기본값으로 충분합니다. 긴 파일 처리나 다운로드 형식만 필요할 때 조정하세요.
                                     </p>
                                 </div>
                                 <Button onClick={handleSaveSettings} disabled={isLoading || isSaving}>
@@ -526,32 +408,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                             </label>
 
                             <label className="rounded-md border border-border bg-muted/20 p-4">
-                                <span className="block font-medium text-foreground">분할 길이</span>
-                                <div className="mt-3 flex items-center gap-3">
-                                    <input
-                                        type="range"
-                                        min={10}
-                                        max={300}
-                                        step={10}
-                                        value={chunkSeconds}
-                                        onChange={event => setChunkSeconds(Number(event.target.value))}
-                                        className="w-full"
-                                        disabled={!chunkingEnabled}
-                                    />
-                                    <input
-                                        type="number"
-                                        min={10}
-                                        max={3600}
-                                        value={chunkSeconds}
-                                        onChange={event => setChunkSeconds(Number(event.target.value))}
-                                        className="w-24 rounded-md border border-input bg-background px-3 py-2"
-                                        disabled={!chunkingEnabled}
-                                    />
-                                    <span className="text-sm text-muted-foreground">초</span>
-                                </div>
-                            </label>
-
-                            <label className="rounded-md border border-border bg-muted/20 p-4">
                                 <span className="block font-medium text-foreground">다운로드 형식</span>
                                 <select
                                     value={downloadFormat}
@@ -566,41 +422,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     회의 상세의 다운로드 아이콘은 이 형식으로 저장합니다.
                                 </span>
                             </label>
-
-                            <label className="rounded-md border border-border bg-muted/20 p-4">
-                                <span className="block font-medium text-foreground">실행 장치</span>
-                                <select
-                                    value={sttDevice}
-                                    onChange={event => setSttDevice(event.target.value as 'auto' | 'cpu' | 'cuda')}
-                                    className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2"
-                                >
-                                    <option value="auto">자동</option>
-                                    <option value="cpu">CPU</option>
-                                    <option value="cuda">CUDA</option>
-                                </select>
-                            </label>
                         </section>
                     )}
 
                     {activeTab === 'about' && (
                         <section className="flex flex-col gap-4 text-sm">
                             <div className="rounded-md border border-border bg-muted/20 p-4">
-                                <div className="font-medium text-foreground">연결 주소</div>
-                                <div className="mt-1 break-all text-muted-foreground">
-                                    {apiBase || '확인 전'}
-                                </div>
-                            </div>
-                            <div className="rounded-md border border-border bg-muted/20 p-4">
-                                <div className="font-medium text-foreground">요약 엔진</div>
-                                <div className="mt-1 text-muted-foreground">
-                                    {settings?.summary?.provider || 'ollama'} · {settings?.summary?.model || 'gemma4:e2b'}
-                                </div>
-                            </div>
-                            <div className="rounded-md border border-border bg-muted/20 p-4">
-                                <div className="font-medium text-foreground">portable 배포 주의 사항</div>
+                                <div className="font-medium text-foreground">Smart Minutes AI</div>
                                 <p className="mt-1 leading-relaxed text-muted-foreground">
-                                    회사 PC에서는 zip을 풀고 폴더 전체를 같은 위치에 둡니다. Cohere STT 모델이 없으면 실제 음성 인식은 시작되지 않습니다.
-                                    Pyannote와 ffmpeg는 portable 패키지에 포함되어 있습니다.
+                                    음성 파일과 회의 녹화 영상에서 회의록, 화자별 발화, 다운로드 파일을 만드는 로컬 데스크탑 앱입니다.
+                                </p>
+                            </div>
+                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                                <div className="font-medium text-foreground">회사 PC 사용 안내</div>
+                                <p className="mt-1 leading-relaxed text-muted-foreground">
+                                    회사 PC에서는 zip을 풀고 `Smart Minutes AI` 폴더 전체를 같은 위치에 둡니다. 필요한 모델이 없으면 실제 분석은 시작되지 않습니다.
+                                    누락된 모델은 `models` 폴더에 넣은 뒤 상태 새로고침을 누르세요.
                                 </p>
                             </div>
                         </section>

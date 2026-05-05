@@ -1,5 +1,5 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { AlertCircle, Copy, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, Loader2, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
@@ -7,8 +7,8 @@ import { getApiBase } from './apiBase';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
-const BACKEND_READY_TIMEOUT_MS = 240_000;
-const BACKEND_READY_INTERVAL_MS = 3_000;
+const BACKEND_READY_TIMEOUT_MS = 45_000;
+const BACKEND_READY_INTERVAL_MS = 1_000;
 
 interface AnalyzeResult {
     status?: string;
@@ -48,6 +48,7 @@ interface ModelsPayload {
 }
 
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
+type AnalysisPhase = 'idle' | 'checking-server' | 'checking-models' | 'downloading-models' | 'analyzing' | 'error';
 
 interface ReadinessCheck {
     state: ReadinessState;
@@ -92,6 +93,40 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
 const displayPath = (path = ''): string => path.replace(/^\\\\\?\\/, '');
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
 
+const getUserModelLabel = (model: ModelStatus): string => {
+    if (model.key === 'stt_primary') return '음성 인식 모델';
+    if (model.key === 'diarization') return '화자 분리 모델';
+    return model.label;
+};
+
+const translateStatusMessage = (message: string): string => {
+    const normalized = message.trim();
+    const statusMap: Record<string, string> = {
+        '업로드 파일 저장 완료': '파일을 안전하게 저장했습니다.',
+        'Cohere STT 모델 확인 중': '음성 인식 모델을 확인하고 있습니다.',
+        'Cohere STT 모델 준비 완료': '음성 인식 모델 준비가 끝났습니다.',
+        'Converting to WAV...': '영상에서 음성을 추출하고 WAV로 변환하고 있습니다.',
+        'Preparing audio chunks...': '긴 음성을 분석하기 좋은 구간으로 나누고 있습니다.',
+        'Primary speech recognition failed; using fallback model...': '음성 인식 방식을 바꾸어 다시 시도하고 있습니다.',
+        'Speaker Diarization & Alignment...': '화자를 분리하고 발화 시간과 문장을 맞추고 있습니다.',
+        'Summarizing with Local LLM...': '회의 내용을 요약하고 주요 주제를 정리하고 있습니다.',
+        'Saving results...': '회의록과 다운로드 파일을 저장하고 있습니다.',
+    };
+
+    return statusMap[normalized] || normalized;
+};
+
+const formatDuration = (seconds: number): string => {
+    const totalSeconds = Math.max(0, Math.round(seconds));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const remainingSeconds = totalSeconds % 60;
+
+    if (hours > 0) return `${hours}시간 ${minutes}분`;
+    if (minutes > 0) return `${minutes}분 ${remainingSeconds}초`;
+    return `${remainingSeconds}초`;
+};
+
 interface MeetingWriterProps {
     onOpenSettings?: () => void;
 }
@@ -104,8 +139,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [isDownloadingModels, setIsDownloadingModels] = useState(false);
     const [progress, setProgress] = useState(0);
+    const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle');
     const [statusMessage, setStatusMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
+    const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
     const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
     const [readinessMessage, setReadinessMessage] = useState('');
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
@@ -141,7 +178,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
             const healthPayload = await healthResponse.json().catch(() => null) as { ok?: boolean; service?: string } | null;
             if (!healthPayload?.ok || healthPayload.service !== 'NIFS AI Meeting API') {
-                const message = '다른 서버가 분석 서버 주소를 사용 중입니다. 실행 중인 Python/FastAPI 서버를 종료하고 앱을 다시 실행해 주세요.';
+                const message = '분석 기능 주소를 다른 프로그램이 사용 중입니다. 앱을 다시 실행하거나 8000번 포트를 사용하는 프로그램을 종료해 주세요.';
                 setReadinessState('error');
                 setReadinessMessage(message);
                 return { state: 'error', message };
@@ -166,14 +203,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
             const missing = payload.models
                 .filter(model => model.required && !model.installed)
-                .map(model => model.label)
+                .map(model => getUserModelLabel(model))
                 .join(', ');
             const message = `필수 모델이 없습니다: ${missing}`;
             setReadinessState('missing-models');
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
         } catch {
-            const message = '로컬 분석 서버를 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
+            const message = '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
             setReadinessState('server-waiting');
             setReadinessMessage(message);
             return { state: 'server-waiting', message };
@@ -182,6 +219,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
     const waitForBackendReady = async (): Promise<ReadinessCheck> => {
         const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
+        setAnalysisPhase('checking-server');
 
         while (Date.now() < deadline) {
             const check = await refreshReadiness();
@@ -189,28 +227,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             if (check.state === 'missing-models' || check.state === 'error') return check;
 
             const remainingSeconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
-            setStatusMessage(`로컬 분석 서버를 준비하고 있습니다. 잠시 기다려 주세요. (${remainingSeconds}초)`);
+            setStatusMessage(`분석 기능을 준비하고 있습니다. 잠시 기다려 주세요. (${remainingSeconds}초)`);
             await sleep(BACKEND_READY_INTERVAL_MS);
         }
 
-        const message = '로컬 분석 서버가 아직 준비되지 않았습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
+        const message = '분석 기능이 아직 준비되지 않았습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
+        setAnalysisPhase('error');
         setErrorMessage(message);
+        setStatusMessage('');
         return { state: 'error', message };
     };
 
     const downloadModels = async (models: ModelStatus[]): Promise<boolean> => {
         const downloadableModels = models.filter(model => model.downloadable !== false);
         if (!downloadableModels.length) {
-            setErrorMessage('자동 다운로드할 수 없는 모델입니다. 설정에서 모델 위치를 확인해 주세요.');
+            setErrorMessage('바로 받을 수 없는 모델입니다. 설정에서 모델 위치를 확인해 주세요.');
             return false;
         }
 
         const modelList = downloadableModels
-            .map(model => `- ${model.label}\n  ${displayPath(model.path)}`)
+            .map(model => `- ${getUserModelLabel(model)}\n  ${displayPath(model.path)}`)
             .join('\n');
         const tokenRequired = downloadableModels.some(model => model.requires_token);
         const tokenNote = tokenRequired
-            ? '\n\nHugging Face 권한이 필요한 모델입니다. 토큰이 없거나 약관에 동의하지 않았다면 다운로드가 실패할 수 있습니다.'
+            ? '\n\n권한 확인이 필요한 모델입니다. 접근 권한이 없으면 다운로드가 실패할 수 있습니다.'
             : '';
 
         const confirmed = window.confirm(
@@ -223,6 +263,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         }
 
         setIsDownloadingModels(true);
+        setAnalysisPhase('downloading-models');
         setProgress(0);
         setStatusMessage('모델 다운로드를 시작합니다.');
 
@@ -267,7 +308,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         setProgress(Math.min(100, Math.max(0, parsed.progress)));
                     }
                     if (parsed.message) {
-                        setStatusMessage(parsed.message);
+                        setStatusMessage(translateStatusMessage(parsed.message));
                     }
                     if (parsed.type === 'error' || parsed.status === 'error') {
                         throw new Error(parsed.message || '모델 다운로드에 실패했습니다.');
@@ -302,6 +343,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const ensureModelsReady = async (): Promise<boolean> => {
         if (ANALYSIS_MODE !== 'real') return true;
 
+        setAnalysisPhase('checking-models');
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         const check = await waitForBackendReady();
         if (check.state === 'ready') return true;
@@ -312,6 +354,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         }
 
         setErrorMessage(check.message);
+        setAnalysisPhase('error');
         return false;
     };
 
@@ -326,11 +369,27 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         setErrorMessage('');
         setStatusMessage('');
         setProgress(0);
+        setFileDurationSeconds(null);
         setFile(selectedFile);
+
+        if (!selectedFile || getFileKind(selectedFile) === 'unknown') return;
+
+        const media = document.createElement(selectedFile.type.startsWith('video/') ? 'video' : 'audio');
+        const objectUrl = URL.createObjectURL(selectedFile);
+        media.preload = 'metadata';
+        media.onloadedmetadata = () => {
+            if (Number.isFinite(media.duration)) {
+                setFileDurationSeconds(media.duration);
+            }
+            URL.revokeObjectURL(objectUrl);
+        };
+        media.onerror = () => URL.revokeObjectURL(objectUrl);
+        media.src = objectUrl;
     };
 
     const clearFile = () => {
         setFile(null);
+        setFileDurationSeconds(null);
         setErrorMessage('');
         setStatusMessage('');
         setProgress(0);
@@ -348,6 +407,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         }
 
         setIsAnalyzing(true);
+        setAnalysisPhase('checking-server');
         setProgress(0);
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
@@ -355,6 +415,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         try {
             const modelsReady = await ensureModelsReady();
             if (!modelsReady) return;
+            setAnalysisPhase('analyzing');
+            setStatusMessage('분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
 
             const formData = new FormData();
             formData.append('title', title.trim());
@@ -408,7 +470,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         setProgress(Math.min(100, Math.max(0, parsed.progress)));
                     }
                     if (parsed.message) {
-                        setStatusMessage(parsed.message);
+                        setStatusMessage(translateStatusMessage(parsed.message));
                     }
                     if (parsed.status === 'error') {
                         throw new Error(parsed.message || '분석 중 오류가 발생했습니다.');
@@ -449,15 +511,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             }
         } catch (error) {
             const message = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
+            setAnalysisPhase('error');
             setErrorMessage(message);
             setStatusMessage('');
         } finally {
             setIsAnalyzing(false);
+            setAnalysisPhase(current => (current === 'error' ? 'error' : 'idle'));
         }
     };
 
     const buttonLabel = (() => {
-        if (isDownloadingModels) return `모델 다운로드 중... (${progress}%)`;
+        if (isDownloadingModels || analysisPhase === 'downloading-models') return `모델 다운로드 중... (${progress}%)`;
+        if (isAnalyzing && analysisPhase === 'checking-server') return '분석 기능 확인 중...';
+        if (isAnalyzing && analysisPhase === 'checking-models') return '모델 준비 상태 확인 중...';
+        if (isAnalyzing && progress <= 0) return '분석 준비 중...';
         if (isAnalyzing) return `분석 진행 중... (${progress}%)`;
         return 'AI 분석 시작';
     })();
@@ -465,6 +532,23 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const progressBarClass = errorMessage ? 'bg-red-500' : 'bg-primary';
     const showProgressBar = isAnalyzing || isDownloadingModels || progress > 0;
     const fileKind = file ? getFileKind(file) : null;
+    const showAnalysisPanel = isAnalyzing || isDownloadingModels;
+    const progressPercent = Math.min(100, Math.max(0, progress));
+    const selectedFileMeta = file
+        ? [
+            fileKind === 'video' ? '영상 파일' : fileKind === 'audio' ? '음성 파일' : '알 수 없는 형식',
+            formatFileSize(file.size),
+            fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
+        ].filter(Boolean).join(' · ')
+        : '오디오 또는 영상 파일을 선택해 주세요.';
+    const isLongMedia = Boolean(fileDurationSeconds && fileDurationSeconds >= 3 * 60 * 60);
+    const currentStatusMessage = statusMessage || (
+        analysisPhase === 'checking-server'
+            ? '분석 기능을 확인하고 있습니다.'
+            : analysisPhase === 'checking-models'
+                ? '모델 준비 상태를 확인하고 있습니다.'
+                : '분석을 준비하고 있습니다.'
+    );
 
     return (
         <div className="flex flex-col h-full gap-6 max-w-3xl mx-auto w-full">
@@ -512,9 +596,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                         {file ? file.name : '선택된 파일 없음'}
                                     </div>
                                     <div className="mt-1 text-xs text-muted-foreground">
-                                        {file
-                                            ? `${fileKind === 'video' ? '영상 파일' : fileKind === 'audio' ? '음성 파일' : '알 수 없는 형식'} · ${formatFileSize(file.size)}`
-                                            : '오디오 또는 영상 파일을 선택해 주세요.'}
+                                        {selectedFileMeta}
                                     </div>
                                 </div>
                             </div>
@@ -542,21 +624,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         </div>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                        지원 형식: MP3, WAV, M4A, AAC, FLAC, MP4, MOV, MKV, AVI, WEBM. 큰 파일은 차단하지 않고 음성 변환 후 설정된 길이로 나누어 처리합니다.
+                        MP3, WAV, M4A, AAC, FLAC, MP4, MOV, MKV, AVI, WEBM
                     </p>
-                    {file && (
-                        <div className="rounded-md border border-border bg-muted/30 px-4 py-3 text-sm text-foreground">
-                            <div className="font-medium">{file.name}</div>
-                            {file.size >= LARGE_FILE_WARNING_BYTES && (
-                                <div className="mt-2 text-xs text-amber-700">
-                                    큰 파일은 업로드와 음성 추출에 시간이 오래 걸릴 수 있습니다. 분석은 음성 트랙을 만든 뒤 청크 단위로 나누어 진행합니다.
-                                </div>
-                            )}
-                            {fileKind === 'video' && (
-                                <div className="mt-2 text-xs text-muted-foreground">
-                                    영상 자체를 분석하지 않고 음성만 WAV로 변환합니다. 메모리 부담은 원본 영상 길이보다 추출된 음성 길이와 청크 설정의 영향을 더 크게 받습니다.
-                                </div>
-                            )}
+                    {file && (file.size >= LARGE_FILE_WARNING_BYTES || isLongMedia) && (
+                        <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-xs text-amber-800">
+                            긴 파일은 음성만 추출해 나누어 분석합니다. 5시간 영상도 처리할 수 있지만 시간이 오래 걸릴 수 있습니다.
                         </div>
                     )}
                 </div>
@@ -590,7 +662,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         <div className="mt-3 space-y-2">
                             {missingRequiredModels.map(model => (
                                 <div key={model.key} className="rounded-md border border-red-200 bg-white/70 p-3 text-xs text-red-800">
-                                    <div className="font-semibold">{model.label} 필요</div>
+                                    <div className="font-semibold">{getUserModelLabel(model)} 필요</div>
                                     <div className="mt-1 break-all">{displayPath(model.path)}</div>
                                     <div className="mt-2 flex flex-wrap gap-2">
                                         <button
@@ -624,9 +696,40 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 </div>
             )}
 
-            {statusMessage && (
+            {statusMessage && !showAnalysisPanel && (
                 <div className="rounded-md border border-border bg-muted/40 px-4 py-3 text-sm text-muted-foreground">
                     {statusMessage}
+                </div>
+            )}
+
+            {showAnalysisPanel && (
+                <div className="rounded-lg border border-primary/20 bg-primary/5 p-4 shadow-sm">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 gap-3">
+                            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                                {progressPercent >= 100 ? <CheckCircle2 size={18} /> : <Loader2 size={18} className="animate-spin" />}
+                            </div>
+                            <div className="min-w-0">
+                                <div className="text-sm font-semibold text-foreground">
+                                    {analysisPhase === 'downloading-models' ? '모델을 준비하고 있습니다' : '회의록을 분석하고 있습니다'}
+                                </div>
+                                <div className="mt-1 text-sm text-muted-foreground">
+                                    {currentStatusMessage}
+                                </div>
+                            </div>
+                        </div>
+                        <div className="shrink-0 text-right">
+                            <div className="text-2xl font-semibold text-primary">{progressPercent}%</div>
+                            <div className="text-xs text-muted-foreground">진행률</div>
+                        </div>
+                    </div>
+
+                    <div className="mt-4 h-2.5 w-full overflow-hidden rounded-full bg-muted">
+                        <div
+                            className={`${progressBarClass} h-2.5 rounded-full transition-all duration-500 ease-out`}
+                            style={{ width: `${progressPercent}%` }}
+                        />
+                    </div>
                 </div>
             )}
 
@@ -634,7 +737,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 {buttonLabel}
             </Button>
 
-            {showProgressBar && (
+            {showProgressBar && !showAnalysisPanel && (
                 <div className="w-full bg-muted rounded-full h-2.5 overflow-hidden">
                     <div className={`${progressBarClass} h-2.5 rounded-full transition-all duration-300 ease-in-out`} style={{ width: `${progress}%` }} />
                 </div>

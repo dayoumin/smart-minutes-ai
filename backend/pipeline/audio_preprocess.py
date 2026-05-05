@@ -4,6 +4,8 @@ import shutil
 import subprocess
 from typing import Mapping
 
+from process_utils import hidden_subprocess_kwargs, run_hidden
+
 
 def _probe_mean_volume(input_path: str, ffmpeg_path: str) -> float | None:
     null_sink = "NUL" if os.name == "nt" else "/dev/null"
@@ -18,7 +20,7 @@ def _probe_mean_volume(input_path: str, ffmpeg_path: str) -> float | None:
         "null",
         null_sink,
     ]
-    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    completed = run_hidden(command, capture_output=True, text=True, check=False)
     output = "\n".join(part for part in (completed.stdout, completed.stderr) if part)
     match = re.search(r"mean_volume:\s*(-?\d+(?:\.\d+)?)\s*dB", output)
     if not match:
@@ -118,11 +120,25 @@ def convert_to_wav(
         stream = ffmpeg.output(stream, output_path, **output_kwargs)
         
         # ffmpeg_path를 지정하여 실행 가능 (기본값은 환경 변수의 ffmpeg)
-        ffmpeg.run(stream, cmd=ffmpeg_path, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        command = ffmpeg.compile(stream, cmd=ffmpeg_path, overwrite_output=True)
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                completed.stderr.decode("utf-8", errors="replace")
+                if completed.stderr
+                else "Unknown error"
+            )
         return {
             "path": output_path,
             "preprocessing": preprocessing_plan,
         }
+    except RuntimeError as e:
+        raise RuntimeError(f"ffmpeg conversion failed: {e}")
     except ffmpeg.Error as e:
         error_message = e.stderr.decode('utf-8', errors='replace') if e.stderr else "Unknown error"
         raise RuntimeError(f"ffmpeg conversion failed: {error_message}")

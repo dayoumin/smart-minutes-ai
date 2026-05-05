@@ -97,7 +97,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab = 'minutes', onTabCh
             </div>
 
             <div className="mt-4 hidden pl-3 text-caption lg:block">
-                로컬 MVP · FastAPI 연결
+                로컬 분석
             </div>
         </aside>
     );

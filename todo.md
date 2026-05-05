@@ -4,6 +4,8 @@
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`.
 - [ ] Pyannote 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
 - [ ] 앱 실행 후 시스템 설정 > 모델에서 Cohere만 누락으로 표시되는지 확인하고, Cohere 복사 후 상태 새로고침을 누른다.
+- [ ] 모델 다운로드 버튼은 Hugging Face 직접 다운로드 대신 구글 드라이브/웹하드/사내 공유 링크를 열도록 바꾼다.
+- [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `Smart Minutes AI` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
 
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)
 

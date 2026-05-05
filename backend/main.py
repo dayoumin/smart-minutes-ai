@@ -510,7 +510,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     from pipeline.export_markdown import export_markdown
     from pipeline.export_txt import export_txt, save_result_json
     from pipeline.summarize import summarize_meeting
-    from pipeline.transcribe import is_cohere_model, transcribe_audio
+    from pipeline.transcribe import transcribe_audio
 
     if config is None:
         config = load_config()
@@ -570,15 +570,11 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     enable_chunking = processing_config.get("enable_long_audio_chunking", True)
     long_chunk_seconds = int(processing_config.get("long_audio_chunk_seconds", 900))
     chunk_dir = os.path.join(temp_dir, f"{job_id}_chunks")
-    use_cohere_native_long_form = is_cohere_model(stt_model_path)
-    if use_cohere_native_long_form:
-        chunks = [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
-    else:
-        chunks = (
-            split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
-            if enable_chunking
-            else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
-        )
+    chunks = (
+        split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
+        if enable_chunking
+        else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
+    )
 
     stt_language = config["stt"].get("language", "ko")
     stt_device = config["stt"].get("device", "auto")
@@ -589,11 +585,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         total = len(chunks_to_process)
         for idx, chunk in enumerate(chunks_to_process):
             progress = 30 + int((idx / max(total, 1)) * 35)
-            message = (
-                "Transcribing with Cohere native long-form..."
-                if use_cohere_native_long_form and model_path == stt_model_path
-                else f"Transcribing chunk {idx + 1}/{total}..."
-            )
+            message = f"Transcribing chunk {idx + 1}/{total}..."
             _report_progress(message, progress)
             chunk_segments = transcribe_audio(
                 chunk["path"],
@@ -610,12 +602,12 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         segments = _transcribe_chunks(
             chunks,
             stt_model_path,
-            allow_internal_fallback=not use_cohere_native_long_form,
+            allow_internal_fallback=True,
         )
     except Exception:
-        if not (use_cohere_native_long_form and fallback_stt_model_path):
+        if not fallback_stt_model_path:
             raise
-        _report_progress("Cohere failed; falling back to chunked STT...", 30)
+        _report_progress("Primary speech recognition failed; using fallback model...", 30)
         fallback_chunks = (
             split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
             if enable_chunking

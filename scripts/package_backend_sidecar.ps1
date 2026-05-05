@@ -13,6 +13,15 @@ $OutputPath = Join-Path $TauriBinDir $OutputName
 $BuildDistDir = Join-Path $BackendDir "dist-sidecar"
 $BuildOutputDir = Join-Path $BuildDistDir "meeting-backend-$TargetTriple"
 
+function Get-PeSubsystem {
+    param([string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    $optionalHeaderOffset = $peOffset + 24
+    return [BitConverter]::ToUInt16($bytes, $optionalHeaderOffset + 68)
+}
+
 New-Item -ItemType Directory -Force -Path $TauriBinDir | Out-Null
 if (Test-Path $BuildDistDir) {
     Remove-Item -LiteralPath $BuildDistDir -Recurse -Force
@@ -52,6 +61,12 @@ Copy-Item -Recurse -Force (Join-Path $BuildOutputDir "_internal") (Join-Path $Ta
 
 if (-not (Test-Path $OutputPath)) {
     throw "Sidecar build failed: $OutputPath was not created."
+}
+if (-not (Test-Path (Join-Path $TauriBinDir "_internal"))) {
+    throw "Sidecar build failed: _internal dependencies were not copied."
+}
+if ((Get-PeSubsystem $OutputPath) -ne 2) {
+    throw "Sidecar must be Windows GUI subsystem. Rebuild with PyInstaller --noconsole: $OutputPath"
 }
 
 Write-Host "Created sidecar: $OutputPath"

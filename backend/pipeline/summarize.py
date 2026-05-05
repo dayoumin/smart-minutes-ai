@@ -1,11 +1,11 @@
 import json
 import os
 import re
-import subprocess
 import urllib.error
 import urllib.request
 
 from ollama_utils import find_ollama_executable
+from process_utils import run_hidden
 
 
 EMPTY_SUMMARY = {
@@ -120,7 +120,7 @@ def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
 
 
 def _generate_with_ollama_cli(model_name: str, prompt: str) -> str:
-    response = subprocess.run(
+    response = run_hidden(
         [find_ollama_executable(), "run", model_name],
         input=prompt,
         check=True,

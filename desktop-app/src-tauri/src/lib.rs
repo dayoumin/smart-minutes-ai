@@ -1,5 +1,6 @@
+use std::fs::{self, OpenOptions};
 use std::net::TcpListener;
-use std::process::{Child, Command};
+use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tauri::{Manager, RunEvent, State};
 
@@ -19,12 +20,12 @@ fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
     config.base_url.clone()
 }
 
-fn pick_backend_port() -> Result<u16, String> {
-    let listener = TcpListener::bind(("127.0.0.1", 0))
-        .map_err(|error| format!("Could not reserve backend port: {error}"))?;
+fn find_available_port() -> Result<u16, String> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .map_err(|error| format!("Could not reserve an analysis port: {error}"))?;
     let port = listener
         .local_addr()
-        .map_err(|error| format!("Could not read backend port: {error}"))?
+        .map_err(|error| format!("Could not read reserved analysis port: {error}"))?
         .port();
     drop(listener);
     Ok(port)
@@ -37,16 +38,32 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, String> {
         .map_err(|error| format!("Could not resolve resource directory: {error}"))?;
     let backend_dir = resource_dir.join("backend");
     let sidecar_path = resource_dir.join("binaries").join(BACKEND_SIDECAR);
+    let log_dir = resource_dir.join("logs");
+    fs::create_dir_all(&log_dir)
+        .map_err(|error| format!("Could not create log directory at {log_dir:?}: {error}"))?;
+    let stdout_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("sidecar.stdout.log"))
+        .map_err(|error| format!("Could not open sidecar stdout log: {error}"))?;
+    let stderr_log = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("sidecar.stderr.log"))
+        .map_err(|error| format!("Could not open sidecar stderr log: {error}"))?;
 
     let mut command = Command::new(&sidecar_path);
     command
         .current_dir(&backend_dir)
         .env("MEETING_AI_BACKEND_DIR", backend_dir)
         .env("ANALYSIS_MODE", "real")
-        .env("PORT", port.to_string());
+        .env("PORT", port.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(stdout_log))
+        .stderr(Stdio::from(stderr_log));
 
     #[cfg(target_os = "windows")]
-    command.creation_flags(0x08000000);
+    command.creation_flags(0x08000000 | 0x00000008);
 
     let child = command
         .spawn()
@@ -56,7 +73,7 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, String> {
 }
 
 pub fn run() {
-    let backend_port = pick_backend_port().expect("error while reserving backend port");
+    let backend_port = find_available_port().unwrap_or(8000);
     let backend_base_url = format!("http://127.0.0.1:{backend_port}");
     let backend_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
     let setup_backend_child = Arc::clone(&backend_child);
@@ -75,7 +92,14 @@ pub fn run() {
                         *slot = Some(child);
                     }
                 }
-                Err(error) => eprintln!("{error}"),
+                Err(error) => {
+                    if let Ok(resource_dir) = app.path().resource_dir() {
+                        let log_dir = resource_dir.join("logs");
+                        let _ = fs::create_dir_all(&log_dir);
+                        let _ = fs::write(log_dir.join("startup-error.log"), &error);
+                    }
+                    eprintln!("{error}");
+                }
             }
             Ok(())
         })

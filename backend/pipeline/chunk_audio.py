@@ -1,7 +1,10 @@
 import math
 import os
+import subprocess
 import wave
 from typing import Dict, List
+
+from process_utils import hidden_subprocess_kwargs
 
 
 MIN_TRAILING_CHUNK_SECONDS = 1.0
@@ -41,7 +44,16 @@ def split_wav_by_duration(
 
         stream = ffmpeg.input(wav_path, ss=offset, t=chunk_duration)
         stream = ffmpeg.output(stream, chunk_path, ac=1, ar=16000)
-        ffmpeg.run(stream, cmd=ffmpeg_path, overwrite_output=True, capture_stdout=True, capture_stderr=True)
+        command = ffmpeg.compile(stream, cmd=ffmpeg_path, overwrite_output=True)
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            check=False,
+            **hidden_subprocess_kwargs(),
+        )
+        if completed.returncode != 0:
+            error_message = completed.stderr.decode("utf-8", errors="replace") if completed.stderr else "Unknown error"
+            raise RuntimeError(f"ffmpeg chunking failed: {error_message}")
 
         chunks.append({
             "path": chunk_path,

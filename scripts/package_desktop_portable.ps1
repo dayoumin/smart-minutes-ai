@@ -14,14 +14,32 @@ $SidecarDepsDir = Join-Path $TauriDir "binaries\_internal"
 $ResourceBackendDir = Join-Path $TauriDir "resources\backend"
 $ModelSourceRoot = Join-Path $RepoRoot "backend\models"
 
+function Get-PeSubsystem {
+    param([string]$Path)
+
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    $peOffset = [BitConverter]::ToInt32($bytes, 0x3c)
+    $optionalHeaderOffset = $peOffset + 24
+    return [BitConverter]::ToUInt16($bytes, $optionalHeaderOffset + 68)
+}
+
 if (-not (Test-Path $AppExe)) {
     throw "App executable does not exist. Run `corepack pnpm run desktop:build` or `cargo build --release` first: $AppExe"
 }
 if (-not (Test-Path $SidecarExe)) {
     throw "Backend sidecar does not exist. Run scripts/package_backend_sidecar.ps1 first: $SidecarExe"
 }
+if (-not (Test-Path $SidecarDepsDir)) {
+    throw "Backend sidecar dependencies do not exist. Run scripts/package_backend_sidecar.ps1 first: $SidecarDepsDir"
+}
 if (-not (Test-Path $ResourceBackendDir)) {
     throw "Prepared backend resources do not exist. Run scripts/prepare_tauri_resources.ps1 first: $ResourceBackendDir"
+}
+if ((Get-PeSubsystem $AppExe) -ne 2) {
+    throw "App executable must be Windows GUI subsystem: $AppExe"
+}
+if ((Get-PeSubsystem $SidecarExe) -ne 2) {
+    throw "Backend sidecar must be Windows GUI subsystem: $SidecarExe"
 }
 
 if (Test-Path $PortableDir) {
@@ -33,9 +51,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $PortableDir "binaries") | 
 
 Copy-Item -Force $AppExe (Join-Path $PortableDir "Smart Minutes AI.exe")
 Copy-Item -Force $SidecarExe (Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe")
-if (Test-Path $SidecarDepsDir) {
-    Copy-Item -Recurse -Force $SidecarDepsDir (Join-Path $PortableDir "binaries\_internal")
-}
+Copy-Item -Recurse -Force $SidecarDepsDir (Join-Path $PortableDir "binaries\_internal")
 Copy-Item -Recurse -Force $ResourceBackendDir (Join-Path $PortableDir "backend")
 
 $PortableModelsDir = Join-Path $PortableDir "models"
@@ -44,8 +60,8 @@ New-Item -ItemType Directory -Force -Path $PortableModelsDir | Out-Null
 $ModelReadme = @"
 Smart Minutes AI model folder
 
-Put the default Cohere speech model files directly in this folder.
-Pyannote diarization files can also live directly here.
+Put the default speech recognition model files directly in this folder.
+Speaker diarization files can also live directly here.
 
 Examples:
 - models\config.json

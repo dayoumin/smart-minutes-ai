@@ -1,11 +1,11 @@
 import os
-import subprocess
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, Optional
 
 from huggingface_hub import get_token, snapshot_download
 
 from ollama_utils import find_ollama_executable
+from process_utils import run_hidden
 
 
 @dataclass(frozen=True)
@@ -27,7 +27,7 @@ class ModelSpec:
 MODEL_SPECS = [
     ModelSpec(
         key="stt_primary",
-        label="Cohere Transcribe 03-2026",
+        label="기본 음성 인식 모델",
         repo_id="CohereLabs/cohere-transcribe-03-2026",
         local_dir="../models",
         aliases=("../models/cohere-transcribe-03-2026", "./models/stt/cohere-transcribe-03-2026"),
@@ -42,7 +42,7 @@ MODEL_SPECS = [
         license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
         requires_token=True,
         manual_note=(
-            "실행 파일 옆 models 폴더 바로 아래에 Cohere 모델 파일을 넣으세요. "
+            "실행 파일 옆 models 폴더 바로 아래에 기본 음성 인식 모델 파일을 넣으세요. "
             "config.json, model.safetensors 등이 models 폴더 안에 바로 보여야 합니다."
         ),
     ),
@@ -58,7 +58,7 @@ MODEL_SPECS = [
     ),
     ModelSpec(
         key="diarization",
-        label="Pyannote Community-1 Diarization",
+        label="화자 분리 모델",
         repo_id="pyannote/speaker-diarization-community-1",
         local_dir="../models",
         aliases=("../models/speaker-diarization-community-1", "./models/diarization/speaker-diarization-community-1"),
@@ -72,7 +72,7 @@ MODEL_SPECS = [
         license_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
         manual_note=(
-            "Pyannote 화자 분리 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
+            "화자 분리 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
             "기존 models\\speaker-diarization-community-1 폴더 방식도 함께 인식합니다."
         ),
     ),
@@ -156,7 +156,7 @@ def hf_token_available() -> bool:
 
 def ollama_model_exists(model_name: str) -> bool:
     try:
-        result = subprocess.run(
+        result = run_hidden(
             [find_ollama_executable(), "list"],
             check=True,
             capture_output=True,

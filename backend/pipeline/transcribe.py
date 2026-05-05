@@ -117,6 +117,31 @@ def _clean_repeated_text(text: str) -> str:
     return cleaned
 
 
+def _korean_text_quality_score(text: str) -> float:
+    compact = re.sub(r"\s+", "", text)
+    if not compact:
+        return 0.0
+
+    hangul_count = len(re.findall(r"[\uac00-\ud7a3]", compact))
+    latin_count = len(re.findall(r"[A-Za-z]", compact))
+    replacement_count = compact.count("\ufffd")
+    mojibake_count = len(re.findall(r"[À-ÿ]", compact))
+    return hangul_count - (latin_count * 0.35) - (replacement_count * 4) - (mojibake_count * 2)
+
+
+def _needs_korean_retry(text: str, language: str) -> bool:
+    if language != "ko":
+        return False
+
+    compact = re.sub(r"\s+", "", text)
+    if len(compact) < 30:
+        return False
+
+    hangul_count = len(re.findall(r"[\uac00-\ud7a3]", compact))
+    latin_count = len(re.findall(r"[A-Za-z]", compact))
+    return latin_count > max(30, hangul_count * 1.5)
+
+
 def is_cohere_model(model_path: str) -> bool:
     normalized = model_path.lower()
     if "cohere-transcribe" in normalized:
@@ -212,6 +237,20 @@ def transcribe_audio_cohere(
         pipeline_detokenization=False,
     )
     text = _clean_repeated_text(texts[0] if texts else "")
+    if _needs_korean_retry(text, language):
+        print("[STT] Korean transcription looks unstable; retrying without punctuation prompt...")
+        retry_texts = model.transcribe(
+            processor=processor,
+            language=language,
+            audio_files=[wav_path],
+            punctuation=False,
+            compile=False,
+            pipeline_detokenization=False,
+        )
+        retry_text = _clean_repeated_text(retry_texts[0] if retry_texts else "")
+        if _korean_text_quality_score(retry_text) > _korean_text_quality_score(text):
+            text = retry_text
+
     if not text.strip():
         raise RuntimeError("Cohere transcription returned empty text.")
     duration = _audio_duration_seconds(wav_path)

@@ -24,6 +24,7 @@
   },
   "preprocessing": {
     "enabled": true,
+    "noise_gate": true,
     "normalize_audio": true,
     "normalization_mode": "auto",
     "trim_silence": false,

@@ -42,10 +42,12 @@ def resolve_preprocessing_plan(
 ) -> dict:
     plan = {
         "enabled": bool(preprocessing.get("enabled", True)) if preprocessing else True,
+        "noise_gate": bool(preprocessing.get("noise_gate", False)) if preprocessing else False,
         "normalize_audio": bool(preprocessing.get("normalize_audio", False)) if preprocessing else False,
         "requested_mode": str(preprocessing.get("normalization_mode", "loudnorm")).lower() if preprocessing else "loudnorm",
         "resolved_mode": "off",
         "mean_volume_db": None,
+        "audio_filters": [],
         "audio_filter": None,
     }
     if not preprocessing or not preprocessing.get("enabled", True):
@@ -53,20 +55,26 @@ def resolve_preprocessing_plan(
     if not preprocessing.get("normalize_audio", False):
         return plan
 
+    def set_audio_filter() -> None:
+        plan["audio_filter"] = ",".join(plan["audio_filters"]) if plan["audio_filters"] else None
+
     loudnorm_filter = "loudnorm=I=-16:LRA=11:TP=-1.5"
     requested_mode = plan["requested_mode"]
 
     if requested_mode == "loudnorm":
         plan["resolved_mode"] = "loudnorm"
-        plan["audio_filter"] = loudnorm_filter
+        plan["audio_filters"].append(loudnorm_filter)
+        set_audio_filter()
         return plan
     if requested_mode == "dynaudnorm":
         plan["resolved_mode"] = "dynaudnorm"
-        plan["audio_filter"] = "dynaudnorm"
+        plan["audio_filters"].append("dynaudnorm")
+        set_audio_filter()
         return plan
     if requested_mode == "speechnorm":
         plan["resolved_mode"] = "speechnorm"
-        plan["audio_filter"] = "speechnorm"
+        plan["audio_filters"].append("speechnorm")
+        set_audio_filter()
         return plan
     if requested_mode != "auto":
         raise ValueError(f"Unsupported normalization_mode: {requested_mode}")
@@ -76,13 +84,15 @@ def resolve_preprocessing_plan(
     if mean_volume is None:
         print("[Preprocess] mean_volume probe failed; falling back to loudnorm.")
         plan["resolved_mode"] = "loudnorm"
-        plan["audio_filter"] = loudnorm_filter
+        plan["audio_filters"].append(loudnorm_filter)
+        set_audio_filter()
         return plan
 
     if mean_volume <= -18.0:
         print(f"[Preprocess] mean_volume={mean_volume:.1f} dB -> using loudnorm")
         plan["resolved_mode"] = "loudnorm"
-        plan["audio_filter"] = loudnorm_filter
+        plan["audio_filters"].append(loudnorm_filter)
+        set_audio_filter()
         return plan
 
     print(f"[Preprocess] mean_volume={mean_volume:.1f} dB -> skipping normalization")
@@ -95,8 +105,12 @@ def _build_audio_filters(
     preprocessing: Mapping | None,
 ) -> tuple[str | None, dict]:
     plan = resolve_preprocessing_plan(input_path, ffmpeg_path, preprocessing)
-    audio_filter = plan.get("audio_filter")
-    return (audio_filter if audio_filter else None, plan)
+    audio_filters = list(plan.get("audio_filters") or [])
+    if plan.get("enabled") and plan.get("noise_gate"):
+        audio_filters.insert(0, "agate=threshold=0.02:ratio=4:attack=5:release=100")
+    audio_filter = ",".join(audio_filters) if audio_filters else None
+    plan["audio_filter"] = audio_filter
+    return (audio_filter, plan)
 
 
 def convert_to_wav(

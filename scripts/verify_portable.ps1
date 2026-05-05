@@ -41,13 +41,65 @@ function Get-PeSubsystem([string]$Path) {
     }
 }
 
+function Get-FileHashValue([string]$Path) {
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return $null
+    }
+    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+}
+
+function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath) {
+    if (-not (Test-Path -LiteralPath $ManifestPath)) {
+        Add-Result "manifest hash check" $false "manifest missing"
+        return
+    }
+
+    try {
+        $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        Add-Result "manifest hash check" $false "manifest parse failed: $($_.Exception.Message)"
+        return
+    }
+
+    $mismatches = @()
+    foreach ($entry in $manifest.files.PSObject.Properties) {
+        $relativePath = [string]$entry.Value.path
+        $expectedHash = [string]$entry.Value.sha256
+        $fullPath = Join-Path $PortableRoot $relativePath
+        $actualHash = Get-FileHashValue $fullPath
+        if (-not $actualHash) {
+            $mismatches += "$relativePath missing"
+        }
+        elseif ($expectedHash -and $actualHash -ne $expectedHash) {
+            $mismatches += "$relativePath hash mismatch"
+        }
+    }
+
+    if ($manifest.modelMarkers) {
+        foreach ($marker in $manifest.modelMarkers) {
+            $fullPath = Join-Path $PortableRoot ([string]$marker.path)
+            $exists = Test-Path -LiteralPath $fullPath
+            if ([bool]$marker.exists -ne $exists) {
+                $mismatches += "$($marker.path) existence mismatch"
+                continue
+            }
+            if ($exists -and $null -ne $marker.bytes) {
+                $actualBytes = (Get-Item -LiteralPath $fullPath).Length
+                if ([int64]$marker.bytes -ne [int64]$actualBytes) {
+                    $mismatches += "$($marker.path) size mismatch"
+                }
+            }
+        }
+    }
+
+    Add-Result "manifest hash check" ($mismatches.Count -eq 0) ($mismatches -join "; ")
+}
+
 function Stop-PortableProcesses([string]$PortableRoot) {
     Get-Process -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.Path -and (
-                $_.Path.StartsWith($PortableRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
-                $_.ProcessName -like "meeting-backend*"
-            )
+            $_.Path -and $_.Path.StartsWith($PortableRoot, [System.StringComparison]::OrdinalIgnoreCase)
         } |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
@@ -74,6 +126,7 @@ Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backend
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
+Test-ReleaseManifest $portablePath $manifestFile
 Add-Result "pyannote direct layout" ((Test-Path -LiteralPath $pyannoteConfigFile) -and (Test-Path -LiteralPath $pyannoteEmbeddingFile)) $modelsDir
 
 if ($RequireCohere) {

@@ -48,21 +48,12 @@ interface ModelsPayload {
 }
 
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
-type AnalysisPhase = 'idle' | 'checking-server' | 'checking-models' | 'downloading-models' | 'analyzing' | 'error';
+type AnalysisPhase = 'idle' | 'checking-server' | 'checking-models' | 'analyzing' | 'error';
 
 interface ReadinessCheck {
     state: ReadinessState;
     message: string;
     models?: ModelsPayload;
-}
-
-interface DownloadEvent {
-    type?: string;
-    status?: string;
-    progress?: number;
-    message?: string;
-    model?: string;
-    models?: ModelStatus[];
 }
 
 const parseSseChunk = (chunk: string): string[] => {
@@ -139,7 +130,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const [participants, setParticipants] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
-    const [isDownloadingModels, setIsDownloadingModels] = useState(false);
     const [progress, setProgress] = useState(0);
     const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle');
     const [statusMessage, setStatusMessage] = useState('');
@@ -152,7 +142,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const analysisInFlightRef = useRef(false);
 
     useEffect(() => {
-        const active = isAnalyzing || isDownloadingModels;
+        const active = isAnalyzing;
         window.dispatchEvent(new CustomEvent('analysis:status', {
             detail: {
                 active,
@@ -160,7 +150,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 message: statusMessage,
             },
         }));
-    }, [isAnalyzing, isDownloadingModels, progress, statusMessage]);
+    }, [isAnalyzing, progress, statusMessage]);
 
     useEffect(() => {
         if (ANALYSIS_MODE !== 'real') return;
@@ -273,108 +263,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         return { state: 'error', message };
     };
 
-    const downloadModels = async (models: ModelStatus[]): Promise<boolean> => {
-        const downloadableModels = models.filter(model => model.downloadable !== false);
-        if (!downloadableModels.length) {
-            setErrorMessage('바로 받을 수 없는 모델입니다. 설정에서 모델 위치를 확인해 주세요.');
-            return false;
-        }
-
-        const modelList = downloadableModels
-            .map(model => `- ${getUserModelLabel(model)}\n  ${displayPath(model.path)}`)
-            .join('\n');
-        const tokenRequired = downloadableModels.some(model => model.requires_token);
-        const tokenNote = tokenRequired
-            ? '\n\n권한 확인이 필요한 모델입니다. 접근 권한이 없으면 다운로드가 실패할 수 있습니다.'
-            : '';
-
-        const confirmed = window.confirm(
-            `음성 분석에 필요한 모델이 없습니다.\n\n확인을 누르면 프로그램 하위에 아래 폴더가 생성되고 모델 다운로드를 시작합니다.\n\n${modelList}${tokenNote}\n\n다운로드에는 시간이 오래 걸릴 수 있습니다. 진행할까요?`,
-        );
-
-        if (!confirmed) {
-            setErrorMessage('모델 다운로드를 취소했습니다. 필수 모델이 준비되어야 분석할 수 있습니다.');
-            return false;
-        }
-
-        setIsDownloadingModels(true);
-        setAnalysisPhase('downloading-models');
-        setProgress(0);
-        setStatusMessage('모델 다운로드를 시작합니다.');
-
-        try {
-            const apiBase = await getApiBase();
-            const response = await fetch(`${apiBase}/api/models/download`, {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    Accept: 'text/event-stream',
-                },
-                body: JSON.stringify({ models: downloadableModels.map(model => model.key) }),
-            });
-
-            if (!response.ok) {
-                throw new Error(`모델 다운로드 요청 실패: ${response.status}`);
-            }
-
-            const reader = response.body?.getReader();
-            if (!reader) throw new Error('모델 다운로드 응답을 읽을 수 없습니다.');
-
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
-            let completed = false;
-
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-
-                buffer += decoder.decode(value, { stream: true });
-                const boundary = buffer.lastIndexOf('\n\n');
-                if (boundary === -1) continue;
-
-                const completeChunk = buffer.slice(0, boundary + 2);
-                buffer = buffer.slice(boundary + 2);
-
-                for (const dataStr of parseSseChunk(completeChunk)) {
-                    if (dataStr === '[DONE]') continue;
-
-                    const parsed = JSON.parse(dataStr) as DownloadEvent;
-                    if (typeof parsed.progress === 'number') {
-                        setProgress(Math.min(100, Math.max(0, parsed.progress)));
-                    }
-                    if (parsed.message) {
-                        setStatusMessage(translateStatusMessage(parsed.message));
-                    }
-                    if (parsed.type === 'error' || parsed.status === 'error') {
-                        throw new Error(parsed.message || '모델 다운로드에 실패했습니다.');
-                    }
-                    if (parsed.status === 'completed') {
-                        completed = true;
-                    }
-                }
-            }
-
-            if (!completed) {
-                throw new Error('모델 다운로드 완료 응답을 받지 못했습니다.');
-            }
-
-            setProgress(100);
-            setStatusMessage('모델 다운로드가 완료되었습니다. 분석을 계속합니다.');
-            const nextCheck = await refreshReadiness();
-            if (nextCheck.state !== 'ready') {
-                setErrorMessage(nextCheck.message || '모델 다운로드 후에도 분석 준비가 완료되지 않았습니다.');
-                return false;
-            }
-            return true;
-        } catch (error) {
-            const message = error instanceof Error ? error.message : '모델 다운로드 중 오류가 발생했습니다.';
-            setErrorMessage(message);
-            return false;
-        } finally {
-            setIsDownloadingModels(false);
-        }
-    };
-
     const ensureModelsReady = async (): Promise<boolean> => {
         if (ANALYSIS_MODE !== 'real') return true;
 
@@ -385,7 +273,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
         if (check.state === 'missing-models') {
             const missingModels = (check.models?.models || []).filter(model => model.required && !model.installed);
-            return downloadModels(missingModels);
+            const missingList = missingModels.map(model => getUserModelLabel(model)).join(', ');
+            setErrorMessage(
+                `필수 모델이 없습니다${missingList ? `: ${missingList}` : ''}. 설정에서 넣을 위치를 확인하고, 관리자가 지정한 모델 파일을 models 폴더에 복사한 뒤 새로고침해 주세요.`,
+            );
+            setAnalysisPhase('error');
+            return false;
         }
 
         setErrorMessage(check.message);
@@ -448,7 +341,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     };
 
     const handleStartAnalysis = async () => {
-        if (analysisInFlightRef.current || isAnalyzing || isDownloadingModels) {
+        if (analysisInFlightRef.current || isAnalyzing) {
             return;
         }
 
@@ -576,7 +469,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     };
 
     const buttonLabel = (() => {
-        if (isDownloadingModels || analysisPhase === 'downloading-models') return `모델 다운로드 중... (${progress}%)`;
         if (isAnalyzing && analysisPhase === 'checking-server') return '분석 기능 확인 중...';
         if (isAnalyzing && analysisPhase === 'checking-models') return '모델 준비 상태 확인 중...';
         if (isAnalyzing && progress <= 0) return '분석 준비 중...';
@@ -585,9 +477,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     })();
 
     const progressBarClass = errorMessage ? 'bg-red-500' : 'bg-primary';
-    const showProgressBar = isAnalyzing || isDownloadingModels || progress > 0;
+    const showProgressBar = isAnalyzing || progress > 0;
     const fileKind = file ? getFileKind(file) : null;
-    const showAnalysisPanel = isAnalyzing || isDownloadingModels;
+    const showAnalysisPanel = isAnalyzing;
     const progressPercent = Math.min(100, Math.max(0, progress));
     const selectedFileMeta = file
         ? [
@@ -764,7 +656,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                             <div className="min-w-0">
                                 <div className="text-sm font-semibold text-foreground">
-                                    {analysisPhase === 'downloading-models' ? '분석 준비 중입니다' : '회의록을 분석하고 있습니다'}
+                                    회의록을 분석하고 있습니다
                                 </div>
                                 <div className="mt-1 text-sm text-muted-foreground">
                                     {currentStatusMessage}

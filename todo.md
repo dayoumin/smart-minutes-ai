@@ -4,6 +4,7 @@
   - 실제 실행 기준은 루트 `Smart Minutes AI` 폴더 하나로 고정한다.
   - `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 중간 산출물로만 본다.
   - 이상 상태가 보이면 `scripts\diagnose_portable.ps1` 결과와 `release-manifest.json` 해시를 먼저 확인한다.
+  - `release-manifest.json`은 배포본의 신분증이다. verify/diagnose에서 해시 불일치를 확인한다.
   - WebView 캐시는 필요할 때 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
 - [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
   - `Smart Minutes AI` 폴더 전체를 옮긴 뒤 실행한다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
@@ -12,6 +13,7 @@
   - 화자 분리 모델은 `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
 - [ ] 2순위: 긴 파일 실전 테스트
   - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
+  - 결과는 `Smart Minutes AI\backend\outputs`, 임시 파일은 `Smart Minutes AI\backend\temp`에 생성된다.
   - 실패 시 `Smart Minutes AI\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
 - [ ] 3순위: 품질 기준 샘플셋 만들기
   - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
@@ -35,7 +37,7 @@
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`.
 - [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
 - [ ] 앱 실행 후 시스템 설정 > 모델에서 누락 모델이 있는지 확인하고, 모델 복사 후 상태 새로고침을 누른다.
-- [ ] 모델 다운로드 버튼은 직접 다운로드 대신 구글 드라이브/웹하드/사내 공유 링크를 열도록 바꾼다.
+- [x] 앱 안의 사용자용 모델 자동 다운로드 흐름을 제거하고, 관리자가 지정한 모델 파일을 `models`에 넣는 방식으로 정리한다.
 - [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `Smart Minutes AI` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
 
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)
@@ -47,9 +49,9 @@
 - [x] 분석 모드 선택 추가: 빠른 테스트(Mock)와 실제 로컬 분석(mode=real) API 계약 분리
 
 ## 2. 모델 및 환경 자동화 (오프라인 배포 준비)
-- [x] `download_models.py` 등 모델/의존성 오프라인 다운로드 스크립트 초안 작성
-- [ ] `download_models.py`에 실제 라이브러리 연동 및 다운로드 테스트 수행
-- [ ] 내부망 이관 후 클릭 한 번으로 `models/` 디렉토리 자동 배치 (Tauri/Electron 윈도우 인스톨러 패키징 시 포함)
+- [x] 사용자용 자동 모델 다운로드 흐름 제거
+- [ ] 관리자가 준비한 모델 묶음을 `Smart Minutes AI\models`에 복사하는 배포 절차 확정
+- [ ] 내부망 이관 후 모델 묶음 배포 위치와 파일 검증 절차 정리
 
 ## 3. 회의록 DB화 및 이력 관리
 - [x] 회의 단위 DB 스키마 설계 (IndexedDB 임시 적용 완료): 제목, 날짜, 참석자, 요약 데이터 저장

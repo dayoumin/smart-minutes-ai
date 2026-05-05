@@ -11,6 +11,7 @@ ENV/
 backend/models/
 backend/ffmpeg.exe
 backend/ffmpeg.zip
+backend/ffmpeg-extracted/
 *.gguf
 *.pt
 *.bin

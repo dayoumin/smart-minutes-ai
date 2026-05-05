@@ -13,7 +13,7 @@ from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
-from model_manager import download_model, get_model_status, missing_downloadable_models, model_exists, get_model_spec, resolve_model_path
+from model_manager import get_model_status, model_exists, get_model_spec, resolve_model_path
 
 BASE_DIR = os.path.abspath(
     os.environ.get(
@@ -322,78 +322,6 @@ async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
 
     filename = _safe_export_name(result_data["summary"]["title"], extension)
     return FileResponse(output_path, filename=filename, media_type=media_type)
-
-
-@app.post("/api/models/download")
-async def download_missing_models(payload: dict | None = Body(default=None)) -> StreamingResponse:
-    async def event_generator() -> AsyncIterator[str]:
-        steps = [
-            (10, "파일 업로드 수신 완료"),
-            (25, "오디오 전처리 준비 중"),
-            (45, "음성 인식(STT) mock 처리 중"),
-            (65, "화자 분리 mock 처리 중"),
-            (85, "회의 요약 mock 생성 중"),
-        ]
-
-        for progress, message in steps:
-            await asyncio.sleep(0.35)
-            yield sse_event({
-                "type": "progress",
-                "progress": progress,
-                "message": message,
-                "status": "processing",
-            }, event="progress")
-
-        final_data = {
-            "type": "result",
-            "mode": "mock",
-            "progress": 100,
-            "status": "completed",
-            "meeting": {
-                "title": title,
-                "date": date,
-                "participants": participants,
-                "source_file": file.filename,
-            },
-            "summary": (
-                f"[Mock 회의록]\n"
-                f"- 회의명: {title}\n"
-                f"- 일시: {date}\n"
-                f"- 참석자: {participants}\n"
-                f"- 업로드 파일: {file.filename}\n\n"
-                "프론트엔드가 FastAPI 백엔드에 파일과 메타데이터를 전송했고, "
-                "백엔드는 SSE 스트리밍으로 진행률과 최종 회의록 결과를 반환했습니다."
-            ),
-            "topics": ["엔드투엔드 연결", "SSE 진행률 스트리밍", "실제 AI 파이프라인 연동 준비"],
-            "actions": ["Mock 응답을 실제 STT/요약 파이프라인으로 교체", "회의록 DB 저장 API 추가"],
-            "segments": [
-                {
-                    "start": "00:00:00",
-                    "end": "00:00:05",
-                    "speaker": "Speaker 1",
-                    "text": "FastAPI 서버가 업로드 요청을 정상적으로 받았습니다.",
-                },
-                {
-                    "start": "00:00:06",
-                    "end": "00:00:11",
-                    "speaker": "Speaker 2",
-                    "text": "프론트엔드는 SSE 스트림에서 진행률 이벤트를 수신하고 있습니다.",
-                },
-            ],
-        }
-
-        yield sse_event(final_data, event="result")
-        yield sse_event("[DONE]", event="done")
-
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
 
 
 @app.post("/api/analyze")

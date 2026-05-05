@@ -117,6 +117,11 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
+    def test_user_model_download_endpoint_is_not_exposed(self):
+        response = self.client.post("/api/models/download", json={"models": ["stt_primary"]})
+
+        self.assertEqual(response.status_code, 404)
+
 
 if __name__ == "__main__":
     unittest.main()

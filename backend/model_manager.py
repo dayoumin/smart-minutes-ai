@@ -1,8 +1,6 @@
 import os
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, Optional
-
-from huggingface_hub import get_token, snapshot_download
+from typing import Dict, Optional
 
 from ollama_utils import find_ollama_executable
 from process_utils import run_hidden
@@ -150,10 +148,6 @@ def model_exists(base_dir: str, spec: ModelSpec) -> bool:
     return any(path_has_model_payload(path, spec) for path in candidate_paths(base_dir, spec))
 
 
-def hf_token_available() -> bool:
-    return bool(os.environ.get("HF_TOKEN") or get_token())
-
-
 def ollama_model_exists(model_name: str) -> bool:
     try:
         result = run_hidden(
@@ -183,11 +177,11 @@ def get_model_status(base_dir: str) -> Dict:
             "required": spec.required,
             "gated": spec.gated,
             "requires_token": spec.requires_token,
-            "token_available": hf_token_available(),
+            "token_available": False,
             "license_name": spec.license_name,
             "license_url": spec.license_url,
             "manual_note": spec.manual_note,
-            "downloadable": spec.repo_id is not None,
+            "downloadable": False,
         })
 
     required_models = [model for model in models if model["required"]]
@@ -197,47 +191,8 @@ def get_model_status(base_dir: str) -> Dict:
     }
 
 
-def missing_downloadable_models(base_dir: str, required_only: bool = True) -> Iterable[ModelSpec]:
-    for spec in MODEL_SPECS:
-        if required_only and not spec.required:
-            continue
-        if spec.repo_id and not model_exists(base_dir, spec):
-            yield spec
-
-
 def get_model_spec(key: str) -> ModelSpec:
     for spec in MODEL_SPECS:
         if spec.key == key:
             return spec
     raise KeyError(f"Unknown model key: {key}")
-
-
-def ensure_model(base_dir: str, key: str, token: Optional[str] = None) -> str:
-    spec = get_model_spec(key)
-    if model_exists(base_dir, spec):
-        return resolve_model_path(base_dir, spec)
-    if not spec.repo_id:
-        raise ValueError(f"{spec.label}는 자동 다운로드 대상이 아닙니다.")
-    token = token or get_token()
-    if spec.requires_token and not token:
-        raise ValueError(f"{spec.label} 다운로드에는 HF_TOKEN이 필요합니다.")
-    return download_model(base_dir, spec, token=token)
-
-
-def download_model(base_dir: str, spec: ModelSpec, token: Optional[str] = None) -> str:
-    if not spec.repo_id:
-        raise ValueError(f"{spec.key} is not downloadable automatically")
-
-    local_dir = resolve_backend_path(base_dir, spec.local_dir)
-    os.makedirs(local_dir, exist_ok=True)
-    token = token or get_token()
-    if spec.requires_token and not token:
-        raise ValueError(f"{spec.label} 다운로드에는 Hugging Face 토큰이 필요합니다.")
-
-    snapshot_download(
-        repo_id=spec.repo_id,
-        local_dir=local_dir,
-        local_dir_use_symlinks=False,
-        token=token,
-    )
-    return local_dir

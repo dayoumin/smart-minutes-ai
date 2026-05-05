@@ -23,7 +23,7 @@ Smart Minutes AI\
 
 ## 기본 음성 인식 모델 넣는 위치
 
-기본 음성 인식 모델은 실행 파일 옆 `models` 폴더 바로 아래에 넣습니다.
+기본 음성 인식 모델은 관리자가 지정한 파일을 받아 실행 파일 옆 `models` 폴더 바로 아래에 넣습니다. 앱에서 사용자가 개별적으로 모델을 내려받지는 않습니다.
 
 ```text
 Smart Minutes AI\models\
@@ -88,10 +88,10 @@ Smart Minutes AI\models\qwen-asr\
 
 ## 주의 사항
 
-- 기본 음성 인식 모델은 로그인 권한이나 토큰이 필요할 수 있어 회사 PC에서 자동 다운로드가 막힐 수 있습니다.
-- 그 경우 구글 드라이브, 사내 공유 드라이브, 외장 SSD 등으로 모델 파일을 전달해서 `models`에 복사하세요.
+- 기본 음성 인식 모델은 구글 드라이브, 사내 공유 드라이브, 외장 SSD 등 관리자가 지정한 위치에서 받아 `models`에 복사하세요.
 - 정상 배포본에서는 별도 PowerShell 창이 뜨지 않아야 합니다.
 - zip을 옮길 때는 `Smart Minutes AI` 폴더 전체를 옮기세요.
+- 분석 결과와 임시 파일은 `Smart Minutes AI\backend\outputs`, `Smart Minutes AI\backend\temp`에 생성됩니다. 앱 폴더는 쓰기 가능한 D 드라이브 같은 위치에 두세요.
 
 ## 프로젝트 루트 정리 기준
 
@@ -128,3 +128,7 @@ Smart Minutes AI\
 ```
 
 `Smart Minutes AI` 폴더는 실행용 배포 폴더입니다. 회사 PC로 옮길 때도 이 폴더 전체를 옮기면 됩니다.
+
+## release-manifest.json
+
+`release-manifest.json`은 배포본의 기준표입니다. 앱 실행 파일, 분석 실행 파일, backend 파일의 해시와 생성 커밋을 기록합니다. 문제가 생기면 `scripts\diagnose_portable.ps1`로 현재 파일이 manifest와 같은지 확인합니다.

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle2, Copy, ExternalLink, RefreshCw, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, Copy, RefreshCw, X } from 'lucide-react';
 import { Button } from './Button';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
@@ -43,6 +43,10 @@ interface SettingsPayload {
         language?: string;
         device?: 'auto' | 'cpu' | 'cuda';
     };
+    paths?: {
+        output_dir?: string;
+        temp_dir?: string;
+    };
     preprocessing?: {
         enabled?: boolean;
         normalize_audio?: boolean;
@@ -60,12 +64,6 @@ interface SettingsProps {
 }
 
 type SettingsTab = 'models' | 'analysis' | 'about';
-
-const modelPageUrl = (model: ModelStatus): string | null => {
-    if (model.license_url) return model.license_url;
-    if (model.repo_id) return `https://huggingface.co/${model.repo_id}`;
-    return null;
-};
 
 const displayPath = (path: string): string => path.replace(/^\\\\\?\\/, '');
 
@@ -88,7 +86,7 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
 
 export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('models');
-    const [, setSettings] = useState<SettingsPayload | null>(null);
+    const [settings, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
     const [apiBase, setApiBase] = useState('');
     const [isLoading, setIsLoading] = useState(true);
@@ -180,23 +178,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             window.removeEventListener('keydown', handleKeyDown);
         };
     }, [onClose]);
-
-    const handleOpenModelPages = () => {
-        const candidates = missingModels.length
-            ? missingModels
-            : (models?.models || []).filter(model => model.downloadable || model.license_url || model.repo_id);
-
-        if (!candidates.length) {
-            setMessage('열 수 있는 모델 페이지가 없습니다.');
-            return;
-        }
-
-        candidates.slice(0, 3).forEach(model => {
-            const url = modelPageUrl(model);
-            if (url) window.open(url, '_blank', 'noopener,noreferrer');
-        });
-        setMessage('모델 페이지를 열었습니다. 수동으로 받은 모델은 표시된 배치 위치에 넣고 상태 새로고침을 눌러 주세요.');
-    };
 
     const handleCopyPath = async (path: string) => {
         await navigator.clipboard.writeText(displayPath(path));
@@ -314,17 +295,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                         <RefreshCw size={16} />
                                         상태 새로고침
                                     </Button>
-                                    <Button onClick={handleOpenModelPages} disabled={isLoading}>
-                                        <ExternalLink size={16} />
-                                        준비 파일 받기
-                                    </Button>
                                 </div>
                             </div>
 
                             <div className="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                                 <div className="font-medium text-foreground">회사 PC 사용 요약</div>
                                 <p className="mt-1">
-                                    `Smart Minutes AI` 폴더 전체를 옮기고, 필요한 모델은 실행 파일 옆 `models` 폴더에 넣습니다.
+                                    `Smart Minutes AI` 폴더 전체를 옮기고, 관리자가 지정한 모델 파일을 실행 파일 옆 `models` 폴더에 넣습니다.
                                 </p>
                             </div>
 
@@ -495,6 +472,20 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     회사 PC에서는 zip을 풀고 `Smart Minutes AI` 폴더 전체를 같은 위치에 둡니다. 필요한 모델이 없으면 실제 분석은 시작되지 않습니다.
                                     누락된 모델은 `models` 폴더에 넣은 뒤 상태 새로고침을 누르세요.
                                 </p>
+                            </div>
+                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                                <div className="font-medium text-foreground">저장 위치</div>
+                                <p className="mt-1 leading-relaxed text-muted-foreground">
+                                    분석 결과와 임시 파일은 실행 폴더 하위의 backend 폴더 기준으로 저장됩니다.
+                                </p>
+                                <div className="mt-3 grid gap-2 text-xs text-muted-foreground">
+                                    <code className="break-all rounded-md border border-border bg-background px-3 py-2">
+                                        결과: {settings?.paths?.output_dir ?? './outputs'}
+                                    </code>
+                                    <code className="break-all rounded-md border border-border bg-background px-3 py-2">
+                                        임시 파일: {settings?.paths?.temp_dir ?? './temp'}
+                                    </code>
+                                </div>
                             </div>
                         </section>
                     )}

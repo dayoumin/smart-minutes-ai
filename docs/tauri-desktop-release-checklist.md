@@ -83,10 +83,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
 - Tauri 리소스와 portable 폴더를 다시 구성한다.
 - 루트 `Smart Minutes AI` 폴더로 동기화한다.
 - `release-manifest.json`에 exe, sidecar, backend 파일 해시를 기록한다.
-- `scripts\verify_portable.ps1`로 실행 smoke test를 한다.
+- `scripts\verify_portable.ps1`로 manifest 해시와 실행 smoke test를 확인한다.
 
 문제가 반복될 때는 먼저 진단 스크립트로 실제 실행 파일, 프로세스, 포트, 모델, manifest를 확인한다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps1
 ```
+
+운영 기준:
+
+- 사용자가 앱 안에서 모델을 개별 다운로드하지 않는다.
+- 모델은 관리자가 지정한 공유 위치에서 받아 `Smart Minutes AI\models` 바로 아래에 둔다.
+- `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
+- 분석 결과와 임시 파일은 portable 실행 폴더 하위 `backend\outputs`, `backend\temp`에 생성된다.
+- 회사 PC에서는 portable 폴더를 쓰기 가능한 위치에 둔다.

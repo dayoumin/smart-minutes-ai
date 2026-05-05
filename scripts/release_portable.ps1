@@ -33,7 +33,6 @@ function Stop-AppProcesses([string]$PortableRoot) {
     Get-CimInstance Win32_Process |
         Where-Object {
             ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)) -or
-            $_.Name -like "meeting-backend*" -or
             ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|Smart Minutes AI")
         } |
         ForEach-Object {
@@ -101,6 +100,16 @@ function Write-ReleaseManifest([string]$PortableDir) {
     $sidecarExe = Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
     $backendMain = Join-Path $PortableDir "backend\main.py"
     $configJson = Join-Path $PortableDir "backend\config.json"
+    $modelMarkers = @(
+        "models\config.json",
+        "models\model.safetensors",
+        "models\preprocessor_config.json",
+        "models\tokenizer_config.json",
+        "models\config.yaml",
+        "models\embedding\pytorch_model.bin",
+        "models\segmentation\pytorch_model.bin",
+        "models\plda\plda.npz"
+    )
 
     $manifest = [ordered]@{
         app = "Smart Minutes AI"
@@ -134,6 +143,15 @@ function Write-ReleaseManifest([string]$PortableDir) {
             sttRequiredMarkers = @("models\config.json", "models\model.safetensors", "models\preprocessor_config.json", "models\tokenizer_config.json")
             diarizationRequiredMarkers = @("models\config.yaml", "models\embedding\pytorch_model.bin", "models\segmentation\pytorch_model.bin", "models\plda\plda.npz")
         }
+        modelMarkers = @($modelMarkers | ForEach-Object {
+            $path = Join-Path $PortableDir $_
+            $exists = Test-Path -LiteralPath $path
+            [ordered]@{
+                path = $_
+                exists = $exists
+                bytes = if ($exists) { (Get-Item -LiteralPath $path).Length } else { $null }
+            }
+        })
     }
 
     $manifestPath = Join-Path $PortableDir "release-manifest.json"

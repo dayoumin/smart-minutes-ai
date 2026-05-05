@@ -64,7 +64,7 @@ Smart_Minutes_AI_Portable*.zip
 
 ## 회사 PC 이관
 
-회사 PC에는 실행용이면 `Smart Minutes AI` 폴더 전체를 옮기면 됩니다. 기본 음성 인식 모델은 로그인 권한 문제로 자동 다운로드가 막힐 수 있으므로, 구글 드라이브/웹하드/사내 공유 저장소에 올린 모델 파일을 받아 `Smart Minutes AI\models` 바로 아래에 복사하는 방식을 우선 사용합니다.
+회사 PC에는 실행용이면 `Smart Minutes AI` 폴더 전체를 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `Smart Minutes AI\models` 바로 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
 
 자세한 내용은 [Smart_Minutes_AI_Portable_회사_PC_사용법.md](Smart_Minutes_AI_Portable_회사_PC_사용법.md)를 봅니다.
 
@@ -83,6 +83,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
 ```
 
 배포 후 기준 실행 폴더는 항상 `D:\Projects\audio\Smart Minutes AI`입니다. `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
+
+`release-manifest.json`은 배포본의 신분증입니다. 어떤 커밋에서 만들었는지, 앱 exe/분석 실행 파일/backend 설정 파일의 해시가 무엇인지 기록합니다. `verify_portable.ps1`과 `diagnose_portable.ps1`은 이 값을 다시 계산해 구버전 파일이나 손으로 바뀐 파일이 섞였는지 확인합니다.
+
+분석 결과는 portable 실행 폴더 하위에 저장됩니다.
+
+```text
+Smart Minutes AI\backend\outputs\
+Smart Minutes AI\backend\temp\
+```
+
+따라서 회사 PC에서는 `Smart Minutes AI` 폴더를 쓰기 가능한 위치에 둡니다. 예: `D:\Smart Minutes AI`, `D:\Apps\Smart Minutes AI`.
 
 상태가 이상하면 먼저 아래 진단 스크립트를 실행합니다.
 

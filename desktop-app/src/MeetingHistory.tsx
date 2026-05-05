@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Download, Edit3, FileText, PlusCircle, Save, Trash2, X } from 'lucide-react';
+import { Download, Edit3, FileText, PlusCircle, Save, Search, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import {
@@ -60,6 +60,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [editTitle, setEditTitle] = useState('');
     const [editDate, setEditDate] = useState('');
     const [editParticipants, setEditParticipants] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
 
     const loadRecords = async (event?: Event) => {
         try {
@@ -122,6 +123,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [selectedMeeting?.id]);
 
     const recordCountLabel = useMemo(() => `${records.length}개 회의 저장됨`, [records.length]);
+    const filteredRecords = useMemo(() => {
+        const query = searchQuery.trim().toLowerCase();
+        if (!query) return records;
+        return records.filter(record => [
+            record.title,
+            record.date,
+            record.participants,
+            record.sourceFile,
+            record.summary,
+        ].filter(Boolean).join(' ').toLowerCase().includes(query));
+    }, [records, searchQuery]);
 
     const buildTranscriptText = (meeting: MeetingRecord): string => {
         const lines = [
@@ -205,7 +217,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
     const handleDelete = async (id: string) => {
         const meeting = records.find(record => record.id === id);
-        if (!window.confirm('정말로 이 회의록을 삭제하시겠습니까? 저장된 분석 파일도 함께 삭제됩니다.')) return;
+        if (!window.confirm('회의록 기록을 삭제합니다. 분석 파일 정리도 함께 시도합니다. 계속할까요?')) return;
 
         try {
             await deleteMeeting(id);
@@ -290,7 +302,44 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                         회의 기록을 불러오는 중입니다...
                     </div>
                 ) : selectedMeeting ? (
-                    <div className="flex h-full min-h-0 flex-col">
+                    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
+                        <aside className="min-h-0 border-b border-border bg-muted/10 lg:border-b-0 lg:border-r">
+                            <div className="border-b border-border p-4">
+                                <div className="flex items-center justify-between gap-3">
+                                    <h3 className="text-base font-semibold text-foreground">회의 기록</h3>
+                                    <span className="text-xs text-muted-foreground">{recordCountLabel}</span>
+                                </div>
+                                <label className="mt-3 flex h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm">
+                                    <Search size={15} className="shrink-0 text-muted-foreground" />
+                                    <input
+                                        value={searchQuery}
+                                        onChange={event => setSearchQuery(event.target.value)}
+                                        placeholder="제목, 참석자, 요약 검색"
+                                        className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+                                    />
+                                </label>
+                            </div>
+                            <div className="max-h-64 overflow-y-auto p-2 custom-scrollbar lg:max-h-none lg:h-[calc(100%-81px)]">
+                                {filteredRecords.length ? filteredRecords.map(record => (
+                                    <button
+                                        key={record.id}
+                                        type="button"
+                                        onClick={() => {
+                                            setSelectedMeeting(record);
+                                            setDetailTab('summary');
+                                        }}
+                                        className={`mb-1 flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors ${selectedMeeting.id === record.id ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60'}`}
+                                    >
+                                        <span className="truncate text-sm font-semibold">{record.title}</span>
+                                        <span className="mt-1 truncate text-xs text-muted-foreground">{record.date} · {record.participants}</span>
+                                    </button>
+                                )) : (
+                                    <div className="p-4 text-sm text-muted-foreground">검색 결과가 없습니다.</div>
+                                )}
+                            </div>
+                        </aside>
+
+                        <div className="flex h-full min-h-0 flex-col">
                         <div className="app-panel-header">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0 flex-1">
@@ -315,7 +364,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-muted-foreground md:grid-cols-2">
                                                 <span>일시: {selectedMeeting.date}</span>
                                                 <span>참석자: {selectedMeeting.participants}</span>
-                                                <span>{recordCountLabel}</span>
                                                 {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
                                             </div>
                                         </>
@@ -478,6 +526,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     )}
                                 </div>
                             )}
+                        </div>
                         </div>
                     </div>
                 ) : records.length === 0 ? (

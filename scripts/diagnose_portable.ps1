@@ -20,6 +20,53 @@ function Get-HashIfExists([string]$Path) {
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
 }
 
+function Test-ManifestDrift([string]$PortableRoot, [string]$ManifestPath) {
+    $results = @()
+    if (-not (Test-Path -LiteralPath $ManifestPath)) {
+        return @([pscustomobject]@{ Item = "release-manifest.json"; Result = "FAIL"; Detail = "missing" })
+    }
+
+    try {
+        $manifest = Get-Content -LiteralPath $ManifestPath -Raw | ConvertFrom-Json
+    }
+    catch {
+        return @([pscustomobject]@{ Item = "release-manifest.json"; Result = "FAIL"; Detail = "parse failed" })
+    }
+
+    foreach ($entry in $manifest.files.PSObject.Properties) {
+        $relativePath = [string]$entry.Value.path
+        $expectedHash = [string]$entry.Value.sha256
+        $fullPath = Join-Path $PortableRoot $relativePath
+        $actualHash = Get-HashIfExists $fullPath
+        $ok = $actualHash -and (!$expectedHash -or $actualHash -eq $expectedHash)
+        $results += [pscustomobject]@{
+            Item = $relativePath
+            Result = if ($ok) { "PASS" } else { "FAIL" }
+            Detail = if ($actualHash) { $actualHash } else { "missing" }
+        }
+    }
+
+    foreach ($marker in @($manifest.modelMarkers)) {
+        if (-not $marker -or -not $marker.path) {
+            continue
+        }
+        $relativePath = [string]$marker.path
+        $fullPath = Join-Path $PortableRoot $relativePath
+        $exists = Test-Path -LiteralPath $fullPath
+        $ok = [bool]$marker.exists -eq $exists
+        if ($ok -and $exists -and $null -ne $marker.bytes) {
+            $ok = [int64](Get-Item -LiteralPath $fullPath).Length -eq [int64]$marker.bytes
+        }
+        $results += [pscustomobject]@{
+            Item = $relativePath
+            Result = if ($ok) { "PASS" } else { "FAIL" }
+            Detail = if ($exists) { "present" } else { "missing" }
+        }
+    }
+
+    return $results
+}
+
 function Write-Section([string]$Title) {
     Write-Host ""
     Write-Host "== $Title ==" -ForegroundColor Cyan
@@ -49,6 +96,8 @@ Write-Section "Hashes"
 Write-Section "Release Manifest"
 if (Test-Path -LiteralPath $manifestFile) {
     Get-Content -LiteralPath $manifestFile -TotalCount 80
+    Write-Section "Manifest Drift Check"
+    Test-ManifestDrift $portablePath $manifestFile | Format-Table -AutoSize
 }
 else {
     Write-Host "No release-manifest.json found."

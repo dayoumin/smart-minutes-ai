@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, Copy, Loader2, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
 import { Button } from './Button';
 import { Input } from './Input';
@@ -149,6 +149,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const [readinessMessage, setReadinessMessage] = useState('');
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const analysisInFlightRef = useRef(false);
+
+    useEffect(() => {
+        const active = isAnalyzing || isDownloadingModels;
+        window.dispatchEvent(new CustomEvent('analysis:status', {
+            detail: {
+                active,
+                progress,
+                message: statusMessage,
+            },
+        }));
+    }, [isAnalyzing, isDownloadingModels, progress, statusMessage]);
 
     const missingRequiredModels = useMemo(
         () => (modelsPayload?.models || []).filter(model => model.required && !model.installed),
@@ -401,6 +413,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     };
 
     const handleStartAnalysis = async () => {
+        if (analysisInFlightRef.current || isAnalyzing || isDownloadingModels) {
+            return;
+        }
+
         if (missingFields.length > 0) {
             setProgress(0);
             setStatusMessage('');
@@ -408,6 +424,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             return;
         }
 
+        analysisInFlightRef.current = true;
         setIsAnalyzing(true);
         setAnalysisPhase('checking-server');
         setProgress(0);
@@ -502,7 +519,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             };
 
             await addMeeting(newRecord);
-            window.dispatchEvent(new Event('meetings:updated'));
+            window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: newRecord.id } }));
             setProgress(100);
             setStatusMessage('회의록 저장이 완료되었습니다.');
             setTitle('');
@@ -517,6 +534,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             setErrorMessage(message);
             setStatusMessage('');
         } finally {
+            analysisInFlightRef.current = false;
             setIsAnalyzing(false);
             setAnalysisPhase(current => (current === 'error' ? 'error' : 'idle'));
         }

@@ -61,14 +61,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [editDate, setEditDate] = useState('');
     const [editParticipants, setEditParticipants] = useState('');
 
-    const loadRecords = async () => {
+    const loadRecords = async (event?: Event) => {
         try {
             setIsLoading(true);
             setErrorMessage('');
             const data = await getAllMeetings();
             const sorted = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+            const nextSelectedId = (event as CustomEvent<{ id?: string }> | undefined)?.detail?.id;
             setRecords(sorted);
             setSelectedMeeting(prev => {
+                if (nextSelectedId) {
+                    return sorted.find(record => record.id === nextSelectedId) ?? prev;
+                }
                 if (prev && sorted.some(record => record.id === prev.id)) {
                     return sorted.find(record => record.id === prev.id) ?? prev;
                 }

@@ -76,15 +76,40 @@
 
 ## 4. 다음 작업 체크리스트
 
-- [ ] 작은 목소리 샘플 2개 이상으로 `auto / loudnorm / speechnorm` 비교
-- [ ] 잡음 많은 샘플 2개 이상으로 `auto / loudnorm / speechnorm` 비교
+- [x] `Smart Minutes AI\video` 폴더의 영상 4개 앞 60초로 `auto / loudnorm / speechnorm` 1차 비교
+- [ ] 작은 목소리 샘플 2개 이상으로 `auto / loudnorm / speechnorm` 추가 비교
+- [ ] 잡음 많은 샘플 2개 이상으로 `auto / loudnorm / speechnorm` 추가 비교
 - [ ] 회의형 다화자 샘플에서 화자 분리 영향 확인
 - [ ] 30분 이상 샘플에서 처리 시간과 임시 파일 용량 확인
 - [ ] 결과가 쌓이면 기본값 유지 또는 조정 판단
 - [ ] 그 다음에만 silence trim 후보 검토
 - [ ] denoise는 별도 브랜치나 별도 실험으로 마지막에 검토
 
-## 5. 관련 문서
+## 5. 2026-05-05 video 폴더 60초 비교
+
+대상:
+
+- `D:\Projects\audio\Smart Minutes AI\video` 폴더의 MP4 4개
+- 각 영상 앞 60초만 추출해 비교했다.
+- 산출물: `backend\temp\preprocessing_eval_video\video_folder_preprocessing_eval_60s.json`
+
+요약:
+
+| 샘플 | 원본 평균 음량 | auto 결과 | loudnorm 결과 | speechnorm 결과 | 판단 |
+| --- | ---: | --- | --- | --- | --- |
+| Hermes Agent | -19.5 dB | loudnorm, -16.2 dB, 492자 | -16.2 dB, 492자 | -14.3 dB, 490자 | speechnorm 이점 없음 |
+| 대선 TV 토론 | -27.8 dB | loudnorm, -17.5 dB, 478자 | -17.5 dB, 478자 | -21.8 dB, 448자 | speechnorm 불리 |
+| DeepSeek 논문 읽기 | -17.0 dB | off, -17.0 dB, 594자 | -16.7 dB, 603자 | -14.4 dB, 621자 | 추가 청취 확인 필요 |
+| AI 복지 돌봄 포럼 | -39.7 dB | loudnorm, -19.7 dB, 268자 | -19.7 dB, 268자 | -33.7 dB, 181자 | speechnorm 불리 |
+
+판단:
+
+- 현재 샘플 기준으로 `auto`는 작은 음량에서는 `loudnorm`, 충분한 음량에서는 `off`로 동작해 보수적인 결과를 냈다.
+- `speechnorm`은 일부 샘플에서 음량을 키웠지만, 매우 작은 음량 샘플에서는 전사량이 줄거나 표기가 흔들렸다.
+- `speechnorm`은 기본값 후보가 아니다. 비교용 옵션으로 유지한다.
+- 다음 단계는 사람이 들어서 작은 목소리/잡음 샘플을 더 골라 비교하는 것이다.
+
+## 6. 관련 문서
 
 - 전처리 현황: `docs/audio-preprocessing-notes.md`
 - 테스트 계획: `docs/audio-preprocessing-test-plan.md`

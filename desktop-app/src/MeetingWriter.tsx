@@ -162,6 +162,27 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         }));
     }, [isAnalyzing, isDownloadingModels, progress, statusMessage]);
 
+    useEffect(() => {
+        if (ANALYSIS_MODE !== 'real') return;
+
+        let cancelled = false;
+        const syncReadiness = async () => {
+            const check = await refreshReadiness();
+            if (!cancelled && check.state === 'ready') {
+                setErrorMessage('');
+                setStatusMessage('');
+                setAnalysisPhase('idle');
+            }
+        };
+
+        void syncReadiness();
+        window.addEventListener('focus', syncReadiness);
+        return () => {
+            cancelled = true;
+            window.removeEventListener('focus', syncReadiness);
+        };
+    }, []);
+
     const missingRequiredModels = useMemo(
         () => (modelsPayload?.models || []).filter(model => model.required && !model.installed),
         [modelsPayload],
@@ -370,6 +391,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         setErrorMessage(check.message);
         setAnalysisPhase('error');
         return false;
+    };
+
+    const handleRefreshReadiness = async () => {
+        setStatusMessage('분석 환경을 확인하고 있습니다.');
+        const check = await refreshReadiness();
+        if (check.state === 'ready') {
+            setErrorMessage('');
+            setStatusMessage('');
+            setAnalysisPhase('idle');
+            return;
+        }
+
+        setErrorMessage(check.state === 'server-waiting' ? '' : check.message);
+        setStatusMessage('');
     };
 
     const handleCopyPath = async (path?: string) => {
@@ -663,7 +698,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                         </div>
                         <div className="flex shrink-0 gap-2">
-                            <Button variant="outline" onClick={() => void refreshReadiness()} disabled={isAnalyzing}>
+                            <Button variant="outline" onClick={() => void handleRefreshReadiness()} disabled={isAnalyzing}>
                                 <RefreshCw size={15} />
                                 새로고침
                             </Button>

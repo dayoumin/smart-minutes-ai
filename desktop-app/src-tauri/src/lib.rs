@@ -52,12 +52,14 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, String> {
         .map_err(|error| format!("Could not create log directory at {log_dir:?}: {error}"))?;
     let stdout_log = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(log_dir.join("sidecar.stdout.log"))
         .map_err(|error| format!("Could not open sidecar stdout log: {error}"))?;
     let stderr_log = OpenOptions::new()
         .create(true)
-        .append(true)
+        .write(true)
+        .truncate(true)
         .open(log_dir.join("sidecar.stderr.log"))
         .map_err(|error| format!("Could not open sidecar stderr log: {error}"))?;
 

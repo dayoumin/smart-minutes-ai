@@ -191,6 +191,51 @@ try {
         if ($RequireCohere) {
             Add-Result "required models ready" ($models.ready -eq $true) "missing=$($missingRequired -join ', ')"
         }
+
+        $smokeRecord = [ordered]@{
+            id = "portable_verify_smoke"
+            jobId = "portable_verify_smoke"
+            title = "Portable verify smoke"
+            date = (Get-Date).ToString("yyyy-MM-dd HH:mm")
+            participants = "tester"
+            sourceFile = "smoke.wav"
+            summary = "Portable export smoke test."
+            topics = @("release")
+            actions = @("verify export")
+            segments = @(
+                [ordered]@{
+                    start = "00:00:00"
+                    end = "00:00:01"
+                    speaker = "speaker01"
+                    text = "portable export smoke"
+                }
+            )
+        } | ConvertTo-Json -Depth 6
+
+        $exportFailures = @()
+        foreach ($kind in @("txt", "md", "docx", "hwpx")) {
+            $smokeFile = Join-Path ([System.IO.Path]::GetTempPath()) "smart-minutes-export-smoke-$kind.tmp"
+            try {
+                Invoke-WebRequest -Uri "$baseUrl/api/export-record/$kind" -Method Post -ContentType "application/json; charset=utf-8" -Body $smokeRecord -OutFile $smokeFile -TimeoutSec 15
+                if (-not (Test-Path -LiteralPath $smokeFile) -or (Get-Item -LiteralPath $smokeFile).Length -le 0) {
+                    $exportFailures += "$kind empty response"
+                }
+            }
+            catch {
+                $exportFailures += "$kind $($_.Exception.Message)"
+            }
+            finally {
+                Remove-Item -LiteralPath $smokeFile -Force -ErrorAction SilentlyContinue
+            }
+        }
+        Add-Result "export smoke" ($exportFailures.Count -eq 0) ($exportFailures -join "; ")
+
+        try {
+            Invoke-RestMethod -Uri "$baseUrl/api/outputs/portable_verify_smoke" -Method Delete -TimeoutSec 5 | Out-Null
+        }
+        catch {
+            Add-Result "export smoke cleanup" $false $_.Exception.Message
+        }
     }
 }
 catch {

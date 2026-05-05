@@ -201,13 +201,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             const healthResponse = await fetch(`${apiBase}/api/health`);
             if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
 
-            const healthPayload = await healthResponse.json().catch(() => null) as { ok?: boolean } | null;
-            if (!healthPayload?.ok) {
-                const message = '분석 기능을 확인하지 못했습니다. 앱을 다시 실행하거나 실행 중인 다른 Smart Minutes AI 창을 닫아 주세요.';
-                setReadinessState('error');
-                setReadinessMessage(message);
-                return { state: 'error', message };
-            }
+            await healthResponse.json().catch(() => null);
 
             const modelsResponse = await fetch(`${apiBase}/api/models/status`);
             if (!modelsResponse.ok) {

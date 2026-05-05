@@ -104,6 +104,45 @@ function Stop-PortableProcesses([string]$PortableRoot) {
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
+function Test-PortAvailable([int]$Port) {
+    $listener = $null
+    try {
+        $listener = [System.Net.Sockets.TcpListener]::new([System.Net.IPAddress]::Loopback, $Port)
+        $listener.Start()
+        return $true
+    }
+    catch {
+        return $false
+    }
+    finally {
+        if ($listener) {
+            $listener.Stop()
+        }
+    }
+}
+
+function Get-AvailableBackendPort([int]$StartPort = 17863, [int]$Attempts = 100) {
+    for ($offset = 0; $offset -lt $Attempts; $offset += 1) {
+        $candidate = $StartPort + $offset
+        if (Test-PortAvailable $candidate) {
+            return $candidate
+        }
+    }
+    throw "No available backend port found from $StartPort to $($StartPort + $Attempts - 1)."
+}
+
+function Start-BackendSidecar([string]$ExePath, [string]$BackendRoot, [int]$Port) {
+    $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $startInfo.FileName = $ExePath
+    $startInfo.WorkingDirectory = $BackendRoot
+    $startInfo.UseShellExecute = $false
+    $startInfo.CreateNoWindow = $true
+    $startInfo.Environment["MEETING_AI_BACKEND_DIR"] = $BackendRoot
+    $startInfo.Environment["ANALYSIS_MODE"] = "real"
+    $startInfo.Environment["PORT"] = [string]$Port
+    return [System.Diagnostics.Process]::Start($startInfo)
+}
+
 $script:Results = @()
 $script:Failed = $false
 
@@ -154,30 +193,36 @@ $backendProcess = $null
 $backendPort = $null
 
 try {
-    $appProcess = Start-Process -FilePath $appExe -WorkingDirectory $portablePath -PassThru
+    $backendPort = Get-AvailableBackendPort
+    $backendProcess = Start-BackendSidecar $sidecarExe $backendDir $backendPort
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
     while ((Get-Date) -lt $deadline) {
-        $backendProcess = Get-Process meeting-backend* -ErrorAction SilentlyContinue |
-            Where-Object { $_.Path -and $_.Path.StartsWith($portablePath, [System.StringComparison]::OrdinalIgnoreCase) } |
-            Select-Object -First 1
+        $backendProcess.Refresh()
+        if ($backendProcess.HasExited) {
+            Add-Result "sidecar process running" $false "exited with code $($backendProcess.ExitCode)"
+            break
+        }
 
-        if ($backendProcess) {
-            $connection = Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
-                Where-Object { $_.OwningProcess -eq $backendProcess.Id } |
-                Select-Object -First 1
-            if ($connection) {
-                $backendPort = $connection.LocalPort
-                break
-            }
+        $connection = Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.OwningProcess -eq $backendProcess.Id } |
+            Select-Object -First 1
+        if ($connection) {
+            break
         }
 
         Start-Sleep -Seconds 3
     }
 
-    Add-Result "sidecar process listens" ($null -ne $backendPort) $(if ($backendPort) { "port $backendPort" } else { "no listen port found" })
+    $listening = $false
+    if ($backendProcess -and -not $backendProcess.HasExited) {
+        $listening = $null -ne (Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorAction SilentlyContinue |
+            Where-Object { $_.OwningProcess -eq $backendProcess.Id } |
+            Select-Object -First 1)
+    }
+    Add-Result "sidecar process listens" $listening $(if ($listening) { "port $backendPort" } else { "no listen port found" })
 
-    if ($backendPort) {
+    if ($listening) {
         $baseUrl = "http://127.0.0.1:$backendPort"
         $health = Invoke-RestMethod -Uri "$baseUrl/api/health" -TimeoutSec 5
         Add-Result "health endpoint" ($health.ok -eq $true -and $health.service -eq "NIFS AI Meeting API") ($health | ConvertTo-Json -Compress)
@@ -242,10 +287,10 @@ catch {
     Add-Result "runtime smoke test" $false $_.Exception.Message
 }
 finally {
-    Stop-PortableProcesses $portablePath
-    if ($appProcess -and -not $appProcess.HasExited) {
-        Stop-Process -Id $appProcess.Id -Force -ErrorAction SilentlyContinue
+    if ($backendProcess -and -not $backendProcess.HasExited) {
+        Stop-Process -Id $backendProcess.Id -Force -ErrorAction SilentlyContinue
     }
+    Stop-PortableProcesses $portablePath
 }
 
 $Results | Format-Table -AutoSize

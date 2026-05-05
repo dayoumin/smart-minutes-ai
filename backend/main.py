@@ -2,6 +2,7 @@
 import asyncio
 import os
 import json
+import logging
 import re
 import shutil
 import sys
@@ -122,7 +123,18 @@ async def update_settings(payload: dict = Body(...)) -> dict:
 
 @app.get("/api/models/status")
 async def models_status() -> dict:
-    return get_model_status(BASE_DIR)
+    try:
+        return get_model_status(BASE_DIR)
+    except Exception as exc:
+        logging.exception("Failed to inspect model status")
+        return {
+            "ready": False,
+            "models": [],
+            "errors": [
+                "모델 상태를 확인하지 못했습니다. 앱을 다시 실행하거나 models 폴더 구성을 확인해 주세요.",
+                str(exc),
+            ],
+        }
 
 
 @app.get("/api/outputs/{job_id}/{kind}")

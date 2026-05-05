@@ -157,6 +157,7 @@ def ollama_model_exists(model_name: str) -> bool:
             text=True,
             encoding="utf-8",
             errors="replace",
+            timeout=5,
         )
     except Exception:
         return False

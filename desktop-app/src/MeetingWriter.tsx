@@ -45,6 +45,7 @@ interface ModelStatus {
 interface ModelsPayload {
     ready: boolean;
     models: ModelStatus[];
+    errors?: string[];
 }
 
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
@@ -224,7 +225,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 .filter(model => model.required && !model.installed)
                 .map(model => getUserModelLabel(model))
                 .join(', ');
-            const message = `필수 모델이 없습니다: ${missing}`;
+            const message = payload.errors?.[0] || `필수 모델이 없습니다: ${missing || '모델 파일'}`;
             setReadinessState('missing-models');
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };

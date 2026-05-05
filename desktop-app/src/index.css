@@ -311,19 +311,71 @@
   }
 
   .summary-block {
-    @apply rounded-[var(--radius-card)] border border-border bg-muted/20 p-4 text-sm leading-relaxed text-foreground whitespace-pre-wrap;
+    @apply rounded-[var(--radius-card)] border border-slate-200 bg-slate-50 p-4 text-sm leading-relaxed text-slate-900 whitespace-pre-wrap;
   }
 
   .topic-chip {
-    @apply rounded-full bg-muted/60 px-3 py-1 text-xs font-medium text-muted-foreground;
+    @apply rounded-full border border-slate-200 bg-white px-3 py-1 text-xs font-medium text-slate-700 shadow-sm;
   }
 
   .speaker-turn {
-    @apply grid gap-3 rounded-[var(--radius-card)] border border-border bg-background p-3 transition-colors hover:bg-muted/20 md:grid-cols-[8rem_1fr];
+    --speaker-accent: theme(colors.slate.400);
+    --speaker-soft: theme(colors.slate.50);
+    @apply grid gap-3 rounded-[var(--radius-card)] border border-slate-200 bg-white p-3 transition-colors hover:bg-slate-50 md:grid-cols-[8.5rem_1fr];
+    box-shadow: inset 4px 0 0 var(--speaker-accent);
+  }
+
+  .speaker-turn-warning {
+    @apply border-red-200;
+    box-shadow: inset 4px 0 0 theme(colors.red.500);
   }
 
   .speaker-meta {
-    @apply text-xs text-muted-foreground;
+    @apply text-xs text-slate-500;
+  }
+
+  .speaker-label {
+    @apply mb-1 flex items-center gap-2 font-semibold text-slate-900;
+  }
+
+  .speaker-dot {
+    @apply h-2.5 w-2.5 rounded-full;
+    background-color: var(--speaker-accent);
+  }
+
+  .speaker-text {
+    @apply rounded-md px-3 py-2 text-sm leading-relaxed text-slate-950;
+    background-color: var(--speaker-soft);
+  }
+
+  .speaker-tone-0 {
+    --speaker-accent: theme(colors.blue.600);
+    --speaker-soft: theme(colors.blue.50);
+  }
+
+  .speaker-tone-1 {
+    --speaker-accent: theme(colors.emerald.600);
+    --speaker-soft: theme(colors.emerald.50);
+  }
+
+  .speaker-tone-2 {
+    --speaker-accent: theme(colors.amber.600);
+    --speaker-soft: theme(colors.amber.50);
+  }
+
+  .speaker-tone-3 {
+    --speaker-accent: theme(colors.rose.600);
+    --speaker-soft: theme(colors.rose.50);
+  }
+
+  .speaker-tone-4 {
+    --speaker-accent: theme(colors.cyan.700);
+    --speaker-soft: theme(colors.cyan.50);
+  }
+
+  .speaker-tone-5 {
+    --speaker-accent: theme(colors.violet.600);
+    --speaker-soft: theme(colors.violet.50);
   }
 
   .status-note {

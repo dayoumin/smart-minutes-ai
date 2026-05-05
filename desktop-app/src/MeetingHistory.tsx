@@ -32,6 +32,22 @@ const downloadFormatLabels: Record<DownloadFormat, string> = {
     txt: 'TXT',
     docx: 'DOCX',
 };
+const speakerToneCount = 6;
+
+const getSpeakerTone = (speaker: string, index: number): string => {
+    const match = speaker.match(/(\d+)/);
+    const speakerIndex = match ? Number.parseInt(match[1], 10) : index;
+    return `speaker-tone-${speakerIndex % speakerToneCount}`;
+};
+
+const looksLikeKoreanMisrecognition = (text: string): boolean => {
+    const compact = text.replace(/\s/g, '');
+    if (compact.length < 20) return false;
+
+    const hangulCount = (compact.match(/[\uac00-\ud7a3]/g) || []).length;
+    const latinCount = (compact.match(/[A-Za-z]/g) || []).length;
+    return latinCount > hangulCount * 2 && latinCount > 24;
+};
 
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled, onCreateMeeting }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
@@ -417,21 +433,32 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 </div>
                             ) : (
                                 <div id="meeting-script-panel" role="tabpanel" aria-labelledby="meeting-script-tab" className="flex flex-col gap-3">
-                                    {selectedMeeting.segments?.some(seg => seg.timingApproximate) && (
-                                        <div className="status-note border-amber-200 bg-amber-50 text-amber-800">
-                                            일부 시간 정보는 음성 길이에 맞춘 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
-                                        </div>
-                                    )}
+                                    <div className="flex flex-col gap-2">
+                                        {selectedMeeting.segments?.some(seg => seg.timingApproximate) && (
+                                            <div className="status-note border-amber-200 bg-amber-50 text-amber-800">
+                                                일부 시간 정보는 음성 길이에 맞춘 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
+                                            </div>
+                                        )}
+                                        {selectedMeeting.segments?.some(seg => looksLikeKoreanMisrecognition(seg.text)) && (
+                                            <div className="status-note border-red-200 bg-red-50 text-red-700">
+                                                일부 구간은 음성 인식 품질 확인이 필요합니다. 원본 음성과 대조해 주세요.
+                                            </div>
+                                        )}
+                                    </div>
                                     {selectedMeeting.segments?.length ? (
                                         <div className="flex flex-col gap-3">
                                             {selectedMeeting.segments.map((seg, idx) => (
-                                                <div key={`${seg.start}-${idx}`} className="speaker-turn">
+                                                <div key={`${seg.start}-${idx}`} className={`speaker-turn ${getSpeakerTone(seg.speaker, idx)} ${looksLikeKoreanMisrecognition(seg.text) ? 'speaker-turn-warning' : ''}`}>
                                                     <div className="speaker-meta">
-                                                        <div className="font-semibold text-primary">{seg.speaker}</div>
+                                                        <div className="speaker-label">
+                                                            <span className="speaker-dot" aria-hidden="true" />
+                                                            <span>{seg.speaker}</span>
+                                                        </div>
                                                         <div>{seg.start} - {seg.end}</div>
                                                         {seg.timingApproximate && <div className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">시간 추정</div>}
+                                                        {looksLikeKoreanMisrecognition(seg.text) && <div className="mt-1 w-fit rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">인식 확인</div>}
                                                     </div>
-                                                    <div className="flex-1 text-sm leading-relaxed text-foreground">{seg.text}</div>
+                                                    <div className="speaker-text">{seg.text}</div>
                                                 </div>
                                             ))}
                                         </div>

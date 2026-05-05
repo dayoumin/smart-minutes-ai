@@ -3,7 +3,7 @@ import { AlertCircle, CheckCircle2, Copy, Loader2, RefreshCw, Settings, UploadCl
 import { Button } from './Button';
 import { Input } from './Input';
 import { addMeeting, MeetingRecord, MeetingSegment } from './meetingRepository';
-import { getApiBase } from './apiBase';
+import { getApiBase, writeFrontendLog } from './apiBase';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const LARGE_FILE_WARNING_BYTES = 500 * 1024 * 1024;
@@ -222,13 +222,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
         try {
             const apiBase = await getApiBase();
+            await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
             const healthResponse = await fetch(`${apiBase}/api/health`);
+            await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
             if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
 
             await healthResponse.json().catch(() => null);
 
             const modelsResponse = await fetch(`${apiBase}/api/models/status`);
+            await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
             if (!modelsResponse.ok) {
+                const body = await modelsResponse.text().catch(() => '');
+                await writeFrontendLog(`readiness models non-ok body=${body.slice(0, 500)}`);
                 const message = options.soft
                     ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
                     : '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
@@ -238,6 +243,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             }
 
             const payload = await modelsResponse.json() as ModelsPayload;
+            await writeFrontendLog(`readiness models payload ready=${payload.ready} count=${payload.models?.length ?? 0} errors=${payload.errors?.join(' | ') ?? ''}`);
             setModelsPayload(payload);
 
             if (payload.ready) {
@@ -255,6 +261,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
         } catch (error) {
+            await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const message = error instanceof Error && !options.soft
                 ? `분석 기능을 준비하고 있습니다. ${error.message}`
                 : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';

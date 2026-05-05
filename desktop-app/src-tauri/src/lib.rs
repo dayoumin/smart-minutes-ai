@@ -1,8 +1,9 @@
 use std::fs::{self, OpenOptions};
+use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
-use tauri::{Manager, RunEvent, State};
+use tauri::{AppHandle, Manager, RunEvent, State};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
@@ -20,6 +21,24 @@ struct BackendConfig {
 #[tauri::command]
 fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
     config.base_url.clone()
+}
+
+#[tauri::command]
+fn write_frontend_log(app: AppHandle, message: String) -> Result<(), String> {
+    let resource_dir = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("Could not resolve resource directory: {error}"))?;
+    let log_dir = resource_dir.join("logs");
+    fs::create_dir_all(&log_dir)
+        .map_err(|error| format!("Could not create log directory at {log_dir:?}: {error}"))?;
+    let mut log_file = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_dir.join("frontend.log"))
+        .map_err(|error| format!("Could not open frontend log: {error}"))?;
+    writeln!(log_file, "{message}").map_err(|error| format!("Could not write frontend log: {error}"))?;
+    Ok(())
 }
 
 fn find_available_port() -> Result<u16, String> {
@@ -95,7 +114,10 @@ pub fn run() {
             base_url: backend_base_url,
         })
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![get_backend_base_url])
+        .invoke_handler(tauri::generate_handler![
+            get_backend_base_url,
+            write_frontend_log
+        ])
         .setup(move |app| {
             match spawn_backend(app, backend_port) {
                 Ok(child) => {

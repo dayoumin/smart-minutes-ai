@@ -17,6 +17,17 @@ const fallbackApiBase = (): string => {
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
 
+export const writeFrontendLog = async (message: string): Promise<void> => {
+    try {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (!invoke) return;
+        const timestamp = new Date().toISOString();
+        await invoke('write_frontend_log', { message: `${timestamp} ${message}` });
+    } catch {
+        // Diagnostics must never break the user flow.
+    }
+};
+
 const isTauriRuntime = (): boolean => {
     if (typeof window === 'undefined') return false;
     if (window.__TAURI__?.core?.invoke) return true;
@@ -27,7 +38,9 @@ const getTauriApiBase = async (attempts = 5): Promise<string | null> => {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
         const invoke = window.__TAURI__?.core?.invoke;
         if (invoke) {
-            return invoke<string>('get_backend_base_url');
+            const value = await invoke<string>('get_backend_base_url');
+            await writeFrontendLog(`apiBase tauri=${value}`);
+            return value;
         }
         await sleep(100);
     }

@@ -79,7 +79,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 if (prev && sorted.some(record => record.id === prev.id)) {
                     return sorted.find(record => record.id === prev.id) ?? prev;
                 }
-                return sorted[0] ?? null;
+                return null;
             });
         } catch (error) {
             const message = error instanceof Error ? error.message : '회의 기록을 불러오지 못했습니다.';
@@ -125,17 +125,33 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [selectedMeeting]);
 
     const recordCountLabel = useMemo(() => `${records.length}개 회의 저장됨`, [records.length]);
-    const filteredRecords = useMemo(() => {
-        const query = searchQuery.trim().toLowerCase();
-        if (!query) return records;
-        return records.filter(record => [
-            record.title,
-            record.date,
-            record.participants,
-            record.sourceFile,
-            record.summary,
-        ].filter(Boolean).join(' ').toLowerCase().includes(query));
-    }, [records, searchQuery]);
+    const contentQuery = searchQuery.trim().toLowerCase();
+    const summaryMatches = !contentQuery || Boolean(selectedMeeting?.summary.toLowerCase().includes(contentQuery));
+    const visibleTopics = useMemo(
+        () => selectedMeeting?.topics?.filter(topic => !contentQuery || topic.toLowerCase().includes(contentQuery)) ?? [],
+        [contentQuery, selectedMeeting],
+    );
+    const visibleActions = useMemo(
+        () => selectedMeeting?.actions?.filter(action => !contentQuery || action.toLowerCase().includes(contentQuery)) ?? [],
+        [contentQuery, selectedMeeting],
+    );
+    const visibleSegments = useMemo(
+        () => selectedMeeting?.segments?.filter(segment => !contentQuery || [
+            segment.speaker,
+            segment.start,
+            segment.end,
+            segment.text,
+        ].join(' ').toLowerCase().includes(contentQuery)) ?? [],
+        [contentQuery, selectedMeeting],
+    );
+    const hasSummarySearchResult = summaryMatches || visibleTopics.length > 0 || visibleActions.length > 0;
+
+    const handleSelectMeeting = (meeting: MeetingRecord) => {
+        setSelectedMeeting(meeting);
+        setDetailTab('summary');
+        setSearchQuery('');
+        setIsEditing(false);
+    };
 
     const buildTranscriptText = (meeting: MeetingRecord): string => {
         const lines = [
@@ -304,44 +320,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                         회의 기록을 불러오는 중입니다...
                     </div>
                 ) : selectedMeeting ? (
-                    <div className="grid h-full min-h-0 grid-cols-1 lg:grid-cols-[280px_minmax(0,1fr)]">
-                        <aside className="min-h-0 border-b border-border bg-muted/10 lg:border-b-0 lg:border-r">
-                            <div className="border-b border-border p-4">
-                                <div className="flex items-center justify-between gap-3">
-                                    <h3 className="text-base font-semibold text-foreground">회의 기록</h3>
-                                    <span className="text-xs text-muted-foreground">{recordCountLabel}</span>
-                                </div>
-                                <label className="mt-3 flex h-10 items-center gap-2 rounded-md border border-input bg-background px-3 text-sm">
-                                    <Search size={15} className="shrink-0 text-muted-foreground" />
-                                    <input
-                                        value={searchQuery}
-                                        onChange={event => setSearchQuery(event.target.value)}
-                                        placeholder="제목, 참석자, 요약 검색"
-                                        className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-                                    />
-                                </label>
-                            </div>
-                            <div className="max-h-64 overflow-y-auto p-2 custom-scrollbar lg:max-h-none lg:h-[calc(100%-81px)]">
-                                {filteredRecords.length ? filteredRecords.map(record => (
-                                    <button
-                                        key={record.id}
-                                        type="button"
-                                        onClick={() => {
-                                            setSelectedMeeting(record);
-                                            setDetailTab('summary');
-                                        }}
-                                        className={`mb-1 flex w-full flex-col rounded-md px-3 py-2 text-left transition-colors ${selectedMeeting.id === record.id ? 'bg-primary/10 text-primary' : 'hover:bg-muted/60'}`}
-                                    >
-                                        <span className="truncate text-sm font-semibold">{record.title}</span>
-                                        <span className="mt-1 truncate text-xs text-muted-foreground">{record.date} · {record.participants}</span>
-                                    </button>
-                                )) : (
-                                    <div className="p-4 text-sm text-muted-foreground">검색 결과가 없습니다.</div>
-                                )}
-                            </div>
-                        </aside>
-
-                        <div className="flex h-full min-h-0 flex-col">
+                    <div className="flex h-full min-h-0 flex-col">
                         <div className="app-panel-header">
                             <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                                 <div className="min-w-0 flex-1">
@@ -426,54 +405,80 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 </div>
                             </div>
 
-                            <div className="tab-list mt-5" role="tablist" aria-label="회의록 상세">
-                                <button
-                                    type="button"
-                                    id="meeting-summary-tab"
-                                    role="tab"
-                                    aria-selected={detailTab === 'summary'}
-                                    aria-controls="meeting-summary-panel"
-                                    className={`tab-button ${detailTab === 'summary' ? 'tab-button-active' : ''}`}
-                                    onClick={() => setDetailTab('summary')}
-                                >
-                                    회의 요약
-                                </button>
-                                <button
-                                    type="button"
-                                    id="meeting-script-tab"
-                                    role="tab"
-                                    aria-selected={detailTab === 'script'}
-                                    aria-controls="meeting-script-panel"
-                                    className={`tab-button ${detailTab === 'script' ? 'tab-button-active' : ''}`}
-                                    onClick={() => setDetailTab('script')}
-                                >
-                                    발화 기록
-                                </button>
+                            <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                                <div className="tab-list" role="tablist" aria-label="회의록 상세">
+                                    <button
+                                        type="button"
+                                        id="meeting-summary-tab"
+                                        role="tab"
+                                        aria-selected={detailTab === 'summary'}
+                                        aria-controls="meeting-summary-panel"
+                                        className={`tab-button ${detailTab === 'summary' ? 'tab-button-active' : ''}`}
+                                        onClick={() => setDetailTab('summary')}
+                                    >
+                                        회의 요약
+                                    </button>
+                                    <button
+                                        type="button"
+                                        id="meeting-script-tab"
+                                        role="tab"
+                                        aria-selected={detailTab === 'script'}
+                                        aria-controls="meeting-script-panel"
+                                        className={`tab-button ${detailTab === 'script' ? 'tab-button-active' : ''}`}
+                                        onClick={() => setDetailTab('script')}
+                                    >
+                                        발화 기록
+                                    </button>
+                                </div>
+                                <label className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm md:w-72">
+                                    <Search size={15} className="shrink-0 text-muted-foreground" />
+                                    <input
+                                        value={searchQuery}
+                                        onChange={event => setSearchQuery(event.target.value)}
+                                        placeholder="현재 회의록 검색"
+                                        className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
+                                    />
+                                    {searchQuery && (
+                                        <button
+                                            type="button"
+                                            onClick={() => setSearchQuery('')}
+                                            className="text-muted-foreground hover:text-foreground"
+                                            aria-label="검색어 지우기"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    )}
+                                </label>
                             </div>
                         </div>
 
                         <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
                             {detailTab === 'summary' ? (
                                 <div id="meeting-summary-panel" role="tabpanel" aria-labelledby="meeting-summary-tab" className="flex flex-col gap-5">
-                                    <div className="summary-block">
+                                    {summaryMatches && <div className="summary-block">
                                         {selectedMeeting.summary}
-                                    </div>
-                                    {!!selectedMeeting.topics?.length && (
+                                    </div>}
+                                    {!!visibleTopics.length && (
                                         <div>
                                             <h4 className="section-title mb-2">주요 주제</h4>
                                             <div className="flex flex-wrap gap-2">
-                                                {selectedMeeting.topics.map(topic => (
-                                                    <span key={topic} className="topic-chip">{topic}</span>
+                                                {visibleTopics.map((topic, index) => (
+                                                    <span key={`${topic}-${index}`} className="topic-chip">{topic}</span>
                                                 ))}
                                             </div>
                                         </div>
                                     )}
-                                    {!!selectedMeeting.actions?.length && (
+                                    {!!visibleActions.length && (
                                         <div>
                                             <h4 className="section-title mb-2">할 일</h4>
                                             <ul className="list-disc pl-5 text-sm text-foreground">
-                                                {selectedMeeting.actions.map(action => <li key={action}>{action}</li>)}
+                                                {visibleActions.map((action, index) => <li key={`${action}-${index}`}>{action}</li>)}
                                             </ul>
+                                        </div>
+                                    )}
+                                    {contentQuery && !hasSummarySearchResult && (
+                                        <div className="rounded-md bg-muted/30 p-8 text-center text-sm text-muted-foreground">
+                                            검색 결과가 없습니다.
                                         </div>
                                     )}
                                 </div>
@@ -491,9 +496,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             </StatusBanner>
                                         )}
                                     </div>
-                                    {selectedMeeting.segments?.length ? (
+                                    {visibleSegments.length ? (
                                         <div className="flex flex-col gap-3">
-                                            {selectedMeeting.segments.map((seg, idx) => (
+                                            {visibleSegments.map((seg, idx) => (
                                                 <div key={`${seg.start}-${idx}`} className={`speaker-turn ${getSpeakerTone(seg.speaker, idx)} ${looksLikeKoreanMisrecognition(seg.text) ? 'speaker-turn-warning' : ''}`}>
                                                     <div className="speaker-meta">
                                                         <div className="speaker-label">
@@ -510,7 +515,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         </div>
                                     ) : (
                                         <div className="rounded-md bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-                                            <div>발화 기록이 없습니다.</div>
+                                            <div>{contentQuery ? '검색 결과가 없습니다.' : '발화 기록이 없습니다.'}</div>
                                             <Button className="mt-4" variant="outline" onClick={onCreateMeeting}>
                                                 <PlusCircle size={16} />
                                                 새 회의록 작성
@@ -519,7 +524,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     )}
                                 </div>
                             )}
-                        </div>
                         </div>
                     </div>
                 ) : records.length === 0 ? (
@@ -541,8 +545,47 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                         </div>
                     </div>
                 ) : (
-                    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
-                        왼쪽 목록에서 회의 기록을 선택하면 이 영역에서 바로 확인할 수 있습니다.
+                    <div className="flex h-full min-h-0 flex-col">
+                        <div className="app-panel-header">
+                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                <div>
+                                    <h3 className="text-h3 font-semibold text-foreground">회의 기록</h3>
+                                    <p className="mt-1 text-sm text-muted-foreground">{recordCountLabel}</p>
+                                </div>
+                                <Button variant="outline" onClick={onCreateMeeting}>
+                                    <PlusCircle size={16} />
+                                    새 회의록 작성
+                                </Button>
+                            </div>
+                        </div>
+                        <div className="min-h-0 flex-1 overflow-y-auto p-3 custom-scrollbar sm:p-5">
+                            <div className="grid gap-2">
+                                {records.map(record => (
+                                    <button
+                                        key={record.id}
+                                        type="button"
+                                        onClick={() => handleSelectMeeting(record)}
+                                        className="rounded-md border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/30 focus:outline-none focus:ring-2 focus:ring-primary/40"
+                                    >
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                            <div className="min-w-0">
+                                                <div className="truncate text-sm font-semibold text-foreground">{record.title}</div>
+                                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                                    <span>{record.date}</span>
+                                                    <span>{record.participants}</span>
+                                                </div>
+                                            </div>
+                                            <span className="shrink-0 text-xs font-medium text-primary">열기</span>
+                                        </div>
+                                        {record.summary && (
+                                            <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
+                                                {record.summary}
+                                            </p>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
                     </div>
                 )}
             </section>

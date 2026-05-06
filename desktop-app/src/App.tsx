@@ -52,7 +52,7 @@ export const App: React.FC = () => {
                 {analysisStatus.active && activeTab !== 'minutes' && (
                     <StatusBanner
                         tone="info"
-                        className="mb-4"
+                        className="mb-4 sm:hidden"
                         action={(
                             <button
                                 type="button"

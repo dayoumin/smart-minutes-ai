@@ -77,7 +77,10 @@ def align_segments_with_speakers(
 
         overlaps.sort(key=lambda item: item[1])
         meaningful = [item for item in overlaps if item[0] >= 1.0]
-        if t_seg.get("timing_approximate") and len(meaningful) > 1 and t_duration > 0:
+        should_split_on_speaker_change = bool(
+            t_seg.get("timing_approximate") or t_seg.get("split_on_speaker_change")
+        )
+        if should_split_on_speaker_change and len(meaningful) > 1 and t_duration > 0:
             text_chunks = _split_text_by_weights(t_seg.get("text", ""), [item[0] for item in meaningful])
             for item, text_chunk in zip(meaningful, text_chunks):
                 _overlap, start, end, speaker = item

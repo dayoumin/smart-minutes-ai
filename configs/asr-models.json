@@ -1,0 +1,86 @@
+{
+  "default_manifest": "docs/audio-regression-manifest.csv",
+  "default_output_dir": "backend/temp/asr_benchmark",
+  "engines": [
+    {
+      "id": "cohere-current",
+      "label": "Cohere Transcribe current app path",
+      "engine": "cohere",
+      "enabled": true,
+      "model_path": "lmo_audio/models",
+      "language": "ko",
+      "chunk_seconds": 30,
+      "notes": "Current desktop app STT model. Uses backend/pipeline/transcribe.py."
+    },
+    {
+      "id": "faster-whisper-large-v3",
+      "label": "faster-whisper large-v3",
+      "engine": "faster_whisper",
+      "enabled": true,
+      "model_path": "backend/models/stt/faster-whisper-large-v3",
+      "language": "ko",
+      "device": "cpu",
+      "compute_type": "int8",
+      "beam_size": 1,
+      "vad_filter": true,
+      "notes": "2026-05-07: CPU int8 beam1 completed a 30s TV debate sample in 15.45s with 98.8% Hangul ratio. Auto/CUDA probing was too slow on this machine."
+    },
+    {
+      "id": "qwen3-asr-1.7b-transformers",
+      "label": "Qwen3-ASR-1.7B transformers",
+      "engine": "qwen_asr",
+      "enabled": true,
+      "model_id": "Qwen/Qwen3-ASR-1.7B",
+      "model_path": "backend/models/stt/Qwen3-ASR-1.7B",
+      "language": "Korean",
+      "dtype": "float32",
+      "device_map": "cpu",
+      "max_new_tokens": 4096,
+      "max_inference_batch_size": 1,
+      "return_time_stamps": false,
+      "notes": "Requires qwen-asr package. Official docs recommend a fresh Python 3.12 environment. Current local test environment is CPU-only, so use float32/cpu."
+    },
+    {
+      "id": "qwen3-asr-1.7b-transformers-aligner",
+      "label": "Qwen3-ASR-1.7B + Qwen3-ForcedAligner",
+      "engine": "qwen_asr",
+      "enabled": true,
+      "model_id": "Qwen/Qwen3-ASR-1.7B",
+      "model_path": "backend/models/stt/Qwen3-ASR-1.7B",
+      "forced_aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
+      "forced_aligner_path": "backend/models/stt/Qwen3-ForcedAligner-0.6B",
+      "language": "Korean",
+      "dtype": "float32",
+      "device_map": "cpu",
+      "max_new_tokens": 4096,
+      "max_inference_batch_size": 1,
+      "return_time_stamps": true,
+      "merge_aligner_segments": true,
+      "merge_max_chars": 60,
+      "merge_max_seconds": 5,
+      "merge_gap_seconds": 0.8,
+      "merge_min_chars": 12,
+      "build_display_segments": true,
+      "notes": "Use this to compare transcript quality and timestamp quality together. Current local test environment is CPU-only, so use float32/cpu."
+    },
+    {
+      "id": "qwen3-asr-1.7b-vllm-server",
+      "label": "Qwen3-ASR-1.7B vLLM/OpenAI-compatible server",
+      "engine": "openai_audio_server",
+      "enabled": false,
+      "base_url": "http://127.0.0.1:8000/v1/chat/completions",
+      "model": "Qwen/Qwen3-ASR-1.7B",
+      "language": "Korean",
+      "notes": "Start with qwen-asr-serve first, then run this benchmark against the server."
+    },
+    {
+      "id": "qwen3-asr-1.7b-gguf-command",
+      "label": "Qwen3-ASR-1.7B GGUF external command",
+      "engine": "external_command",
+      "enabled": false,
+      "model_id": "ggml-org/Qwen3-ASR-1.7B-GGUF",
+      "command": "",
+      "notes": "GGUF runtime support differs by tool. Fill command after choosing llama-server, Ollama, LM Studio, or another runner."
+    }
+  ]
+}

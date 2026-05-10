@@ -31,6 +31,7 @@
 - [ ] **no-Cohere 패키지 재생성 주의**: 최신 PyInstaller 백엔드 sidecar 자체가 약 3.45GB라 Cohere 모델을 제외해도 메일 첨부용으로는 부적합하다. 회사 전달은 USB, 사내 파일 공유, 외장 저장소를 기본 경로로 잡는다.
 - [ ] **Portable 압축 해제 위치 안내**: `Program Files`처럼 쓰기 권한이 엄격한 위치가 아니라 `문서\Smart Minutes AI`, 바탕화면, 또는 사용자 쓰기 가능한 업무 폴더에 압축 해제한다.
 - [ ] **Cohere 모델 배치 안내 유지**: 회사 PC에서 `Smart Minutes AI\models\model.safetensors`와 `Smart Minutes AI\models\config.json`이 보이도록 Cohere 모델 파일을 `models` 바로 아래에 둬야 실제 분석이 가능하다. 기존 `models\cohere-transcribe-03-2026` 폴더 방식은 호환 경로로만 유지한다.
+- [ ] **GPU 가속 사전 점검 도구**: 설정에서 NVIDIA GPU 감지, CUDA DLL, 간단한 샘플 추론까지 점검하고 통과한 경우에만 GPU 사용을 권장한다.
 - [ ] **HWPX 실열기 검증**: 현재 자동 테스트는 HWPX zip 구조와 XML 파싱까지만 확인한다. 배포 전 한글/HWPX 뷰어에서 실제 파일 열기, 서식, 본문 표시를 별도로 검증한다.
 - [ ] **AppData 저장소 분리**: 향후 설치형 배포를 지원하려면 `config.json`, `outputs`, `temp`를 앱 리소스 폴더가 아니라 사용자 쓰기 가능한 AppData/localData 경로로 분리한다.
 - [x] **로컬 분석 포트 자동 할당**: 앱 실행 시 빈 로컬 포트를 잡아 sidecar에 전달하고 UI는 Tauri command로 받은 실제 주소를 사용한다.

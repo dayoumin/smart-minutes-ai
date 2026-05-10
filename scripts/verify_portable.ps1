@@ -1,10 +1,11 @@
 param(
-    [string]$PortableDir = "Smart Minutes AI",
-    [switch]$RequireCohere,
+    [string]$PortableDir = "lmo_audio",
     [int]$TimeoutSeconds = 240
 )
 
 $ErrorActionPreference = "Stop"
+$ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
+$ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
 function Resolve-InRepoPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -46,6 +47,36 @@ function Get-FileHashValue([string]$Path) {
         return $null
     }
     return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+}
+
+function Get-ZipMissingEntries([string]$Path, [string[]]$RequiredEntries) {
+    Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+
+    $zip = $null
+    try {
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+        $entrySet = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+        foreach ($entry in $zip.Entries) {
+            [void]$entrySet.Add($entry.FullName.Replace("/", "\"))
+        }
+
+        $missing = @()
+        foreach ($requiredEntry in $RequiredEntries) {
+            $normalized = $requiredEntry.Replace("/", "\")
+            if (-not $entrySet.Contains($normalized)) {
+                $missing += $requiredEntry
+            }
+        }
+        return $missing
+    }
+    catch {
+        return @("invalid zip: $($_.Exception.Message)")
+    }
+    finally {
+        if ($zip) {
+            $zip.Dispose()
+        }
+    }
 }
 
 function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath) {
@@ -146,17 +177,15 @@ function Start-BackendSidecar([string]$ExePath, [string]$BackendRoot, [int]$Port
 $script:Results = @()
 $script:Failed = $false
 
+$PortableAppExeName = "lmo_audio.exe"
 $portablePath = Resolve-InRepoPath $PortableDir
-$appExe = Join-Path $portablePath "Smart Minutes AI.exe"
+$appExe = Join-Path $portablePath $PortableAppExeName
 $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $backendDir = Join-Path $portablePath "backend"
+$backendConfigFile = Join-Path $backendDir "config.json"
 $ffmpegExe = Join-Path $backendDir "ffmpeg.exe"
 $modelsDir = Join-Path $portablePath "models"
 $manifestFile = Join-Path $portablePath "release-manifest.json"
-$cohereModelFile = Join-Path $modelsDir "model.safetensors"
-$cohereConfigFile = Join-Path $modelsDir "config.json"
-$pyannoteConfigFile = Join-Path $modelsDir "config.yaml"
-$pyannoteEmbeddingFile = Join-Path $modelsDir "embedding\pytorch_model.bin"
 
 Add-Result "portable folder exists" (Test-Path -LiteralPath $portablePath) $portablePath
 Add-Result "app exe exists" (Test-Path -LiteralPath $appExe) $appExe
@@ -166,13 +195,17 @@ Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $mode
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
 Test-ReleaseManifest $portablePath $manifestFile
-Add-Result "pyannote direct layout" ((Test-Path -LiteralPath $pyannoteConfigFile) -and (Test-Path -LiteralPath $pyannoteEmbeddingFile)) $modelsDir
-
-if ($RequireCohere) {
-    Add-Result "cohere direct layout" ((Test-Path -LiteralPath $cohereConfigFile) -and (Test-Path -LiteralPath $cohereModelFile)) $modelsDir
-}
-else {
-    Add-Result "cohere direct location" $true $modelsDir
+foreach ($model in @($ModelLayout.models)) {
+    $modelDir = Join-Path $modelsDir ([string]$model.portableDir)
+    $missingMarkers = @(
+        foreach ($marker in @($model.requiredMarkers)) {
+            $markerPath = Join-Path $modelDir ([string]$marker)
+            if (-not (Test-Path -LiteralPath $markerPath)) {
+                [string]$marker
+            }
+        }
+    )
+    Add-Result "$($model.label) model layout" ($missingMarkers.Count -eq 0) $(if ($missingMarkers.Count -eq 0) { $modelDir } else { "missing=$($missingMarkers -join ', ')" })
 }
 
 if (Test-Path -LiteralPath $appExe) {
@@ -233,8 +266,37 @@ try {
         $models = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec 5
         $missingRequired = @($models.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
         Add-Result "models endpoint" ($null -ne $models.models) "ready=$($models.ready); missing=$($missingRequired -join ', ')"
-        if ($RequireCohere) {
-            Add-Result "required models ready" ($models.ready -eq $true) "missing=$($missingRequired -join ', ')"
+        Add-Result "required models ready" ($models.ready -eq $true) "selected=$($models.selected_stt_model); missing=$($missingRequired -join ', ')"
+
+        $previousSttModel = $settings.stt.selected_model
+        if (-not $previousSttModel) {
+            $previousSttModel = "faster-whisper-large-v3"
+        }
+        $originalBackendConfigBytes = if (Test-Path -LiteralPath $backendConfigFile) {
+            [System.IO.File]::ReadAllBytes($backendConfigFile)
+        } else {
+            $null
+        }
+        try {
+            $qwenBody = @{ stt = @{ selected_model = "qwen3-asr" } } | ConvertTo-Json -Depth 4
+            Invoke-RestMethod -Uri "$baseUrl/api/settings" -Method Patch -ContentType "application/json" -Body $qwenBody -TimeoutSec 5 | Out-Null
+            $qwenModels = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec 5
+            $qwenMissingRequired = @($qwenModels.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
+            $qwenRequiredKeys = @($qwenModels.models | Where-Object { $_.required } | Select-Object -ExpandProperty key)
+            $qwenReady = (
+                $qwenModels.ready -eq $true -and
+                $qwenModels.selected_stt_model -eq "qwen3-asr" -and
+                $qwenRequiredKeys -contains "stt_qwen" -and
+                $qwenRequiredKeys -contains "stt_qwen_aligner"
+            )
+            Add-Result "Qwen selection ready" $qwenReady "selected=$($qwenModels.selected_stt_model); required=$($qwenRequiredKeys -join ', '); missing=$($qwenMissingRequired -join ', ')"
+        }
+        finally {
+            $restoreBody = @{ stt = @{ selected_model = $previousSttModel } } | ConvertTo-Json -Depth 4
+            Invoke-RestMethod -Uri "$baseUrl/api/settings" -Method Patch -ContentType "application/json" -Body $restoreBody -TimeoutSec 5 | Out-Null
+            if ($null -ne $originalBackendConfigBytes) {
+                [System.IO.File]::WriteAllBytes($backendConfigFile, $originalBackendConfigBytes)
+            }
         }
 
         $smokeRecord = [ordered]@{
@@ -259,11 +321,23 @@ try {
 
         $exportFailures = @()
         foreach ($kind in @("txt", "md", "docx", "hwpx")) {
-            $smokeFile = Join-Path ([System.IO.Path]::GetTempPath()) "smart-minutes-export-smoke-$kind.tmp"
+            $smokeFile = Join-Path ([System.IO.Path]::GetTempPath()) "lmo-audio-export-smoke-$kind.tmp"
             try {
                 Invoke-WebRequest -Uri "$baseUrl/api/export-record/$kind" -Method Post -ContentType "application/json; charset=utf-8" -Body $smokeRecord -OutFile $smokeFile -TimeoutSec 15
                 if (-not (Test-Path -LiteralPath $smokeFile) -or (Get-Item -LiteralPath $smokeFile).Length -le 0) {
                     $exportFailures += "$kind empty response"
+                }
+                elseif ($kind -eq "docx") {
+                    $missingEntries = @(Get-ZipMissingEntries $smokeFile @("[Content_Types].xml", "_rels/.rels", "word/document.xml"))
+                    if ($missingEntries.Count -gt 0) {
+                        $exportFailures += "$kind missing zip entries: $($missingEntries -join ', ')"
+                    }
+                }
+                elseif ($kind -eq "hwpx") {
+                    $missingEntries = @(Get-ZipMissingEntries $smokeFile @("mimetype", "META-INF/container.xml", "version.xml", "Contents/content.hpf", "Contents/section0.xml"))
+                    if ($missingEntries.Count -gt 0) {
+                        $exportFailures += "$kind missing zip entries: $($missingEntries -join ', ')"
+                    }
                 }
             }
             catch {

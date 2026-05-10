@@ -1,10 +1,9 @@
 param(
-    [string]$DeployDir = "Smart Minutes AI",
+    [string]$DeployDir = "lmo_audio",
     [string]$Configuration = "release",
     [string]$Python = "python",
     [switch]$SkipSidecarBuild,
     [switch]$SkipTauriBuild,
-    [switch]$RequireCohere,
     [switch]$ClearWebViewCache
 )
 
@@ -13,13 +12,52 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TauriDir = Join-Path $RepoRoot "desktop-app\src-tauri"
 $ReleaseDir = Join-Path $TauriDir "target\$Configuration"
-$TargetPortableDir = Join-Path $ReleaseDir "portable\Smart Minutes AI"
+$PortableFolderName = "lmo_audio"
+$PortableAppExeName = "lmo_audio.exe"
+$TargetPortableDir = Join-Path $ReleaseDir "portable\$PortableFolderName"
+$ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
+$ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
 function Resolve-InRepoPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
-        return (Resolve-Path -LiteralPath $Path).Path
+        if (Test-Path -LiteralPath $Path) {
+            return (Resolve-Path -LiteralPath $Path).Path
+        }
+        return [System.IO.Path]::GetFullPath($Path)
     }
     return (Join-Path $RepoRoot $Path)
+}
+
+function Assert-SafeDeployPath([string]$Path) {
+    $resolvedPath = if (Test-Path -LiteralPath $Path) {
+        (Resolve-Path -LiteralPath $Path).Path
+    }
+    else {
+        [System.IO.Path]::GetFullPath($Path)
+    }
+    $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
+    $expectedDeployPath = [System.IO.Path]::GetFullPath((Join-Path $repoRootPath $PortableFolderName))
+
+    if (-not $resolvedPath.Equals($expectedDeployPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe DeployDir. Portable releases must deploy to $expectedDeployPath, got $resolvedPath"
+    }
+
+    foreach ($unsafePath in @($repoRootPath, (Split-Path -Parent $repoRootPath), (Join-Path $repoRootPath "desktop-app"))) {
+        $unsafeFullPath = [System.IO.Path]::GetFullPath($unsafePath)
+        if ($resolvedPath.Equals($unsafeFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe DeployDir points to a project or parent directory: $resolvedPath"
+        }
+    }
+
+    foreach ($child in @("backend", "binaries", "models")) {
+        $childPath = Join-Path $resolvedPath $child
+        $childFullPath = [System.IO.Path]::GetFullPath($childPath)
+        if (-not $childFullPath.StartsWith($resolvedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe DeployDir child path escaped deployment root: $childFullPath"
+        }
+    }
+
+    return $resolvedPath
 }
 
 function Stop-AppProcesses([string]$PortableRoot) {
@@ -33,7 +71,7 @@ function Stop-AppProcesses([string]$PortableRoot) {
     Get-CimInstance Win32_Process |
         Where-Object {
             ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)) -or
-            ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|Smart Minutes AI")
+            ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
         } |
         ForEach-Object {
             Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -96,23 +134,20 @@ function Get-FrontendAssets {
 }
 
 function Write-ReleaseManifest([string]$PortableDir) {
-    $appExe = Join-Path $PortableDir "Smart Minutes AI.exe"
+    $appExe = Join-Path $PortableDir $PortableAppExeName
     $sidecarExe = Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
     $backendMain = Join-Path $PortableDir "backend\main.py"
     $configJson = Join-Path $PortableDir "backend\config.json"
     $modelMarkers = @(
-        "models\config.json",
-        "models\model.safetensors",
-        "models\preprocessor_config.json",
-        "models\tokenizer_config.json",
-        "models\config.yaml",
-        "models\embedding\pytorch_model.bin",
-        "models\segmentation\pytorch_model.bin",
-        "models\plda\plda.npz"
+        foreach ($model in @($ModelLayout.models)) {
+            foreach ($marker in @($model.requiredMarkers)) {
+                (Join-Path (Join-Path ([string]$ModelLayout.canonical) ([string]$model.portableDir)) ([string]$marker)).Replace("/", "\")
+            }
+        }
     )
 
     $manifest = [ordered]@{
-        app = "Smart Minutes AI"
+        app = "lmo_audio"
         generatedAt = (Get-Date).ToString("o")
         repoRoot = $RepoRoot.Path
         commit = Get-GitValue "rev-parse HEAD"
@@ -121,7 +156,7 @@ function Write-ReleaseManifest([string]$PortableDir) {
         portableDir = (Resolve-Path -LiteralPath $PortableDir).Path
         files = [ordered]@{
             appExe = [ordered]@{
-                path = "Smart Minutes AI.exe"
+                path = $PortableAppExeName
                 sha256 = Get-FileHashValue $appExe
             }
             sidecarExe = [ordered]@{
@@ -138,11 +173,7 @@ function Write-ReleaseManifest([string]$PortableDir) {
             }
         }
         frontendAssets = Get-FrontendAssets
-        modelLayout = [ordered]@{
-            canonical = "models"
-            sttRequiredMarkers = @("models\config.json", "models\model.safetensors", "models\preprocessor_config.json", "models\tokenizer_config.json")
-            diarizationRequiredMarkers = @("models\config.yaml", "models\embedding\pytorch_model.bin", "models\segmentation\pytorch_model.bin", "models\plda\plda.npz")
-        }
+        modelLayout = $ModelLayout
         modelMarkers = @($modelMarkers | ForEach-Object {
             $path = Join-Path $PortableDir $_
             $exists = Test-Path -LiteralPath $path
@@ -162,7 +193,7 @@ function Write-ReleaseManifest([string]$PortableDir) {
 function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
     New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
 
-    Copy-Item -Force (Join-Path $SourceDir "Smart Minutes AI.exe") (Join-Path $DestinationDir "Smart Minutes AI.exe")
+    Copy-Item -Force (Join-Path $SourceDir $PortableAppExeName) (Join-Path $DestinationDir $PortableAppExeName)
     Copy-Item -Force (Join-Path $SourceDir "release-manifest.json") (Join-Path $DestinationDir "release-manifest.json")
 
     robocopy (Join-Path $SourceDir "binaries") (Join-Path $DestinationDir "binaries") /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Host
@@ -177,13 +208,13 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
 
     $destinationModels = Join-Path $DestinationDir "models"
     New-Item -ItemType Directory -Force -Path $destinationModels | Out-Null
-    robocopy (Join-Path $SourceDir "models") $destinationModels /E /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+    robocopy (Join-Path $SourceDir "models") $destinationModels /MIR /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing models with exit code $LASTEXITCODE"
     }
 }
 
-$DeployPath = Resolve-InRepoPath $DeployDir
+$DeployPath = Assert-SafeDeployPath (Resolve-InRepoPath $DeployDir)
 
 Stop-AppProcesses $DeployPath
 if ($ClearWebViewCache) {
@@ -209,7 +240,7 @@ Sync-PortableToDeploy $TargetPortableDir $DeployPath
 $deployManifest = Write-ReleaseManifest $DeployPath
 Write-Host "Wrote deploy manifest: $deployManifest"
 
-& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -RequireCohere:$RequireCohere
+& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath
 
 Write-Host "Portable release is ready:" -ForegroundColor Green
 Write-Host $DeployPath

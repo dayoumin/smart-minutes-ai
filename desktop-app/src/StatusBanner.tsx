@@ -1,6 +1,6 @@
 import React from 'react';
 
-type StatusTone = 'info' | 'warning' | 'error' | 'neutral';
+type StatusTone = 'info' | 'warning' | 'error' | 'success' | 'neutral';
 
 export interface StatusBannerProps extends Omit<React.HTMLAttributes<HTMLDivElement>, 'title'> {
     tone?: StatusTone;
@@ -10,10 +10,11 @@ export interface StatusBannerProps extends Omit<React.HTMLAttributes<HTMLDivElem
 }
 
 const toneClasses: Record<StatusTone, string> = {
-    info: 'border-blue-200 bg-blue-50 text-blue-900',
-    warning: 'border-amber-200 bg-amber-50 text-amber-800',
-    error: 'border-red-200 bg-red-50 text-red-700',
-    neutral: 'border-border bg-muted/40 text-muted-foreground',
+    info: 'status-banner-info',
+    warning: 'status-banner-warning',
+    error: 'status-banner-error',
+    success: 'status-banner-success',
+    neutral: 'status-banner-neutral',
 };
 
 export const StatusBanner: React.FC<StatusBannerProps> = ({
@@ -31,7 +32,7 @@ export const StatusBanner: React.FC<StatusBannerProps> = ({
 
     return (
         <div
-            className={`rounded-md border px-4 py-3 text-sm shadow-sm ${toneClasses[tone]} ${className}`}
+            className={`status-banner ${toneClasses[tone]} ${className}`}
             role={liveRole}
             aria-live={liveSetting}
             {...props}

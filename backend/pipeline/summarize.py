@@ -12,6 +12,8 @@ EMPTY_SUMMARY = {
     "title": "회의록",
     "overview": "",
     "topics": [],
+    "topic_sections": [],
+    "participant_summaries": [],
     "decisions": [],
     "actions": [],
     "needs_check": [],
@@ -55,6 +57,30 @@ def _normalize_summary(data: dict) -> dict:
     for key in ("topics", "decisions", "actions", "needs_check"):
         if not isinstance(summary[key], list):
             summary[key] = [str(summary[key])] if summary[key] else []
+    if not isinstance(summary["topic_sections"], list):
+        summary["topic_sections"] = []
+    summary["topic_sections"] = [
+        {
+            "topic": str(item.get("topic", "")).strip(),
+            "summary": str(item.get("summary", "")).strip(),
+            "evidence": item.get("evidence", []) if isinstance(item.get("evidence", []), list) else [],
+            "actions": item.get("actions", []) if isinstance(item.get("actions", []), list) else [],
+        }
+        for item in summary["topic_sections"]
+        if isinstance(item, dict) and str(item.get("topic", "")).strip()
+    ]
+    if not isinstance(summary["participant_summaries"], list):
+        summary["participant_summaries"] = []
+    summary["participant_summaries"] = [
+        {
+            "participant": str(item.get("participant", "")).strip(),
+            "summary": str(item.get("summary", "")).strip(),
+            "key_points": item.get("key_points", []) if isinstance(item.get("key_points", []), list) else [],
+            "actions": item.get("actions", []) if isinstance(item.get("actions", []), list) else [],
+        }
+        for item in summary["participant_summaries"]
+        if isinstance(item, dict) and str(item.get("participant", "")).strip()
+    ]
     return summary
 
 
@@ -84,6 +110,8 @@ def _summary_has_content(summary: dict) -> bool:
     return bool(
         str(summary.get("overview", "")).strip()
         or summary.get("topics")
+        or summary.get("topic_sections")
+        or summary.get("participant_summaries")
         or summary.get("decisions")
         or summary.get("actions")
     )
@@ -95,6 +123,8 @@ def _fallback_extract_summary(transcript_text: str) -> dict:
         "title": "회의록",
         "overview": compact[:500] + ("..." if len(compact) > 500 else ""),
         "topics": [],
+        "topic_sections": [],
+        "participant_summaries": [],
         "decisions": [],
         "actions": [],
         "needs_check": ["LLM 요약 결과가 비어 있어 transcript 앞부분을 임시 개요로 사용했습니다."],
@@ -141,6 +171,165 @@ def _generate_summary_once(model_name: str, prompt: str) -> dict:
     return _normalize_summary(_parse_llm_json(result_text))
 
 
+def _generate_json_once(model_name_or_path: str, prompt: str) -> dict:
+    if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
+        try:
+            result_text = _generate_with_ollama_http(model_name_or_path, prompt)
+        except (urllib.error.URLError, TimeoutError, ConnectionError):
+            result_text = _generate_with_ollama_cli(model_name_or_path, prompt)
+        return _parse_llm_json(result_text)
+
+    if not os.path.exists(model_name_or_path):
+        raise FileNotFoundError(model_name_or_path)
+
+    from llama_cpp import Llama
+
+    llm = Llama(model_path=model_name_or_path, n_ctx=8192, n_gpu_layers=-1, verbose=False)
+    response = llm(prompt, max_tokens=2048, stop=["```"], echo=False)
+    return _parse_llm_json(response["choices"][0]["text"].strip())
+
+
+def _segments_to_transcript(transcript_segments: list[dict]) -> str:
+    lines = []
+    for segment in transcript_segments:
+        speaker = segment.get("speaker_name") or segment.get("speaker") or "UNKNOWN"
+        text = str(segment.get("text", "")).strip()
+        if text:
+            lines.append(f"{speaker}: {text}")
+    return "\n".join(lines)
+
+
+def _trim_followup_transcript(transcript_text: str, max_chars: int = 12000) -> str:
+    if len(transcript_text) <= max_chars:
+        return transcript_text
+    half = max_chars // 2
+    return f"{transcript_text[:half]}\n...\n{transcript_text[-half:]}"
+
+
+def _normalize_topic_sections(items) -> list[dict]:
+    if not isinstance(items, list):
+        return []
+    sections = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        topic = str(item.get("topic", "")).strip()
+        if not topic:
+            continue
+        sections.append({
+            "topic": topic,
+            "summary": str(item.get("summary", "")).strip(),
+            "evidence": item.get("evidence", []) if isinstance(item.get("evidence", []), list) else [],
+            "actions": item.get("actions", []) if isinstance(item.get("actions", []), list) else [],
+        })
+    return sections
+
+
+def _normalize_speaker_context_summaries(items) -> list[dict]:
+    if not isinstance(items, list):
+        return []
+    summaries = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or item.get("participant") or "").strip()
+        if not speaker:
+            continue
+        summaries.append({
+            "speaker": speaker,
+            "display_name": str(item.get("display_name") or item.get("displayName") or speaker).strip(),
+            "role_in_meeting": str(item.get("role_in_meeting") or item.get("roleInMeeting") or "").strip(),
+            "summary": str(item.get("summary", "")).strip(),
+            "key_points": item.get("key_points", []) if isinstance(item.get("key_points", []), list) else [],
+            "actions": item.get("actions", []) if isinstance(item.get("actions", []), list) else [],
+            "needs_check": item.get("needs_check", []) if isinstance(item.get("needs_check", []), list) else [],
+        })
+    return summaries
+
+
+def generate_topic_sections(
+    transcript_segments: list[dict],
+    base_summary: dict,
+    model_name_or_path: str = "./models/llm/gemma.gguf",
+) -> list[dict]:
+    transcript_text = _segments_to_transcript(transcript_segments)
+    if not transcript_text.strip():
+        return []
+
+    prompt = f"""You are a Korean meeting-minutes assistant.
+Create topic-by-topic meeting notes from the transcript and the basic meeting summary.
+Return strict JSON only. Do not wrap it in Markdown.
+Do not invent facts. Write all JSON values in Korean unless a source term must remain in English.
+
+Required JSON schema:
+{{
+  "topic_sections": [
+    {{
+      "topic": "topic title",
+      "summary": "what was discussed about this topic in context",
+      "evidence": ["short transcript-based evidence"],
+      "actions": ["topic-specific task"]
+    }}
+  ]
+}}
+
+Basic summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text)}
+"""
+    data = _generate_json_once(model_name_or_path, prompt)
+    return _normalize_topic_sections(data.get("topic_sections") or data.get("topicSections"))
+
+
+def generate_speaker_context_summaries(
+    transcript_segments: list[dict],
+    base_summary: dict,
+    topic_sections: list[dict] | None = None,
+    model_name_or_path: str = "./models/llm/gemma.gguf",
+) -> list[dict]:
+    transcript_text = _segments_to_transcript(transcript_segments)
+    if not transcript_text.strip():
+        return []
+
+    prompt = f"""You are a Korean meeting-minutes assistant.
+Create speaker-by-speaker context summaries from the whole meeting context.
+Do not summarize each speaker mechanically from isolated utterances. Interpret each speaker's comments in relation to the overall discussion, other speakers, topics, decisions, and tasks.
+Return strict JSON only. Do not wrap it in Markdown.
+Use existing speaker labels unless a verified participant name is present in the transcript or summary.
+Do not invent speaker identities. Write all JSON values in Korean unless a source term must remain in English.
+
+Required JSON schema:
+{{
+  "speaker_context_summaries": [
+    {{
+      "speaker": "Speaker 1",
+      "display_name": "Speaker 1 or verified participant name",
+      "role_in_meeting": "observed role in this meeting",
+      "summary": "context-aware summary of this speaker's contribution",
+      "key_points": ["important point in context"],
+      "actions": ["speaker-related task"],
+      "needs_check": ["identity or context item that needs confirmation"]
+    }}
+  ]
+}}
+
+Basic summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Topic sections:
+{json.dumps(topic_sections or [], ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text)}
+"""
+    data = _generate_json_once(model_name_or_path, prompt)
+    return _normalize_speaker_context_summaries(
+        data.get("speaker_context_summaries") or data.get("speakerContextSummaries")
+    )
+
+
 def _split_text_for_summary(transcript_text: str, max_chars: int = SUMMARY_CHUNK_CHARS) -> list[str]:
     def split_long_line(line: str) -> list[str]:
         if len(line) <= max_chars:
@@ -181,6 +370,8 @@ def _error_summary(title: str, overview: str) -> dict:
         "title": title,
         "overview": overview,
         "topics": [],
+        "topic_sections": [],
+        "participant_summaries": [],
         "decisions": [],
         "actions": [],
         "needs_check": [],

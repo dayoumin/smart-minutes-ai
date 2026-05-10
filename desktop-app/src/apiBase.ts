@@ -16,6 +16,9 @@ const fallbackApiBase = (): string => {
 };
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
+const HEALTH_CHECK_TIMEOUT_MS = 350;
+const LOCAL_BACKEND_PORT_START = 17863;
+const LOCAL_BACKEND_PORT_ATTEMPTS = 100;
 
 export const writeFrontendLog = async (message: string): Promise<void> => {
     try {
@@ -47,20 +50,59 @@ const getTauriApiBase = async (attempts = 5): Promise<string | null> => {
     return null;
 };
 
+const isHealthyApiBase = async (baseUrl: string): Promise<boolean> => {
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
+    try {
+        const response = await fetch(new URL('/api/health', baseUrl), {
+            cache: 'no-store',
+            signal: controller.signal,
+        });
+        return response.ok;
+    } catch {
+        return false;
+    } finally {
+        window.clearTimeout(timeout);
+    }
+};
+
+const discoverLocalApiBase = async (): Promise<string | null> => {
+    for (let offset = 0; offset < LOCAL_BACKEND_PORT_ATTEMPTS; offset += 1) {
+        const candidate = `http://127.0.0.1:${LOCAL_BACKEND_PORT_START + offset}`;
+        if (await isHealthyApiBase(candidate)) return candidate;
+    }
+    return null;
+};
+
 export const getApiBase = async (): Promise<string> => {
-    if (import.meta.env.VITE_API_BASE_URL) return import.meta.env.VITE_API_BASE_URL;
+    const runningInTauri = isTauriRuntime();
 
     if (!cachedApiBase) {
-        cachedApiBase = getTauriApiBase(isTauriRuntime() ? 80 : 5).then(value => value || fallbackApiBase());
+        cachedApiBase = getTauriApiBase(runningInTauri ? 80 : 5).then(value => {
+            if (value) return value;
+            if (!runningInTauri && import.meta.env.VITE_API_BASE_URL) {
+                return import.meta.env.VITE_API_BASE_URL;
+            }
+            if (runningInTauri) return discoverLocalApiBase().then(discovered => discovered ?? fallbackApiBase());
+            return fallbackApiBase();
+        });
     }
 
     const apiBase = await cachedApiBase;
     if (apiBase !== fallbackApiBase()) return apiBase;
 
-    const retryApiBase = await getTauriApiBase(isTauriRuntime() ? 20 : 5);
+    const retryApiBase = await getTauriApiBase(runningInTauri ? 20 : 5);
     if (retryApiBase) {
         cachedApiBase = Promise.resolve(retryApiBase);
         return retryApiBase;
+    }
+
+    if (runningInTauri) {
+        const discoveredApiBase = await discoverLocalApiBase();
+        if (discoveredApiBase) {
+            cachedApiBase = Promise.resolve(discoveredApiBase);
+            return discoveredApiBase;
+        }
     }
 
     return apiBase;

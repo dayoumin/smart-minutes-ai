@@ -1,0 +1,54 @@
+{
+  "canonical": "models",
+  "models": [
+    {
+      "key": "stt_faster_whisper",
+      "label": "faster-whisper-large-v3",
+      "source": "stt/faster-whisper-large-v3",
+      "portableDir": "faster-whisper-large-v3",
+      "role": "default_stt",
+      "requiredMarkers": [
+        "model.bin",
+        "tokenizer.json",
+        "config.json"
+      ]
+    },
+    {
+      "key": "stt_qwen",
+      "label": "Qwen3-ASR-1.7B",
+      "source": "stt/Qwen3-ASR-1.7B",
+      "portableDir": "Qwen3-ASR-1.7B",
+      "role": "optional_stt",
+      "requiredMarkers": [
+        "config.json",
+        "tokenizer_config.json",
+        "model.safetensors.index.json"
+      ]
+    },
+    {
+      "key": "stt_qwen_aligner",
+      "label": "Qwen3-ForcedAligner-0.6B",
+      "source": "stt/Qwen3-ForcedAligner-0.6B",
+      "portableDir": "Qwen3-ForcedAligner-0.6B",
+      "role": "qwen_aligner",
+      "requiredMarkers": [
+        "config.json",
+        "tokenizer_config.json",
+        "model.safetensors"
+      ]
+    },
+    {
+      "key": "diarization",
+      "label": "speaker-diarization-community-1",
+      "source": "diarization/speaker-diarization-community-1",
+      "portableDir": "speaker-diarization-community-1",
+      "role": "diarization",
+      "requiredMarkers": [
+        "config.yaml",
+        "embedding/pytorch_model.bin",
+        "segmentation/pytorch_model.bin",
+        "plda/plda.npz"
+      ]
+    }
+  ]
+}

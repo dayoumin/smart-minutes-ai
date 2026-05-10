@@ -34,6 +34,7 @@ def export_docx(
         
     summary = result.get("summary", {})
     title = summary.get("title", "회의록")
+    section_no = 1
     
     # 제목
     doc.add_heading(title, 0)
@@ -42,32 +43,63 @@ def export_docx(
     doc.add_paragraph(f"파일명: {result.get('source_file', '')}")
     doc.add_paragraph(f"처리일시: {result.get('created_at', '')}")
     
-    # 1. 회의 요약
-    doc.add_heading("1. 회의 요약", level=1)
+    # 회의 요약
+    doc.add_heading(f"{section_no}. 회의 요약", level=1)
+    section_no += 1
     doc.add_paragraph(summary.get("overview", "내용 없음"))
     
-    # 2. 주요 논의사항
-    doc.add_heading("2. 주요 논의사항", level=1)
+    # 주요 주제
+    doc.add_heading(f"{section_no}. 주요 주제", level=1)
+    section_no += 1
     for topic in summary.get("topics", []):
         doc.add_paragraph(topic, style='List Bullet')
+
+    topic_sections = summary.get("topic_sections", []) or []
+    if topic_sections:
+        doc.add_heading(f"{section_no}. 주제별 내용", level=1)
+        section_no += 1
+        for section in topic_sections:
+            doc.add_heading(section.get("topic", "주제"), level=2)
+            if section.get("summary"):
+                doc.add_paragraph(section.get("summary"))
+            for evidence in section.get("evidence", []) or []:
+                doc.add_paragraph(f"근거: {evidence}", style='List Bullet')
+            for action in section.get("actions", []) or []:
+                doc.add_paragraph(f"할 일: {action}", style='List Bullet')
+
+    participant_summaries = summary.get("participant_summaries", []) or []
+    if participant_summaries:
+        doc.add_heading(f"{section_no}. 발언자별 요약 AI 초안", level=1)
+        section_no += 1
+        for participant in participant_summaries:
+            doc.add_heading(participant.get("participant", "발언자"), level=2)
+            if participant.get("summary"):
+                doc.add_paragraph(participant.get("summary"))
+            for point in participant.get("key_points", []) or []:
+                doc.add_paragraph(f"핵심: {point}", style='List Bullet')
+            for action in participant.get("actions", []) or []:
+                doc.add_paragraph(f"할 일: {action}", style='List Bullet')
         
-    # 3. 결정사항
-    doc.add_heading("3. 결정사항", level=1)
+    # 결정사항
+    doc.add_heading(f"{section_no}. 결정사항", level=1)
+    section_no += 1
     for dec in summary.get("decisions", []):
         doc.add_paragraph(dec, style='List Bullet')
         
-    # 4. 할 일
-    doc.add_heading("4. 할 일", level=1)
+    # 할 일
+    doc.add_heading(f"{section_no}. 할 일", level=1)
+    section_no += 1
     for act in summary.get("actions", []):
         doc.add_paragraph(act, style='List Bullet')
         
-    # 5. 확인 필요 사항
-    doc.add_heading("5. 확인 필요 사항", level=1)
+    # 확인 필요 사항
+    doc.add_heading(f"{section_no}. 확인 필요 사항", level=1)
+    section_no += 1
     for chk in summary.get("needs_check", []):
         doc.add_paragraph(chk, style='List Bullet')
         
-    # 6. 화자별 원문
-    doc.add_heading("6. 화자별 원문", level=1)
+    # 대화록
+    doc.add_heading(f"{section_no}. 대화록", level=1)
     segments = result.get("segments", [])
     for seg in segments:
         time_str = f"[{_format_time(seg.get('start', 0.0))}]"

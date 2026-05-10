@@ -12,6 +12,8 @@
     "desktop:build": "tauri build",
     "desktop:build:exe": "tauri build --no-bundle",
     "e2e:smoke": "node e2e-smoke.cjs",
+    "test:generation-flow": "node scripts/simulate-generation-flow.mjs",
+    "test:meeting-detail-flow": "node scripts/simulate-meeting-detail-flow.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"

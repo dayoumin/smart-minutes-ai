@@ -3,7 +3,8 @@
   "offline_mode": true,
   "paths": {
     "ffmpeg": "ffmpeg.exe",
-    "stt_model": "../models",
+    "stt_model": "../models/faster-whisper-large-v3",
+    "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
     "diarization_model": "../models",
     "segmentation_model": "",
     "llm_model": "./models/llm/gemma.gguf",
@@ -13,9 +14,10 @@
   },
   "stt": {
     "language": "ko",
-    "default_model": "cohere-transcribe-03-2026",
-    "fallback_model": "faster-whisper-large-v3",
-    "device": "auto",
+    "selected_model": "faster-whisper-large-v3",
+    "default_model": "faster-whisper-large-v3",
+    "fallback_model": "",
+    "device": "cpu",
     "chunk_seconds": 30
   },
   "processing": {
@@ -24,14 +26,14 @@
   },
   "preprocessing": {
     "enabled": true,
-    "noise_gate": true,
+    "noise_gate": false,
     "normalize_audio": true,
     "normalization_mode": "auto",
     "trim_silence": false,
     "denoise": false
   },
   "diarization": {
-    "enabled": true,
+    "enabled": false,
     "min_speakers": null,
     "max_speakers": null
   },

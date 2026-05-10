@@ -1,5 +1,5 @@
 param(
-    [switch]$IncludeModels = $true
+    [bool]$IncludeModels = $true
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,6 +13,8 @@ New-Item -ItemType Directory -Force -Path $ResourceBackendDir | Out-Null
 Copy-Item -Force (Join-Path $BackendDir "config.json") (Join-Path $ResourceBackendDir "config.json")
 
 $BackendSourceFiles = @(
+    "analysis_jobs.py",
+    "config_normalization.py",
     "main.py",
     "model_manager.py",
     "ollama_utils.py"

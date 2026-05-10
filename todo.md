@@ -1,4 +1,17 @@
 # 0. 다음 우선순위
+- [ ] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
+  - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
+  - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization off` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
+  - 우선 확인 범위:
+    - `ctranslate2` / `faster_whisper` import 지연
+    - Python 3.11 앱 런타임과 별도 ASR 런타임 차이
+    - Windows OpenMP / DLL 충돌 가능성
+    - 손상된 venv 또는 패키지 설치 상태
+  - 전체 앱을 새로 만들기 전에, ASR 런타임(venv/패키지)만 분리 재구성해서 재현 여부를 먼저 확인한다.
+- [ ] 0-0-1순위: 푸시 안전 기준 정리
+  - 현재처럼 워크트리가 많이 더러운 상태에서는 `main`에 바로 푸시하지 않는다.
+  - 내가 작업한 파일만 별도 브랜치에서 선별 커밋 후 푸시한다.
+  - 빌드 전 검증 작업과 기능 개발 변경이 섞여 있으면 푸시 단위를 먼저 분리한다.
 - [ ] 0순위: 배포 혼돈 방지 기준 유지
   - 새 portable 배포는 `scripts\release_portable.ps1`로만 갱신한다.
   - 실제 실행 기준은 루트 `Smart Minutes AI` 폴더 하나로 고정한다.
@@ -68,6 +81,15 @@
 - [ ] 표 형식을 포함한 깔끔한 DOCX 내보내기 스타일(python-docx) 개선
 
 ## 4-1. 오디오 전처리 품질 개선
+- [ ] 0순위: STT 품질 회귀 재현 및 원인 분리
+  - 사용자가 품질 저하를 느낀 실제 파일 1개를 기준 샘플에 추가한다.
+  - 현재 기본값, 전처리 off, `noise_gate=false`, 청크 60초/90초를 같은 파일로 비교한다.
+  - STT 원문 문제와 화자 정렬 문제를 분리해서 본다.
+  - 2026-05-07 1차 확인: `noise_gate=false`, 긴 파일 STT 청크 90초가 같은 샘플에서 더 안정적이었다.
+  - 2026-05-07 추가 확인: Cohere 전처리 제거 90초 비교에서 raw/off 한글 비율 47.4%, `auto_no_gate` 54.3%, `noise_gate_on` 45.8%. 전처리 제거만으로 Cohere 품질 문제는 해결되지 않음.
+- [ ] 0순위: `noise_gate` 기본 적용 여부 재검토
+  - 방송 오프닝 샘플에는 효과가 있었지만 실제 회의/작은 목소리에서 회귀 가능성이 있다.
+  - 비교가 끝날 때까지 기본 회의 인식에서는 끄는 방향을 우선 검토한다. 2026-05-07 설정 기본값은 `false`로 변경했다.
 - [x] 현재 전처리 현황 문서화 (`docs/audio-preprocessing-notes.md`)
 - [x] 오디오 전처리 테스트 계획 문서화 (`docs/audio-preprocessing-test-plan.md`)
 - [x] 성능 개선 작업 로그와 시행착오 기록 문서화 (`docs/audio-performance-improvement-log.md`)
@@ -93,6 +115,30 @@
   - Qwen3-ASR 계열
   - WhisperX 계열
   - 비교 기준: timestamp 구조, diarization 정합성, 한국어 회의 정확도, 처리시간, 로컬 배포 난이도
+  - 2026-05-07 확인: 현재 로컬에는 faster-whisper 라이브러리만 있고 `large-v3` 모델 파일은 없음. Cohere는 90초 샘플 후반부에서 로마자식 한국어 전사가 남음.
+  - 2026-05-07 추가 확인: `faster-whisper-large-v3` 모델 파일을 받았고 CPU int8/beam1 30초 테스트는 15.45초, 한글 비율 98.8%로 성공.
+  - 2026-05-07 추가 확인: 같은 조건의 90초 테스트는 213.86초, 한글 비율 99.7%로 품질은 좋지만 처리 속도가 느림.
+  - 2026-05-07 추가 확인: `Qwen3-ASR-1.7B` CPU 90초 테스트는 123.64초, 한글 비율 99.6%로 성공. 기본 결과는 1개 텍스트 세그먼트라 화자 정렬에는 ForcedAligner/문장 병합 검토가 필요.
+  - 2026-05-07 추가 확인: `Qwen3-ASR-1.7B + Qwen3-ForcedAligner-0.6B` CPU 30초 테스트는 58.07초, 75개 timestamp segment 생성.
+- [ ] 포터블 앱 모델 폴더 구조 정리
+  - `models/stt/cohere-transcribe-03-2026`
+  - `models/stt/faster-whisper-large-v3`
+  - `models/stt/Qwen3-ASR-1.7B`
+  - `models/aligner/Qwen3-ForcedAligner-0.6B`
+  - 사용자에게 보이는 포터블 폴더와 백엔드 설정 경로를 일치시킨다.
+- [ ] Qwen3-ASR vs faster-whisper 최종 후보 테스트
+  - 테스트 계획: `docs/qwen-vs-faster-whisper-test-plan.md`
+  - 먼저 Qwen ForcedAligner 결과를 문장/발화 단위로 병합하는 최소 구현이 필요하다.
+  - 2026-05-07 준비: `merge_aligner_segments_to_utterances()` 초안과 단위 테스트 추가. Qwen aligner 30초 결과는 75개 raw segment에서 6개 발화 segment로 병합됨.
+  - 남은 확인: Qwen aligner 텍스트가 단어/형태소처럼 쪼개지는 문제를 회의록 UI에서 허용할지, 원문 텍스트 기반으로 문장 복원할지 결정한다.
+  - 2026-05-07 90초 구조 검증: Qwen 병합은 213개 raw segment를 19개 발화 segment로 병합. faster-whisper는 38개 segment로 자연스럽지만 후반 반복 문장이 보임. Qwen은 반복은 적지만 띄어쓰기/형태소 분리 텍스트가 UI 리스크.
+  - 2026-05-07 원문 복원 병합 확인: Qwen timestamp 그룹에 전체 전사 원문을 분배해 `마쳤 습니다` 같은 형태소 분리 표시는 해소. 90초 결과는 19개 segment, 한글 비율 99.6%, 처리 시간 209.38초.
+  - 남은 확인: Qwen 내부 정렬용 segment와 사용자 표시용 문장 segment를 분리할지 검토한다.
+  - 2026-05-07 표시용 segment 준비: Qwen 벤치마크 결과에 `display_segments` 추가. 90초 결과는 내부 19개, 표시 15개 segment. 표시용 시간은 근사값이므로 화자 정렬에는 쓰지 않는다.
+  - 2026-05-07 화자 정렬 확인: Qwen 내부 19개 segment를 pyannote 22개 speaker segment와 정렬. 진행자/발언자 구간은 대체로 분리됐지만 짧은 끼어들기 구간에서는 한 segment 안에 화자가 섞일 수 있음.
+  - 2026-05-07 speaker overlap 재분할 플래그 추가. 이번 90초 샘플은 내부 segment가 이미 짧아 추가 분할은 거의 없었고, 남은 문제는 원문 텍스트를 시간 그룹에 배분할 때 speaker boundary를 고려해야 하는 쪽으로 확인됨.
+  - 2026-05-07 `test (4).mp4` 90초 비교: Qwen은 224.76초/한글 100%/내부 17개/표시 36개, faster-whisper는 62.56초/한글 99.2%/segment 38개. 이 샘플에서는 faster-whisper가 더 빠르고 발화 경계가 자연스러움.
+  - 2026-05-07 `test (1).mp4` 90초 비교: Qwen은 약 276초/내부 23개/표시 47개, faster-whisper는 약 71초/segment 41개. 두 번째 실제 대화 샘플에서도 faster-whisper가 더 실용적.
 - [x] 무음 제거는 ffmpeg `silenceremove` 후보로 60초 샘플 1차 비교
 - [ ] 무음 제거 청취 검증 및 실제 회의 샘플 추가 비교
 - [ ] 음성 강화(speech enhancement)는 별도 후보 모델/라이브러리 조사 후 실험 여부 결정

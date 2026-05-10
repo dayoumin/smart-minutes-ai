@@ -15,8 +15,15 @@ export interface MeetingRecord {
     segments?: MeetingSegment[];
     sourceFile?: string;
     jobId?: string;
+    pinned?: boolean;
     topics?: string[];
+    topicSections?: MeetingTopicSection[];
+    participantSummaries?: MeetingParticipantSummary[];
+    speakerContextSummaries?: MeetingSpeakerContextSummary[];
+    generationStatus?: MeetingGenerationStatus;
     actions?: string[];
+    decisions?: string[];
+    needsCheck?: string[];
     outputFiles?: {
         json?: string | null;
         txt?: string | null;
@@ -24,6 +31,54 @@ export interface MeetingRecord {
         docx?: string | null;
         hwpx?: string | null;
     };
+}
+
+type StoredMeetingRecord = Partial<MeetingRecord> & {
+    topic_sections?: MeetingTopicSection[];
+    participant_summaries?: MeetingParticipantSummary[];
+    speaker_context_summaries?: MeetingSpeakerContextSummary[];
+    generation_status?: MeetingGenerationStatus;
+    needs_check?: string[];
+};
+
+const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => ({
+    ...(record as MeetingRecord),
+    topicSections: record.topicSections ?? record.topic_sections ?? [],
+    participantSummaries: record.participantSummaries ?? record.participant_summaries ?? [],
+    speakerContextSummaries: record.speakerContextSummaries ?? record.speaker_context_summaries ?? [],
+    generationStatus: record.generationStatus ?? record.generation_status ?? {},
+    needsCheck: record.needsCheck ?? record.needs_check ?? [],
+});
+
+export interface MeetingTopicSection {
+    topic: string;
+    summary: string;
+    evidence?: string[];
+    actions?: string[];
+}
+
+export interface MeetingParticipantSummary {
+    participant: string;
+    summary: string;
+    key_points?: string[];
+    actions?: string[];
+}
+
+export interface MeetingSpeakerContextSummary {
+    speaker: string;
+    display_name?: string;
+    role_in_meeting?: string;
+    summary: string;
+    key_points?: string[];
+    actions?: string[];
+    needs_check?: string[];
+}
+
+export interface MeetingGenerationStatus {
+    topicSections?: 'not_started' | 'generating' | 'completed' | 'failed';
+    topic_sections?: 'not_started' | 'generating' | 'completed' | 'failed';
+    speakerContextSummaries?: 'not_started' | 'generating' | 'completed' | 'failed';
+    speaker_context_summaries?: 'not_started' | 'generating' | 'completed' | 'failed';
 }
 
 const DB_NAME = 'MeetingHistoryDB';
@@ -52,7 +107,7 @@ export const getAllMeetings = async (): Promise<MeetingRecord[]> => {
         const request = store.getAll();
         let result: MeetingRecord[] = [];
         request.onsuccess = () => {
-            result = request.result as MeetingRecord[];
+            result = (request.result as StoredMeetingRecord[]).map(normalizeMeetingRecord);
         };
         transaction.oncomplete = () => {
             db.close();
@@ -99,7 +154,7 @@ export const getMeetingById = async (id: string): Promise<MeetingRecord | undefi
         const request = store.get(id);
         let result: MeetingRecord | undefined;
         request.onsuccess = () => {
-            result = request.result as MeetingRecord | undefined;
+            result = request.result ? normalizeMeetingRecord(request.result as StoredMeetingRecord) : undefined;
         };
         transaction.oncomplete = () => {
             db.close();

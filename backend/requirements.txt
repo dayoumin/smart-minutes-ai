@@ -1,4 +1,5 @@
 faster-whisper
+qwen-asr
 torch
 torchaudio
 ffmpeg-python
@@ -9,6 +10,7 @@ librosa
 soundfile
 sentencepiece
 protobuf>=5,<7
+lxml
 python-docx
 pydantic
 gradio

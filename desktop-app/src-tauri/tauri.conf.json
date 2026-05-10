@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Smart Minutes AI",
+  "productName": "LMO 스마트 회의시스템",
   "version": "0.1.0",
   "identifier": "com.nifs.smart-minutes-ai",
   "build": {
@@ -13,7 +13,7 @@
     "withGlobalTauri": true,
     "windows": [
       {
-        "title": "Smart Minutes AI",
+        "title": "LMO 스마트 회의시스템",
         "width": 1280,
         "height": 820,
         "minWidth": 960,

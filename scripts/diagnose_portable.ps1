@@ -1,5 +1,5 @@
 param(
-    [string]$PortableDir = "Smart Minutes AI",
+    [string]$PortableDir = "lmo_audio",
     [int]$FirstPort = 17863,
     [int]$LastPort = 17980
 )
@@ -73,7 +73,7 @@ function Write-Section([string]$Title) {
 }
 
 $portablePath = Resolve-InRepoPath $PortableDir
-$appExe = Join-Path $portablePath "Smart Minutes AI.exe"
+$appExe = Join-Path $portablePath "lmo_audio.exe"
 $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $manifestFile = Join-Path $portablePath "release-manifest.json"
 $modelsDir = Join-Path $portablePath "models"
@@ -106,10 +106,11 @@ else {
 Write-Section "Processes"
 $processes = Get-CimInstance Win32_Process |
     Where-Object {
+        $_.Name -like "lmo_audio*" -or
         $_.Name -like "Smart Minutes AI*" -or
         $_.Name -like "smart-minutes-ai*" -or
         $_.Name -like "meeting-backend*" -or
-        ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|Smart Minutes AI")
+        ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
     } |
     Select-Object ProcessId, Name, ExecutablePath, CommandLine
 
@@ -117,7 +118,7 @@ if ($processes) {
     $processes | Format-Table -AutoSize
 }
 else {
-    Write-Host "No Smart Minutes AI related process is running."
+    Write-Host "No lmo_audio related process is running."
 }
 
 Write-Section "Listening Ports"

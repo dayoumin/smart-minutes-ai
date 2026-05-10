@@ -42,6 +42,14 @@ Smart Minutes AI\
 
 `backend`는 분석 서버 소스입니다. FastAPI, STT, 화자 분리, 요약, 내보내기 로직이 들어 있습니다.
 
+개발 중 웹 UI에서 실제 분석 서버를 쓸 때는 전역 Python이 아니라 백엔드 가상환경으로 실행합니다.
+
+```powershell
+.\scripts\start_dev_backend.ps1
+```
+
+이 스크립트는 `backend\.venv`에서 `fastapi`, `uvicorn`, `faster_whisper` import를 먼저 확인한 뒤 `http://127.0.0.1:17863` 백엔드를 시작합니다.
+
 ## 캐시와 생성물
 
 아래 항목은 커밋하지 않습니다.
@@ -73,13 +81,13 @@ Smart_Minutes_AI_Portable*.zip
 헷갈리지 않도록 새 배포본은 한 명령으로 만들고 검증합니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -RequireCohere -ClearWebViewCache
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -ClearWebViewCache
 ```
 
 이미 Tauri exe와 sidecar를 새로 빌드한 직후라면 빠른 동기화/검증만 할 수 있습니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild -RequireCohere
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
 
 배포 후 기준 실행 폴더는 항상 `D:\Projects\audio\Smart Minutes AI`입니다. `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.

@@ -7,12 +7,16 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TauriDir = Join-Path $RepoRoot "desktop-app\src-tauri"
 $ReleaseDir = Join-Path $TauriDir "target\$Configuration"
-$PortableDir = Join-Path $ReleaseDir "portable\Smart Minutes AI"
+$PortableFolderName = "lmo_audio"
+$PortableAppExeName = "lmo_audio.exe"
+$PortableDir = Join-Path $ReleaseDir "portable\$PortableFolderName"
 $AppExe = Join-Path $ReleaseDir "smart-minutes-ai.exe"
 $SidecarExe = Join-Path $TauriDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $SidecarDepsDir = Join-Path $TauriDir "binaries\_internal"
 $ResourceBackendDir = Join-Path $TauriDir "resources\backend"
 $ModelSourceRoot = Join-Path $RepoRoot "backend\models"
+$ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
+$ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
 function Get-PeSubsystem {
     param([string]$Path)
@@ -49,7 +53,7 @@ if (Test-Path $PortableDir) {
 New-Item -ItemType Directory -Force -Path $PortableDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $PortableDir "binaries") | Out-Null
 
-Copy-Item -Force $AppExe (Join-Path $PortableDir "Smart Minutes AI.exe")
+Copy-Item -Force $AppExe (Join-Path $PortableDir $PortableAppExeName)
 Copy-Item -Force $SidecarExe (Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe")
 Copy-Item -Recurse -Force $SidecarDepsDir (Join-Path $PortableDir "binaries\_internal")
 Copy-Item -Recurse -Force $ResourceBackendDir (Join-Path $PortableDir "backend")
@@ -58,39 +62,63 @@ $PortableModelsDir = Join-Path $PortableDir "models"
 New-Item -ItemType Directory -Force -Path $PortableModelsDir | Out-Null
 
 $ModelReadme = @"
-Smart Minutes AI model folder
+LMO Smart Meeting System model folder
 
-Put the default speech recognition model files directly in this folder.
-Speaker diarization files can also live directly here.
+Keep each model in its own folder under models.
 
 Examples:
-- models\config.json
-- models\model.safetensors
-- models\preprocessor_config.json
-- models\tokenizer_config.json
-- models\config.yaml
-- models\embedding\pytorch_model.bin
-- models\segmentation\pytorch_model.bin
-- models\plda\plda.npz
+$(@($ModelLayout.models) | ForEach-Object { "- models\$($_.portableDir)" } | Out-String)
 
-Optional alternate model folders:
-- models\faster-whisper-large-v3
-- models\qwen-asr
-
-Older layouts are still recognized, but the simplest layout is to keep
-the default model files directly under this models folder.
+faster-whisper-large-v3 is the default speech recognition model.
+Qwen3-ASR-1.7B requires Qwen3-ForcedAligner-0.6B when selected in settings.
 "@
 Set-Content -Path (Join-Path $PortableModelsDir "README.txt") -Value $ModelReadme -Encoding UTF8
 
-$PyannoteSource = Join-Path $ModelSourceRoot "diarization\speaker-diarization-community-1"
-if (Test-Path $PyannoteSource) {
-    robocopy $PyannoteSource $PortableModelsDir /E /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
-    if ($LASTEXITCODE -gt 7) {
-        throw "robocopy failed while copying Pyannote model with exit code $LASTEXITCODE"
+function Test-RequiredMarkers {
+    param(
+        [string]$Root,
+        [string[]]$Markers,
+        [string]$Label
+    )
+
+    $missing = @()
+    foreach ($marker in $Markers) {
+        $path = Join-Path $Root $marker
+        if (-not (Test-Path -LiteralPath $path)) {
+            $missing += $marker
+        }
+    }
+    if ($missing.Count -gt 0) {
+        throw "$Label model is incomplete at $Root. Missing: $($missing -join ', ')"
     }
 }
-else {
-    Write-Warning "Pyannote model was not found at $PyannoteSource. Place it directly in the portable models folder before distribution if diarization is required."
+
+function Copy-ModelDirectory {
+    param(
+        [string]$Source,
+        [string]$Destination,
+        [string]$Label,
+        [string[]]$RequiredMarkers
+    )
+
+    if (-not (Test-Path -LiteralPath $Source)) {
+        throw "$Label model was not found at $Source"
+    }
+
+    Test-RequiredMarkers $Source $RequiredMarkers $Label
+
+    robocopy $Source $Destination /E /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+        throw "robocopy failed while copying model with exit code $LASTEXITCODE`: $Source"
+    }
+
+    Test-RequiredMarkers $Destination $RequiredMarkers $Label
+}
+
+foreach ($model in @($ModelLayout.models)) {
+    $source = Join-Path $ModelSourceRoot ([string]$model.source)
+    $destination = Join-Path $PortableModelsDir ([string]$model.portableDir)
+    Copy-ModelDirectory $source $destination ([string]$model.label) @($model.requiredMarkers)
 }
 
 Write-Host "Created portable desktop package:"

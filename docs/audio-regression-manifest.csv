@@ -1,0 +1,2 @@
+sample_id,file_path,reference_transcript_path,duration_seconds,recording_device,recording_location,speaker_count,primary_conditions,expected_issues,language_mix,has_reference_transcript,notes
+latest_temp_upload,"Smart Minutes AI/backend/temp/20260506_072159_upload.mp4",,,unknown,,,uploaded_video,"recent_user_quality_regression",ko,false,"Temporary retained upload used for the 2026-05-07 STT regression check."

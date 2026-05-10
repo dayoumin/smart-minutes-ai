@@ -1,40 +1,74 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { Download, Edit3, FileText, PlusCircle, Save, Search, Trash2, X } from 'lucide-react';
+﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Edit3, Loader2, PlusCircle, Save, Search, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
-import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
-import {
-    DownloadFormat,
-    DOWNLOAD_FORMAT_CHANGE_EVENT,
-    getDownloadFormatPreference,
-    setDownloadFormatPreference,
-} from './downloadPreferences';
+import { getAllMeetings, MeetingRecord, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
 import { Input } from './Input';
 import { StatusBanner } from './StatusBanner';
+import { MeetingDownloadControl } from './MeetingDownloadControl';
+import {
+    canGenerateSpeakerContext as canGenerateSpeakerContextFromState,
+    getSpeakerGenerationStatus,
+    getTopicGenerationStatus,
+    normalizeGenerationStatus,
+} from './meetingGeneration';
 
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
-    onSelectedMeetingHandled?: () => void;
     onCreateMeeting?: () => void;
 }
 
 type DetailTab = 'summary' | 'script';
+type GenerationKind = 'topicSections' | 'speakerContextSummaries';
 
-const safeFileName = (title: string): string => title.replace(/[/\\?%*:|"<>]/g, '-');
-const extensionByKind: Record<DownloadFormat, string> = {
-    hwpx: 'hwpx',
-    md: 'md',
-    txt: 'txt',
-    docx: 'docx',
+interface GenerateTopicSectionsResponse {
+    topics?: string[];
+    topic_sections?: MeetingTopicSection[];
+    topicSections?: MeetingTopicSection[];
+    generation_status?: MeetingRecord['generationStatus'];
+    generationStatus?: MeetingRecord['generationStatus'];
+    outputs?: MeetingRecord['outputFiles'];
+    export_error?: string | null;
+}
+
+interface GenerateSpeakerContextResponse {
+    speaker_context_summaries?: MeetingSpeakerContextSummary[];
+    speakerContextSummaries?: MeetingSpeakerContextSummary[];
+    participant_summaries?: MeetingRecord['participantSummaries'];
+    participantSummaries?: MeetingRecord['participantSummaries'];
+    generation_status?: MeetingRecord['generationStatus'];
+    generationStatus?: MeetingRecord['generationStatus'];
+    outputs?: MeetingRecord['outputFiles'];
+    export_error?: string | null;
+}
+
+const generationStatusLabel = {
+    not_started: '생성 전',
+    generating: '생성 중',
+    completed: '완료',
+    failed: '다시 필요',
 };
-const downloadFormatLabels: Record<DownloadFormat, string> = {
-    hwpx: 'HWPX',
-    md: 'MD',
-    txt: 'TXT',
-    docx: 'DOCX',
-};
+
 const speakerToneCount = 6;
+
+const getGenerationErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+    const body = await response.text().catch(() => '');
+    if (!body) return fallback;
+
+    try {
+        const parsed = JSON.parse(body) as { detail?: string };
+        if (parsed.detail === 'Output result not found') {
+            return '저장된 분석 원본을 찾지 못했습니다. 대화록이 있는 회의록이면 다시 정리를 생성합니다.';
+        }
+        if (parsed.detail === 'Transcript segments are required') {
+            return '대화록이 없어 AI 정리를 만들 수 없습니다. 원본 음성 파일로 다시 분석해 주세요.';
+        }
+        return parsed.detail || fallback;
+    } catch {
+        return body || fallback;
+    }
+};
 
 const getSpeakerTone = (speaker: string, index: number): string => {
     const match = speaker.match(/(\d+)/);
@@ -51,20 +85,22 @@ const looksLikeKoreanMisrecognition = (text: string): boolean => {
     return latinCount > hangulCount * 2 && latinCount > 24;
 };
 
-export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onSelectedMeetingHandled, onCreateMeeting }) => {
+export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
     const [detailTab, setDetailTab] = useState<DetailTab>('summary');
-    const [downloadKind, setDownloadKind] = useState<DownloadFormat>(() => getDownloadFormatPreference());
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState('');
     const [editDate, setEditDate] = useState('');
     const [editParticipants, setEditParticipants] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
+    const [isDownloading, setIsDownloading] = useState(false);
+    const [generatingKind, setGeneratingKind] = useState<GenerationKind | null>(null);
+    const currentSelectedMeetingIdRef = useRef<string | null>(null);
 
-    const loadRecords = async (event?: Event) => {
+    const loadRecords = React.useCallback(async (event?: Event) => {
         try {
             setIsLoading(true);
             setErrorMessage('');
@@ -73,522 +109,563 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             const nextSelectedId = (event as CustomEvent<{ id?: string }> | undefined)?.detail?.id;
             setRecords(sorted);
             setSelectedMeeting(prev => {
-                if (nextSelectedId) {
-                    return sorted.find(record => record.id === nextSelectedId) ?? prev;
-                }
-                if (prev && sorted.some(record => record.id === prev.id)) {
-                    return sorted.find(record => record.id === prev.id) ?? prev;
-                }
-                return null;
+                if (nextSelectedId) return sorted.find(record => record.id === nextSelectedId) ?? prev;
+                if (selectedMeetingId) return sorted.find(record => record.id === selectedMeetingId) ?? prev;
+                if (prev && sorted.some(record => record.id === prev.id)) return sorted.find(record => record.id === prev.id) ?? prev;
+                return sorted[0] ?? null;
             });
         } catch (error) {
-            const message = error instanceof Error ? error.message : '회의 기록을 불러오지 못했습니다.';
-            setErrorMessage(message);
+            setErrorMessage(error instanceof Error ? error.message : '회의 기록을 불러오지 못했습니다.');
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [selectedMeetingId]);
 
     useEffect(() => {
-        loadRecords();
+        void loadRecords();
         window.addEventListener('meetings:updated', loadRecords);
         return () => window.removeEventListener('meetings:updated', loadRecords);
-    }, []);
+    }, [loadRecords]);
 
     useEffect(() => {
-        const syncDownloadPreference = () => setDownloadKind(getDownloadFormatPreference());
-        window.addEventListener(DOWNLOAD_FORMAT_CHANGE_EVENT, syncDownloadPreference);
-        window.addEventListener('focus', syncDownloadPreference);
-        return () => {
-            window.removeEventListener(DOWNLOAD_FORMAT_CHANGE_EVENT, syncDownloadPreference);
-            window.removeEventListener('focus', syncDownloadPreference);
-        };
-    }, []);
+        if (!selectedMeetingId) return;
+        const nextMeeting = records.find(record => record.id === selectedMeetingId);
+        if (nextMeeting) setSelectedMeeting(nextMeeting);
+    }, [records, selectedMeetingId]);
 
     useEffect(() => {
-        if (!selectedMeetingId || !records.length) return;
-
-        const meeting = records.find(record => record.id === selectedMeetingId);
-        if (meeting) {
-            setSelectedMeeting(meeting);
-            setDetailTab('summary');
-            onSelectedMeetingHandled?.();
-        }
-    }, [selectedMeetingId, records, onSelectedMeetingHandled]);
+        currentSelectedMeetingIdRef.current = selectedMeeting?.id ?? null;
+        setDetailTab('summary');
+        setIsEditing(false);
+        setSearchQuery('');
+    }, [selectedMeeting?.id]);
 
     useEffect(() => {
         if (!selectedMeeting) return;
         setEditTitle(selectedMeeting.title);
-        setEditDate(selectedMeeting.date.replace(' ', 'T'));
+        setEditDate(selectedMeeting.date);
         setEditParticipants(selectedMeeting.participants);
-        setIsEditing(false);
     }, [selectedMeeting]);
 
-    const recordCountLabel = useMemo(() => `${records.length}개 회의 저장됨`, [records.length]);
-    const contentQuery = searchQuery.trim().toLowerCase();
-    const summaryMatches = !contentQuery || Boolean(selectedMeeting?.summary.toLowerCase().includes(contentQuery));
-    const visibleTopics = useMemo(
-        () => selectedMeeting?.topics?.filter(topic => !contentQuery || topic.toLowerCase().includes(contentQuery)) ?? [],
-        [contentQuery, selectedMeeting],
-    );
-    const visibleActions = useMemo(
-        () => selectedMeeting?.actions?.filter(action => !contentQuery || action.toLowerCase().includes(contentQuery)) ?? [],
-        [contentQuery, selectedMeeting],
-    );
-    const visibleSegments = useMemo(
-        () => selectedMeeting?.segments?.filter(segment => !contentQuery || [
-            segment.speaker,
-            segment.start,
-            segment.end,
-            segment.text,
-        ].join(' ').toLowerCase().includes(contentQuery)) ?? [],
-        [contentQuery, selectedMeeting],
-    );
-    const hasSummarySearchResult = summaryMatches || visibleTopics.length > 0 || visibleActions.length > 0;
-
-    const handleSelectMeeting = (meeting: MeetingRecord) => {
-        setSelectedMeeting(meeting);
-        setDetailTab('summary');
-        setSearchQuery('');
-        setIsEditing(false);
+    const updateSelectedMeeting = async (patch: Partial<MeetingRecord>, target = selectedMeeting) => {
+        if (!target) return;
+        const nextMeeting = { ...target, ...patch };
+        await updateMeeting(nextMeeting);
+        setSelectedMeeting(nextMeeting);
+        setRecords(prev => prev.map(record => (record.id === nextMeeting.id ? nextMeeting : record)));
+        window.dispatchEvent(new Event('meetings:updated'));
     };
 
-    const buildTranscriptText = (meeting: MeetingRecord): string => {
-        const lines = [
-            meeting.title,
-            `일시: ${meeting.date}`,
-            `참석자: ${meeting.participants}`,
-            meeting.sourceFile ? `원본 파일: ${meeting.sourceFile}` : '',
-            '',
-            '[요약]',
-            meeting.summary,
-            '',
-            '[발화 기록]',
-            ...(meeting.segments?.length
-                ? meeting.segments.map(segment => {
-                    const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
-                    return `${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
-                })
-                : ['발화 기록이 없습니다. 다시 분석해 주세요.']),
-        ];
-        return lines.filter(Boolean).join('\n');
-    };
-
-    const downloadBlob = (content: BlobPart | Blob, filename: string, type?: string) => {
-        const blob = content instanceof Blob ? content : new Blob([content], { type });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement('a');
-
-        link.href = url;
-        link.download = filename;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    };
-
-    const filenameFromDisposition = (disposition: string | null, fallback: string): string => {
-        if (!disposition) return fallback;
-
-        const utf8Match = disposition.match(/filename\*=UTF-8''([^;]+)/i);
-        if (utf8Match?.[1]) return decodeURIComponent(utf8Match[1]);
-
-        const plainMatch = disposition.match(/filename="?([^"]+)"?/i);
-        return plainMatch?.[1] ?? fallback;
-    };
-
-    const handleDownloadArtifact = async (kind: DownloadFormat) => {
-        if (!selectedMeeting) return;
-        setErrorMessage('');
-
-        const downloadLocalText = () => {
-            downloadBlob(
-                buildTranscriptText(selectedMeeting),
-                `회의록_${safeFileName(selectedMeeting.title)}_transcript.txt`,
-                'text/plain;charset=utf-8;',
-            );
-        };
-
-        try {
-            const response = await fetch(await toApiUrl(`/api/export-record/${kind}`), {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(selectedMeeting),
-            });
-            if (!response.ok) {
-                const detail = await response.text().catch(() => '');
-                downloadLocalText();
-                setErrorMessage(`${kind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
-                return;
-            }
-
-            const blob = await response.blob();
-            const fallbackName = `${safeFileName(selectedMeeting.title)}.${extensionByKind[kind]}`;
-            const filename = filenameFromDisposition(response.headers.get('content-disposition'), fallbackName);
-            downloadBlob(blob, filename);
-        } catch (error) {
-            downloadLocalText();
-            const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
-            setErrorMessage(`${message} TXT로 다운로드했습니다.`);
-        }
-    };
-
-    const handleDelete = async (id: string) => {
-        const meeting = records.find(record => record.id === id);
-        if (!window.confirm('회의록 기록을 삭제합니다. 분석 파일 정리도 함께 시도합니다. 계속할까요?')) return;
-
-        try {
-            await deleteMeeting(id);
-            setRecords(prev => prev.filter(record => record.id !== id));
-            setSelectedMeeting(prev => prev?.id === id ? null : prev);
-            window.dispatchEvent(new Event('meetings:updated'));
-            setErrorMessage('');
-        } catch (error) {
-            const message = error instanceof Error ? error.message : '회의록 삭제 중 오류가 발생했습니다.';
-            setErrorMessage(message);
-            return;
-        }
-
-        try {
-            if (meeting?.jobId) {
-                const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(meeting.jobId)}`), {
-                    method: 'DELETE',
-                });
-                if (!response.ok && response.status !== 404) {
-                    setErrorMessage('회의록은 삭제했지만 일부 분석 파일을 정리하지 못했습니다. 앱을 다시 실행한 뒤 다시 확인해 주세요.');
-                }
-            }
-        } catch {
-            setErrorMessage('회의록은 삭제했지만 분석 파일 정리 상태를 확인하지 못했습니다. 앱을 다시 실행한 뒤 다시 확인해 주세요.');
-        }
-    };
-
-    const handlePreferredDownload = () => {
-        setDownloadFormatPreference(downloadKind);
-        handleDownloadArtifact(downloadKind);
+    const setLocalGenerationStatus = (meetingId: string, kind: GenerationKind, state: 'generating' | 'completed' | 'failed') => {
+        setSelectedMeeting(prev => {
+            if (!prev || prev.id !== meetingId) return prev;
+            return {
+                ...prev,
+                generationStatus: normalizeGenerationStatus(prev.generationStatus, { [kind]: state }),
+            };
+        });
     };
 
     const handleSaveEdit = async () => {
         if (!selectedMeeting) return;
-
-        const nextTitle = editTitle.trim();
-        const nextParticipants = editParticipants.trim();
-        if (!nextTitle || !editDate || !nextParticipants) {
-            setErrorMessage('회의 제목, 일시, 참석자를 모두 입력해 주세요.');
+        const title = editTitle.trim();
+        const date = editDate.trim();
+        const participants = editParticipants.trim();
+        if (!title || !date) {
+            setErrorMessage('회의 제목과 일시는 비워둘 수 없습니다.');
             return;
         }
 
-        const nextMeeting: MeetingRecord = {
-            ...selectedMeeting,
-            title: nextTitle,
-            date: editDate.replace('T', ' '),
-            participants: nextParticipants,
-        };
-
         try {
-            await updateMeeting(nextMeeting);
-            setSelectedMeeting(nextMeeting);
-            setRecords(prev => prev.map(record => record.id === nextMeeting.id ? nextMeeting : record));
-            setIsEditing(false);
             setErrorMessage('');
-            window.dispatchEvent(new Event('meetings:updated'));
+            await updateSelectedMeeting({ title, date, participants });
+            setIsEditing(false);
         } catch (error) {
-            const message = error instanceof Error ? error.message : '회의록 정보를 저장하지 못했습니다.';
-            setErrorMessage(message);
+            setErrorMessage(error instanceof Error ? error.message : '회의록 정보를 저장하지 못했습니다.');
         }
     };
 
-    const handleCancelEdit = () => {
-        if (!selectedMeeting) return;
-        setEditTitle(selectedMeeting.title);
-        setEditDate(selectedMeeting.date.replace(' ', 'T'));
-        setEditParticipants(selectedMeeting.participants);
-        setIsEditing(false);
+    const topicGenerationStatus = getTopicGenerationStatus(selectedMeeting?.generationStatus, selectedMeeting?.topicSections);
+    const canUseAiOrganization = Boolean(selectedMeeting?.jobId && selectedMeeting?.segments?.length);
+    const speakerGenerationStatus = getSpeakerGenerationStatus(
+        selectedMeeting?.generationStatus,
+        selectedMeeting?.speakerContextSummaries,
+    );
+    const canCreateSpeakerContext = canGenerateSpeakerContextFromState(
+        selectedMeeting?.generationStatus,
+        selectedMeeting?.topicSections,
+    );
+    const speakerGenerationStatusText = canCreateSpeakerContext && speakerGenerationStatus === 'not_started'
+        ? '생성 가능'
+        : generationStatusLabel[speakerGenerationStatus];
+
+    const handleGenerateTopicSections = async () => {
+        if (generatingKind !== null || topicGenerationStatus === 'generating') return;
+        if (!selectedMeeting?.jobId) {
+            setErrorMessage('분석 결과 파일이 있는 회의록에서만 주제별 정리를 만들 수 있습니다.');
+            return;
+        }
+
+        const targetMeeting = selectedMeeting;
+        const targetJobId = selectedMeeting.jobId;
+        try {
+            setErrorMessage('');
+            setGeneratingKind('topicSections');
+            setLocalGenerationStatus(targetMeeting.id, 'topicSections', 'generating');
+            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-sections`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(targetMeeting),
+            });
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '주제별 정리를 만들지 못했습니다.'));
+
+            const data = await response.json() as GenerateTopicSectionsResponse;
+            await updateSelectedMeeting({
+                topics: data.topics ?? targetMeeting.topics ?? [],
+                topicSections: data.topicSections ?? data.topic_sections ?? [],
+                generationStatus: data.generationStatus ?? data.generation_status ?? { topicSections: 'completed' },
+                outputFiles: data.outputs ?? targetMeeting.outputFiles,
+            }, targetMeeting);
+            if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setErrorMessage(data.export_error);
+            }
+        } catch (error) {
+            setLocalGenerationStatus(targetMeeting.id, 'topicSections', 'failed');
+            if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setErrorMessage(error instanceof Error ? error.message : '주제별 정리 생성 중 오류가 발생했습니다.');
+            }
+        } finally {
+            setGeneratingKind(null);
+        }
     };
 
+    const handleGenerateSpeakerContext = async () => {
+        if (generatingKind !== null || speakerGenerationStatus === 'generating') return;
+        if (!selectedMeeting?.jobId) {
+            setErrorMessage('분석 결과 파일이 있는 회의록에서만 참석자별 정리를 만들 수 있습니다.');
+            return;
+        }
+        if (!canCreateSpeakerContext) {
+            setErrorMessage('참석자별 정리는 주제별 정리를 먼저 만든 뒤 사용할 수 있습니다.');
+            return;
+        }
+
+        const targetMeeting = selectedMeeting;
+        const targetJobId = selectedMeeting.jobId;
+        try {
+            setErrorMessage('');
+            setGeneratingKind('speakerContextSummaries');
+            setLocalGenerationStatus(targetMeeting.id, 'speakerContextSummaries', 'generating');
+            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-speaker-context`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(targetMeeting),
+            });
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '참석자별 정리를 만들지 못했습니다.'));
+
+            const data = await response.json() as GenerateSpeakerContextResponse;
+            await updateSelectedMeeting({
+                speakerContextSummaries: data.speakerContextSummaries ?? data.speaker_context_summaries ?? [],
+                participantSummaries: data.participantSummaries ?? data.participant_summaries ?? targetMeeting.participantSummaries ?? [],
+                generationStatus: data.generationStatus ?? data.generation_status ?? { speakerContextSummaries: 'completed' },
+                outputFiles: data.outputs ?? targetMeeting.outputFiles,
+            }, targetMeeting);
+            if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setErrorMessage(data.export_error);
+            }
+        } catch (error) {
+            setLocalGenerationStatus(targetMeeting.id, 'speakerContextSummaries', 'failed');
+            if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setErrorMessage(error instanceof Error ? error.message : '참석자별 정리 생성 중 오류가 발생했습니다.');
+            }
+        } finally {
+            setGeneratingKind(null);
+        }
+    };
+
+    const contentQuery = searchQuery.trim().toLowerCase();
+    const summaryMatches = !contentQuery || Boolean(selectedMeeting?.summary.toLowerCase().includes(contentQuery));
+    const allTopics = useMemo(() => {
+        const topics = selectedMeeting?.topics ?? [];
+        const sectionTopics = selectedMeeting?.topicSections?.map(section => section.topic) ?? [];
+        return Array.from(new Set([...topics, ...sectionTopics].filter(Boolean)));
+    }, [selectedMeeting]);
+    const visibleTopics = useMemo(
+        () => allTopics.filter(topic => !contentQuery || topic.toLowerCase().includes(contentQuery)),
+        [allTopics, contentQuery],
+    );
+    const visibleTopicSections = useMemo(
+        () => selectedMeeting?.topicSections?.filter(section => !contentQuery || [
+            section.topic,
+            section.summary,
+            ...(section.evidence ?? []),
+            ...(section.actions ?? []),
+        ].join(' ').toLowerCase().includes(contentQuery)) ?? [],
+        [contentQuery, selectedMeeting],
+    );
+    const speakerSummariesForDisplay = useMemo(() => {
+        if (selectedMeeting?.speakerContextSummaries?.length) {
+            return selectedMeeting.speakerContextSummaries.map(item => ({
+                name: item.display_name || item.speaker,
+                role: item.role_in_meeting,
+                summary: item.summary,
+                keyPoints: item.key_points ?? [],
+                actions: item.actions ?? [],
+                needsCheck: item.needs_check ?? [],
+            }));
+        }
+
+        return selectedMeeting?.participantSummaries?.map(item => ({
+            name: item.participant,
+            role: '',
+            summary: item.summary,
+            keyPoints: item.key_points ?? [],
+            actions: item.actions ?? [],
+            needsCheck: [],
+        })) ?? [];
+    }, [selectedMeeting]);
+    const visibleSpeakerSummaries = useMemo(
+        () => speakerSummariesForDisplay.filter(item => !contentQuery || [
+            item.name,
+            item.role ?? '',
+            item.summary,
+            ...item.keyPoints,
+            ...item.actions,
+            ...item.needsCheck,
+        ].join(' ').toLowerCase().includes(contentQuery)),
+        [contentQuery, speakerSummariesForDisplay],
+    );
+    const filteredSegments = useMemo(
+        () => selectedMeeting?.segments?.filter(segment => !contentQuery || [
+            segment.speaker,
+            segment.text,
+            segment.start,
+            segment.end,
+        ].join(' ').toLowerCase().includes(contentQuery)) ?? [],
+        [contentQuery, selectedMeeting],
+    );
+    const hasCompletedEmptyTopicSections = topicGenerationStatus === 'completed' && !visibleTopicSections.length && Boolean(selectedMeeting?.topicSections);
+    const hasCompletedEmptySpeakerContext = speakerGenerationStatus === 'completed' && !visibleSpeakerSummaries.length && Boolean(selectedMeeting?.speakerContextSummaries);
+    const hasDecisionContent = Boolean(selectedMeeting?.decisions?.length || selectedMeeting?.needsCheck?.length);
+
+    if (isLoading) {
+        return (
+            <div className="mx-auto max-w-5xl">
+                <div className="app-panel flex min-h-[420px] items-center justify-center text-sm text-muted-foreground">
+                    회의 기록을 불러오는 중입니다.
+                </div>
+            </div>
+        );
+    }
+
+    if (!selectedMeeting) {
+        return (
+            <div className="mx-auto max-w-5xl">
+                <div className="app-panel flex min-h-[420px] flex-col items-center justify-center gap-3 text-center">
+                    <h2 className="text-lg font-semibold text-foreground">선택된 회의록이 없습니다</h2>
+                    <p className="text-sm text-muted-foreground">왼쪽 회의 기록에서 회의록을 선택하거나 새 회의록을 작성하세요.</p>
+                    {onCreateMeeting && (
+                        <Button onClick={onCreateMeeting}>
+                            <PlusCircle size={16} />
+                            새 회의록 작성
+                        </Button>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
     return (
-        <div className="flex h-full min-h-0 flex-col gap-4">
+        <div className="mx-auto max-w-5xl">
             {errorMessage && (
-                <StatusBanner tone="error">
+                <StatusBanner tone="error" className="mb-4">
                     {errorMessage}
                 </StatusBanner>
             )}
 
-            <section className="app-panel min-h-0 flex-1">
-                {isLoading ? (
-                    <div className="flex h-full items-center justify-center p-8 text-center text-sm text-muted-foreground">
-                        회의 기록을 불러오는 중입니다...
-                    </div>
-                ) : selectedMeeting ? (
-                    <div className="flex h-full min-h-0 flex-col">
-                        <div className="app-panel-header">
-                            <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-                                <div className="min-w-0 flex-1">
-                                    {isEditing ? (
-                                        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                                            <label className="md:col-span-2 text-xs font-medium text-muted-foreground">
-                                                회의 제목
-                                                <Input className="mt-1" value={editTitle} onChange={event => setEditTitle(event.target.value)} />
-                                            </label>
-                                            <label className="text-xs font-medium text-muted-foreground">
-                                                일시
-                                                <Input className="mt-1" type="datetime-local" value={editDate} onChange={event => setEditDate(event.target.value)} />
-                                            </label>
-                                            <label className="text-xs font-medium text-muted-foreground">
-                                                참석자
-                                                <Input className="mt-1" value={editParticipants} onChange={event => setEditParticipants(event.target.value)} />
-                                            </label>
-                                        </div>
-                                    ) : (
-                                        <>
-                                            <h3 className="text-h3 font-semibold text-foreground">{selectedMeeting.title}</h3>
-                                            <div className="mt-2 grid grid-cols-1 gap-1 text-sm text-muted-foreground md:grid-cols-2">
-                                                <span>일시: {selectedMeeting.date}</span>
-                                                <span>참석자: {selectedMeeting.participants}</span>
-                                                {selectedMeeting.sourceFile && <span className="md:col-span-2">원본 파일: {selectedMeeting.sourceFile}</span>}
-                                            </div>
-                                        </>
-                                    )}
-                                </div>
-                                <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                                    <select
-                                        value={downloadKind}
-                                        onChange={event => setDownloadKind(event.target.value as DownloadFormat)}
-                                        className="h-10 rounded-md border border-input bg-background px-3 text-sm"
-                                        aria-label="다운로드 형식 선택"
-                                    >
-                                        {Object.entries(downloadFormatLabels).map(([value, label]) => (
-                                            <option key={value} value={value}>{label}</option>
-                                        ))}
-                                    </select>
-                                    <IconButton
-                                        variant="outline"
-                                        icon={<Download size={18} />}
-                                        onClick={handlePreferredDownload}
-                                        title={`${downloadFormatLabels[downloadKind]} 다운로드`}
-                                        aria-label="회의록 다운로드"
-                                    />
-                                    {isEditing ? (
-                                        <>
-                                            <IconButton
-                                                variant="outline"
-                                                icon={<Save size={18} />}
-                                                onClick={handleSaveEdit}
-                                                title="수정 저장"
-                                                aria-label="수정 저장"
-                                            />
-                                            <IconButton
-                                                variant="outline"
-                                                icon={<X size={18} />}
-                                                onClick={handleCancelEdit}
-                                                title="수정 취소"
-                                                aria-label="수정 취소"
-                                            />
-                                        </>
-                                    ) : (
-                                        <IconButton
-                                            variant="outline"
-                                            icon={<Edit3 size={18} />}
-                                            onClick={() => setIsEditing(true)}
-                                            title="회의 정보 수정"
-                                            aria-label="회의 정보 수정"
-                                        />
-                                    )}
-                                    <IconButton
-                                        variant="outline"
-                                        className="border-red-200 text-red-500 hover:bg-red-50"
-                                        icon={<Trash2 size={18} />}
-                                        onClick={() => handleDelete(selectedMeeting.id)}
-                                        title="회의록 삭제"
-                                        aria-label="회의록 삭제"
-                                    />
+            <article className="app-panel overflow-hidden">
+                <div className="app-panel-header flex flex-col gap-4 border-b border-border p-5">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        {isEditing ? (
+                            <div className="grid flex-1 gap-3">
+                                <Input value={editTitle} onChange={event => setEditTitle(event.target.value)} aria-label="회의 제목" />
+                                <div className="grid gap-3 sm:grid-cols-2">
+                                    <Input value={editDate} onChange={event => setEditDate(event.target.value)} aria-label="회의 일시" />
+                                    <Input value={editParticipants} onChange={event => setEditParticipants(event.target.value)} aria-label="참석자" />
                                 </div>
                             </div>
-
-                            <div className="mt-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-                                <div className="tab-list" role="tablist" aria-label="회의록 상세">
-                                    <button
-                                        type="button"
-                                        id="meeting-summary-tab"
-                                        role="tab"
-                                        aria-selected={detailTab === 'summary'}
-                                        aria-controls="meeting-summary-panel"
-                                        className={`tab-button ${detailTab === 'summary' ? 'tab-button-active' : ''}`}
-                                        onClick={() => setDetailTab('summary')}
-                                    >
-                                        회의 요약
-                                    </button>
-                                    <button
-                                        type="button"
-                                        id="meeting-script-tab"
-                                        role="tab"
-                                        aria-selected={detailTab === 'script'}
-                                        aria-controls="meeting-script-panel"
-                                        className={`tab-button ${detailTab === 'script' ? 'tab-button-active' : ''}`}
-                                        onClick={() => setDetailTab('script')}
-                                    >
-                                        발화 기록
-                                    </button>
+                        ) : (
+                            <div className="min-w-0 flex-1">
+                                <h2 className="break-words text-xl font-semibold text-foreground">{selectedMeeting.title}</h2>
+                                <div className="mt-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
+                                    <div><span className="font-medium text-foreground">일시:</span> {selectedMeeting.date}</div>
+                                    <div><span className="font-medium text-foreground">참석자:</span> {selectedMeeting.participants || '-'}</div>
                                 </div>
-                                <label className="flex h-10 w-full items-center gap-2 rounded-md border border-input bg-background px-3 text-sm md:w-72">
-                                    <Search size={15} className="shrink-0 text-muted-foreground" />
-                                    <input
-                                        value={searchQuery}
-                                        onChange={event => setSearchQuery(event.target.value)}
-                                        placeholder="현재 회의록 검색"
-                                        className="min-w-0 flex-1 bg-transparent outline-none placeholder:text-muted-foreground"
-                                    />
-                                    {searchQuery && (
-                                        <button
-                                            type="button"
-                                            onClick={() => setSearchQuery('')}
-                                            className="text-muted-foreground hover:text-foreground"
-                                            aria-label="검색어 지우기"
-                                        >
-                                            <X size={14} />
-                                        </button>
-                                    )}
-                                </label>
-                            </div>
-                        </div>
-
-                        <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
-                            {detailTab === 'summary' ? (
-                                <div id="meeting-summary-panel" role="tabpanel" aria-labelledby="meeting-summary-tab" className="flex flex-col gap-5">
-                                    {summaryMatches && <div className="summary-block">
-                                        {selectedMeeting.summary}
-                                    </div>}
-                                    {!!visibleTopics.length && (
-                                        <div>
-                                            <h4 className="section-title mb-2">주요 주제</h4>
-                                            <div className="flex flex-wrap gap-2">
-                                                {visibleTopics.map((topic, index) => (
-                                                    <span key={`${topic}-${index}`} className="topic-chip">{topic}</span>
-                                                ))}
-                                            </div>
-                                        </div>
-                                    )}
-                                    {!!visibleActions.length && (
-                                        <div>
-                                            <h4 className="section-title mb-2">할 일</h4>
-                                            <ul className="list-disc pl-5 text-sm text-foreground">
-                                                {visibleActions.map((action, index) => <li key={`${action}-${index}`}>{action}</li>)}
-                                            </ul>
-                                        </div>
-                                    )}
-                                    {contentQuery && !hasSummarySearchResult && (
-                                        <div className="rounded-md bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-                                            검색 결과가 없습니다.
-                                        </div>
-                                    )}
-                                </div>
-                            ) : (
-                                <div id="meeting-script-panel" role="tabpanel" aria-labelledby="meeting-script-tab" className="flex flex-col gap-3">
-                                    <div className="flex flex-col gap-2">
-                                        {selectedMeeting.segments?.some(seg => seg.timingApproximate) && (
-                                            <StatusBanner tone="warning" className="py-2 text-xs shadow-none">
-                                                일부 시간 정보는 음성 길이에 맞춘 추정값입니다. 화자와 내용 확인용으로 사용해 주세요.
-                                            </StatusBanner>
-                                        )}
-                                        {selectedMeeting.segments?.some(seg => looksLikeKoreanMisrecognition(seg.text)) && (
-                                            <StatusBanner tone="error" className="py-2 text-xs shadow-none">
-                                                일부 구간은 음성 인식 품질 확인이 필요합니다. 원본 음성과 대조해 주세요.
-                                            </StatusBanner>
-                                        )}
+                                {selectedMeeting.sourceFile && (
+                                    <div className="mt-2 break-words text-sm text-muted-foreground">
+                                        <span className="font-medium text-foreground">원본 파일:</span> {selectedMeeting.sourceFile}
                                     </div>
-                                    {visibleSegments.length ? (
-                                        <div className="flex flex-col gap-3">
-                                            {visibleSegments.map((seg, idx) => (
-                                                <div key={`${seg.start}-${idx}`} className={`speaker-turn ${getSpeakerTone(seg.speaker, idx)} ${looksLikeKoreanMisrecognition(seg.text) ? 'speaker-turn-warning' : ''}`}>
-                                                    <div className="speaker-meta">
-                                                        <div className="speaker-label">
-                                                            <span className="speaker-dot" aria-hidden="true" />
-                                                            <span>{seg.speaker}</span>
-                                                        </div>
-                                                        <div>{seg.start} - {seg.end}</div>
-                                                        {seg.timingApproximate && <div className="mt-1 w-fit rounded-sm bg-amber-100 px-1.5 py-0.5 text-[11px] text-amber-800">시간 추정</div>}
-                                                        {looksLikeKoreanMisrecognition(seg.text) && <div className="mt-1 w-fit rounded-sm bg-red-100 px-1.5 py-0.5 text-[11px] text-red-700">인식 확인</div>}
-                                                    </div>
-                                                    <div className="speaker-text">{seg.text}</div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    ) : (
-                                        <div className="rounded-md bg-muted/30 p-8 text-center text-sm text-muted-foreground">
-                                            <div>{contentQuery ? '검색 결과가 없습니다.' : '발화 기록이 없습니다.'}</div>
-                                            <Button className="mt-4" variant="outline" onClick={onCreateMeeting}>
-                                                <PlusCircle size={16} />
-                                                새 회의록 작성
-                                            </Button>
-                                        </div>
-                                    )}
-                                </div>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="flex shrink-0 items-center gap-2">
+                            {isEditing ? (
+                                <>
+                                    <Button onClick={handleSaveEdit}>
+                                        <Save size={16} />
+                                        저장
+                                    </Button>
+                                    <IconButton
+                                        aria-label="수정 취소"
+                                        title="수정 취소"
+                                        icon={<X size={18} />}
+                                        onClick={() => setIsEditing(false)}
+                                    />
+                                </>
+                            ) : (
+                                <>
+                                    <MeetingDownloadControl
+                                        meeting={selectedMeeting}
+                                        onMessage={setErrorMessage}
+                                        onDownloadingChange={setIsDownloading}
+                                    />
+                                    <IconButton
+                                        aria-label="회의 정보 수정"
+                                        title="회의 정보 수정"
+                                        icon={<Edit3 size={18} />}
+                                        onClick={() => setIsEditing(true)}
+                                        disabled={isDownloading}
+                                    />
+                                </>
                             )}
                         </div>
                     </div>
-                ) : records.length === 0 ? (
-                    <div className="flex h-full items-center justify-center p-8 text-center">
-                        <div className="flex max-w-sm flex-col items-center gap-4">
-                            <div className="flex h-12 w-12 items-center justify-center rounded-md bg-muted/50 text-primary">
-                                <FileText size={22} />
-                            </div>
-                            <div>
-                                <h3 className="text-base font-semibold text-foreground">아직 저장된 회의록이 없습니다</h3>
-                                <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
-                                    첫 회의 자료를 업로드하면 회의 요약과 발화 기록이 이곳에 저장됩니다.
-                                </p>
-                            </div>
-                            <Button onClick={onCreateMeeting}>
-                                <PlusCircle size={16} />
-                                새 회의록 작성
-                            </Button>
+
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-end lg:justify-between">
+                        <div className="tab-list" role="tablist" aria-label="회의록 상세">
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={detailTab === 'summary'}
+                                className={`tab-button ${detailTab === 'summary' ? 'tab-button-active' : ''}`}
+                                onClick={() => setDetailTab('summary')}
+                            >
+                                회의 요약
+                            </button>
+                            <button
+                                type="button"
+                                role="tab"
+                                aria-selected={detailTab === 'script'}
+                                className={`tab-button ${detailTab === 'script' ? 'tab-button-active' : ''}`}
+                                onClick={() => setDetailTab('script')}
+                            >
+                                대화록
+                            </button>
                         </div>
+                        <label className="relative w-full lg:max-w-xs">
+                            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                            <Input
+                                value={searchQuery}
+                                onChange={event => setSearchQuery(event.target.value)}
+                                placeholder="현재 회의에서 검색"
+                                className="pl-9"
+                                aria-label="현재 회의에서 검색"
+                            />
+                        </label>
                     </div>
-                ) : (
-                    <div className="flex h-full min-h-0 flex-col">
-                        <div className="app-panel-header">
-                            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                <div>
-                                    <h3 className="text-h3 font-semibold text-foreground">회의 기록</h3>
-                                    <p className="mt-1 text-sm text-muted-foreground">{recordCountLabel}</p>
-                                </div>
-                                <Button variant="outline" onClick={onCreateMeeting}>
-                                    <PlusCircle size={16} />
-                                    새 회의록 작성
-                                </Button>
-                            </div>
-                        </div>
-                        <div className="min-h-0 flex-1 overflow-y-auto p-3 custom-scrollbar sm:p-5">
-                            <div className="grid gap-2">
-                                {records.map(record => (
-                                    <button
-                                        key={record.id}
-                                        type="button"
-                                        onClick={() => handleSelectMeeting(record)}
-                                        className="rounded-md border border-border bg-background p-4 text-left transition-colors hover:border-primary/40 hover:bg-muted/30 focus:outline-none focus:ring-2 focus:ring-primary/40"
-                                    >
-                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                </div>
+
+                <div className="space-y-6 p-5">
+                    {detailTab === 'summary' && (
+                        <>
+                            {summaryMatches && (
+                                <section>
+                                    <h3 className="section-title mb-2">핵심 요약</h3>
+                                    <div className="detail-callout">{selectedMeeting.summary || '요약 내용이 없습니다.'}</div>
+                                </section>
+                            )}
+
+                            {canUseAiOrganization && (
+                                <section className="detail-action-row">
+                                    <h3 className="section-title mb-3">AI 정리</h3>
+                                    <div className="grid gap-2 lg:grid-cols-2">
+                                        <div className="ai-action-item">
                                             <div className="min-w-0">
-                                                <div className="truncate text-sm font-semibold text-foreground">{record.title}</div>
-                                                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                                    <span>{record.date}</span>
-                                                    <span>{record.participants}</span>
+                                                <div className="ai-action-title">주제별 정리</div>
+                                                <div className="ai-action-meta">{generationStatusLabel[topicGenerationStatus]}</div>
+                                            </div>
+                                            <Button
+                                                variant="outline"
+                                                className="detail-action-button"
+                                                disabled={generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                onClick={handleGenerateTopicSections}
+                                            >
+                                                {generatingKind === 'topicSections' && <Loader2 size={15} className="animate-spin" />}
+                                                주제별 정리
+                                            </Button>
+                                        </div>
+                                        <div className={`ai-action-item ${!canCreateSpeakerContext ? 'ai-action-item-disabled' : ''}`}>
+                                            <div className="min-w-0">
+                                                <div className="ai-action-title">참석자별 정리</div>
+                                                <div className="ai-action-meta">
+                                                    {canCreateSpeakerContext || speakerGenerationStatus !== 'not_started'
+                                                        ? speakerGenerationStatusText
+                                                        : '주제별 정리 후 사용'}
                                                 </div>
                                             </div>
-                                            <span className="shrink-0 text-xs font-medium text-primary">열기</span>
+                                            <Button
+                                                variant="outline"
+                                                className="detail-action-button"
+                                                disabled={generatingKind !== null || speakerGenerationStatus === 'generating' || !canCreateSpeakerContext}
+                                                onClick={handleGenerateSpeakerContext}
+                                                title={canCreateSpeakerContext ? '참석자별 정리' : '주제별 정리를 먼저 만들어 주세요.'}
+                                            >
+                                                {generatingKind === 'speakerContextSummaries' && <Loader2 size={15} className="animate-spin" />}
+                                                참석자별 정리
+                                            </Button>
                                         </div>
-                                        {record.summary && (
-                                            <p className="mt-3 line-clamp-2 text-sm leading-relaxed text-muted-foreground">
-                                                {record.summary}
-                                            </p>
+                                    </div>
+                                </section>
+                            )}
+
+                            {hasDecisionContent && (
+                                <section>
+                                    <h3 className="section-title mb-2">주요 내용 및 결정사항</h3>
+                                    <div className="grid gap-3">
+                                        {!!selectedMeeting.decisions?.length && (
+                                            <div className="detail-subtle-card">
+                                                <div className="mb-2 text-xs font-semibold text-muted-foreground">결정사항</div>
+                                                <ul className="detail-list">
+                                                    {selectedMeeting.decisions.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                                                </ul>
+                                            </div>
                                         )}
-                                    </button>
-                                ))}
-                            </div>
-                        </div>
-                    </div>
-                )}
-            </section>
+                                        {!!selectedMeeting.needsCheck?.length && (
+                                            <div className="detail-subtle-card">
+                                                <div className="mb-2 text-xs font-semibold text-muted-foreground">확인 필요</div>
+                                                <ul className="detail-list">
+                                                    {selectedMeeting.needsCheck.map((item, index) => <li key={`${item}-${index}`}>{item}</li>)}
+                                                </ul>
+                                            </div>
+                                        )}
+                                    </div>
+                                </section>
+                            )}
+
+                            {!!visibleTopics.length && (
+                                <section>
+                                    <h3 className="section-title mb-2">논의 내용</h3>
+                                    <div className="flex flex-wrap gap-2">
+                                        {visibleTopics.map(topic => (
+                                            <span key={topic} className="topic-chip">{topic}</span>
+                                        ))}
+                                    </div>
+                                </section>
+                            )}
+
+                            {(!!visibleTopicSections.length || hasCompletedEmptyTopicSections) && (
+                                <section>
+                                    <h3 className="section-title mb-2">주제별 정리</h3>
+                                    {visibleTopicSections.length ? (
+                                        <div className="grid gap-3">
+                                            {visibleTopicSections.map((section, index) => (
+                                                <article key={`${section.topic}-${index}`} className="detail-subtle-card">
+                                                    <h4 className="font-semibold text-foreground">{section.topic}</h4>
+                                                    <p className="mt-2 text-sm leading-relaxed text-foreground">{section.summary}</p>
+                                                    {!!section.evidence?.length && (
+                                                        <ul className="detail-list mt-3">
+                                                            {section.evidence.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}
+                                                        </ul>
+                                                    )}
+                                                    {!!section.actions?.length && (
+                                                        <div className="mt-3">
+                                                            <div className="mb-1 text-xs font-semibold text-muted-foreground">할 일</div>
+                                                            <ul className="detail-list">
+                                                                {section.actions.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{item}</li>)}
+                                                            </ul>
+                                                        </div>
+                                                    )}
+                                                </article>
+                                            ))}
+                                        </div>
+                                    ) : (
+                                        <div className="detail-inline-note">
+                                            주제별 정리는 완료됐지만 표시할 내용이 없습니다. 대화록 내용을 확인해 주세요.
+                                        </div>
+                                    )}
+                                </section>
+                            )}
+
+                            {(!!visibleSpeakerSummaries.length || hasCompletedEmptySpeakerContext) && (
+                                <section>
+                                    <h3 className="section-title mb-2">참석자별 정리</h3>
+                                    {visibleSpeakerSummaries.length ? (
+                                        <>
+                                            <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+                                                화자 구분과 회의 맥락을 바탕으로 만든 AI 초안입니다. 실제 이름과 역할은 확인이 필요할 수 있습니다.
+                                            </p>
+                                            <div className="grid gap-3 md:grid-cols-2">
+                                                {visibleSpeakerSummaries.map((item, index) => (
+                                                    <article key={`${item.name}-${index}`} className="detail-subtle-card">
+                                                        <h4 className="font-semibold text-foreground">{item.name}</h4>
+                                                        {item.role && <div className="mt-1 text-xs text-muted-foreground">{item.role}</div>}
+                                                        <p className="mt-2 text-sm leading-relaxed text-foreground">{item.summary}</p>
+                                                        {!!item.keyPoints.length && (
+                                                            <ul className="detail-list mt-3">
+                                                                {item.keyPoints.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{point}</li>)}
+                                                            </ul>
+                                                        )}
+                                                    </article>
+                                                ))}
+                                            </div>
+                                        </>
+                                    ) : (
+                                        <div className="detail-inline-note">
+                                            참석자별 정리는 완료됐지만 표시할 내용이 없습니다. 대화록의 화자 구분을 확인해 주세요.
+                                        </div>
+                                    )}
+                                </section>
+                            )}
+
+                            {!!selectedMeeting.actions?.length && (
+                                <section>
+                                    <h3 className="section-title mb-2">할 일</h3>
+                                    <ul className="detail-list">
+                                        {selectedMeeting.actions.map((action, index) => <li key={`${action}-${index}`}>{action}</li>)}
+                                    </ul>
+                                </section>
+                            )}
+                        </>
+                    )}
+
+                    {detailTab === 'script' && (
+                        <section>
+                            <h3 className="section-title mb-3">대화록</h3>
+                            {filteredSegments.length ? (
+                                <div className="space-y-2">
+                                    {filteredSegments.map((segment, index) => {
+                                        const warning = looksLikeKoreanMisrecognition(segment.text);
+                                        return (
+                                            <article key={`${segment.start}-${index}`} className={`script-row ${warning ? 'script-row-warning' : ''}`}>
+                                                <div className="script-meta">
+                                                    <span className={`speaker-dot ${getSpeakerTone(segment.speaker, index)}`} />
+                                                    <span className="font-semibold text-foreground">{segment.speaker || '화자'}</span>
+                                                    <span>{segment.start} - {segment.end}</span>
+                                                    {segment.timingApproximate && <span className="script-badge">시간 추정</span>}
+                                                </div>
+                                                <p className="script-text">{segment.text}</p>
+                                            </article>
+                                        );
+                                    })}
+                                </div>
+                            ) : (
+                                <div className="detail-inline-note">대화록 내용이 없습니다.</div>
+                            )}
+                        </section>
+                    )}
+                </div>
+            </article>
         </div>
     );
 };

@@ -1,5 +1,11 @@
 # Project Agent Notes
 
+## Agent Coordination
+
+- When a task explicitly asks for agent-based review, split the work by perspective or surface when useful.
+- If the active agent limit is reached, close older idle agents first, then continue with the requested review.
+- Prefer clear review scopes such as product-level review, UI/UX review, implementation review, and regression-risk review.
+
 ## Audio Performance Work
 
 When changing audio preprocessing, STT quality, diarization quality, or long-file performance:
@@ -15,9 +21,39 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 
 ## UI and Copy Work
 
-- Read `docs/design-system.md` before changing repeated UI surfaces.
-- Prefer user-facing terms such as `회의 파일`, `회의 요약`, `발화 기록`, and `분석 준비`.
+- Read `docs/design.md` before changing repeated UI surfaces.
+- Prefer user-facing terms such as `음성 파일`, `회의 요약`, `대화록`, and `분석 준비`.
 - Avoid exposing implementation terms such as model names, server details, or pipeline names in common user flows.
+
+## Portable Release Debugging Rules
+
+- First classify the failing layer: sidecar packaging, desktop/Tauri build, portable packaging, or deploy-folder runtime.
+- Use the actual `lmo_audio` deploy folder as the runtime source of truth. Treat `dist`, `dist-sidecar`, `target`, and `target/release/portable` as intermediate artifacts unless the task explicitly asks about them.
+- Before diagnosing a portable bug, record the launched executable, backend directory from `/api/health`, and whether the app is dev, sidecar, or packaged portable.
+- Prefer `scripts/verify_portable.ps1` before rerunning a full portable build.
+- If intermediate portable packaging is locked, verify `lmo_audio` directly and rebuild only the missing layer.
+
+## Analysis Hang Debugging Rules
+
+- Separate three cases before changing code: native STT/chunk hang, backend SSE/progress delivery issue, frontend state/rendering issue.
+- If progress text stays unchanged for a long time, check backend logs and SSE events before changing UI copy or ETA logic.
+- Do not treat stalled UI text as the fix for a native STT hang.
+- Reproduce long-file stalls with a short clipped sample first. If short clips pass and long files fail, prioritize chunking, timeout, and STT runtime settings before UI changes.
+- When possible, confirm whether backend CPU usage, temp chunk creation, or chunk counters are still moving before declaring the pipeline stuck.
+
+## Backend Output Contract Rules
+
+- Treat backend output JSON as separate from the frontend meeting record.
+- Before enabling or debugging `/api/outputs/{job_id}/...`, verify `MeetingRecord.jobId`, `MeetingRecord.outputFiles.job_id` when present, the active backend `output_dir`, and the existence of `{job_id}_result.json`.
+- If the frontend record exists but backend output JSON does not, use a payload-based fallback path or treat the record as ineligible for output-based generation.
+- Topic/speaker generation buttons should not rely on `jobId` alone; check transcript segments and generation state too.
+- Never expose raw backend JSON errors such as `Output result not found` directly in the UI when a user-facing recovery message is possible.
+
+## Verification Scope Rules
+
+- For release or runtime issues, verify the narrowest suspected layer first.
+- Prefer this order: deploy folder structure, backend health/config, specific API endpoint, frontend state/UI behavior, then full portable release build only when packaging is the proven failing layer or the user explicitly asks.
+- Do not rely on a full production build to diagnose an issue that can be isolated with a backend endpoint, deploy-folder inspection, or targeted script.
 
 Related docs:
 
@@ -26,5 +62,5 @@ Related docs:
 - `docs/audio-preprocessing-test-plan.md`
 - `docs/audio-testset-manifest.csv`
 - `docs/audio-preprocessing-eval-template.csv`
-- `docs/design-system.md`
+- `docs/design.md`
 - `todo.md`

@@ -67,13 +67,13 @@
 정식 배포 갱신:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -RequireCohere -ClearWebViewCache
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -ClearWebViewCache
 ```
 
 이미 exe와 sidecar를 새로 만든 뒤 복사/검증만 다시 할 때:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild -RequireCohere
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
 
 배포 스크립트가 하는 일:

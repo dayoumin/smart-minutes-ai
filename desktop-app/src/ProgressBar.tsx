@@ -9,12 +9,13 @@ export interface ProgressBarProps {
     size?: ProgressSize;
     className?: string;
     label?: string;
+    decorative?: boolean;
 }
 
 const toneClasses: Record<ProgressTone, string> = {
-    primary: 'bg-primary',
-    info: 'bg-blue-600',
-    error: 'bg-red-500',
+    primary: 'progress-fill-primary',
+    info: 'progress-fill-info',
+    error: 'progress-fill-error',
 };
 
 const sizeClasses: Record<ProgressSize, string> = {
@@ -28,20 +29,25 @@ export const ProgressBar: React.FC<ProgressBarProps> = ({
     size = 'md',
     className = '',
     label = '진행률',
+    decorative = false,
 }) => {
     const progress = Math.min(100, Math.max(0, value || 0));
 
     return (
         <div
-            className={`w-full overflow-hidden rounded-full bg-muted ${sizeClasses[size]} ${className}`}
-            role="progressbar"
-            aria-label={label}
-            aria-valuemin={0}
-            aria-valuemax={100}
-            aria-valuenow={progress}
+            className={`progress-track ${sizeClasses[size]} ${className}`}
+            {...(decorative
+                ? { 'aria-hidden': true }
+                : {
+                    role: 'progressbar',
+                    'aria-label': label,
+                    'aria-valuemin': 0,
+                    'aria-valuemax': 100,
+                    'aria-valuenow': progress,
+                })}
         >
             <div
-                className={`${sizeClasses[size]} rounded-full ${toneClasses[tone]} transition-all duration-300`}
+                className={`progress-fill ${sizeClasses[size]} ${toneClasses[tone]}`}
                 style={{ width: `${progress}%` }}
             />
         </div>

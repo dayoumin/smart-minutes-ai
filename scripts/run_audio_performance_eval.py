@@ -23,7 +23,7 @@ def add_backend_to_path(root: Path) -> None:
 
 def find_ffmpeg(root: Path) -> str:
     candidates = [
-        root / "Smart Minutes AI" / "backend" / "ffmpeg.exe",
+        root / "lmo_audio" / "backend" / "ffmpeg.exe",
         root / "backend" / "ffmpeg.exe",
         root / "ffmpeg.exe",
     ]
@@ -48,7 +48,7 @@ def find_stt_model(root: Path, override: str | None = None) -> Path:
         return override_path
 
     candidates = [
-        root / "Smart Minutes AI" / "models",
+        root / "lmo_audio" / "models",
         root / "backend" / "models" / "stt" / "cohere-transcribe-03-2026",
         root / "backend" / "models",
     ]
@@ -65,7 +65,7 @@ def find_diarization_model(root: Path, override: str | None = None) -> Path:
         return override_path
 
     candidates = [
-        root / "Smart Minutes AI" / "models",
+        root / "lmo_audio" / "models",
         root / "backend" / "models" / "diarization" / "speaker-diarization-community-1",
     ]
     required = ["config.yaml", "embedding", "segmentation", "plda"]
@@ -240,6 +240,8 @@ def main() -> int:
     parser.add_argument("--output", default=r"backend\temp\audio_performance_eval\latest.json")
     parser.add_argument("--stt-model", default=None)
     parser.add_argument("--diarization-model", default=None)
+    parser.add_argument("--modes", default=None, help="Comma-separated preprocessing modes to run.")
+    parser.add_argument("--variants", default=None, help="Comma-separated audio variants to run.")
     parser.add_argument("--clean", action="store_true", help="Delete the output work directory before running.")
     args = parser.parse_args()
 
@@ -285,11 +287,25 @@ def main() -> int:
 
     preprocessing_modes = {
         "off": {"enabled": False, "normalize_audio": False, "normalization_mode": "off"},
+        "noise_gate_on": {"enabled": True, "noise_gate": True, "normalize_audio": True, "normalization_mode": "auto"},
+        "auto_no_gate": {"enabled": True, "noise_gate": False, "normalize_audio": True, "normalization_mode": "auto"},
         "auto": {"enabled": True, "normalize_audio": True, "normalization_mode": "auto"},
         "loudnorm": {"enabled": True, "normalize_audio": True, "normalization_mode": "loudnorm"},
         "speechnorm": {"enabled": True, "normalize_audio": True, "normalization_mode": "speechnorm"},
     }
     variants = ["normal", "quiet", "noise", "silence_trim", "denoise"]
+    if args.modes:
+        requested_modes = [mode.strip() for mode in args.modes.split(",") if mode.strip()]
+        unknown_modes = sorted(set(requested_modes) - set(preprocessing_modes))
+        if unknown_modes:
+            raise SystemExit(f"Unknown preprocessing modes: {', '.join(unknown_modes)}")
+        preprocessing_modes = {mode: preprocessing_modes[mode] for mode in requested_modes}
+    if args.variants:
+        requested_variants = [variant.strip() for variant in args.variants.split(",") if variant.strip()]
+        unknown_variants = sorted(set(requested_variants) - set(variants))
+        if unknown_variants:
+            raise SystemExit(f"Unknown variants: {', '.join(unknown_variants)}")
+        variants = requested_variants
 
     report: dict[str, Any] = {
         "created_at": time.strftime("%Y-%m-%dT%H:%M:%S"),

@@ -6,6 +6,14 @@ from ollama_utils import find_ollama_executable
 from process_utils import run_hidden
 
 
+def normalize_windows_path(path: str) -> str:
+    if path.startswith("\\\\?\\UNC\\"):
+        return "\\\\" + path[8:]
+    if path.startswith("\\\\?\\"):
+        return path[4:]
+    return path
+
+
 @dataclass(frozen=True)
 class ModelSpec:
     key: str
@@ -24,35 +32,37 @@ class ModelSpec:
 
 MODEL_SPECS = [
     ModelSpec(
-        key="stt_primary",
-        label="기본 음성 인식 모델",
-        repo_id="CohereLabs/cohere-transcribe-03-2026",
-        local_dir="../models",
-        aliases=("../models/cohere-transcribe-03-2026", "./models/stt/cohere-transcribe-03-2026"),
-        marker_files=(
-            "config.json",
-            "model.safetensors",
-            "preprocessor_config.json",
-            "tokenizer_config.json",
-        ),
-        gated=True,
-        license_name="Apache-2.0",
-        license_url="https://huggingface.co/CohereLabs/cohere-transcribe-03-2026",
-        requires_token=True,
-        manual_note=(
-            "실행 파일 옆 models 폴더 바로 아래에 기본 음성 인식 모델 파일을 넣으세요. "
-            "config.json, model.safetensors 등이 models 폴더 안에 바로 보여야 합니다."
-        ),
-    ),
-    ModelSpec(
-        key="stt_fallback",
+        key="stt_faster_whisper",
         label="Faster Whisper Large v3",
         repo_id="Systran/faster-whisper-large-v3",
         local_dir="../models/faster-whisper-large-v3",
         aliases=("./models/stt/faster-whisper-large-v3",),
-        marker_files=("model.bin", "model.safetensors", "tokenizer.json"),
-        required=False,
+        marker_files=("model.bin", "tokenizer.json", "config.json"),
+        required=True,
         license_url="https://huggingface.co/Systran/faster-whisper-large-v3",
+        manual_note="실행 파일 옆 models\\faster-whisper-large-v3 폴더에 model.bin, tokenizer.json, config.json 등을 넣어 주세요.",
+    ),
+    ModelSpec(
+        key="stt_qwen",
+        label="Qwen3-ASR 1.7B",
+        repo_id="Qwen/Qwen3-ASR-1.7B",
+        local_dir="../models/Qwen3-ASR-1.7B",
+        aliases=("./models/stt/Qwen3-ASR-1.7B",),
+        marker_files=("config.json", "model.safetensors.index.json", "tokenizer_config.json"),
+        required=False,
+        license_url="https://huggingface.co/Qwen/Qwen3-ASR-1.7B",
+        manual_note="Qwen을 선택하려면 models\\Qwen3-ASR-1.7B 폴더에 모델 파일을 넣어 주세요.",
+    ),
+    ModelSpec(
+        key="stt_qwen_aligner",
+        label="Qwen3 ForcedAligner 0.6B",
+        repo_id="Qwen/Qwen3-ForcedAligner-0.6B",
+        local_dir="../models/Qwen3-ForcedAligner-0.6B",
+        aliases=("./models/stt/Qwen3-ForcedAligner-0.6B",),
+        marker_files=("config.json", "model.safetensors", "tokenizer_config.json"),
+        required=False,
+        license_url="https://huggingface.co/Qwen/Qwen3-ForcedAligner-0.6B",
+        manual_note="Qwen을 선택하려면 models\\Qwen3-ForcedAligner-0.6B 폴더도 함께 넣어 주세요.",
     ),
     ModelSpec(
         key="diarization",
@@ -87,8 +97,8 @@ MODEL_SPECS = [
 
 def resolve_backend_path(base_dir: str, path_value: str) -> str:
     if os.path.isabs(path_value):
-        return path_value
-    return os.path.normpath(os.path.join(base_dir, path_value))
+        return normalize_windows_path(os.path.normpath(path_value))
+    return normalize_windows_path(os.path.normpath(os.path.join(base_dir, path_value)))
 
 
 def candidate_paths(base_dir: str, spec: ModelSpec) -> list[str]:

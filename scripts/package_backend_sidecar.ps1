@@ -27,7 +27,7 @@ if (Test-Path $BuildDistDir) {
     Remove-Item -LiteralPath $BuildDistDir -Recurse -Force
 }
 if (Test-Path (Join-Path $TauriBinDir "_internal")) {
-    Remove-Item -LiteralPath (Join-Path $TauriBinDir "_internal") -Recurse -Force
+    cmd /c "rmdir /s /q `"$TauriBinDir\_internal`"" | Out-Null
 }
 if (Test-Path $OutputPath) {
     Remove-Item -LiteralPath $OutputPath -Force
@@ -43,6 +43,22 @@ try {
         --contents-directory "_internal" `
         --collect-submodules "pyannote.audio" `
         --collect-data "pyannote.audio" `
+        --collect-submodules "faster_whisper" `
+        --collect-data "faster_whisper" `
+        --collect-submodules "av" `
+        --collect-binaries "av" `
+        --collect-data "av" `
+        --collect-submodules "ctranslate2" `
+        --collect-binaries "ctranslate2" `
+        --collect-data "ctranslate2" `
+        --collect-submodules "tokenizers" `
+        --collect-binaries "tokenizers" `
+        --collect-data "tokenizers" `
+        --collect-submodules "qwen_asr" `
+        --collect-data "qwen_asr" `
+        --collect-submodules "lxml" `
+        --collect-binaries "lxml" `
+        --collect-data "lxml" `
         --distpath $BuildDistDir `
         --workpath (Join-Path $BackendDir "build") `
         --specpath (Join-Path $BackendDir "build") `
@@ -64,6 +80,10 @@ if (-not (Test-Path $OutputPath)) {
 }
 if (-not (Test-Path (Join-Path $TauriBinDir "_internal"))) {
     throw "Sidecar build failed: _internal dependencies were not copied."
+}
+$lxmlEtree = Get-ChildItem -LiteralPath (Join-Path $TauriBinDir "_internal\lxml") -Filter "etree*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $lxmlEtree) {
+    throw "Sidecar build failed: lxml.etree was not bundled into _internal\lxml."
 }
 if ((Get-PeSubsystem $OutputPath) -ne 2) {
     throw "Sidecar must be Windows GUI subsystem. Rebuild with PyInstaller --noconsole: $OutputPath"

@@ -1,3 +1,4 @@
+import json
 import os
 import sys
 import tempfile
@@ -103,6 +104,92 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertGreater(len(response.content), 0)
+
+    def test_exports_speaker_context_without_participant_summaries(self):
+        payload = legacy_meeting_payload(
+            participantSummaries=[],
+            speakerContextSummaries=[
+                {
+                    "speaker": "SPEAKER_00",
+                    "display_name": "화자1",
+                    "summary": "발언자별 맥락 정리만 있는 기록입니다.",
+                    "key_points": ["핵심 발언"],
+                    "actions": ["후속 확인"],
+                }
+            ],
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("발언자별 맥락 정리만 있는 기록입니다.", content)
+        self.assertIn("화자1", content)
+
+    def test_topic_generation_stays_completed_when_export_refresh_fails(self):
+        job_id = "unit_topic_export_refresh_failure"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                    "summary": {"generation_status": {"topic_sections": "not_started"}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("pipeline.summarize.generate_topic_sections", return_value=[{"topic": "예산", "summary": "예산 논의"}]),
+            patch.object(main, "_refresh_summary_exports", side_effect=RuntimeError("export failed")),
+            patch.object(main.logging, "exception"),
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        data = response.json()
+        self.assertEqual(data["generation_status"]["topic_sections"], "completed")
+        self.assertEqual(data["export_error"], "정리는 완료됐지만 다운로드 파일 갱신은 실패했습니다.")
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "completed")
+
+    def test_rejects_duplicate_topic_generation_while_generating(self):
+        job_id = "unit_topic_generation_duplicate"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                    "summary": {"generation_status": {"topic_sections": "generating"}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
+
+        self.assertEqual(response.status_code, 409)
+
+    def test_topic_generation_rebuilds_missing_result_from_record_payload(self):
+        job_id = "unit_rebuild_topic_generation"
+        payload = legacy_meeting_payload(id=job_id, jobId=job_id)
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+
+        with (
+            patch("pipeline.summarize.generate_topic_sections", return_value=[{"topic": "budget", "summary": "Budget discussion"}]),
+            patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)),
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(output_path.exists())
+        data = response.json()
+        self.assertEqual(data["generation_status"]["topic_sections"], "completed")
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["job_id"], job_id)
+        self.assertTrue(result_data["segments"])
 
     def test_txt_export_without_segments_has_placeholder(self):
         payload = legacy_meeting_payload(segments=[])

@@ -1,40 +1,16 @@
 import React from 'react';
 import { Settings } from 'lucide-react';
-import { ProgressBar } from './ProgressBar';
-
-interface AnalysisStatus {
-    active: boolean;
-    progress: number;
-    message: string;
-}
 
 interface HeaderProps {
     onOpenSettings?: () => void;
-    analysisStatus?: AnalysisStatus;
-    onShowAnalysis?: () => void;
 }
 
-export const Header: React.FC<HeaderProps> = ({ onOpenSettings, analysisStatus, onShowAnalysis }) => {
+export const Header: React.FC<HeaderProps> = ({ onOpenSettings }) => {
     return (
-        <header className="h-16 border-b border-border flex items-center justify-between px-6 glass-card border-x-0 border-t-0 rounded-none z-10 relative">
-            <h1 className="text-h3 text-primary">Smart Minutes AI</h1>
+        <header className="h-16 border-b border-border flex items-center justify-between gap-4 px-4 bg-surface shadow-sm z-10 relative sm:px-6">
+            <h1 className="min-w-0 truncate text-lg font-semibold text-foreground">LMO 스마트 회의시스템</h1>
 
-            <div className="flex items-center gap-3">
-                {analysisStatus?.active && (
-                    <button
-                        type="button"
-                        onClick={onShowAnalysis}
-                        className="hidden min-w-48 rounded-md border border-blue-200 bg-blue-50 px-3 py-2 text-left text-xs text-blue-800 shadow-sm transition-colors hover:bg-blue-100 sm:block"
-                        title={analysisStatus.message || '분석 진행 중'}
-                        aria-label="진행 중인 분석 보기"
-                    >
-                        <div className="flex items-center justify-between gap-3">
-                            <span className="font-semibold">분석 중</span>
-                            <span>{analysisStatus.progress}%</span>
-                        </div>
-                        <ProgressBar value={analysisStatus.progress} tone="info" size="sm" className="mt-1 bg-blue-100" />
-                    </button>
-                )}
+            <div className="flex shrink-0 items-center gap-3">
                 <button
                     type="button"
                     onClick={onOpenSettings}

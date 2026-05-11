@@ -66,6 +66,12 @@
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
 - [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
 - [x] 회사 전달용 portable 기본 묶음에서는 Qwen ASR와 Qwen ForcedAligner 모델을 제외한다. Qwen 비교/벤치 기록은 남기되 회사 PC 이동 패키지에는 `faster-whisper-large-v3`와 화자 분리 모델만 포함한다.
+- [ ] 회사에서 실행파일을 다시 만들 경우 모델은 빌드 전 원본 위치에 먼저 둔다.
+  - Whisper 원본 위치: `backend\models\stt\faster-whisper-large-v3`
+  - 화자 분리 원본 위치: `backend\models\diarization\speaker-diarization-community-1`
+  - 이후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1`를 실행하면 최종 실행 폴더 `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`로 복사된다.
+- [ ] 이미 만든 portable을 그대로 가져가서 실행 테스트만 할 경우에는 `lmo_audio` 폴더 전체를 가져간다. 이때 모델 위치는 `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`이면 된다.
+- [ ] 모델만 따로 가져갈 경우에는 회사 PC에서 재빌드할지, 기존 portable에 넣을지만 먼저 정한다. 재빌드용이면 `backend\models\...`에 넣고, 기존 portable 실행용이면 `lmo_audio\models\...`에 넣는다.
 - [ ] 앱 실행 후 시스템 설정 > 모델에서 누락 모델이 있는지 확인하고, 모델 복사 후 상태 새로고침을 누른다.
 - [x] 앱 안의 사용자용 모델 자동 다운로드 흐름을 제거하고, 관리자가 지정한 모델 파일을 `models`에 넣는 방식으로 정리한다.
 - [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `lmo_audio` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.

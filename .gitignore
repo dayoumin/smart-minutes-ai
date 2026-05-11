@@ -9,7 +9,18 @@ ENV/
 *.log
 
 # Models & Binaries (Large Files)
-backend/models/
+backend/models/*
+!backend/models/README.txt
+!backend/models/stt/
+backend/models/stt/*
+!backend/models/stt/faster-whisper-large-v3/
+backend/models/stt/faster-whisper-large-v3/*
+!backend/models/stt/faster-whisper-large-v3/.gitkeep
+!backend/models/diarization/
+backend/models/diarization/*
+!backend/models/diarization/speaker-diarization-community-1/
+backend/models/diarization/speaker-diarization-community-1/*
+!backend/models/diarization/speaker-diarization-community-1/.gitkeep
 backend/ffmpeg.exe
 backend/ffmpeg.zip
 backend/ffmpeg-extracted/

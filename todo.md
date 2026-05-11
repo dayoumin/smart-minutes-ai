@@ -1,8 +1,9 @@
 # 0. 다음 우선순위
 - [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
-  - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization off` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
-  - 2026-05-11 확인: ASR 벤치 15초 샘플은 `cpu_threads=4`, `num_workers=1` 조건에서 9.88초, 로컬 `/api/analyze` real SSE는 17.73초, portable sidecar real SSE는 35.41초에 완료됐다.
+  - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization on` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
+  - 2026-05-11 확인: 기존 `diarization off` 회귀 기준에서 ASR 벤치 15초 샘플은 `cpu_threads=4`, `num_workers=1` 조건으로 9.88초, 로컬 `/api/analyze` real SSE는 17.73초, portable sidecar real SSE는 35.41초에 완료됐다.
+  - 2026-05-11 추가 확인: `diarization on` 기준 portable 90초 샘플은 133.66초에 완료됐고, 화자 3명, 주제별 정리 3개, 발언자별 정리 3개가 생성됐다.
   - 결론: 600초대 지연의 현재 차단점은 해소됐다. 남은 검증은 회사 PC 이동 테스트와 긴 파일 실전 테스트로 분리한다.
   - 우선 확인 범위:
     - 현재 `backend\.venv`와 `backend\.venv-asr-faster-whisper`가 삭제된 로컬 Python 경로를 가리키는 문제 복구

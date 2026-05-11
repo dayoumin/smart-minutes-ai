@@ -33,7 +33,7 @@
     "denoise": false
   },
   "diarization": {
-    "enabled": false,
+    "enabled": true,
     "min_speakers": null,
     "max_speakers": null
   },

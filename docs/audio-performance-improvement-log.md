@@ -612,3 +612,13 @@ Hermes Agent 60초 샘플:
 - 104초 실제 분석: `video\videoplayback.mp4`를 같은 복사본 sidecar에서 실행했을 때 4개 청크로 처리됐고 55.32초에 완료, segment 17개가 생성됐다.
 - 365초 실제 분석: `video\test (4).mp4`를 같은 복사본 sidecar에서 실행했을 때 13개 청크로 처리됐고 139.25초에 완료, segment 143개가 생성됐다.
 - 판단: 프로젝트 내부의 이동 복사본 기준으로는 portable 폴더 독립 실행, 모델 경로, sidecar 패키징, 짧은/중간 길이 실제 분석 경로가 모두 통과했다. 실제 회사 PC 이동 테스트와 30분 이상 장문 파일 검증은 별도 남은 작업이다.
+## 2026-05-11 Portable diarization/topic/speaker-context smoke
+
+- Test target: `D:\Projects\audio\lmo_audio` portable sidecar with `MEETING_AI_BACKEND_DIR=D:\Projects\audio\lmo_audio\backend`.
+- Sample: `.codex-work\diarization-check\test4_90s.mp4`, clipped from `video\test (4).mp4`.
+- Config: `faster-whisper-large-v3`, CPU, `diarization.enabled=true`.
+- Result: `/api/analyze` completed in 133.66s with 40 transcript segments.
+- Diarization result: 3 speakers detected: `화자00` 8 segments, `화자01` 18 segments, `화자02` 14 segments.
+- Topic generation: `/api/outputs/{job_id}/generate-topic-sections` completed in 2.37s and produced 3 topic sections.
+- Speaker context generation: `/api/outputs/{job_id}/generate-speaker-context` completed in 3.34s and produced 3 speaker context summaries plus 3 participant summaries.
+- Follow-up fix: source `backend/config.json` now defaults `diarization.enabled=true` so future portable rebuilds do not silently disable speaker separation.

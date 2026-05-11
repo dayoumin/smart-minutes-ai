@@ -66,6 +66,7 @@
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
 - [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
 - [x] 회사 전달용 portable 기본 묶음에서는 Qwen ASR와 Qwen ForcedAligner 모델을 제외한다. Qwen 비교/벤치 기록은 남기되 회사 PC 이동 패키지에는 `faster-whisper-large-v3`와 화자 분리 모델만 포함한다.
+- [x] 2026-05-12 결정: 앱 기본 흐름과 설정 UI에서는 `faster-whisper-large-v3`만 사용한다. Qwen/Cohere는 기록과 벤치마크 코드만 보존하고 사용자 설정 후보로 다루지 않는다.
 - [ ] 회사에서 실행파일을 다시 만들 경우 모델은 빌드 전 원본 위치에 먼저 둔다.
   - Whisper 원본 위치: `backend\models\stt\faster-whisper-large-v3`
   - 화자 분리 원본 위치: `backend\models\diarization\speaker-diarization-community-1`
@@ -133,7 +134,7 @@
   - ffmpeg `speechnorm` 선택형 모드 추가 완료, 샘플 비교 필요
   - ffmpeg `dynaudnorm`
   - 작은 목소리 보정 효과와 잡음 증폭 부작용 비교
-- [ ] 대체 STT 모델 비교 검토
+- [x] 대체 STT 모델 비교 종료: 기본 STT는 `faster-whisper-large-v3`로 고정
   - faster-whisper-large-v3
   - Qwen3-ASR 계열
   - WhisperX 계열
@@ -143,13 +144,12 @@
   - 2026-05-07 추가 확인: 같은 조건의 90초 테스트는 213.86초, 한글 비율 99.7%로 품질은 좋지만 처리 속도가 느림.
   - 2026-05-07 추가 확인: `Qwen3-ASR-1.7B` CPU 90초 테스트는 123.64초, 한글 비율 99.6%로 성공. 기본 결과는 1개 텍스트 세그먼트라 화자 정렬에는 ForcedAligner/문장 병합 검토가 필요.
   - 2026-05-07 추가 확인: `Qwen3-ASR-1.7B + Qwen3-ForcedAligner-0.6B` CPU 30초 테스트는 58.07초, 75개 timestamp segment 생성.
-- [ ] 포터블 앱 모델 폴더 구조 정리
-  - `models/stt/cohere-transcribe-03-2026`
-  - `models/stt/faster-whisper-large-v3`
-  - `models/stt/Qwen3-ASR-1.7B`
-  - `models/aligner/Qwen3-ForcedAligner-0.6B`
-  - 사용자에게 보이는 포터블 폴더와 백엔드 설정 경로를 일치시킨다.
-- [ ] Qwen3-ASR vs faster-whisper 최종 후보 테스트
+- [x] 2026-05-12 결정: 회사 PC/사용자 실행 흐름에서는 대체 STT 후보를 더 진행하지 않는다. 비교 기록과 benchmark 코드는 보존한다.
+- [x] 포터블 앱 모델 폴더 구조 정리
+  - 사용자 실행 폴더 기준: `lmo_audio\models\faster-whisper-large-v3`
+  - 화자 분리 모델: `lmo_audio\models\speaker-diarization-community-1`
+  - Qwen/Cohere 모델 폴더는 사용자 실행 경로에서 안내하지 않는다.
+- [x] Qwen3-ASR vs faster-whisper 최종 후보 테스트 종료
   - 테스트 계획: `docs/qwen-vs-faster-whisper-test-plan.md`
   - 먼저 Qwen ForcedAligner 결과를 문장/발화 단위로 병합하는 최소 구현이 필요하다.
   - 2026-05-07 준비: `merge_aligner_segments_to_utterances()` 초안과 단위 테스트 추가. Qwen aligner 30초 결과는 75개 raw segment에서 6개 발화 segment로 병합됨.
@@ -162,13 +162,14 @@
   - 2026-05-07 speaker overlap 재분할 플래그 추가. 이번 90초 샘플은 내부 segment가 이미 짧아 추가 분할은 거의 없었고, 남은 문제는 원문 텍스트를 시간 그룹에 배분할 때 speaker boundary를 고려해야 하는 쪽으로 확인됨.
   - 2026-05-07 `test (4).mp4` 90초 비교: Qwen은 224.76초/한글 100%/내부 17개/표시 36개, faster-whisper는 62.56초/한글 99.2%/segment 38개. 이 샘플에서는 faster-whisper가 더 빠르고 발화 경계가 자연스러움.
   - 2026-05-07 `test (1).mp4` 90초 비교: Qwen은 약 276초/내부 23개/표시 47개, faster-whisper는 약 71초/segment 41개. 두 번째 실제 대화 샘플에서도 faster-whisper가 더 실용적.
+  - 2026-05-12 결정: 앱은 `faster-whisper-large-v3` 단일 기본값으로 간다. Qwen은 제품 후보가 아니라 기록/벤치마크 보존 대상으로 둔다.
 - [x] 무음 제거는 ffmpeg `silenceremove` 후보로 60초 샘플 1차 비교
 - [ ] 무음 제거 청취 검증 및 실제 회의 샘플 추가 비교
 - [ ] 음성 강화(speech enhancement)는 별도 후보 모델/라이브러리 조사 후 실험 여부 결정
 - [x] denoise는 ffmpeg `afftdn` 후보로 60초 샘플 1차 비교
 - [ ] denoise 청취 검증 및 실제 잡음 샘플 추가 비교
 - [ ] legacy 필요 시 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
-- [ ] 사용자 설정 UI에 전처리 옵션 추가
+- [x] 사용자 설정 UI에 전처리 옵션 추가
   - 자동
   - 끔
   - 표준 정규화(`loudnorm`)

@@ -4,7 +4,6 @@
   "paths": {
     "ffmpeg": "ffmpeg.exe",
     "stt_model": "../models/faster-whisper-large-v3",
-    "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
     "diarization_model": "../models",
     "segmentation_model": "",
     "llm_model": "./models/llm/gemma.gguf",

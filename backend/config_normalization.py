@@ -4,11 +4,9 @@ from copy import deepcopy
 from typing import Any
 
 
-SUPPORTED_STT_MODELS = {"faster-whisper-large-v3", "qwen3-asr"}
+SUPPORTED_STT_MODELS = {"faster-whisper-large-v3"}
 DEFAULT_STT_MODEL = "faster-whisper-large-v3"
 DEFAULT_STT_MODEL_PATH = "../models/faster-whisper-large-v3"
-DEFAULT_QWEN_MODEL_PATH = "../models/Qwen3-ASR-1.7B"
-DEFAULT_QWEN_ALIGNER_MODEL_PATH = "../models/Qwen3-ForcedAligner-0.6B"
 DEFAULT_STT_DEVICE = "cpu"
 DEFAULT_LONG_AUDIO_CHUNK_SECONDS = 30
 DEFAULT_STT_CHUNK_SECONDS = 30
@@ -58,8 +56,7 @@ def normalize_app_config(config: dict) -> dict:
         or "cohere" in str(paths.get("stt_model", "")).lower()
         or normalized_stt_path in {"../models", "./models", "models"}
     ):
-        paths["stt_model"] = DEFAULT_QWEN_MODEL_PATH if selected_model == "qwen3-asr" else DEFAULT_STT_MODEL_PATH
-    paths.setdefault("qwen_aligner_model", DEFAULT_QWEN_ALIGNER_MODEL_PATH)
+        paths["stt_model"] = DEFAULT_STT_MODEL_PATH
 
     stt["chunk_seconds"] = max(1, _safe_int(stt.get("chunk_seconds"), DEFAULT_STT_CHUNK_SECONDS))
     diarization["enabled"] = bool(diarization.get("enabled", False))

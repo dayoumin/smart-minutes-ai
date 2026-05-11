@@ -43,7 +43,7 @@ interface SettingsPayload {
     stt?: {
         language?: string;
         device?: 'auto' | 'cpu' | 'cuda';
-        selected_model?: 'faster-whisper-large-v3' | 'qwen3-asr';
+        selected_model?: 'faster-whisper-large-v3';
     };
     paths?: {
         output_dir?: string;
@@ -78,8 +78,6 @@ type SettingsTab = 'general' | 'models' | 'advanced';
 
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '기본 음성 인식 파일';
-    if (model.key === 'stt_qwen') return '추가 음성 인식 파일';
-    if (model.key === 'stt_qwen_aligner') return '문장 정렬 파일';
     if (model.key === 'diarization') return '화자 구분';
     return model.label;
 };
@@ -108,7 +106,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [chunkingEnabled, setChunkingEnabled] = useState(true);
     const [diarizationEnabled, setDiarizationEnabled] = useState(false);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
-    const [sttSelectedModel, setSttSelectedModel] = useState<'faster-whisper-large-v3' | 'qwen3-asr'>('faster-whisper-large-v3');
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
     const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
     const [normalizeAudio, setNormalizeAudio] = useState(true);
@@ -116,7 +113,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
 
     const userVisibleModels = useMemo(
         () => (models?.models || []).filter(
-            model => model.required || model.key === 'stt_qwen' || model.key === 'stt_qwen_aligner' || model.key === 'diarization',
+            model => model.key === 'stt_faster_whisper' || model.key === 'diarization',
         ),
         [models],
     );
@@ -126,7 +123,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setChunkingEnabled(nextSettings.processing?.enable_long_audio_chunking ?? true);
         setDiarizationEnabled(nextSettings.diarization?.enabled ?? false);
         setSttDevice(nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu');
-        setSttSelectedModel(nextSettings.stt?.selected_model ?? 'faster-whisper-large-v3');
         setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setNormalizeAudio(nextSettings.preprocessing?.normalize_audio ?? true);
         setNormalizationMode(nextSettings.preprocessing?.normalization_mode ?? 'auto');
@@ -228,7 +224,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                         enabled: diarizationEnabled,
                     },
                     stt: {
-                        selected_model: sttSelectedModel,
+                        selected_model: 'faster-whisper-large-v3',
                         device: sttDevice,
                     },
                     preprocessing: {
@@ -439,21 +435,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     {isSaving ? '저장 중...' : '저장'}
                                 </Button>
                             </div>
-
-                            <label className="rounded-md border border-border bg-muted/20 p-4">
-                                <span className="block font-medium text-foreground">음성 인식 모델</span>
-                                <select
-                                    value={sttSelectedModel}
-                                    onChange={event => setSttSelectedModel(event.target.value as typeof sttSelectedModel)}
-                                    className="mt-3 w-full rounded-md border border-input bg-background px-3 py-2"
-                                >
-                                    <option value="faster-whisper-large-v3">기본 인식</option>
-                                    <option value="qwen3-asr">추가 인식</option>
-                                </select>
-                                <span className="mt-2 block text-sm text-muted-foreground">
-                                    기본 인식을 권장합니다. 추가 인식은 관련 파일이 모두 준비된 경우에만 사용하세요.
-                                </span>
-                            </label>
 
                             <label className="rounded-md border border-border bg-muted/20 p-4">
                                 <span className="block font-medium text-foreground">분석 장치</span>

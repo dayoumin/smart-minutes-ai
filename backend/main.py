@@ -20,7 +20,6 @@ from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from config_normalization import (
     DEFAULT_LONG_AUDIO_CHUNK_SECONDS,
     DEFAULT_STT_CHUNK_SECONDS,
-    SUPPORTED_STT_MODELS,
     normalize_app_config,
 )
 from model_manager import get_model_status, model_exists, get_model_spec, normalize_windows_path, resolve_model_path
@@ -157,11 +156,7 @@ async def update_settings(payload: dict = Body(...)) -> dict:
 
     if "stt" in payload:
         stt = payload["stt"] or {}
-        if "selected_model" in stt:
-            selected_model = str(stt["selected_model"])
-            if selected_model not in SUPPORTED_STT_MODELS:
-                raise HTTPException(status_code=400, detail="stt.selected_model must be faster-whisper-large-v3 or qwen3-asr")
-            config.setdefault("stt", {})["selected_model"] = selected_model
+        config.setdefault("stt", {})["selected_model"] = "faster-whisper-large-v3"
         if "device" in stt:
             device = str(stt["device"])
             if device not in {"cpu", "cuda"}:
@@ -177,19 +172,17 @@ async def models_status() -> dict:
     try:
         status = get_model_status(BASE_DIR)
         config = load_config()
-        selected_stt = config.get("stt", {}).get("selected_model", "faster-whisper-large-v3")
+        selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
         stt_device_status = get_stt_device_status()
-        required_stt_keys = (
-            {"stt_qwen", "stt_qwen_aligner"}
-            if selected_stt == "qwen3-asr"
-            else {"stt_faster_whisper"}
-        )
+        required_stt_keys = {"stt_faster_whisper"}
         for model in status.get("models", []):
             key = model.get("key")
-            if key in {"stt_faster_whisper", "stt_qwen", "stt_qwen_aligner"}:
+            if key == "stt_faster_whisper":
                 model["required"] = key in required_stt_keys
+            elif key in {"stt_qwen", "stt_qwen_aligner"}:
+                model["required"] = False
             elif key == "diarization":
                 model["required"] = diarization_enabled
         required_models = [model for model in status.get("models", []) if model.get("required")]
@@ -920,23 +913,14 @@ async def stream_real_analysis(
         config = load_config()
 
         report_progress("음성 인식 모델 확인 중", 6)
-        selected_stt = config.setdefault("stt", {}).get("selected_model", "faster-whisper-large-v3")
-        stt_spec_key = "stt_qwen" if selected_stt == "qwen3-asr" else "stt_faster_whisper"
-        stt_spec = get_model_spec(stt_spec_key)
+        config.setdefault("stt", {})["selected_model"] = "faster-whisper-large-v3"
+        stt_spec = get_model_spec("stt_faster_whisper")
         if not model_exists(BASE_DIR, stt_spec):
             raise RuntimeError(
                 f"선택한 음성 인식 모델이 없습니다: {stt_spec.label}. "
                 "실행 파일 옆 models 폴더에 모델 폴더를 넣은 뒤 다시 실행해 주세요."
             )
         config["paths"]["stt_model"] = resolve_model_path(BASE_DIR, stt_spec)
-        if selected_stt == "qwen3-asr":
-            aligner_spec = get_model_spec("stt_qwen_aligner")
-            if not model_exists(BASE_DIR, aligner_spec):
-                raise RuntimeError(
-                    "Qwen을 사용하려면 Qwen3 ForcedAligner 모델도 필요합니다. "
-                    "models\\Qwen3-ForcedAligner-0.6B 폴더를 넣어 주세요."
-                )
-            config["paths"]["qwen_aligner_model"] = resolve_model_path(BASE_DIR, aligner_spec)
         report_progress("음성 인식 모델 준비 완료", 8)
 
         diarization_spec = get_model_spec("diarization")
@@ -1222,10 +1206,6 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     stt_language = config["stt"].get("language", "ko")
     stt_device = config["stt"].get("device", "auto")
     stt_chunk_seconds = int(config["stt"].get("chunk_seconds", DEFAULT_STT_CHUNK_SECONDS))
-    qwen_aligner_model_path = config["paths"].get("qwen_aligner_model")
-    if qwen_aligner_model_path and qwen_aligner_model_path.startswith((".", "..")):
-        qwen_aligner_model_path = resolve_config_path(qwen_aligner_model_path)
-
     def _transcribe_chunks(chunks_to_process, model_path, allow_internal_fallback):
         collected_segments = []
         total = len(chunks_to_process)
@@ -1242,7 +1222,6 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
                     device=stt_device,
                     chunk_seconds=stt_chunk_seconds,
                     fallback_model_path=fallback_stt_model_path if allow_internal_fallback else None,
-                    qwen_aligner_model_path=qwen_aligner_model_path,
                 )
                 _raise_if_cancelled()
                 collected_segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))

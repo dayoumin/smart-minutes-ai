@@ -4,13 +4,13 @@
   "engines": [
     {
       "id": "cohere-current",
-      "label": "Cohere Transcribe current app path",
+      "label": "Cohere Transcribe legacy benchmark path",
       "engine": "cohere",
-      "enabled": true,
+      "enabled": false,
       "model_path": "lmo_audio/models",
       "language": "ko",
       "chunk_seconds": 30,
-      "notes": "Current desktop app STT model. Uses backend/pipeline/transcribe.py."
+      "notes": "Legacy benchmark candidate only. Keep this entry for comparison and regression tracing; run it explicitly by id when needed. Do not include it in the default benchmark set or current desktop default STT."
     },
     {
       "id": "faster-whisper-large-v3",
@@ -21,6 +21,8 @@
       "language": "ko",
       "device": "cpu",
       "compute_type": "int8",
+      "cpu_threads": 4,
+      "num_workers": 1,
       "beam_size": 1,
       "vad_filter": true,
       "notes": "2026-05-07: CPU int8 beam1 completed a 30s TV debate sample in 15.45s with 98.8% Hangul ratio. Auto/CUDA probing was too slow on this machine."

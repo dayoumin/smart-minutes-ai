@@ -10,7 +10,8 @@ D:\Projects\audio\
   desktop-app\                     # React/Tauri 데스크탑 앱 소스
   docs\                            # 설계/테스트/배포 문서
   scripts\                         # 빌드, 패키징, 검증 스크립트
-  Smart Minutes AI\                # 실행용 portable 배포 폴더, 커밋 제외
+  lmo_audio\                       # 실행용 portable 배포 폴더, 커밋 제외
+  video\                           # 성능/품질 평가용 샘플, 커밋 제외
   .hf_modules\                     # 모델 실행 코드 캐시, 커밋 제외
   todo.md
   roadmap.md
@@ -21,20 +22,20 @@ D:\Projects\audio\
 실행할 때는 루트의 portable 폴더를 사용합니다.
 
 ```text
-D:\Projects\audio\Smart Minutes AI\Smart Minutes AI.exe
+D:\Projects\audio\lmo_audio\lmo_audio.exe
 ```
 
-`Smart Minutes AI.exe`만 따로 옮기면 안 됩니다. 아래 폴더들이 같은 위치에 있어야 합니다.
+`lmo_audio.exe`만 따로 옮기면 안 됩니다. 아래 폴더들이 같은 위치에 있어야 합니다.
 
 ```text
-Smart Minutes AI\
-  Smart Minutes AI.exe
+lmo_audio\
+  lmo_audio.exe
   backend\
   binaries\
   models\
 ```
 
-`models`에는 기본 음성 인식 모델과 화자 분리 모델 파일이 들어갑니다. 모델은 단일 파일 하나가 아니라 `config.json`, `model.safetensors`, `tokenizer_config.json`, `embedding`, `segmentation`, `plda` 같은 파일/폴더 묶음입니다.
+`models`에는 기본 음성 인식 모델과 화자 분리 모델 파일이 들어갑니다. 현재 기본 음성 인식 모델은 `faster-whisper-large-v3`이며, `models\faster-whisper-large-v3` 폴더 안에 `model.bin`, `tokenizer.json`, `config.json` 같은 파일 묶음이 있어야 합니다.
 
 ## 소스 폴더
 
@@ -44,18 +45,30 @@ Smart Minutes AI\
 
 개발 중 웹 UI에서 실제 분석 서버를 쓸 때는 전역 Python이 아니라 백엔드 가상환경으로 실행합니다.
 
+개발 중에는 프론트와 백엔드를 각각 띄웁니다.
+
 ```powershell
 .\scripts\start_dev_backend.ps1
+cd desktop-app
+corepack pnpm run dev
 ```
 
-이 스크립트는 `backend\.venv`에서 `fastapi`, `uvicorn`, `faster_whisper` import를 먼저 확인한 뒤 `http://127.0.0.1:17863` 백엔드를 시작합니다.
+백엔드 스크립트는 `backend\.venv`에서 `fastapi`, `uvicorn`, `faster_whisper` import를 먼저 확인한 뒤 `http://127.0.0.1:17863` 백엔드를 시작합니다. `npm run dev` 또는 `pnpm run dev`만 실행하면 프론트만 뜨고 실제 분석 백엔드는 시작되지 않습니다.
+
+요약 기본 경로는 Ollama입니다. `llama-cpp-python`은 GGUF 파일을 Python에서 직접 실행할 때만 필요한 선택 의존성이라 기본 `backend\.venv`에는 넣지 않습니다. 필요하면 Windows 긴 경로 문제를 피하기 위해 짧은 경로에 별도 환경을 만듭니다.
+현재 PC에서 `llama-cpp-python`을 소스 설치하려면 Windows 긴 경로 설정(`LongPathsEnabled=1`)이 필요합니다. 이 값이 꺼져 있으면 아래 스크립트는 시작 전에 실패 이유를 알려줍니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\setup_llama_cpp_env.ps1 -Python <python.exe 경로>
+```
 
 ## 캐시와 생성물
 
 아래 항목은 커밋하지 않습니다.
 
 ```text
-Smart Minutes AI\
+lmo_audio\
+video\
 .hf_modules\
 .codex-work\
 outputs\
@@ -64,7 +77,7 @@ backend\build\
 backend\dist-sidecar\
 desktop-app\dist\
 desktop-app\src-tauri\target\
-Smart_Minutes_AI_Portable*.zip
+lmo_audio*.zip
 *.mp4
 ```
 
@@ -72,7 +85,7 @@ Smart_Minutes_AI_Portable*.zip
 
 ## 회사 PC 이관
 
-회사 PC에는 실행용이면 `Smart Minutes AI` 폴더 전체를 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `Smart Minutes AI\models` 바로 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
+회사 PC에는 실행용이면 `lmo_audio` 폴더 전체를 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
 
 자세한 내용은 [Smart_Minutes_AI_Portable_회사_PC_사용법.md](Smart_Minutes_AI_Portable_회사_PC_사용법.md)를 봅니다.
 
@@ -90,18 +103,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
 
-배포 후 기준 실행 폴더는 항상 `D:\Projects\audio\Smart Minutes AI`입니다. `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
+배포 후 기준 실행 폴더는 항상 `D:\Projects\audio\lmo_audio`입니다. `desktop-app\src-tauri\target\release\portable\lmo_audio`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
 
 `release-manifest.json`은 배포본의 신분증입니다. 어떤 커밋에서 만들었는지, 앱 exe/분석 실행 파일/backend 설정 파일의 해시가 무엇인지 기록합니다. `verify_portable.ps1`과 `diagnose_portable.ps1`은 이 값을 다시 계산해 구버전 파일이나 손으로 바뀐 파일이 섞였는지 확인합니다.
 
 분석 결과는 portable 실행 폴더 하위에 저장됩니다.
 
 ```text
-Smart Minutes AI\backend\outputs\
-Smart Minutes AI\backend\temp\
+lmo_audio\backend\outputs\
+lmo_audio\backend\temp\
 ```
 
-따라서 회사 PC에서는 `Smart Minutes AI` 폴더를 쓰기 가능한 위치에 둡니다. 예: `D:\Smart Minutes AI`, `D:\Apps\Smart Minutes AI`.
+따라서 회사 PC에서는 `lmo_audio` 폴더를 쓰기 가능한 위치에 둡니다. 예: `D:\lmo_audio`, `D:\Apps\lmo_audio`.
 
 상태가 이상하면 먼저 아래 진단 스크립트를 실행합니다.
 

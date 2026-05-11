@@ -165,7 +165,14 @@ def run_faster_whisper(root: Path, wav_path: Path, engine: dict[str, Any]) -> di
     last_error: Exception | None = None
     for try_device, try_compute in configs:
         try:
-            model = WhisperModel(str(model_path), device=try_device, compute_type=try_compute)
+            model_kwargs: dict[str, Any] = {}
+            if try_device == "cpu":
+                if engine.get("cpu_threads") is not None:
+                    model_kwargs["cpu_threads"] = int(engine["cpu_threads"])
+                if engine.get("num_workers") is not None:
+                    model_kwargs["num_workers"] = int(engine["num_workers"])
+
+            model = WhisperModel(str(model_path), device=try_device, compute_type=try_compute, **model_kwargs)
             segments_iter, info = model.transcribe(
                 str(wav_path),
                 language=str(engine.get("language", "ko")),
@@ -180,7 +187,7 @@ def run_faster_whisper(root: Path, wav_path: Path, engine: dict[str, Any]) -> di
             return {
                 "segments": normalized,
                 "text": text,
-                "runtime": {"device": try_device, "compute_type": try_compute},
+                "runtime": {"device": try_device, "compute_type": try_compute, **model_kwargs},
                 "model_info": {
                     "language": getattr(info, "language", None),
                     "language_probability": getattr(info, "language_probability", None),

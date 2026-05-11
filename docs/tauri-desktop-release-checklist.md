@@ -62,7 +62,7 @@
 
 ## 7. 이 프로젝트의 단일 배포 흐름
 
-혼돈을 줄이기 위해 실제 배포 기준은 루트의 `Smart Minutes AI` 폴더 하나로 고정한다. Tauri target 폴더는 중간 산출물이며 사용자가 직접 실행할 기준 폴더가 아니다.
+혼돈을 줄이기 위해 실제 배포 기준은 루트의 `lmo_audio` 폴더 하나로 고정한다. Tauri target 폴더는 중간 산출물이며 사용자가 직접 실행할 기준 폴더가 아니다.
 
 정식 배포 갱신:
 
@@ -81,7 +81,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
 - 실행 중인 앱, sidecar, 관련 WebView 프로세스를 종료한다.
 - 필요 시 WebView 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
 - Tauri 리소스와 portable 폴더를 다시 구성한다.
-- 루트 `Smart Minutes AI` 폴더로 동기화한다.
+- 루트 `lmo_audio` 폴더로 동기화한다.
 - `release-manifest.json`에 exe, sidecar, backend 파일 해시를 기록한다.
 - `scripts\verify_portable.ps1`로 manifest 해시와 실행 smoke test를 확인한다.
 
@@ -94,7 +94,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps
 운영 기준:
 
 - 사용자가 앱 안에서 모델을 개별 다운로드하지 않는다.
-- 모델은 관리자가 지정한 공유 위치에서 받아 `Smart Minutes AI\models` 바로 아래에 둔다.
+- 기본 STT 모델은 관리자가 지정한 공유 위치에서 받아 `lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 분석 결과와 임시 파일은 portable 실행 폴더 하위 `backend\outputs`, `backend\temp`에 생성된다.
 - 회사 PC에서는 portable 폴더를 쓰기 가능한 위치에 둔다.

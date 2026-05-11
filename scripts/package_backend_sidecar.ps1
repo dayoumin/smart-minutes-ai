@@ -27,7 +27,15 @@ if (Test-Path $BuildDistDir) {
     Remove-Item -LiteralPath $BuildDistDir -Recurse -Force
 }
 if (Test-Path (Join-Path $TauriBinDir "_internal")) {
-    cmd /c "rmdir /s /q `"$TauriBinDir\_internal`"" | Out-Null
+    $internalDir = Resolve-Path -LiteralPath (Join-Path $TauriBinDir "_internal")
+    $tauriBinFullPath = (Resolve-Path -LiteralPath $TauriBinDir).Path
+    if (-not $internalDir.Path.StartsWith($tauriBinFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove unsafe sidecar dependency path: $($internalDir.Path)"
+    }
+    Remove-Item -LiteralPath $internalDir.Path -Recurse -Force
+    if (Test-Path -LiteralPath $internalDir.Path) {
+        throw "Failed to remove stale sidecar dependency directory: $($internalDir.Path)"
+    }
 }
 if (Test-Path $OutputPath) {
     Remove-Item -LiteralPath $OutputPath -Force
@@ -59,6 +67,7 @@ try {
         --collect-submodules "lxml" `
         --collect-binaries "lxml" `
         --collect-data "lxml" `
+        --hidden-import "unicodedata" `
         --distpath $BuildDistDir `
         --workpath (Join-Path $BackendDir "build") `
         --specpath (Join-Path $BackendDir "build") `
@@ -84,6 +93,10 @@ if (-not (Test-Path (Join-Path $TauriBinDir "_internal"))) {
 $lxmlEtree = Get-ChildItem -LiteralPath (Join-Path $TauriBinDir "_internal\lxml") -Filter "etree*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $lxmlEtree) {
     throw "Sidecar build failed: lxml.etree was not bundled into _internal\lxml."
+}
+$unicodeData = Get-ChildItem -LiteralPath (Join-Path $TauriBinDir "_internal") -Filter "unicodedata*.pyd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+if (-not $unicodeData) {
+    throw "Sidecar build failed: unicodedata was not bundled into _internal."
 }
 if ((Get-PeSubsystem $OutputPath) -ne 2) {
     throw "Sidecar must be Windows GUI subsystem. Rebuild with PyInstaller --noconsole: $OutputPath"

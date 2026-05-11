@@ -5,6 +5,8 @@ param(
 )
 
 $ErrorActionPreference = "Continue"
+$ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
+$ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
 function Resolve-InRepoPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -149,19 +151,13 @@ foreach ($connection in @($connections)) {
 }
 
 Write-Section "Model Markers"
-$markers = @(
-    "config.json",
-    "model.safetensors",
-    "preprocessor_config.json",
-    "tokenizer_config.json",
-    "config.yaml",
-    "embedding\pytorch_model.bin",
-    "segmentation\pytorch_model.bin",
-    "plda\plda.npz"
-)
-foreach ($marker in $markers) {
-    $path = Join-Path $modelsDir $marker
-    Write-Host "$marker : $(Test-Path -LiteralPath $path)"
+foreach ($model in @($ModelLayout.models)) {
+    $modelDir = Join-Path $modelsDir ([string]$model.portableDir)
+    Write-Host "$($model.label) : $(Test-Path -LiteralPath $modelDir)  $modelDir"
+    foreach ($marker in @($model.requiredMarkers)) {
+        $path = Join-Path $modelDir ([string]$marker)
+        Write-Host "  $marker : $(Test-Path -LiteralPath $path)"
+    }
 }
 
 Write-Section "WebView Cache"

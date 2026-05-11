@@ -17,5 +17,4 @@ gradio
 fastapi
 uvicorn
 python-multipart
-llama-cpp-python
 huggingface_hub

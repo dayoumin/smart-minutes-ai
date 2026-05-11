@@ -581,3 +581,24 @@ Hermes Agent 60초 샘플:
 - Current blocker assessment:
   - caching alone did not recover acceptable CPU latency on this machine
   - next checks should compare a smaller whisper profile or a different faster-whisper runtime/dependency set before starting a portable build
+
+## 2026-05-11 기준선 재정리와 venv 상태 확인
+
+- 배포 기준 이름을 코드 자동화에 맞춰 `lmo_audio` / `lmo_audio.exe`로 고정했다. `Smart Minutes AI`는 제품/문서 제목으로 남을 수 있지만, 실제 portable 실행 폴더 기준으로는 쓰지 않는다.
+- 기본 STT 기준은 `faster-whisper-large-v3`로 둔다. Cohere는 품질 문제 때문에 기본 후보에서 제외하지만, 관련 코드와 기록은 삭제하지 않고 과거 비교/벤치마크 후보로 보존한다.
+- 개발 루틴은 프론트와 백엔드를 분리한다. 프론트는 `desktop-app`에서 `corepack pnpm run dev`, 백엔드는 `scripts/start_dev_backend.ps1`로 `127.0.0.1:17863`에 띄운다.
+- 추가 진단: 현재 `backend\.venv`는 `C:\Users\MS\AppData\Local\Programs\Python\Python311`, `backend\.venv-asr-faster-whisper`는 `C:\Users\MS\AppData\Local\Programs\Python\Python312`를 가리키지만, 이 Python 실행 파일들이 현재 PATH/파일 시스템에서 잡히지 않아 venv 실행이 실패한다.
+- 판단: 다음 faster-whisper 지연 재검증 전에 개발용 backend venv와 ASR 전용 venv를 현재 PC의 실제 Python 런타임으로 재구성해야 한다. 지금 바로 STT 속도 비교를 실행하면 런타임 복구 문제와 모델 성능 문제가 섞인다.
+- 복구: 기존 `backend\.venv*` 폴더를 삭제하고, Codex 번들 Python 3.12.13 기준으로 `backend\.venv`와 `backend\.venv-asr-faster-whisper`를 새로 만들었다.
+- 검증: `backend\.venv`는 `fastapi`, `uvicorn`, `faster_whisper`, `ctranslate2`, `torch`, `cohere` import와 `pip check`를 통과했다. ASR 전용 venv도 `faster_whisper`, `ctranslate2`, `numpy`, `WhisperModel` import와 `pip check`를 통과했다.
+- 검증: `scripts\start_dev_backend.ps1` 실행 후 `/api/health`가 `backend_dir=D:\Projects\audio\backend`, `python_executable=D:\Projects\audio\backend\.venv\Scripts\python.exe`로 응답했다.
+- 제외: `llama-cpp-python`은 Windows 긴 경로 문제로 전체 requirements 설치를 막았으므로 기본 requirements에서 분리했다. 현재 요약 기본 경로는 Ollama provider이고, GGUF 직접 실행이 필요할 때만 `backend\requirements-llama.txt`와 `scripts\setup_llama_cpp_env.ps1`로 짧은 경로의 별도 환경에 설치한다.
+- 재검증: 새 ASR venv에서 `scripts\run_asr_benchmark.py --engines faster-whisper-large-v3 --sample-seconds 15 --manifest docs\audio-testset-manifest.csv`를 먼저 실행했을 때 벤치 스크립트가 앱과 달리 `cpu_threads=4`, `num_workers=1`을 넘기지 않아 15초 샘플이 207.60초 걸렸다.
+- 조치: `configs/asr-models.json`과 `scripts\run_asr_benchmark.py`를 앱 런타임과 맞춰 CPU에서 `cpu_threads=4`, `num_workers=1`을 쓰도록 정렬했다.
+- 재검증: 같은 15초 샘플은 `device=cpu`, `compute_type=int8`, `cpu_threads=4`, `num_workers=1` 조건에서 9.88초에 완료됐다. 즉 이번 지연 재현의 직접 원인은 venv 자체보다 벤치/실행 경로의 faster-whisper CPU worker 설정 불일치였다.
+- `llama-cpp-python` 추가 확인: agent 검토 결과 현재 기본 요약 경로는 Ollama이고, `backend/pipeline/summarize.py`는 GGUF/BIN 파일 경로를 직접 지정할 때만 `llama_cpp`를 import한다. 따라서 기능은 삭제하지 않고 선택 의존성으로 분리한다.
+- `llama-cpp-python` 설치 시도: `C:\tmp\lmo-llama-venv`와 `C:\tmp\lmo-pip-temp`처럼 짧은 경로를 사용해도 sdist 내부의 긴 경로 때문에 실패했다. 이 PC는 `HKLM\SYSTEM\CurrentControlSet\Control\FileSystem\LongPathsEnabled=0`이고, 현재 권한으로 HKLM 값을 바꾸지 못했다. `scripts\setup_llama_cpp_env.ps1`는 이제 시작 전에 이 조건을 확인하고 명확히 실패한다.
+- 실제 backend 검증: `video\portable_video_15s.mp4`를 `/api/analyze` real SSE 경로로 실행했을 때 17.73초에 완료됐고, JSON/TXT/MD/DOCX/HWPX 출력이 생성됐다.
+- portable 1차 검증: `scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild`로 `lmo_audio`를 재구성하면 기본 구조/모델/health/export smoke는 통과했지만, deploy sidecar의 실제 `/api/analyze`는 `No module named 'unicodedata'`로 실패했다. 이는 웹/backend 문제가 아니라 오래된 PyInstaller sidecar의 표준 확장 모듈 누락이었다.
+- 조치: `scripts\package_backend_sidecar.ps1`에 `--hidden-import unicodedata`와 빌드 후 `unicodedata*.pyd` 존재 검증을 추가했다. 새 `backend\.venv`에 `backend\requirements-desktop.txt`의 PyInstaller 빌드 의존성을 설치하고 sidecar를 재빌드했다.
+- portable 재검증: `scripts\release_portable.ps1 -SkipTauriBuild -Python D:\Projects\audio\backend\.venv\Scripts\python.exe`가 통과했고, deploy 폴더 `lmo_audio`의 sidecar로 같은 15초 샘플을 실제 `/api/analyze`에 넣었을 때 35.41초에 완료됐다. 첫 실행 모델 로딩 때문에 dev backend보다 느리지만, 500초대 stall과 `unicodedata` 오류는 재현되지 않았다.

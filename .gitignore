@@ -3,6 +3,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 .venv/
+backend/.venv*/
 venv/
 ENV/
 *.log
@@ -25,6 +26,8 @@ backend/outputs/
 backend/build/
 backend/dist-sidecar/
 backend/*.spec
+lmo_audio*.zip
+lmo_audio/
 Smart_Minutes_AI_Portable*.zip
 Smart Minutes AI/
 desktop-app/src-tauri/binaries/_internal/
@@ -40,6 +43,7 @@ desktop-app/dist/
 desktop-app/test-results/
 .DS_Store
 *.local
+.vscode/
 
 # Environment variables
 .env

@@ -1,8 +1,11 @@
 # 0. 다음 우선순위
-- [ ] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
+- [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
   - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization off` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
+  - 2026-05-11 확인: ASR 벤치 15초 샘플은 `cpu_threads=4`, `num_workers=1` 조건에서 9.88초, 로컬 `/api/analyze` real SSE는 17.73초, portable sidecar real SSE는 35.41초에 완료됐다.
+  - 결론: 600초대 지연의 현재 차단점은 해소됐다. 남은 검증은 회사 PC 이동 테스트와 긴 파일 실전 테스트로 분리한다.
   - 우선 확인 범위:
+    - 현재 `backend\.venv`와 `backend\.venv-asr-faster-whisper`가 삭제된 로컬 Python 경로를 가리키는 문제 복구
     - `ctranslate2` / `faster_whisper` import 지연
     - Python 3.11 앱 런타임과 별도 ASR 런타임 차이
     - Windows OpenMP / DLL 충돌 가능성
@@ -12,22 +15,32 @@
   - 현재처럼 워크트리가 많이 더러운 상태에서는 `main`에 바로 푸시하지 않는다.
   - 내가 작업한 파일만 별도 브랜치에서 선별 커밋 후 푸시한다.
   - 빌드 전 검증 작업과 기능 개발 변경이 섞여 있으면 푸시 단위를 먼저 분리한다.
-- [ ] 0순위: 배포 혼돈 방지 기준 유지
+- [x] 0-0-2순위: Cohere 보존 기준 유지
+  - Cohere 관련 코드와 비교 기록은 삭제하지 않는다.
+  - 다만 현재 기본 STT/회사 PC 배포 경로에서는 제외하고, `legacy/benchmark` 후보로 명시한다.
+  - 2026-05-11 확인: Cohere 벤치 항목은 보존하되 기본 벤치 대상에서는 제외했다. 필요할 때 명시적으로 id를 지정해 실행한다.
+  - 이유: Cohere 품질 문제가 재현됐으므로 기본 후보로 쓰지 않되, 과거 결과 비교와 회귀 원인 추적에는 필요하다.
+- [ ] 보류: GGUF 직접 실행용 `llama-cpp-python` 선택 환경
+  - 현재 기본 요약 경로는 Ollama이므로 웹 개발/portable 배포 차단점은 아니다.
+  - `llama-cpp-python`은 기본 requirements에서 분리했고, 필요할 때만 `backend\requirements-llama.txt`와 `scripts\setup_llama_cpp_env.ps1`로 별도 설치한다.
+  - 현재 PC는 `LongPathsEnabled=0`이라 관리자 권한으로 Windows 긴 경로 설정을 켜기 전에는 설치 성공 검증을 하지 않는다.
+- [x] 0순위: 배포 혼돈 방지 기준 유지
   - 새 portable 배포는 `scripts\release_portable.ps1`로만 갱신한다.
-  - 실제 실행 기준은 루트 `Smart Minutes AI` 폴더 하나로 고정한다.
-  - `desktop-app\src-tauri\target\release\portable\Smart Minutes AI`는 중간 산출물로만 본다.
+  - 실제 실행 기준은 루트 `lmo_audio` 폴더 하나로 고정한다.
+  - `desktop-app\src-tauri\target\release\portable\lmo_audio`는 중간 산출물로만 본다.
   - 이상 상태가 보이면 `scripts\diagnose_portable.ps1` 결과와 `release-manifest.json` 해시를 먼저 확인한다.
   - `release-manifest.json`은 배포본의 신분증이다. verify/diagnose에서 해시 불일치를 확인한다.
   - WebView 캐시는 필요할 때 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
+  - 2026-05-11 확인: `lmo_audio` deploy 폴더 재구성, manifest/모델/sidecar/export smoke, deploy sidecar 15초 실제 분석을 통과했다.
 - [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
-  - `Smart Minutes AI` 폴더 전체를 옮긴 뒤 실행한다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
-  - 기본 음성 인식 모델은 `Smart Minutes AI\models` 바로 아래에 복사한다.
-  - 복사 후 `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`가 바로 보여야 한다.
-  - 화자 분리 모델은 `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
+  - `lmo_audio` 폴더 전체를 옮긴 뒤 실행한다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
+  - 기본 음성 인식 모델은 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
+  - 복사 후 `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`가 보여야 한다.
+  - 화자 분리 모델은 `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
 - [ ] 2순위: 긴 파일 실전 테스트
   - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
-  - 결과는 `Smart Minutes AI\backend\outputs`, 임시 파일은 `Smart Minutes AI\backend\temp`에 생성된다.
-  - 실패 시 `Smart Minutes AI\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
+  - 결과는 `lmo_audio\backend\outputs`, 임시 파일은 `lmo_audio\backend\temp`에 생성된다.
+  - 실패 시 `lmo_audio\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
 - [ ] 3순위: 품질 기준 샘플셋 만들기
   - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
   - STT 정확도, 화자 분리 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.
@@ -45,13 +58,13 @@
   - 모델 미포함/포함 기준을 명확히 하고, 회사 PC용 설명 md와 함께 다시 묶는다.
 
 # 0-1. 회사 PC에서 가장 먼저 할 일
-- [ ] `Smart Minutes AI` 폴더 전체를 그대로 둔다. `Smart Minutes AI.exe`만 따로 빼서 실행하지 않는다.
-- [ ] 기본 음성 인식 모델은 별도로 받아서 `Smart Minutes AI\models` 바로 아래에 복사한다.
-- [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\config.json`, `models\model.safetensors`, `models\preprocessor_config.json`, `models\tokenizer_config.json`.
-- [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\config.yaml`, `models\embedding`, `models\segmentation`, `models\plda`가 있으면 된다.
+- [ ] `lmo_audio` 폴더 전체를 그대로 둔다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
+- [ ] 기본 음성 인식 모델은 별도로 받아서 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
+- [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
+- [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
 - [ ] 앱 실행 후 시스템 설정 > 모델에서 누락 모델이 있는지 확인하고, 모델 복사 후 상태 새로고침을 누른다.
 - [x] 앱 안의 사용자용 모델 자동 다운로드 흐름을 제거하고, 관리자가 지정한 모델 파일을 `models`에 넣는 방식으로 정리한다.
-- [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `Smart Minutes AI` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
+- [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `lmo_audio` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
 
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)
 
@@ -63,7 +76,7 @@
 
 ## 2. 모델 및 환경 자동화 (오프라인 배포 준비)
 - [x] 사용자용 자동 모델 다운로드 흐름 제거
-- [ ] 관리자가 준비한 모델 묶음을 `Smart Minutes AI\models`에 복사하는 배포 절차 확정
+- [ ] 관리자가 준비한 모델 묶음을 `lmo_audio\models\faster-whisper-large-v3`에 복사하는 배포 절차 확정
 - [ ] 내부망 이관 후 모델 묶음 배포 위치와 파일 검증 절차 정리
 
 ## 3. 회의록 DB화 및 이력 관리
@@ -97,10 +110,10 @@
 - [x] 입력 음량 측정 기반 `auto normalization` 1차 적용
 - [x] 테스트셋 1차 manifest 구성 (`docs/audio-testset-manifest.csv`, 현재 4개 영상)
 - [ ] 테스트셋 보강 (6~10개, 실제 작은 목소리/잡음/기기/길이 편차 포함)
-- [ ] `off / auto / loudnorm` 기준 Cohere STT / diarization / summary 비교 검증
+- [ ] `off / auto / loudnorm` 기준 faster-whisper STT / diarization / summary 비교 검증
 - [x] `speechnorm` 선택형 모드 추가
 - [x] `speechnorm` 60초 샘플 1차 비교
-- [x] `Smart Minutes AI\video` 폴더 4개 영상 60초 비교
+- [x] `video` 폴더 4개 영상 60초 비교
 - [x] 성능 비교 자동화 스크립트 추가 (`scripts/run_audio_performance_eval.py`)
 - [x] 성능 비교 스크립트에 `off` 기준, portable 모델 경로 탐색, 긴 파일 전체 후보 선택, `--clean` 옵션 반영
 - [x] 성능 비교 스크립트에 manifest 기반 테스트셋 실행 옵션 추가 (`--manifest docs\audio-testset-manifest.csv`)
@@ -144,7 +157,7 @@
 - [ ] 음성 강화(speech enhancement)는 별도 후보 모델/라이브러리 조사 후 실험 여부 결정
 - [x] denoise는 ffmpeg `afftdn` 후보로 60초 샘플 1차 비교
 - [ ] denoise 청취 검증 및 실제 잡음 샘플 추가 비교
-- [ ] 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
+- [ ] legacy 필요 시 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
 - [ ] 사용자 설정 UI에 전처리 옵션 추가
   - 자동
   - 끔

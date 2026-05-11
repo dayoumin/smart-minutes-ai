@@ -48,13 +48,17 @@ def find_stt_model(root: Path, override: str | None = None) -> Path:
         return override_path
 
     candidates = [
-        root / "lmo_audio" / "models",
+        root / "lmo_audio" / "models" / "faster-whisper-large-v3",
+        root / "backend" / "models" / "stt" / "faster-whisper-large-v3",
+        # Legacy Cohere benchmark path. Keep it after the current default.
         root / "backend" / "models" / "stt" / "cohere-transcribe-03-2026",
-        root / "backend" / "models",
     ]
-    required = ["config.json", "model.safetensors"]
+    marker_sets = [
+        ["model.bin", "tokenizer.json", "config.json"],
+        ["config.json", "model.safetensors"],
+    ]
     for candidate in candidates:
-        if candidate.exists() and all((candidate / item).exists() for item in required):
+        if candidate.exists() and any(all((candidate / item).exists() for item in markers) for markers in marker_sets):
             return candidate
     return candidates[0]
 
@@ -229,7 +233,7 @@ def summarize_text(segments: list[dict[str, Any]]) -> tuple[int, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run reusable audio performance comparisons.")
-    parser.add_argument("--video-dir", default=r"Smart Minutes AI\video", help="Directory containing audio/video samples.")
+    parser.add_argument("--video-dir", default=r"video", help="Directory containing audio/video samples.")
     parser.add_argument("--manifest", default=None, help="CSV manifest listing samples to evaluate.")
     parser.add_argument("--sample-seconds", type=int, default=60)
     parser.add_argument("--limit", type=int, default=2)
@@ -239,6 +243,7 @@ def main() -> int:
     parser.add_argument("--long-seconds", type=int, default=1800)
     parser.add_argument("--output", default=r"backend\temp\audio_performance_eval\latest.json")
     parser.add_argument("--stt-model", default=None)
+    parser.add_argument("--stt-device", default="cpu", choices=("cpu", "cuda", "auto"))
     parser.add_argument("--diarization-model", default=None)
     parser.add_argument("--modes", default=None, help="Comma-separated preprocessing modes to run.")
     parser.add_argument("--variants", default=None, help="Comma-separated audio variants to run.")
@@ -363,7 +368,13 @@ def main() -> int:
                 if transcribe_audio is not None:
                     start = time.perf_counter()
                     try:
-                        segments = transcribe_audio(str(processed_wav), str(stt_model), language="ko", device="auto", chunk_seconds=30)
+                        segments = transcribe_audio(
+                            str(processed_wav),
+                            str(stt_model),
+                            language="ko",
+                            device=args.stt_device,
+                            chunk_seconds=30,
+                        )
                         chars, preview = summarize_text(segments)
                         mode_item.update({
                             "stt_ok": True,

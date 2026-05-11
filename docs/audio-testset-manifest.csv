@@ -1,5 +1,5 @@
 sample_id,file_path,reference_transcript_path,duration_seconds,recording_device,recording_location,speaker_count,primary_conditions,expected_issues,language_mix,has_reference_transcript,notes
-hermes_agent_demo,"Smart Minutes AI/video/[Hermes Agent] 기억하고 진화하는 AI 헤르메스 에이전트  설치부터 보안까지   스스로 코딩하며 진화하는 헤르메스 에이전트.mp4",,,unknown,,,clean_dialogue,"proper_nouns;technical_terms",ko,false,"Agent/product discussion sample used for desktop smoke tests."
-election_tv_debate,"Smart Minutes AI/video/[특집대담] 대선 주자 TV 스탠딩 토론회, 평가는   연합뉴스TV (YonhapnewsTV).mp4",,,broadcast,,,multi_speaker_broadcast,"speaker_overlap;proper_nouns;broadcast_audio",ko,false,"Long multi-speaker broadcast sample."
-deepseek_paper_ep95,"Smart Minutes AI/video/EP 95. DeepSeek-V4 논문 읽기.mp4",,,unknown,,,technical_talk,"technical_terms;english_terms",ko+en,false,"Technical discussion sample."
-ai_welfare_forum,"Smart Minutes AI/video/AI 복지∙돌봄 혁신 포럼 - 인공지능 시대의 사회보장.mp4",,,event,,,forum_recording,"long_form;room_audio;proper_nouns",ko,false,"Long forum sample for duration and chunking checks."
+hermes_agent_demo,"video/[Hermes Agent] 기억하고 진화하는 AI 헤르메스 에이전트  설치부터 보안까지   스스로 코딩하며 진화하는 헤르메스 에이전트.mp4",,,unknown,,,clean_dialogue,"proper_nouns;technical_terms",ko,false,"Agent/product discussion sample used for desktop smoke tests."
+election_tv_debate,"video/[특집대담] 대선 주자 TV 스탠딩 토론회, 평가는   연합뉴스TV (YonhapnewsTV).mp4",,,broadcast,,,multi_speaker_broadcast,"speaker_overlap;proper_nouns;broadcast_audio",ko,false,"Long multi-speaker broadcast sample."
+deepseek_paper_ep95,"video/EP 95. DeepSeek-V4 논문 읽기.mp4",,,unknown,,,technical_talk,"technical_terms;english_terms",ko+en,false,"Technical discussion sample."
+local_conversation_test4,"video/test (4).mp4",,,unknown,,,conversation_sample,"speaker_turns;room_audio",ko,false,"Local conversation sample for duration, chunking, and diarization checks."

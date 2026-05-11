@@ -74,12 +74,6 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
             "models\\faster-whisper-large-v3\\model.bin",
             "models\\faster-whisper-large-v3\\tokenizer.json",
             "models\\faster-whisper-large-v3\\config.json",
-            "models\\Qwen3-ASR-1.7B\\config.json",
-            "models\\Qwen3-ASR-1.7B\\tokenizer_config.json",
-            "models\\Qwen3-ASR-1.7B\\model.safetensors.index.json",
-            "models\\Qwen3-ForcedAligner-0.6B\\config.json",
-            "models\\Qwen3-ForcedAligner-0.6B\\tokenizer_config.json",
-            "models\\Qwen3-ForcedAligner-0.6B\\model.safetensors",
             "models\\speaker-diarization-community-1\\config.yaml",
             "models\\speaker-diarization-community-1\\embedding\\pytorch_model.bin",
             "models\\speaker-diarization-community-1\\segmentation\\pytorch_model.bin",
@@ -138,7 +132,7 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "desktop-app"), (Join
         completed = _run_powershell(command)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
-    def test_verify_portable_qwen_smoke_preserves_config_and_manifest(self):
+    def test_verify_portable_preserves_config_and_manifest(self):
         portable_dir = ROOT / "lmo_audio"
         config_path = portable_dir / "backend" / "config.json"
         manifest_path = portable_dir / "release-manifest.json"
@@ -165,7 +159,7 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "desktop-app"), (Join
         )
 
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
-        self.assertIn("Qwen selection ready", completed.stdout)
+        self.assertIn("Qwen optional model omitted", completed.stdout)
         self.assertIn("Portable verification passed", completed.stdout)
         self.assertEqual(before_config, _sha256(config_path))
         self.assertEqual(before_manifest, _sha256(manifest_path))

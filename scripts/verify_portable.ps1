@@ -278,18 +278,25 @@ try {
             $null
         }
         try {
-            $qwenBody = @{ stt = @{ selected_model = "qwen3-asr" } } | ConvertTo-Json -Depth 4
-            Invoke-RestMethod -Uri "$baseUrl/api/settings" -Method Patch -ContentType "application/json" -Body $qwenBody -TimeoutSec 5 | Out-Null
-            $qwenModels = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec 5
-            $qwenMissingRequired = @($qwenModels.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
-            $qwenRequiredKeys = @($qwenModels.models | Where-Object { $_.required } | Select-Object -ExpandProperty key)
-            $qwenReady = (
-                $qwenModels.ready -eq $true -and
-                $qwenModels.selected_stt_model -eq "qwen3-asr" -and
-                $qwenRequiredKeys -contains "stt_qwen" -and
-                $qwenRequiredKeys -contains "stt_qwen_aligner"
-            )
-            Add-Result "Qwen selection ready" $qwenReady "selected=$($qwenModels.selected_stt_model); required=$($qwenRequiredKeys -join ', '); missing=$($qwenMissingRequired -join ', ')"
+            $qwenLayoutKeys = @($ModelLayout.models | Where-Object { $_.key -in @("stt_qwen", "stt_qwen_aligner") } | Select-Object -ExpandProperty key)
+            $qwenIncluded = $qwenLayoutKeys -contains "stt_qwen" -and $qwenLayoutKeys -contains "stt_qwen_aligner"
+            if ($qwenIncluded) {
+                $qwenBody = @{ stt = @{ selected_model = "qwen3-asr" } } | ConvertTo-Json -Depth 4
+                Invoke-RestMethod -Uri "$baseUrl/api/settings" -Method Patch -ContentType "application/json" -Body $qwenBody -TimeoutSec 5 | Out-Null
+                $qwenModels = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec 5
+                $qwenMissingRequired = @($qwenModels.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
+                $qwenRequiredKeys = @($qwenModels.models | Where-Object { $_.required } | Select-Object -ExpandProperty key)
+                $qwenReady = (
+                    $qwenModels.ready -eq $true -and
+                    $qwenModels.selected_stt_model -eq "qwen3-asr" -and
+                    $qwenRequiredKeys -contains "stt_qwen" -and
+                    $qwenRequiredKeys -contains "stt_qwen_aligner"
+                )
+                Add-Result "Qwen selection ready" $qwenReady "selected=$($qwenModels.selected_stt_model); required=$($qwenRequiredKeys -join ', '); missing=$($qwenMissingRequired -join ', ')"
+            }
+            else {
+                Add-Result "Qwen optional model omitted" $true "portable layout excludes Qwen ASR models"
+            }
         }
         finally {
             $restoreBody = @{ stt = @{ selected_model = $previousSttModel } } | ConvertTo-Json -Depth 4

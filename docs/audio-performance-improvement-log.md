@@ -602,3 +602,13 @@ Hermes Agent 60초 샘플:
 - portable 1차 검증: `scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild`로 `lmo_audio`를 재구성하면 기본 구조/모델/health/export smoke는 통과했지만, deploy sidecar의 실제 `/api/analyze`는 `No module named 'unicodedata'`로 실패했다. 이는 웹/backend 문제가 아니라 오래된 PyInstaller sidecar의 표준 확장 모듈 누락이었다.
 - 조치: `scripts\package_backend_sidecar.ps1`에 `--hidden-import unicodedata`와 빌드 후 `unicodedata*.pyd` 존재 검증을 추가했다. 새 `backend\.venv`에 `backend\requirements-desktop.txt`의 PyInstaller 빌드 의존성을 설치하고 sidecar를 재빌드했다.
 - portable 재검증: `scripts\release_portable.ps1 -SkipTauriBuild -Python D:\Projects\audio\backend\.venv\Scripts\python.exe`가 통과했고, deploy 폴더 `lmo_audio`의 sidecar로 같은 15초 샘플을 실제 `/api/analyze`에 넣었을 때 35.41초에 완료됐다. 첫 실행 모델 로딩 때문에 dev backend보다 느리지만, 500초대 stall과 `unicodedata` 오류는 재현되지 않았다.
+
+### 2026-05-11 프로젝트 내부 company-smoke portable 검증
+
+- 검증 위치: `D:\Projects\audio\.codex-work\company-smoke\lmo_audio`. 프로젝트 밖 임시 폴더가 아니라 gitignore된 프로젝트 내부 작업 폴더에 portable 폴더를 복사했다.
+- 복사 방식: `lmo_audio`를 `outputs`, `temp`, `logs` 제외 조건으로 복사했다. 모델과 sidecar 포함 총 약 10.1GB가 복사됐다.
+- 구조 검증: `scripts\verify_portable.ps1 -PortableDir D:\Projects\audio\.codex-work\company-smoke\lmo_audio` 통과. manifest, 모델 marker, sidecar health, settings/models endpoint, export smoke가 모두 PASS였다.
+- 15초 실제 분석: `video\portable_video_15s.mp4`를 복사본 sidecar `/api/analyze` real SSE 경로로 실행했을 때 44.11초에 완료됐고, segment 2개와 출력 파일이 생성됐다.
+- 104초 실제 분석: `video\videoplayback.mp4`를 같은 복사본 sidecar에서 실행했을 때 4개 청크로 처리됐고 55.32초에 완료, segment 17개가 생성됐다.
+- 365초 실제 분석: `video\test (4).mp4`를 같은 복사본 sidecar에서 실행했을 때 13개 청크로 처리됐고 139.25초에 완료, segment 143개가 생성됐다.
+- 판단: 프로젝트 내부의 이동 복사본 기준으로는 portable 폴더 독립 실행, 모델 경로, sidecar 패키징, 짧은/중간 길이 실제 분석 경로가 모두 통과했다. 실제 회사 PC 이동 테스트와 30분 이상 장문 파일 검증은 별도 남은 작업이다.

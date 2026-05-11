@@ -37,10 +37,12 @@
   - 기본 음성 인식 모델은 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
   - 복사 후 `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`가 보여야 한다.
   - 화자 분리 모델은 `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
+  - 2026-05-11 프로젝트 내부 company-smoke 복사본(`.codex-work\company-smoke\lmo_audio`) 기준으로 verify/export smoke와 15초 실제 분석은 통과했다. 실제 회사 PC 또는 회사 PC와 같은 별도 드라이브 이동 검증은 아직 남아 있다.
 - [ ] 2순위: 긴 파일 실전 테스트
   - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
   - 결과는 `lmo_audio\backend\outputs`, 임시 파일은 `lmo_audio\backend\temp`에 생성된다.
   - 실패 시 `lmo_audio\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
+  - 2026-05-11 프로젝트 내부 company-smoke 복사본 기준 104초 파일은 55.32초, 365초 파일은 139.25초에 완료됐다. 30분 이상 파일은 아직 미검증이다.
 - [ ] 3순위: 품질 기준 샘플셋 만들기
   - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
   - STT 정확도, 화자 분리 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.

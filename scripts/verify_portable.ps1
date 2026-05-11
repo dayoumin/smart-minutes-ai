@@ -168,9 +168,9 @@ function Start-BackendSidecar([string]$ExePath, [string]$BackendRoot, [int]$Port
     $startInfo.WorkingDirectory = $BackendRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.Environment["MEETING_AI_BACKEND_DIR"] = $BackendRoot
-    $startInfo.Environment["ANALYSIS_MODE"] = "real"
-    $startInfo.Environment["PORT"] = [string]$Port
+    $startInfo.EnvironmentVariables["MEETING_AI_BACKEND_DIR"] = $BackendRoot
+    $startInfo.EnvironmentVariables["ANALYSIS_MODE"] = "real"
+    $startInfo.EnvironmentVariables["PORT"] = [string]$Port
     return [System.Diagnostics.Process]::Start($startInfo)
 }
 

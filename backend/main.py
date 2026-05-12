@@ -181,8 +181,6 @@ async def models_status() -> dict:
             key = model.get("key")
             if key == "stt_faster_whisper":
                 model["required"] = key in required_stt_keys
-            elif key in {"stt_qwen", "stt_qwen_aligner"}:
-                model["required"] = False
             elif key == "diarization":
                 model["required"] = diarization_enabled
         required_models = [model for model in status.get("models", []) if model.get("required")]

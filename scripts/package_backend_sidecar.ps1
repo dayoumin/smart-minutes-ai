@@ -62,8 +62,6 @@ try {
         --collect-submodules "tokenizers" `
         --collect-binaries "tokenizers" `
         --collect-data "tokenizers" `
-        --collect-submodules "qwen_asr" `
-        --collect-data "qwen_asr" `
         --collect-submodules "lxml" `
         --collect-binaries "lxml" `
         --collect-data "lxml" `

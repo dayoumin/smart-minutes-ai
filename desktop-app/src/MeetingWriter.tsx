@@ -142,8 +142,6 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTi
 
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '음성 인식 기본 모델';
-    if (model.key === 'stt_qwen') return 'Qwen 음성 인식 모델';
-    if (model.key === 'stt_qwen_aligner') return 'Qwen 문장 정렬 모델';
     if (model.key === 'diarization') return '화자 구분';
     return model.label;
 };
@@ -159,8 +157,6 @@ const translateStatusMessage = (message: string): string => {
         '업로드 파일 저장 완료': '파일을 안전하게 저장했습니다.',
         '음성 인식 모델 확인 중': '음성 인식 모델을 확인하고 있습니다.',
         '음성 인식 모델 준비 완료': '음성 인식 모델 준비가 끝났습니다.',
-        'Cohere STT 모델 확인 중': '음성 인식 모델을 확인하고 있습니다.',
-        'Cohere STT 모델 준비 완료': '음성 인식 모델 준비가 끝났습니다.',
         'Converting to WAV...': '영상에서 음성을 추출하고 WAV로 변환하고 있습니다.',
         'Preparing audio chunks...': '긴 음성을 분석하기 좋은 구간으로 나누고 있습니다.',
         'Primary speech recognition failed; using fallback model...': '음성 인식 방식을 바꾸어 다시 시도하고 있습니다.',

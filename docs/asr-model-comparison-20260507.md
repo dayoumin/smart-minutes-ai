@@ -228,12 +228,8 @@
 
 ```text
 models/
-  stt/
-    cohere-transcribe-03-2026/
-    faster-whisper-large-v3/
-    Qwen3-ASR-1.7B/
-  aligner/
-    Qwen3-ForcedAligner-0.6B/
+  faster-whisper-large-v3/
+  speaker-diarization-community-1/
 ```
 
 현재 테스트용 Qwen3-ForcedAligner는 `backend/models/stt/Qwen3-ForcedAligner-0.6B`에 받았지만, 포터블 앱 통합 시에는 `models/aligner/Qwen3-ForcedAligner-0.6B`로 분리하는 편이 낫다.

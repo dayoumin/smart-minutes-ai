@@ -61,13 +61,6 @@ Copy-Item -Recurse -Force $ResourceBackendDir (Join-Path $PortableDir "backend")
 $PortableModelsDir = Join-Path $PortableDir "models"
 New-Item -ItemType Directory -Force -Path $PortableModelsDir | Out-Null
 
-$qwenIncluded = @($ModelLayout.models | Where-Object { $_.key -in @("stt_qwen", "stt_qwen_aligner") }).Count -gt 0
-$qwenNote = if ($qwenIncluded) {
-    "Qwen3-ASR-1.7B requires Qwen3-ForcedAligner-0.6B when selected in settings."
-} else {
-    "Qwen ASR models are not included in this portable package to keep the company transfer package smaller."
-}
-
 $ModelReadme = @"
 LMO Smart Meeting System model folder
 
@@ -77,7 +70,7 @@ Examples:
 $(@($ModelLayout.models) | ForEach-Object { "- models\$($_.portableDir)" } | Out-String)
 
 faster-whisper-large-v3 is the default speech recognition model.
-$qwenNote
+Additional STT candidates are not used by this portable app.
 "@
 Set-Content -Path (Join-Path $PortableModelsDir "README.txt") -Value $ModelReadme -Encoding UTF8
 

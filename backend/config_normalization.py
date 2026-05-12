@@ -35,7 +35,8 @@ def normalize_app_config(config: dict) -> dict:
         stt["selected_model"] = DEFAULT_STT_MODEL
     selected_model = stt.get("selected_model", DEFAULT_STT_MODEL)
 
-    if "cohere" in stt_model_path.lower():
+    legacy_stt_path = stt_model_path.lower()
+    if "cohere" in legacy_stt_path or "qwen" in legacy_stt_path:
         paths["stt_model"] = DEFAULT_STT_MODEL_PATH
         stt["selected_model"] = DEFAULT_STT_MODEL
 
@@ -53,7 +54,7 @@ def normalize_app_config(config: dict) -> dict:
     normalized_stt_path = str(paths.get("stt_model", "")).replace("\\", "/").rstrip("/").lower()
     if (
         not paths.get("stt_model")
-        or "cohere" in str(paths.get("stt_model", "")).lower()
+        or any(marker in str(paths.get("stt_model", "")).lower() for marker in ("cohere", "qwen"))
         or normalized_stt_path in {"../models", "./models", "models"}
     ):
         paths["stt_model"] = DEFAULT_STT_MODEL_PATH

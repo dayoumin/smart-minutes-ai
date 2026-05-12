@@ -52,12 +52,10 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(settings_response.json()["stt"]["device"], "cpu")
         self.assertIn("stt_device_status", models_response.json())
 
-    def test_qwen_model_status_requires_qwen_without_faster_whisper(self) -> None:
+    def test_model_status_uses_faster_whisper_even_with_legacy_selection(self) -> None:
         fake_status = {
             "models": [
                 {"key": "stt_faster_whisper", "installed": False, "required": True},
-                {"key": "stt_qwen", "installed": True, "required": False},
-                {"key": "stt_qwen_aligner", "installed": True, "required": False},
                 {"key": "diarization", "installed": True, "required": True},
             ]
         }
@@ -72,12 +70,11 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         payload = response.json()
         required_by_key = {model["key"]: model["required"] for model in payload["models"]}
-        self.assertFalse(required_by_key["stt_faster_whisper"])
-        self.assertTrue(required_by_key["stt_qwen"])
-        self.assertTrue(required_by_key["stt_qwen_aligner"])
+        self.assertTrue(required_by_key["stt_faster_whisper"])
         self.assertFalse(required_by_key["diarization"])
         self.assertFalse(payload["diarization_enabled"])
-        self.assertTrue(payload["ready"])
+        self.assertFalse(payload["ready"])
+        self.assertEqual(payload["selected_stt_model"], "faster-whisper-large-v3")
 
     def test_model_status_requires_diarization_only_when_enabled(self) -> None:
         fake_status = {
@@ -145,13 +142,14 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(normalized["processing"]["long_audio_chunk_seconds"], 30)
         self.assertFalse(normalized["diarization"]["enabled"])
 
-    def test_generic_models_path_migrates_to_selected_model_path(self) -> None:
+    def test_generic_models_path_migrates_to_default_model_path(self) -> None:
         normalized = normalize_stt_config({
             "paths": {"stt_model": "../models"},
             "stt": {"selected_model": "qwen3-asr"},
         })
 
-        self.assertEqual(normalized["paths"]["stt_model"], "../models/Qwen3-ASR-1.7B")
+        self.assertEqual(normalized["paths"]["stt_model"], "../models/faster-whisper-large-v3")
+        self.assertEqual(normalized["stt"]["selected_model"], "faster-whisper-large-v3")
 
     def test_settings_patch_rejects_auto_device(self) -> None:
         response = self.client.patch("/api/settings", json={"stt": {"device": "auto"}})
@@ -446,7 +444,7 @@ class AnalyzeApiTest(unittest.TestCase):
             seen["outer_chunk_seconds"] = chunk_seconds
             return [{"path": wav_path, "offset": 0.0, "duration": 1.0, "index": 0}]
 
-        def fake_transcribe(wav_path, model_path, language, device, chunk_seconds, fallback_model_path, qwen_aligner_model_path):
+        def fake_transcribe(wav_path, model_path, language, device, chunk_seconds, fallback_model_path):
             seen["stt_chunk_seconds"] = chunk_seconds
             return [{"start": 0.0, "end": 1.0, "text": "hello"}]
 
@@ -663,12 +661,14 @@ class AnalyzeApiTest(unittest.TestCase):
             cuda=types.SimpleNamespace(is_available=lambda: True, empty_cache=lambda: None)
         )
 
+        transcribe_module._clear_faster_whisper_model_cache()
         with (
             patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper, "torch": fake_torch}),
             patch("pipeline.transcribe.sys.platform", "win32"),
             patch("pipeline.transcribe.ctypes.WinDLL", side_effect=OSError("missing cuda dll")),
         ):
             segments = transcribe_audio_fallback_whisper("dummy.wav", "dummy-model", device="auto")
+        transcribe_module._clear_faster_whisper_model_cache()
 
         self.assertEqual(calls, ["cpu"])
         self.assertEqual(len(segments), 1)
@@ -735,22 +735,6 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(load_calls, [("cpu", "int8"), ("cuda", "float16")])
         self.assertEqual(cpu_segments[0]["text"], "cpu:int8")
         self.assertEqual(cuda_segments[0]["text"], "cuda:float16")
-
-    def test_qwen_cuda_requires_windows_cuda_runtime_dlls(self) -> None:
-        fake_torch = types.SimpleNamespace(
-            cuda=types.SimpleNamespace(is_available=lambda: True, empty_cache=lambda: None),
-            bfloat16="bf16",
-            float32="fp32",
-        )
-
-        with (
-            patch.dict(sys.modules, {"torch": fake_torch}),
-            patch("pipeline.transcribe._windows_cuda_runtime_is_usable", return_value=False),
-        ):
-            with self.assertRaises(RuntimeError):
-                from pipeline.transcribe import _qwen_device_and_dtype
-
-                _qwen_device_and_dtype("cuda")
 
     def test_delete_outputs_removes_job_artifacts(self) -> None:
         output_dir = os.path.join(BACKEND_DIR, "outputs")

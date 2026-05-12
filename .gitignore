@@ -9,6 +9,7 @@ ENV/
 *.log
 
 # Models & Binaries (Large Files)
+/models/
 backend/models/*
 !backend/models/README.txt
 !backend/models/stt/

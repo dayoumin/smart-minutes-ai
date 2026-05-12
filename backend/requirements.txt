@@ -1,10 +1,7 @@
 faster-whisper
-qwen-asr
 torch
 torchaudio
 ffmpeg-python
-cohere
-transformers
 pyannote.audio
 librosa
 soundfile

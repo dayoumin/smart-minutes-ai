@@ -27,7 +27,9 @@
 
     body {
       margin: 0;
-      background: var(--bg);
+      background:
+        radial-gradient(circle at top left, rgba(36, 87, 197, 0.12), transparent 34rem),
+        linear-gradient(180deg, #fbfcff 0%, var(--bg) 34rem);
       color: var(--ink);
       font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
       line-height: 1.65;
@@ -37,10 +39,26 @@
       max-width: 1080px;
       margin: 0 auto;
       padding: 48px 24px 72px;
+      counter-reset: guide-section;
     }
 
     header {
-      margin-bottom: 32px;
+      position: relative;
+      margin-bottom: 20px;
+      padding: 42px;
+      overflow: hidden;
+      background: rgba(255, 255, 255, 0.9);
+      border: 1px solid rgba(207, 216, 228, 0.86);
+      border-radius: 8px;
+      box-shadow: 0 24px 70px rgba(28, 36, 48, 0.11);
+    }
+
+    header::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 auto 0;
+      height: 6px;
+      background: linear-gradient(90deg, var(--brand), var(--accent), #c26a00);
     }
 
     .eyebrow {
@@ -55,6 +73,7 @@
       font-size: clamp(32px, 4vw, 48px);
       line-height: 1.15;
       letter-spacing: 0;
+      word-break: keep-all;
     }
 
     .lead {
@@ -62,6 +81,62 @@
       margin: 18px 0 0;
       color: var(--muted);
       font-size: 18px;
+      word-break: keep-all;
+    }
+
+    .tag-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 24px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+      padding: 5px 12px;
+      color: #16366f;
+      background: var(--brand-soft);
+      border: 1px solid #cfdcff;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .nav {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 24px;
+      padding: 12px;
+      background: rgba(246, 247, 249, 0.92);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      backdrop-filter: blur(12px);
+    }
+
+    .nav a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 34px;
+      padding: 6px 11px;
+      color: var(--muted);
+      text-decoration: none;
+      background: #ffffff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+
+    .nav a:hover {
+      color: var(--brand);
+      border-color: #bfd0ff;
+      background: #f8faff;
     }
 
     section {
@@ -70,19 +145,47 @@
       background: var(--paper);
       border: 1px solid var(--line);
       border-radius: 8px;
+      box-shadow: 0 14px 36px rgba(28, 36, 48, 0.06);
+      counter-increment: guide-section;
+      scroll-margin-top: 92px;
+    }
+
+    section:hover {
+      border-color: #cad3df;
     }
 
     h2 {
+      display: flex;
+      align-items: center;
+      gap: 10px;
       margin: 0 0 16px;
       font-size: 24px;
       line-height: 1.3;
       letter-spacing: 0;
+      word-break: keep-all;
+    }
+
+    h2::before {
+      content: counter(guide-section, decimal-leading-zero);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 34px;
+      height: 28px;
+      color: var(--brand);
+      background: var(--brand-soft);
+      border: 1px solid #cfdcff;
+      border-radius: 6px;
+      font-size: 12px;
+      font-weight: 800;
+      flex: 0 0 auto;
     }
 
     h3 {
       margin: 22px 0 8px;
       font-size: 18px;
       letter-spacing: 0;
+      word-break: keep-all;
     }
 
     p {
@@ -110,6 +213,34 @@
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 16px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .summary-card {
+      min-height: 132px;
+      padding: 18px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+    }
+
+    .summary-card b {
+      display: block;
+      margin-bottom: 8px;
+      color: var(--brand);
+      font-size: 16px;
+    }
+
+    .summary-card span {
+      display: block;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.55;
     }
 
     .term {
@@ -150,15 +281,33 @@
     }
 
     .template {
+      position: relative;
       white-space: pre-wrap;
-      padding: 16px;
-      background: #101828;
+      padding: 42px 18px 18px;
+      background: linear-gradient(180deg, #101828, #172033);
       color: #f8fafc;
       border-radius: 8px;
       overflow-x: auto;
       font-family: Consolas, "Cascadia Mono", monospace;
       font-size: 14px;
       line-height: 1.55;
+      border: 1px solid #26354f;
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.06);
+    }
+
+    .template::before {
+      content: "요청 예시";
+      position: absolute;
+      top: 12px;
+      left: 16px;
+      padding: 2px 8px;
+      color: #b8d3ff;
+      background: rgba(36, 87, 197, 0.24);
+      border: 1px solid rgba(184, 211, 255, 0.28);
+      border-radius: 999px;
+      font-family: "Segoe UI", "Malgun Gothic", Arial, sans-serif;
+      font-size: 12px;
+      font-weight: 800;
     }
 
     .matrix {
@@ -178,7 +327,7 @@
     }
 
     .matrix th {
-      background: #eef2f7;
+      background: linear-gradient(180deg, #eef2f7, #e8edf5);
       font-weight: 700;
     }
 
@@ -198,12 +347,42 @@
         padding: 28px 16px 48px;
       }
 
+      header {
+        padding: 30px 22px;
+      }
+
       section {
         padding: 20px;
       }
 
-      .grid {
+      .grid,
+      .summary-grid {
         grid-template-columns: 1fr;
+      }
+
+      .nav {
+        position: static;
+      }
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+      }
+
+      main {
+        max-width: none;
+        padding: 0;
+      }
+
+      header,
+      section {
+        box-shadow: none;
+        break-inside: avoid;
+      }
+
+      .nav {
+        display: none;
       }
     }
   </style>
@@ -217,9 +396,49 @@
         사용자가 정확한 기술 용어를 몰라도 괜찮습니다. 중요한 것은 “무엇을 결정하려는지”와
         “어느 깊이까지 확인해야 하는지”를 Codex가 놓치지 않게 요청하는 것입니다.
       </p>
+      <div class="tag-row" aria-label="문서 핵심 키워드">
+        <span class="pill">큰 관점</span>
+        <span class="pill">작은 관점</span>
+        <span class="pill">agent 리뷰</span>
+        <span class="pill">검증과 커밋</span>
+        <span class="pill">프로젝트 공통</span>
+      </div>
     </header>
 
-    <section>
+    <nav class="nav" aria-label="문서 섹션 이동">
+      <a href="#summary">요약</a>
+      <a href="#terms">용어</a>
+      <a href="#templates">요청 문장</a>
+      <a href="#matrix">확인표</a>
+      <a href="#general">공통 사용</a>
+      <a href="#depth">리뷰 깊이</a>
+      <a href="#agents">agent</a>
+      <a href="#missed">빠지는 항목</a>
+    </nav>
+
+    <section id="summary">
+      <h2>한눈에 보는 사용법</h2>
+      <div class="summary-grid">
+        <div class="summary-card">
+          <b>1. 목표를 말한다</b>
+          <span>무엇을 만들고, 어디에 배포하고, 누가 쓰는지 먼저 알려줍니다.</span>
+        </div>
+        <div class="summary-card">
+          <b>2. 관점을 나눈다</b>
+          <span>큰 관점은 목표와 리스크, 작은 관점은 파일과 실행을 확인합니다.</span>
+        </div>
+        <div class="summary-card">
+          <b>3. 끝 지점을 정한다</b>
+          <span>진단만, 수정까지, 커밋까지, 푸시까지 중 어디까지 할지 정합니다.</span>
+        </div>
+        <div class="summary-card">
+          <b>4. 검증을 남긴다</b>
+          <span>실행 명령, 확인 결과, 남은 리스크를 짧게 남기면 다음 작업이 쉬워집니다.</span>
+        </div>
+      </div>
+    </section>
+
+    <section id="terms">
       <h2>핵심 구분</h2>
       <div class="grid">
         <div class="term">
@@ -252,7 +471,7 @@
       </p>
     </section>
 
-    <section>
+    <section id="why-two-levels">
       <h2>왜 큰 관점과 작은 관점을 같이 요청하나</h2>
       <p>
         큰 관점만 보면 실행 명령, 경로, 환경변수 같은 작은 문제가 빠질 수 있습니다.
@@ -267,7 +486,7 @@
       </ol>
     </section>
 
-    <section>
+    <section id="templates">
       <h2>Codex에게 요청할 때의 추천 문장</h2>
       <p>짧게 요청하고 싶을 때는 아래처럼 말하면 충분합니다.</p>
       <div class="template">큰 관점과 작은 관점으로 나눠서 리뷰해줘.
@@ -288,7 +507,7 @@
 수정이 필요하면 바로 고치지 말고 우선순위와 이유만 정리해줘.</div>
     </section>
 
-    <section>
+    <section id="matrix">
       <h2>리뷰 범위별 확인표</h2>
       <table class="matrix">
         <thead>
@@ -323,7 +542,7 @@
       </table>
     </section>
 
-    <section>
+    <section id="input-info">
       <h2>요청할 때 같이 주면 좋은 정보</h2>
       <ul>
         <li>이번 목표: 예를 들어 “회사 PC에서 pull 후 실행 파일을 다시 만들기”</li>
@@ -334,7 +553,7 @@
       </ul>
     </section>
 
-    <section>
+    <section id="workflow">
       <h2>Codex가 이렇게 움직이면 좋다</h2>
       <div class="ok">
         <p><strong>좋은 진행 순서</strong></p>
@@ -358,7 +577,7 @@
       </div>
     </section>
 
-    <section>
+    <section id="one-line">
       <h2>한 문장으로 정리</h2>
       <p class="note">
         사용자가 “큰 관점, 작은 관점으로 봐줘”라고 말하면 Codex는
@@ -367,7 +586,7 @@
       </p>
     </section>
 
-    <section>
+    <section id="general">
       <h2>다른 프로젝트에서도 쓰는 방법</h2>
       <p>
         이 문서는 특정 프로젝트 전용 체크리스트가 아니라, Codex에게 리뷰를 요청하는 방법을 정리한 공통 가이드로 쓸 수 있습니다.
@@ -379,7 +598,7 @@
 프로젝트 특수성이 있으면 먼저 파악하고, 명확한 문제는 수정해줘.</div>
     </section>
 
-    <section>
+    <section id="depth">
       <h2>리뷰 깊이 선택</h2>
       <table class="matrix">
         <thead>
@@ -414,7 +633,7 @@
       </table>
     </section>
 
-    <section>
+    <section id="deliverables">
       <h2>결과물까지 지정하기</h2>
       <p>
         리뷰 요청에서 가장 자주 빠지는 것은 “검토 후 무엇을 남길지”입니다.
@@ -432,7 +651,7 @@
       </p>
     </section>
 
-    <section>
+    <section id="agents">
       <h2>agent를 쓸 때와 안 쓸 때</h2>
       <div class="grid">
         <div class="term">
@@ -451,7 +670,7 @@
 범위가 좁으면 바로 직접 확인하고 수정해줘.</div>
     </section>
 
-    <section>
+    <section id="project-card">
       <h2>프로젝트 정보 카드</h2>
       <p>
         다른 프로젝트에서 처음 리뷰를 요청할 때는 아래 정보를 짧게 붙이면 Codex가 훨씬 빨리 맥락을 잡습니다.
@@ -468,7 +687,7 @@
 - 원하는 종료 지점: 진단만 / 수정까지 / 커밋까지 / 푸시까지</div>
     </section>
 
-    <section>
+    <section id="missed">
       <h2>자주 빠지는 검토 항목</h2>
       <ul>
         <li>사용자가 실제로 여는 화면 또는 실행 파일이 무엇인지</li>

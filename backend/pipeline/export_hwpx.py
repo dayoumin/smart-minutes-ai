@@ -3,6 +3,8 @@ import os
 import zipfile
 from typing import Any
 
+from pipeline.transcript_display import get_transcript_segments
+
 
 def _paragraph(text: str) -> str:
     escaped = html.escape(text or "")
@@ -71,7 +73,7 @@ def export_hwpx(result: dict, output_path: str) -> str:
 
     summary = result.get("summary", {}) or {}
     title = summary.get("title") or "회의록"
-    segments = result.get("segments", []) or []
+    segments = get_transcript_segments(result)
 
     paragraphs = [
         _paragraph(title),

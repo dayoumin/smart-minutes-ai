@@ -91,13 +91,16 @@ def _clear_faster_whisper_model_cache() -> None:
         return
 
     import gc
-    import torch
 
     model = _FASTER_WHISPER_MODEL
     _FASTER_WHISPER_MODEL = None
     _FASTER_WHISPER_MODEL_CACHE_KEY = None
     del model
     gc.collect()
+    try:
+        import torch
+    except Exception:
+        return
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
 

@@ -1,5 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, Loader2, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, Loader2, Play, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
+import {
+    ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
+    AnalysisResumeDraft,
+    AnalysisResumeDraftFileKey,
+    AnalysisResumeDraftStatus,
+    AnalysisResumeDraftUnavailableReason,
+    dismissAnalysisResumeDraft,
+    getAnalysisResumeDraft,
+    getResumeDraftKey,
+    listAnalysisResumeDrafts,
+    listSuppressedResumeCandidateKeys,
+    markAnalysisResumeDraftUnavailable,
+    markAnalysisResumeDraftsForKeyUnavailable,
+    removeAnalysisResumeDraft,
+    unsuppressResumeCandidateKey,
+    upsertAnalysisResumeDraft,
+} from './analysisResumeDrafts';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { Input } from './Input';
@@ -20,6 +37,7 @@ const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
 const BACKEND_READY_INTERVAL_MS = 1_000;
 const ANALYSIS_STALL_WARNING_MS = 120_000;
+const getNowMs = (): number => Date.now();
 
 const formatElapsedDuration = (milliseconds: number): string => {
     const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -33,21 +51,10 @@ const formatElapsedDuration = (milliseconds: number): string => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 };
 
-const getChunkProgress = (message: string): { current: number; total: number } | null => {
-    const match = message.trim().match(/^Transcribing chunk (\d+)\/(\d+)/);
-    if (!match) return null;
-    return {
-        current: Number(match[1]),
-        total: Number(match[2]),
-    };
-};
-
-const formatEstimatedRemaining = (elapsedMs: number, message: string, stalled: boolean): string => {
-    if (stalled) return '확인 필요';
-    const chunk = getChunkProgress(message);
-    if (!chunk || chunk.current <= 0 || chunk.total <= chunk.current) return '측정 중';
-    const estimatedTotalMs = (elapsedMs / chunk.current) * chunk.total;
-    return `약 ${formatElapsedDuration(estimatedTotalMs - elapsedMs)}`;
+const formatEstimatedRemaining = (elapsedMs: number, progressPercent: number): string => {
+    if (progressPercent < 10 || progressPercent >= 100) return progressPercent >= 100 ? '0:00' : '측정 중';
+    const estimatedTotalMs = elapsedMs / (progressPercent / 100);
+    return formatElapsedDuration(estimatedTotalMs - elapsedMs);
 };
 
 interface AnalyzeResult {
@@ -56,6 +63,8 @@ interface AnalyzeResult {
     progress?: number;
     summary?: string;
     segments?: MeetingSegment[];
+    display_segments?: MeetingSegment[];
+    displaySegments?: MeetingSegment[];
     topics?: string[];
     topic_sections?: MeetingTopicSection[];
     topicSections?: MeetingTopicSection[];
@@ -81,6 +90,51 @@ interface AnalyzeResult {
         docx?: string | null;
         hwpx?: string | null;
     };
+    resume?: {
+        requested?: boolean;
+        mode?: string;
+        message?: string;
+        fallback_reason?: string | null;
+        reused_chunk_count?: number;
+    };
+}
+
+interface ResumeCandidate {
+    job_id: string;
+    stage: string;
+    updated_at?: string;
+    created_at?: string;
+    resume_supported: boolean;
+    active: boolean;
+    chunk_count: number;
+    completed_chunk_count: number;
+    last_progress?: {
+        message?: string;
+        progress?: number;
+        status?: string;
+    };
+}
+
+interface ResumeCandidatesPayload {
+    candidates?: ResumeCandidate[];
+    recommended_job_id?: string | null;
+}
+
+interface DraftStatusPayload {
+    drafts?: Array<{
+        job_id: string;
+        status: 'active' | 'cancelled' | 'failed' | 'completed' | 'stopped' | 'missing';
+        stage?: string;
+        updated_at?: string;
+        resume_supported?: boolean;
+        completed_chunk_count?: number;
+        last_progress?: {
+            message?: string;
+            progress?: number;
+            status?: string;
+        };
+        last_error?: string;
+    }>;
 }
 
 interface ModelStatus {
@@ -103,6 +157,12 @@ interface ModelsPayload {
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
 type AnalysisPhase = 'idle' | 'checking-server' | 'checking-models' | 'analyzing' | 'error';
 
+interface CompletionNotice {
+    meetingId: string;
+    elapsedMs: number;
+    note?: string;
+}
+
 interface ReadinessCheck {
     state: ReadinessState;
     message: string;
@@ -112,6 +172,15 @@ interface ReadinessCheck {
 interface ReadinessOptions {
     soft?: boolean;
 }
+
+const getFallbackAnalysisMessage = (phase: AnalysisPhase, progressPercent: number): string => {
+    if (phase === 'checking-server') return '분석 기능 확인 중';
+    if (phase === 'checking-models') return '모델 확인 중';
+    if (progressPercent >= 95) return '저장 중';
+    if (progressPercent >= 80) return '요약 정리 중';
+    if (progressPercent >= 25) return '음성 인식 중';
+    return '분석 시작 중';
+};
 
 const parseSseChunk = (chunk: string): string[] => {
     return chunk
@@ -148,24 +217,29 @@ const getUserModelLabel = (model: ModelStatus): string => {
 
 const translateStatusMessage = (message: string): string => {
     const normalized = message.trim();
-    const chunkMatch = normalized.match(/^Transcribing chunk (\d+)\/(\d+)/);
+    const stallSuffix = ' 같은 단계가 오래 걸리고 있습니다. 진행이 바뀌지 않으면 취소 후 다시 시도해 주세요.';
+    const isStalled = normalized.endsWith(stallSuffix);
+    const baseMessage = isStalled ? normalized.slice(0, -stallSuffix.length) : normalized;
+    const chunkMatch = baseMessage.match(/^Transcribing chunk (\d+)\/(\d+)/);
     if (chunkMatch) {
-        return `음성 인식 중입니다. 현재 ${chunkMatch[1]}/${chunkMatch[2]} 구간을 처리하고 있습니다.`;
+        return `음성 인식 ${chunkMatch[1]}/${chunkMatch[2]} 처리 중`;
     }
 
     const statusMap: Record<string, string> = {
-        '업로드 파일 저장 완료': '파일을 안전하게 저장했습니다.',
-        '음성 인식 모델 확인 중': '음성 인식 모델을 확인하고 있습니다.',
-        '음성 인식 모델 준비 완료': '음성 인식 모델 준비가 끝났습니다.',
-        'Converting to WAV...': '영상에서 음성을 추출하고 WAV로 변환하고 있습니다.',
-        'Preparing audio chunks...': '긴 음성을 분석하기 좋은 구간으로 나누고 있습니다.',
-        'Primary speech recognition failed; using fallback model...': '음성 인식 방식을 바꾸어 다시 시도하고 있습니다.',
-        'Speaker Diarization & Alignment...': '말한 사람과 시간을 구분하고 문장을 맞추고 있습니다.',
-        'Summarizing with Local LLM...': '회의 내용을 요약하고 주요 주제를 정리하고 있습니다.',
-        'Saving results...': '회의록과 다운로드 파일을 저장하고 있습니다.',
+        '업로드 파일 저장 완료': '파일 저장 완료',
+        '음성 인식 모델 확인 중': '모델 확인 중',
+        '음성 인식 모델 준비 완료': '모델 준비 완료',
+        'Converting to WAV...': '음성 추출 중',
+        'Preparing audio chunks...': '구간 나누는 중',
+        '음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.': '후처리 준비 중',
+        'Primary speech recognition failed; using fallback model...': '음성 인식 재시도 중',
+        'Speaker Diarization & Alignment...': '화자 구분 중',
+        '화자 구간 분석 완료. 문장 시간과 맞추는 중': '문장 시간 맞추는 중',
+        'Summarizing with Local LLM...': '요약 정리 중',
+        'Saving results...': '저장 중',
     };
 
-    return statusMap[normalized] || normalized;
+    return statusMap[baseMessage] || baseMessage;
 };
 
 const formatDuration = (seconds: number): string => {
@@ -178,6 +252,109 @@ const formatDuration = (seconds: number): string => {
     if (minutes > 0) return `${minutes}분 ${remainingSeconds}초`;
     return `${remainingSeconds}초`;
 };
+
+const formatResumeUpdatedAt = (value?: string): string => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+};
+
+const getResumeDraftStatusLabel = (status: AnalysisResumeDraftStatus): string => {
+    if (status === 'active') return '진행 중이던 분석';
+    if (status === 'completed') return '정리됨';
+    if (status === 'unavailable') return '이어하기 불가';
+    if (status === 'stopped') return '중단됨';
+    if (status === 'cancelled') return '사용자 취소';
+    return '오류로 중단';
+};
+
+const getResumeDraftTone = (status: AnalysisResumeDraftStatus): 'info' | 'warning' | 'error' | 'success' => {
+    if (status === 'active') return 'info';
+    if (status === 'completed') return 'success';
+    if (status === 'unavailable') return 'warning';
+    if (status === 'stopped') return 'warning';
+    if (status === 'cancelled') return 'warning';
+    return 'error';
+};
+
+const canResumeDraft = (draft: AnalysisResumeDraft): boolean => (
+    draft.status !== 'completed'
+    && draft.status !== 'unavailable'
+    && draft.resumeEligible !== false
+);
+
+const getResumeUnavailableReasonLabel = (draft: AnalysisResumeDraft): string => {
+    if (draft.resumeUnavailableReason === 'no-checkpoint') return '재사용 가능한 체크포인트가 없습니다.';
+    if (draft.resumeUnavailableReason === 'file-mismatch') return '선택한 파일이 이 기록의 파일과 다릅니다.';
+    if (draft.resumeUnavailableReason === 'completed') return '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.';
+    if (draft.resumeUnavailableReason === 'not-candidate') return '현재 재사용 후보로 확인되지 않았습니다.';
+    if (draft.resumeEligible === false) return '재사용 가능한 진행분이 없습니다.';
+    return '';
+};
+
+const getResumeStartErrorMessage = (draft: AnalysisResumeDraft): string => {
+    const reason = getResumeUnavailableReasonLabel(draft);
+    return reason
+        ? `이전 분석 기록을 이어서 진행할 수 없습니다. ${reason}`
+        : '이전 분석 기록을 이어서 진행할 수 없습니다. 새 분석으로 시작할 수 있습니다.';
+};
+
+const isMatchingResumeDraftFile = (draft: AnalysisResumeDraft, selectedFile: File | null): boolean => {
+    if (!selectedFile) return false;
+    return (
+        draft.sourceFilename === selectedFile.name
+        && draft.sourceSize === selectedFile.size
+        && draft.sourceLastModified === selectedFile.lastModified
+    );
+};
+
+const getResumePromptMessage = (candidate: ResumeCandidate): string => {
+    const stageLabel = translateStatusMessage(candidate.last_progress?.message || candidate.stage);
+    const updatedAt = formatResumeUpdatedAt(candidate.updated_at);
+    const chunkLabel = candidate.chunk_count > 0
+        ? `음성 인식 ${candidate.completed_chunk_count}/${candidate.chunk_count} 구간 완료`
+        : '이전 분석 기록';
+    return [
+        '같은 파일의 미완료 분석 후보를 찾았습니다.',
+        updatedAt ? `최근 상태: ${updatedAt}` : undefined,
+        stageLabel ? `진행 단계: ${stageLabel}` : undefined,
+        chunkLabel,
+        '',
+        '이전 음성 인식 진행분 재사용을 시도할까요?',
+    ].filter(Boolean).join('\n');
+};
+
+const getCompletionResumeNote = (resume?: AnalyzeResult['resume']): string | undefined => {
+    if (!resume?.requested) return undefined;
+    if (resume.mode === 'fallback_fresh_start') {
+        return '이전 분석 기록과 일치하지 않아 이번 분석은 처음부터 다시 진행했습니다.';
+    }
+    if (resume.mode === 'reused_stt_and_diarization') {
+        const reusedChunkCount = resume.reused_chunk_count || 0;
+        return reusedChunkCount > 0
+            ? `이전 음성 인식 진행분 ${reusedChunkCount}개 구간과 화자 구분 결과를 재사용했습니다.`
+            : '이전 화자 구분 결과를 재사용했습니다.';
+    }
+    if (resume.mode === 'reused_diarization') {
+        return '이전 화자 구분 결과를 재사용했습니다.';
+    }
+    if (resume.mode === 'reused_stt' && (resume.reused_chunk_count || 0) > 0) {
+        return `이전 음성 인식 진행분 ${resume.reused_chunk_count}개 구간을 재사용했습니다.`;
+    }
+    return undefined;
+};
+
+const toResumeDraftFileKey = (selectedFile: File): AnalysisResumeDraftFileKey => ({
+    sourceFilename: selectedFile.name,
+    sourceSize: selectedFile.size,
+    sourceLastModified: selectedFile.lastModified,
+});
 
 interface MeetingWriterProps {
     onOpenSettings?: () => void;
@@ -201,11 +378,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
     const [readinessMessage, setReadinessMessage] = useState('');
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
+    const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
+    const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
+    const [selectedResumeDraftId, setSelectedResumeDraftId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const analysisInFlightRef = useRef(false);
     const analysisAbortControllerRef = useRef<AbortController | null>(null);
     const analysisCancelledRef = useRef(false);
     const analysisJobIdRef = useRef<string | null>(null);
+    const analysisResumeDraftIdRef = useRef<string | null>(null);
     const analysisStalled = isAnalyzing && analysisPhase === 'analyzing' && analysisNow - lastRealProgressAt >= ANALYSIS_STALL_WARNING_MS;
 
     useEffect(() => {
@@ -228,6 +409,111 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         const timer = window.setInterval(() => setAnalysisNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
     }, [isAnalyzing]);
+
+    useEffect(() => {
+        const syncDrafts = async () => {
+            const localDrafts = listAnalysisResumeDrafts();
+            setResumeDrafts(localDrafts);
+
+            if (ANALYSIS_MODE !== 'real') return;
+            if (localDrafts.length === 0) return;
+
+            try {
+                const apiBase = await getApiBase();
+                const response = await fetch(`${apiBase}/api/analyze/draft-statuses`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ job_ids: localDrafts.map(draft => draft.jobId) }),
+                });
+                if (!response.ok) return;
+                const payload = await response.json() as DraftStatusPayload;
+                const remoteDrafts = payload.drafts || [];
+                const now = new Date().toISOString();
+
+                for (const draft of localDrafts) {
+                    if (draft.status === 'completed' || draft.status === 'unavailable') {
+                        continue;
+                    }
+                    const remote = remoteDrafts.find(item => item.job_id === draft.jobId);
+                    if (!remote || remote.status === 'missing') {
+                        markAnalysisResumeDraftUnavailable(draft.jobId, 'no-checkpoint', {
+                            errorMessage: '재사용 가능한 체크포인트를 찾지 못했습니다.',
+                            updatedAt: now,
+                        });
+                        continue;
+                    }
+                    if (remote.status === 'completed') {
+                        markAnalysisResumeDraftsForKeyUnavailable(
+                            {
+                                sourceFilename: draft.sourceFilename,
+                                sourceSize: draft.sourceSize,
+                                sourceLastModified: draft.sourceLastModified,
+                            },
+                            'completed',
+                            {
+                                status: 'completed',
+                                errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
+                                updatedAt: now,
+                                clearSuppression: false,
+                            },
+                        );
+                        continue;
+                    }
+
+                    const nextStatus: AnalysisResumeDraftStatus = remote.status === 'cancelled'
+                        ? 'cancelled'
+                        : remote.status === 'active'
+                            ? 'active'
+                            : remote.status === 'stopped'
+                                ? 'stopped'
+                                : 'failed';
+                    const resumeEligible = Boolean(remote.resume_supported) && Number(remote.completed_chunk_count || 0) > 0;
+                    const nextDraft: AnalysisResumeDraft = {
+                        ...draft,
+                        status: nextStatus,
+                        updatedAt: remote.updated_at || now,
+                        stage: remote.stage || draft.stage,
+                        lastMessage: remote.last_progress?.message || draft.lastMessage,
+                        lastProgress: typeof remote.last_progress?.progress === 'number'
+                            ? remote.last_progress.progress
+                            : draft.lastProgress,
+                        errorMessage: remote.last_error || draft.errorMessage,
+                        resumeEligible,
+                        completedChunkCount: Number(remote.completed_chunk_count || 0),
+                    };
+                    if (!getAnalysisResumeDraft(draft.jobId)) {
+                        continue;
+                    }
+                    if (
+                        nextDraft.status !== draft.status
+                        || nextDraft.updatedAt !== draft.updatedAt
+                        || nextDraft.stage !== draft.stage
+                        || nextDraft.lastMessage !== draft.lastMessage
+                        || nextDraft.lastProgress !== draft.lastProgress
+                        || nextDraft.errorMessage !== draft.errorMessage
+                        || nextDraft.resumeEligible !== draft.resumeEligible
+                        || nextDraft.completedChunkCount !== draft.completedChunkCount
+                    ) {
+                        upsertAnalysisResumeDraft(nextDraft);
+                    }
+                }
+
+                setResumeDrafts(listAnalysisResumeDrafts());
+            } catch {
+                // Keep local draft snapshot when backend state is unavailable.
+            }
+        };
+        void syncDrafts();
+        const handleSyncDrafts = () => {
+            void syncDrafts();
+        };
+        window.addEventListener('focus', handleSyncDrafts);
+        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleSyncDrafts);
+        return () => {
+            window.removeEventListener('focus', handleSyncDrafts);
+            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleSyncDrafts);
+        };
+    }, []);
 
     useEffect(() => {
         if (ANALYSIS_MODE !== 'real') return;
@@ -288,6 +574,49 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         if (!file) fields.push('음성 파일');
         return fields;
     }, [date, file, participants, title]);
+
+    const selectedResumeDraft = useMemo(
+        () => resumeDrafts.find(draft => draft.jobId === selectedResumeDraftId) ?? null,
+        [resumeDrafts, selectedResumeDraftId],
+    );
+
+    const activeResumeDrafts = useMemo(
+        () => resumeDrafts.filter(draft => draft.status === 'active'),
+        [resumeDrafts],
+    );
+
+    const activeResumeDraftKeys = useMemo(
+        () => new Set(activeResumeDrafts.map(draft => getResumeDraftKey(draft))),
+        [activeResumeDrafts],
+    );
+
+    const resumableResumeDrafts = useMemo(
+        () => resumeDrafts.filter(
+            draft => draft.status !== 'active'
+                && !activeResumeDraftKeys.has(getResumeDraftKey(draft)),
+        ),
+        [activeResumeDraftKeys, resumeDrafts],
+    );
+
+    const resumeDraftFileMismatch = useMemo(() => {
+        if (!selectedResumeDraft || !file) return false;
+        return !isMatchingResumeDraftFile(selectedResumeDraft, file);
+    }, [file, selectedResumeDraft]);
+
+    const matchingActiveDraft = useMemo(() => {
+        if (!file) return null;
+        return activeResumeDrafts.find(draft => isMatchingResumeDraftFile(draft, file)) ?? null;
+    }, [activeResumeDrafts, file]);
+
+    const resumeSelectionActive = Boolean(selectedResumeDraft);
+    const resumeAwaitingFile = Boolean(selectedResumeDraft && !file);
+    const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
+    const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
+    const startButtonDisabled = isAnalyzing
+        || Boolean(matchingActiveDraft)
+        || selectedResumeDraftUnavailable
+        || resumeDraftFileMismatch
+        || missingFields.length > 0;
 
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
 
@@ -350,15 +679,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     };
 
     const waitForBackendReady = async (): Promise<ReadinessCheck> => {
-        const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
+        const deadline = getNowMs() + BACKEND_READY_TIMEOUT_MS;
         setAnalysisPhase('checking-server');
 
-        while (Date.now() < deadline && !analysisCancelledRef.current) {
+        while (getNowMs() < deadline && !analysisCancelledRef.current) {
             const check = await refreshReadiness();
             if (check.state === 'ready') return check;
             if (check.state === 'missing-models' || check.state === 'error') return check;
 
-            const remainingSeconds = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
+            const remainingSeconds = Math.max(0, Math.ceil((deadline - getNowMs()) / 1000));
             setStatusMessage(`분석 기능을 준비하고 있습니다. 잠시 기다려 주세요. (${remainingSeconds}초)`);
             await sleep(BACKEND_READY_INTERVAL_MS);
         }
@@ -412,12 +741,100 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         setStatusMessage('');
     };
 
+    const saveResumeDraft = (
+        status: AnalysisResumeDraftStatus,
+        options: {
+            jobId?: string | null;
+            stage?: string;
+            lastMessage?: string;
+            lastProgress?: number;
+            errorMessage?: string;
+        } = {},
+    ) => {
+        if (!file) return;
+        const jobId = options.jobId || analysisJobIdRef.current;
+        if (!jobId) return;
+        const now = new Date().toISOString();
+        const existing = getAnalysisResumeDraft(jobId);
+        upsertAnalysisResumeDraft({
+            jobId,
+            title: title.trim(),
+            date,
+            participants: participants.trim(),
+            sourceFilename: file.name,
+            sourceSize: file.size,
+            sourceLastModified: file.lastModified,
+            status,
+            createdAt: existing?.createdAt || now,
+            updatedAt: now,
+            stage: options.stage,
+            lastMessage: options.lastMessage,
+            lastProgress: options.lastProgress,
+            errorMessage: options.errorMessage,
+            resumeEligible: existing?.resumeEligible,
+            resumeUnavailableReason: existing?.resumeUnavailableReason,
+            completedChunkCount: existing?.completedChunkCount,
+        });
+    };
+
+    const clearResumeSelectionOnly = () => {
+        setSelectedResumeDraftId(null);
+        setErrorMessage(current => current.includes('이전 분석 기록') || current.includes('이어받기 기록') ? '' : current);
+        setStatusMessage(current => (
+            current.includes('이전 음성 인식 진행분 재사용')
+            || current.includes('같은 파일을 다시 선택')
+                ? ''
+                : current
+        ));
+    };
+
+    const clearResumeDraftSelection = () => {
+        clearResumeSelectionOnly();
+        setFile(null);
+        setFileDurationSeconds(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    };
+
+    const handleResumeDraftPrepare = (draft: AnalysisResumeDraft) => {
+        if (!canResumeDraft(draft)) {
+            setSelectedResumeDraftId(null);
+            setCompletionNotice(null);
+            setStatusMessage('');
+            setProgress(0);
+            setErrorMessage(getResumeStartErrorMessage(draft));
+            return;
+        }
+        setTitle(draft.title);
+        setDate(draft.date);
+        setParticipants(draft.participants);
+        setSelectedResumeDraftId(draft.jobId);
+        unsuppressResumeCandidateKey(getResumeDraftKey(draft));
+        setCompletionNotice(null);
+        setErrorMessage('');
+        setStatusMessage('');
+        setProgress(0);
+    };
+
+    const handleDeleteResumeDraft = (draft: AnalysisResumeDraft) => {
+        if (draft.status === 'active') {
+            removeAnalysisResumeDraft(draft.jobId);
+        } else {
+            dismissAnalysisResumeDraft(draft);
+        }
+        if (selectedResumeDraftId === draft.jobId) {
+            clearResumeDraftSelection();
+        }
+    };
+
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
         const selectedFile = e.target.files?.[0] ?? null;
         setErrorMessage('');
         setStatusMessage('');
         setProgress(0);
         setFileDurationSeconds(null);
+        setCompletionNotice(null);
         setFile(selectedFile);
 
         if (!selectedFile || getFileKind(selectedFile) === 'unknown') return;
@@ -441,6 +858,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         setErrorMessage('');
         setStatusMessage('');
         setProgress(0);
+        setCompletionNotice(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
         }
@@ -454,6 +872,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         if (missingFields.length > 0) {
             setProgress(0);
             setStatusMessage('');
+            setCompletionNotice(null);
             setErrorMessage(`필수 항목을 확인해 주세요: ${missingFields.join(', ')}`);
             return;
         }
@@ -461,24 +880,145 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         analysisInFlightRef.current = true;
         analysisCancelledRef.current = false;
         analysisAbortControllerRef.current = new AbortController();
-        const analysisJobId = crypto.randomUUID();
-        analysisJobIdRef.current = analysisJobId;
-        setAnalysisStartedAt(Date.now());
+        const startedAt = getNowMs();
+        setAnalysisStartedAt(startedAt);
         setIsAnalyzing(true);
         setAnalysisPhase('checking-server');
         setProgress(0);
         setRawStatusMessage('');
-        setLastRealProgressAt(Date.now());
+        setLastRealProgressAt(getNowMs());
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
+        setCompletionNotice(null);
 
         try {
             const modelsReady = await ensureModelsReady();
             if (!modelsReady) return;
             if (analysisCancelledRef.current) return;
+            const apiBase = await getApiBase();
+            let analysisJobId: string = crypto.randomUUID();
+            let resumeRequested = false;
+            let resumePayload: ResumeCandidatesPayload | null = null;
+            const currentFileResumeKey = getResumeDraftKey({
+                sourceFilename: (file as File).name,
+                sourceSize: (file as File).size,
+                sourceLastModified: (file as File).lastModified,
+            });
+            const suppressedResumeKeys = new Set(listSuppressedResumeCandidateKeys());
+            if (ANALYSIS_MODE === 'real' && file) {
+                try {
+                    const resumeResponse = await fetch(`${apiBase}/api/analyze/resume-candidates`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            source_filename: file.name,
+                            source_size: file.size,
+                            source_last_modified: file.lastModified,
+                        }),
+                    });
+                    if (resumeResponse.ok) {
+                        resumePayload = await resumeResponse.json() as ResumeCandidatesPayload;
+                    }
+                } catch {
+                    resumePayload = null;
+                }
+            }
+
+            if (selectedResumeDraft) {
+                if (!canResumeDraft(selectedResumeDraft)) {
+                    setSelectedResumeDraftId(null);
+                    setAnalysisPhase('error');
+                    setErrorMessage(getResumeStartErrorMessage(selectedResumeDraft));
+                    setStatusMessage('');
+                    setProgress(0);
+                    return;
+                }
+                if (!isMatchingResumeDraftFile(selectedResumeDraft, file)) {
+                    setAnalysisPhase('error');
+                    setErrorMessage('이전 분석 기록을 이어서 진행할 수 없습니다. 선택한 파일이 이 기록의 파일과 다릅니다.');
+                    setStatusMessage('');
+                    setProgress(0);
+                    return;
+                }
+                if (ANALYSIS_MODE === 'real' && !resumePayload) {
+                    setAnalysisPhase('error');
+                    setErrorMessage('이전 분석 기록의 재사용 가능 여부를 확인하지 못했습니다. 잠시 뒤 다시 시도해 주세요.');
+                    setStatusMessage('');
+                    setProgress(0);
+                    return;
+                }
+                const orderedCandidates = [...(resumePayload?.candidates || [])].sort((a, b) => {
+                    if (a.job_id === resumePayload?.recommended_job_id) return -1;
+                    if (b.job_id === resumePayload?.recommended_job_id) return 1;
+                    return 0;
+                }).filter(candidate => !suppressedResumeKeys.has(currentFileResumeKey) || candidate.job_id === selectedResumeDraft.jobId);
+                const activeCandidate = orderedCandidates.find(candidate => candidate.active) || null;
+                if (activeCandidate) {
+                    setAnalysisPhase('error');
+                    setErrorMessage('같은 파일의 분석이 이미 진행 중입니다. 완료되거나 취소된 뒤 다시 시도해 주세요.');
+                    setStatusMessage('');
+                    setProgress(0);
+                    return;
+                }
+                const matchingCandidate = orderedCandidates.find(candidate => candidate.job_id === selectedResumeDraft.jobId) || null;
+                if (!matchingCandidate) {
+                    const unavailableReason: AnalysisResumeDraftUnavailableReason = selectedResumeDraft.resumeEligible === false || selectedResumeDraft.completedChunkCount === 0
+                        ? 'no-checkpoint'
+                        : 'not-candidate';
+                    const unavailableMessage = unavailableReason === 'no-checkpoint'
+                        ? '재사용 가능한 체크포인트를 찾지 못했습니다.'
+                        : '현재 재사용 후보로 확인되지 않았습니다.';
+                    markAnalysisResumeDraftUnavailable(selectedResumeDraft.jobId, unavailableReason, {
+                        errorMessage: unavailableMessage,
+                    });
+                    setResumeDrafts(listAnalysisResumeDrafts());
+                    setSelectedResumeDraftId(null);
+                    setAnalysisPhase('error');
+                    setErrorMessage(`이전 분석 기록을 이어서 진행할 수 없습니다. ${unavailableMessage} 새 분석으로 시작할 수 있습니다.`);
+                    setStatusMessage('');
+                    setProgress(0);
+                    return;
+                }
+                analysisJobId = matchingCandidate.job_id;
+                resumeRequested = true;
+                setStatusMessage('이전 음성 인식 진행분 재사용을 시도합니다.');
+            } else if (resumePayload) {
+                const orderedCandidates = [...(resumePayload.candidates || [])].sort((a, b) => {
+                    if (a.job_id === resumePayload.recommended_job_id) return -1;
+                    if (b.job_id === resumePayload.recommended_job_id) return 1;
+                    return 0;
+                }).filter(() => !suppressedResumeKeys.has(currentFileResumeKey));
+                const activeCandidate = orderedCandidates.find(candidate => candidate.active) || null;
+                if (activeCandidate) {
+                    setAnalysisPhase('error');
+                    setErrorMessage('같은 파일의 분석이 이미 진행 중입니다. 완료되거나 취소된 뒤 다시 시도해 주세요.');
+                    setStatusMessage('');
+                    setProgress(0);
+                    return;
+                }
+                const availableCandidate = orderedCandidates[0] || null;
+                if (availableCandidate) {
+                    const shouldResume = window.confirm(getResumePromptMessage(availableCandidate));
+                    if (shouldResume) {
+                        analysisJobId = availableCandidate.job_id;
+                        resumeRequested = true;
+                        setStatusMessage('이전 음성 인식 진행분 재사용을 시도합니다.');
+                    } else {
+                        setStatusMessage('새 분석을 처음부터 시작합니다.');
+                    }
+                }
+            }
+            analysisJobIdRef.current = analysisJobId;
+            analysisResumeDraftIdRef.current = analysisJobId;
+            saveResumeDraft('active', {
+                jobId: analysisJobId,
+                stage: 'uploaded',
+                lastMessage: selectedResumeDraft ? '이전 음성 인식 진행분 재사용을 시도합니다.' : '분석을 시작합니다.',
+                lastProgress: 0,
+            });
             setAnalysisPhase('analyzing');
-            setLastRealProgressAt(Date.now());
-            setStatusMessage('분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
+            setLastRealProgressAt(getNowMs());
+            setStatusMessage(current => current || '분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
 
             const formData = new FormData();
             formData.append('title', title.trim());
@@ -487,8 +1027,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             formData.append('mode', ANALYSIS_MODE);
             formData.append('job_id', analysisJobId);
             formData.append('file', file as File);
-
-            const apiBase = await getApiBase();
+            formData.append('file_size', String((file as File).size));
+            formData.append('file_last_modified', String((file as File).lastModified));
+            formData.append('resume_requested', resumeRequested ? 'true' : 'false');
             const response = await fetch(`${apiBase}/api/analyze`, {
                 method: 'POST',
                 body: formData,
@@ -497,7 +1038,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             });
 
             if (!response.ok) {
-                throw new Error(`서버 응답 오류: ${response.status}`);
+                const detailText = await response.text().catch(() => '');
+                let message = detailText;
+                if (detailText.startsWith('{')) {
+                    try {
+                        const parsedDetail = JSON.parse(detailText) as { detail?: string };
+                        message = parsedDetail.detail || detailText;
+                    } catch {
+                        message = detailText;
+                    }
+                }
+                throw new Error(message || `서버 응답 오류: ${response.status}`);
             }
 
             const reader = response.body?.getReader();
@@ -536,9 +1087,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                     if (parsed.message) {
                         setRawStatusMessage(parsed.message);
                         setStatusMessage(translateStatusMessage(parsed.message));
+                        saveResumeDraft('active', {
+                            jobId: analysisJobId,
+                            stage: parsed.status || 'processing',
+                            lastMessage: parsed.message,
+                            lastProgress: typeof parsed.progress === 'number' ? parsed.progress : progress,
+                        });
                     }
                     if (!parsed.heartbeat) {
-                        setLastRealProgressAt(Date.now());
+                        setLastRealProgressAt(getNowMs());
                     }
                     if (parsed.status === 'error') {
                         throw new Error(parsed.message || '분석 중 오류가 발생했습니다.');
@@ -564,6 +1121,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 participants: participants.trim(),
                 summary: finalData.summary || '요약 결과가 없습니다.',
                 segments: finalData.segments || [],
+                displaySegments: finalData.displaySegments || finalData.display_segments || [],
+                speakerLabels: {},
                 sourceFile: finalData.meeting?.source_file || file?.name,
                 jobId: finalData.outputs?.job_id || finalData.meeting?.job_id,
                 topics: finalData.topics || [],
@@ -578,13 +1137,47 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             };
 
             await addMeeting(newRecord);
-            window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: newRecord.id, openHistory: true } }));
+            const completedJobId = newRecord.jobId || analysisJobId;
+            const keepCompletedDraft = Boolean(selectedResumeDraft && selectedResumeDraft.jobId === completedJobId);
+            if (file) {
+                markAnalysisResumeDraftsForKeyUnavailable(
+                    toResumeDraftFileKey(file),
+                    'completed',
+                    {
+                        status: 'completed',
+                        errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
+                        exceptJobId: keepCompletedDraft ? null : completedJobId,
+                    },
+                );
+                if (keepCompletedDraft) {
+                    markAnalysisResumeDraftUnavailable(
+                        completedJobId,
+                        'completed',
+                        {
+                            status: 'completed',
+                            errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
+                        },
+                    );
+                } else {
+                    removeAnalysisResumeDraft(completedJobId);
+                }
+            } else {
+                removeAnalysisResumeDraft(completedJobId);
+            }
+            window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: newRecord.id, openHistory: false } }));
+            const completedElapsedMs = getNowMs() - startedAt;
             setProgress(100);
             setRawStatusMessage('');
-            setStatusMessage('회의록 저장이 완료되었습니다.');
+            setStatusMessage('회의록을 저장했습니다.');
+            setCompletionNotice({
+                meetingId: newRecord.id,
+                elapsedMs: completedElapsedMs,
+                note: getCompletionResumeNote(finalData.resume),
+            });
             setTitle('');
             setParticipants('');
             setFile(null);
+            clearResumeDraftSelection();
             if (fileInputRef.current) {
                 fileInputRef.current.value = '';
             }
@@ -592,11 +1185,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             if (analysisCancelledRef.current || (error instanceof DOMException && error.name === 'AbortError')) {
                 setProgress(0);
                 setRawStatusMessage('');
-                setStatusMessage('분석 요청을 중단했습니다. 백그라운드 정리는 잠시 걸릴 수 있습니다.');
+                setStatusMessage('분석을 중단했습니다.');
                 setErrorMessage('');
                 return;
             }
             const message = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
+            saveResumeDraft('failed', {
+                stage: 'failed',
+                lastMessage: rawStatusMessage || statusMessage,
+                lastProgress: progress,
+                errorMessage: message,
+            });
             setAnalysisPhase('error');
             setErrorMessage(message);
             setRawStatusMessage('');
@@ -606,6 +1205,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             analysisInFlightRef.current = false;
             analysisAbortControllerRef.current = null;
             analysisJobIdRef.current = null;
+            analysisResumeDraftIdRef.current = null;
             setIsAnalyzing(false);
             setAnalysisStartedAt(null);
             setAnalysisPhase(current => (current === 'error' ? 'error' : 'idle'));
@@ -630,10 +1230,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         }
 
         if (jobId && !cancelAccepted) {
-            setStatusMessage('취소할 분석 작업을 찾지 못했습니다. 이미 완료되었거나 정리 중일 수 있습니다.');
+            setStatusMessage('취소할 분석을 찾지 못했습니다.');
             return;
         }
 
+        saveResumeDraft('cancelled', {
+            jobId,
+            stage: 'cancelled',
+            lastMessage: rawStatusMessage || statusMessage,
+            lastProgress: progress,
+        });
         analysisCancelledRef.current = true;
         analysisAbortControllerRef.current?.abort();
         analysisInFlightRef.current = false;
@@ -642,12 +1248,23 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         setProgress(0);
         setErrorMessage('');
         setRawStatusMessage('');
-        setStatusMessage('분석 요청을 중단했습니다. 백그라운드 정리는 잠시 걸릴 수 있습니다.');
+        setStatusMessage('분석을 중단했습니다.');
     };
 
     const buttonLabel = (() => {
-        return 'AI 분석 시작';
+        if (matchingActiveDraft) return '진행 중';
+        if (selectedResumeDraftUnavailable) return '이어하기 불가';
+        if (resumeSelectionActive && !resumeReady) return '같은 파일 선택';
+        if (resumeReady) return '이어하기';
+        return '분석 시작';
     })();
+
+    const handleOpenCompletedMeeting = () => {
+        if (!completionNotice) return;
+        window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: completionNotice.meetingId, openHistory: true } }));
+        setCompletionNotice(null);
+        setStatusMessage('');
+    };
 
     const showProgressBar = isAnalyzing;
     const fileKind = file ? getFileKind(file) : null;
@@ -655,7 +1272,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     const progressPercent = Math.min(100, Math.max(0, progress));
     const elapsedMs = analysisStartedAt ? analysisNow - analysisStartedAt : 0;
     const elapsedLabel = formatElapsedDuration(elapsedMs);
-    const remainingLabel = formatEstimatedRemaining(elapsedMs, rawStatusMessage, analysisStalled);
+    const remainingLabel = formatEstimatedRemaining(elapsedMs, progressPercent);
     const selectedFileMeta = file
         ? [
             fileKind === 'video' ? '영상' : fileKind === 'audio' ? '음성' : '파일',
@@ -663,21 +1280,140 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
             fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
         ].filter(Boolean).join(' · ')
         : '음성 파일을 선택해 주세요.';
-    const currentStatusMessage = statusMessage || (
-        analysisPhase === 'checking-server'
-            ? '분석 기능을 확인하고 있습니다.'
-            : analysisPhase === 'checking-models'
-                ? '모델 준비 상태를 확인하고 있습니다.'
-                : '분석을 준비하고 있습니다.'
-    );
+    const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
             <div>
-                <h2 className="text-lg font-semibold text-foreground">새 회의록 작성</h2>
+                <h2 className="text-lg font-semibold text-foreground">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
             </div>
 
+            {(activeResumeDrafts.length > 0 || resumableResumeDrafts.length > 0) && !isAnalyzing && (
+                <div className="app-panel p-4 sm:p-5">
+                    {activeResumeDrafts.length > 0 && (
+                        <div>
+                            <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                                <span>진행 중이던 분석 기록</span>
+                                <span
+                                    title="다른 창이나 이전 실행에서 아직 끝나지 않은 분석입니다."
+                                    className="inline-flex items-center text-muted-foreground"
+                                >
+                                    <CircleHelp size={14} />
+                                </span>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                                완료되거나 중단될 때까지 목록에 유지됩니다.
+                            </div>
+                            <div className="mt-3 grid gap-2">
+                                {activeResumeDrafts.map(draft => (
+                                    <div key={draft.jobId} className="resume-draft-card status-info">
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                            <div className="min-w-0">
+                                                <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    <span className="status-pill status-info">{getResumeDraftStatusLabel(draft.status)}</span>
+                                                    <span className="ml-2">{draft.sourceFilename}</span>
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {resumableResumeDrafts.length > 0 && (
+                        <div className={activeResumeDrafts.length > 0 ? 'mt-5 border-t border-border pt-5' : ''}>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                                    <span>이전 분석 기록</span>
+                                    <span
+                                        title="같은 파일을 선택하면 이전 진행분 재사용을 시도합니다."
+                                        className="inline-flex items-center text-muted-foreground"
+                                    >
+                                        <CircleHelp size={14} />
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="mt-3 grid gap-2">
+                                {resumableResumeDrafts.map(draft => {
+                                    const isSelected = selectedResumeDraftId === draft.jobId;
+                                    const toneClass = getResumeDraftTone(draft.status);
+                                    const draftCanResume = canResumeDraft(draft);
+                                    const unavailableReason = getResumeUnavailableReasonLabel(draft);
+                                    const showUnavailableBadge = !draftCanResume && draft.status !== 'completed';
+                                    const detailTextClass = draft.status === 'completed'
+                                        ? 'text-muted-foreground'
+                                        : 'text-destructive';
+                                    return (
+                                        <div
+                                            key={draft.jobId}
+                                            className={`resume-draft-card status-${toneClass} ${isSelected ? 'resume-draft-card-selected' : ''}`}
+                                        >
+                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                <div className="min-w-0">
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="truncate text-sm font-semibold text-foreground">{draft.title || '이전 분석'}</div>
+                                                        {isSelected && (
+                                                            <span className="status-pill status-info">{resumeReady ? '이어하기 준비' : '같은 파일 필요'}</span>
+                                                        )}
+                                                        {showUnavailableBadge && (
+                                                            <span className={`status-pill status-${toneClass}`}>이어하기 불가</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="mt-1 text-xs text-muted-foreground">
+                                                        <span className={`status-pill status-${toneClass}`}>{getResumeDraftStatusLabel(draft.status)}</span>
+                                                        <span className="ml-2">{draft.sourceFilename}</span>
+                                                    </div>
+                                                    <div className="mt-1 text-xs text-muted-foreground">
+                                                        {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
+                                                    </div>
+                                                    {draft.errorMessage && (
+                                                        <div className={`mt-1 text-xs ${detailTextClass}`}>{draft.errorMessage}</div>
+                                                    )}
+                                                    {!draft.errorMessage && unavailableReason && (
+                                                        <div className="mt-1 text-xs text-muted-foreground">{unavailableReason}</div>
+                                                    )}
+                                                </div>
+                                                <div className="flex shrink-0 gap-2">
+                                                    {draftCanResume && (
+                                                        <IconButton
+                                                            variant={isSelected ? 'secondary' : 'outline'}
+                                                            icon={<Play size={16} />}
+                                                            onClick={() => handleResumeDraftPrepare(draft)}
+                                                            aria-label={isSelected ? '이어하기 선택됨' : '이어하기'}
+                                                            title={isSelected ? '이어하기 선택됨' : '이어하기'}
+                                                        />
+                                                    )}
+                                                    <IconButton
+                                                        variant="outline"
+                                                        icon={<X size={16} />}
+                                                        onClick={() => handleDeleteResumeDraft(draft)}
+                                                        aria-label="목록에서 숨기기"
+                                                        title="목록에서 숨기기"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="app-panel p-4 flex flex-col gap-5 sm:p-6">
+                {resumeSelectionActive && (
+                    <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <span>이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.</span>
+                        <Button variant="outline" onClick={clearResumeSelectionOnly} disabled={isAnalyzing}>
+                            새 분석
+                        </Button>
+                    </div>
+                )}
                 <div className="flex flex-col gap-2">
                     <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-title">회의 제목 *</label>
                     <Input id="meeting-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2026년 상반기 기획 회의" disabled={isAnalyzing} />
@@ -695,7 +1431,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 </div>
 
                 <div className="flex flex-col gap-2 mt-2">
-                    <label className="text-[13px] font-semibold text-foreground">음성 파일 *</label>
+                    <label className="text-[13px] font-semibold text-foreground">
+                        {resumeSelectionActive ? '같은 음성 파일 선택 *' : '음성 파일 *'}
+                    </label>
                     <input
                         type="file"
                         ref={fileInputRef}
@@ -708,7 +1446,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                     <div
                         className={`file-drop-zone ${file ? 'file-drop-zone-selected' : ''}`}
                         onClick={() => {
-                            if (!file && !isAnalyzing) fileInputRef.current?.click();
+                            if (!isAnalyzing) fileInputRef.current?.click();
                         }}
                     >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -726,18 +1464,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                 </div>
                             </div>
                             <div className="flex shrink-0 gap-2">
-                                {!file ? (
-                                    <Button
-                                        variant="outline"
-                                        onClick={(event) => {
-                                            event.stopPropagation();
-                                            fileInputRef.current?.click();
-                                        }}
-                                        disabled={isAnalyzing}
-                                    >
-                                        음성 파일 선택
-                                    </Button>
-                                ) : (
+                                {file && (
                                     <IconButton
                                         variant="outline"
                                         className="border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
@@ -754,11 +1481,27 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                         </div>
                     </div>
+                    {selectedResumeDraft && (
+                        <div className={`text-xs ${resumeDraftFileMismatch || selectedResumeDraftUnavailable ? 'text-destructive' : 'text-muted-foreground'}`}>
+                            {selectedResumeDraftUnavailable
+                                ? getResumeStartErrorMessage(selectedResumeDraft)
+                                : resumeAwaitingFile
+                                ? `${selectedResumeDraft.sourceFilename} 파일을 다시 선택해 주세요.`
+                                : resumeDraftFileMismatch
+                                    ? `선택한 파일이 다릅니다. ${selectedResumeDraft.sourceFilename} 파일을 다시 선택해 주세요.`
+                                    : '같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.'}
+                        </div>
+                    )}
+                    {matchingActiveDraft && (
+                        <div className="text-xs text-muted-foreground">
+                            같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
+                        </div>
+                    )}
                 </div>
 
                 {!isAnalyzing && (
                     <div className="flex justify-end border-t border-border/70 pt-5">
-                        <Button className="min-w-40 px-6 py-3 text-sm" onClick={handleStartAnalysis}>
+                        <Button onClick={handleStartAnalysis} disabled={startButtonDisabled}>
                             {buttonLabel}
                         </Button>
                     </div>
@@ -819,9 +1562,26 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                 </StatusBanner>
             )}
 
-            {statusMessage && !showAnalysisPanel && (
+            {statusMessage && !showAnalysisPanel && !completionNotice && (
                 <StatusBanner tone="neutral">
                     {statusMessage}
+                </StatusBanner>
+            )}
+
+            {completionNotice && (
+                <StatusBanner
+                    tone="success"
+                    heading="분석이 완료되었습니다"
+                    action={(
+                        <Button onClick={handleOpenCompletedMeeting}>
+                            결과 보기
+                        </Button>
+                    )}
+                >
+                    <div>소요 시간 {formatElapsedDuration(completionNotice.elapsedMs)}. 결과 보기를 눌러 회의록을 확인하세요.</div>
+                    {completionNotice.note && (
+                        <div className="mt-2 text-sm text-muted-foreground">{completionNotice.note}</div>
+                    )}
                 </StatusBanner>
             )}
 
@@ -834,39 +1594,50 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                             </div>
                             <div className="min-w-0">
                                 <div className="text-sm font-semibold text-foreground">
-                                    회의록을 분석하고 있습니다
-                                </div>
-                                <div className="mt-1 text-sm text-muted-foreground">
                                     {currentStatusMessage}
                                 </div>
                                 {analysisStalled && (
-                                    <div className="mt-2 text-xs font-medium text-destructive">
-                                        같은 단계가 2분 이상 이어지고 있습니다. 진행이 바뀌지 않으면 분석을 취소하고 다시 시도해 주세요.
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                        현재 단계가 계속 진행 중입니다.
                                     </div>
                                 )}
+                                <ProgressBar
+                                    value={progressPercent}
+                                    size="sm"
+                                    tone={errorMessage ? 'error' : 'primary'}
+                                    className="mt-3"
+                                    label="분석 진행률"
+                                />
                             </div>
                         </div>
                         <div className="flex shrink-0 items-start gap-3">
                             <div className="text-right">
-                                <div className="text-lg font-semibold text-primary">{elapsedLabel}</div>
-                                <div className="text-xs text-muted-foreground">경과 시간</div>
+                                <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                    <span>경과 시간</span>
+                                    <span title="분석을 시작한 뒤 지난 시간입니다." className="inline-flex items-center">
+                                        <CircleHelp size={13} />
+                                    </span>
+                                </div>
+                                <div className="mt-1 text-sm font-semibold text-primary">{elapsedLabel}</div>
                             </div>
                             <div className="text-right">
-                                <div className="text-lg font-semibold text-foreground">{remainingLabel}</div>
-                                <div className="text-xs text-muted-foreground">예상 남은 시간</div>
+                                <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                    <span>예상 남음</span>
+                                    <span title="현재 전체 진행률과 경과 시간을 기준으로 계산한 추정 시간입니다." className="inline-flex items-center">
+                                        <CircleHelp size={13} />
+                                    </span>
+                                </div>
+                                <div className="mt-1 text-sm font-semibold text-foreground">{remainingLabel}</div>
                             </div>
-                            <Button
+                            <IconButton
                                 variant="outline"
-                                className="border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                                className="h-9 w-9 border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
+                                icon={<X size={16} />}
                                 onClick={handleCancelAnalysis}
-                            >
-                                분석 취소
-                            </Button>
+                                aria-label="분석 취소"
+                                title="분석 취소"
+                            />
                         </div>
-                    </div>
-
-                    <div className="mt-3 text-xs text-muted-foreground">
-                        파일 크기와 PC 성능에 따라 분석 시간은 달라집니다.
                     </div>
                 </div>
             )}

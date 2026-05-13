@@ -114,11 +114,15 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path "{ROOT}"
 $PortableFolderName = "lmo_audio"
 {helpers}
-$safe = Assert-SafeDeployPath (Join-Path $RepoRoot "lmo_audio")
-if (-not $safe.EndsWith("lmo_audio")) {{
-    throw "Expected lmo_audio deploy path"
+$safe = Assert-SafeDeployPath (Join-Path (Join-Path $RepoRoot "releases") "lmo_audio")
+if (-not $safe.EndsWith("releases\\lmo_audio")) {{
+    throw "Expected releases\\lmo_audio deploy path"
 }}
-foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "desktop-app"), (Join-Path $RepoRoot "Wrong App"))) {{
+$safeTrailing = Assert-SafeDeployPath ((Join-Path (Join-Path $RepoRoot "releases") "lmo_audio") + "\\")
+if (-not $safeTrailing.EndsWith("releases\\lmo_audio")) {{
+    throw "Expected trailing slash deploy path to normalize"
+}}
+foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "lmo_audio"), (Join-Path $RepoRoot "desktop-app"), (Join-Path $RepoRoot "Wrong App"))) {{
     try {{
         Assert-SafeDeployPath $unsafe | Out-Null
         throw "Expected unsafe deploy path failure for $unsafe"
@@ -132,8 +136,44 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "desktop-app"), (Join
         completed = _run_powershell(command)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
+    def test_verify_script_resolves_default_from_repo_root_and_rejects_broad_paths(self):
+        script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
+        match = re.search(
+            r"function Normalize-FullPath[\s\S]+?(?=\r?\nfunction Add-Result)",
+            script,
+        )
+        self.assertIsNotNone(match, "Could not find verify path helper functions")
+        helpers = match.group(0)
+
+        command = f"""
+$ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path "{ROOT}"
+{helpers}
+Set-Location $env:TEMP
+$resolved = Resolve-InRepoPath "releases\\lmo_audio"
+if (-not $resolved.EndsWith("smart-minutes-ai\\releases\\lmo_audio")) {{
+    throw "Expected default portable path to resolve from repo root, got $resolved"
+}}
+$safe = Assert-SafePortablePath $resolved
+if (-not $safe.EndsWith("releases\\lmo_audio")) {{
+    throw "Expected safe portable path"
+}}
+foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Path $RepoRoot "desktop-app"))) {{
+    try {{
+        Assert-SafePortablePath $unsafe | Out-Null
+        throw "Expected unsafe portable path failure for $unsafe"
+    }} catch {{
+        if ($_.Exception.Message -notlike "*Unsafe PortableDir*") {{
+            throw
+        }}
+    }}
+}}
+"""
+        completed = _run_powershell(command)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
     def test_verify_portable_preserves_config_and_manifest(self):
-        portable_dir = ROOT / "lmo_audio"
+        portable_dir = ROOT / "releases" / "lmo_audio"
         config_path = portable_dir / "backend" / "config.json"
         manifest_path = portable_dir / "release-manifest.json"
         if not config_path.exists() or not manifest_path.exists():

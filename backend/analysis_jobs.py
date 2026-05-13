@@ -33,3 +33,7 @@ class AnalysisJobRegistry:
             if cancel_event is not None and self._jobs.get(job_id) is not cancel_event:
                 return
             self._jobs.pop(job_id, None)
+
+    def has(self, job_id: str) -> bool:
+        with self._lock:
+            return job_id in self._jobs

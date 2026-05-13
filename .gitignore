@@ -40,6 +40,7 @@ backend/dist-sidecar/
 backend/*.spec
 lmo_audio*.zip
 lmo_audio/
+releases/
 Smart_Minutes_AI_Portable*.zip
 Smart Minutes AI/
 desktop-app/src-tauri/binaries/_internal/

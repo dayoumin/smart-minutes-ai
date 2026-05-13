@@ -1,5 +1,7 @@
 import os
 
+from pipeline.transcript_display import get_transcript_segments
+
 
 def _format_time(value) -> str:
     if isinstance(value, str):
@@ -85,7 +87,7 @@ def export_markdown(result: dict, output_path: str) -> str:
     md_content += "\n"
         
     md_content += f"## {section_no}. 대화록\n\n"
-    for seg in result.get("segments", []):
+    for seg in get_transcript_segments(result):
         time_str = f"[{_format_time(seg.get('start', 0.0))}]"
         speaker = seg.get("speaker_name") or seg.get("speaker") or ""
         text = seg.get("text", "")

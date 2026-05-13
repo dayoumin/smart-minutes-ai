@@ -3,6 +3,7 @@ import json
 import os
 import sys
 import types
+import tempfile
 import unittest
 from io import BytesIO
 from unittest.mock import patch
@@ -14,6 +15,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 import main
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
+from job_checkpoints import atomic_write_json, build_job_checkpoint_paths, load_json_checkpoint
 from main import app, make_analysis_heartbeat, normalize_stt_config, process_audio_pipeline, stream_real_analysis
 from model_manager import normalize_windows_path, resolve_backend_path
 from pipeline.audio_preprocess import resolve_preprocessing_plan
@@ -219,7 +221,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(heartbeat["mode"], "real")
         self.assertEqual(heartbeat["progress"], 30)
         self.assertTrue(heartbeat["heartbeat"])
-        self.assertIn("취소 후 다시 시도", heartbeat["message"])
+        self.assertEqual(heartbeat["message"], "음성 인식 중입니다.")
 
     def test_real_analysis_stream_sends_heartbeat_during_long_worker_gap(self) -> None:
         fake_config = {
@@ -277,6 +279,66 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn('"heartbeat": true', body)
         self.assertIn("event: result", body)
         self.assertIn("event: done", body)
+
+    def test_analyze_meeting_saves_upload_before_streaming(self) -> None:
+        fake_config = {
+            "paths": {
+                "temp_dir": "./temp",
+                "stt_model": "../models/faster-whisper-large-v3",
+                "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
+            },
+            "stt": {"selected_model": "faster-whisper-large-v3"},
+            "diarization": {"enabled": False},
+            "privacy": {"save_original_audio_copy": False},
+        }
+        seen = {}
+
+        def fake_process_audio_pipeline(upload_path, job_id, config, progress_callback, cancel_event=None):
+            seen["upload_exists"] = os.path.exists(upload_path)
+            seen["upload_size"] = os.path.getsize(upload_path)
+            return {
+                "job_id": job_id,
+                "result_data": {
+                    "summary": {
+                        "overview": "테스트 회의 요약",
+                        "topics": [],
+                        "actions": [],
+                    },
+                    "segments": [],
+                },
+            }
+
+        async def collect_events() -> list[str]:
+            upload = UploadFile(filename="test_audio.wav", file=BytesIO(b"audio bytes"))
+            response = await main.analyze_meeting(
+                "테스트 회의",
+                "2026-05-12T10:00",
+                "홍길동",
+                upload,
+                "real",
+                "unit_saved_before_stream",
+            )
+            upload.file.close()
+            events = []
+            async for chunk in response.body_iterator:
+                events.append(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk)
+                if "event: done" in events[-1]:
+                    break
+            return events
+
+        with (
+            patch("main.load_config", return_value=fake_config),
+            patch("main.model_exists", return_value=True),
+            patch("main.resolve_model_path", return_value="mock-model-path"),
+            patch("main.process_audio_pipeline", side_effect=fake_process_audio_pipeline),
+        ):
+            events = asyncio.run(collect_events())
+
+        body = "\n".join(events)
+        self.assertTrue(seen["upload_exists"])
+        self.assertEqual(seen["upload_size"], len(b"audio bytes"))
+        self.assertIn("event: result", body)
+        self.assertIn("test_audio.wav", body)
 
     def test_real_analysis_stream_errors_after_stall_timeout(self) -> None:
         fake_config = {
@@ -403,6 +465,578 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("event: done", body)
         self.assertFalse(main.ANALYSIS_JOBS.cancel("unit_cancel_cleanup"))
 
+    def test_real_analysis_cancel_persists_checkpoint_state(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3"},
+                "diarization": {"enabled": False},
+                "privacy": {"save_original_audio_copy": False},
+            }
+
+            def fake_process_audio_pipeline(upload_path, job_id, config, progress_callback, cancel_event):
+                raise AnalysisCancelledError("분석이 취소되었습니다.")
+
+            async def collect_events() -> list[str]:
+                upload = UploadFile(filename="test_audio.wav", file=BytesIO(b"audio"))
+                events = []
+                async for event in stream_real_analysis(
+                    "테스트 회의",
+                    "2026-05-08T10:00",
+                    "홍길동",
+                    upload,
+                    "unit_cancel_persist",
+                ):
+                    events.append(event)
+                    if "event: done" in event:
+                        break
+                return events
+
+            with (
+                patch("main.load_config", return_value=fake_config),
+                patch("main.model_exists", return_value=True),
+                patch("main.resolve_model_path", return_value="mock-model-path"),
+                patch("main.process_audio_pipeline", side_effect=fake_process_audio_pipeline),
+            ):
+                events = asyncio.run(collect_events())
+
+            body = "\n".join(events)
+            paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "unit_cancel_persist")
+            state = load_json_checkpoint(paths.state_path)
+
+            self.assertIn("event: cancelled", body)
+            self.assertEqual(state["stage"], "cancelled")
+            self.assertTrue(state["cancelled"])
+            self.assertTrue(state["resume_supported"])
+
+    def test_resume_candidates_returns_matching_unfinished_job(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "llm_model": "",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            matching_paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "resume_match")
+            os.makedirs(os.path.dirname(matching_paths.state_path), exist_ok=True)
+            atomic_write_json(matching_paths.state_path, {
+                "job_id": "resume_match",
+                "stage": "cancelled",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "config_fingerprint": main._analysis_config_fingerprint(fake_config),
+                "completed_chunk_indices": [0, 1],
+                "chunk_count": 4,
+                "last_progress": {"message": "Transcribing chunk 2/4...", "progress": 40, "status": "processing"},
+                "updated_at": "2026-05-13T09:30:00",
+            })
+            completed_paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "resume_done")
+            os.makedirs(os.path.dirname(completed_paths.state_path), exist_ok=True)
+            atomic_write_json(completed_paths.state_path, {
+                "job_id": "resume_done",
+                "stage": "completed",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "config_fingerprint": main._analysis_config_fingerprint(fake_config),
+                "updated_at": "2026-05-13T09:40:00",
+            })
+
+            with patch("main.load_config", return_value=fake_config):
+                response = self.client.post(
+                    "/api/analyze/resume-candidates",
+                    json={
+                        "source_filename": "meeting.mp4",
+                        "source_size": 1234,
+                        "source_last_modified": 987654321,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["recommended_job_id"], "resume_match")
+            self.assertEqual(len(payload["candidates"]), 1)
+            self.assertEqual(payload["candidates"][0]["job_id"], "resume_match")
+            self.assertEqual(payload["candidates"][0]["completed_chunk_count"], 2)
+
+    def test_draft_statuses_returns_backend_truth_for_active_and_completed_jobs(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "llm_model": "",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            active_paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "draft_active")
+            completed_paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "draft_done")
+            os.makedirs(os.path.dirname(active_paths.state_path), exist_ok=True)
+            os.makedirs(os.path.dirname(completed_paths.state_path), exist_ok=True)
+            atomic_write_json(active_paths.state_path, {
+                "job_id": "draft_active",
+                "stage": "transcribing",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "last_progress": {"message": "Transcribing chunk 2/4...", "progress": 40, "status": "processing"},
+                "updated_at": "2026-05-13T09:30:00",
+            })
+            atomic_write_json(completed_paths.state_path, {
+                "job_id": "draft_done",
+                "stage": "completed",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "updated_at": "2026-05-13T09:40:00",
+            })
+
+            cancel_event = main.ANALYSIS_JOBS.create("draft_active")
+            try:
+                with patch("main.load_config", return_value=fake_config):
+                    response = self.client.post(
+                        "/api/analyze/draft-statuses",
+                        json={"job_ids": ["draft_active", "draft_done", "missing_job"]},
+                    )
+            finally:
+                main.ANALYSIS_JOBS.remove("draft_active", cancel_event)
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            by_job = {item["job_id"]: item for item in payload["drafts"]}
+            self.assertEqual(by_job["draft_active"]["status"], "active")
+            self.assertTrue(by_job["draft_active"]["active"])
+            self.assertEqual(by_job["draft_done"]["status"], "completed")
+            self.assertEqual(by_job["missing_job"]["status"], "missing")
+
+    def test_analyze_rejects_active_job_before_overwriting_upload_or_state(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "llm_model": "",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "active_resume_job"
+            checkpoint_paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.upload_dir, exist_ok=True)
+            upload_path = os.path.join(checkpoint_paths.upload_dir, "source.mp4")
+            with open(upload_path, "wb") as handle:
+                handle.write(b"existing upload")
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "stage": "transcribing",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "config_fingerprint": main._analysis_config_fingerprint(fake_config),
+                "completed_chunk_indices": [0],
+                "chunk_count": 4,
+            })
+
+            cancel_event = main.ANALYSIS_JOBS.create(job_id)
+            try:
+                with patch("main.load_config", return_value=fake_config):
+                    response = self.client.post(
+                        "/api/analyze",
+                        data={
+                            "title": "중복 분석",
+                            "date": "2026-05-13T10:00",
+                            "participants": "홍길동",
+                            "mode": "real",
+                            "job_id": job_id,
+                            "file_size": "1234",
+                            "file_last_modified": "987654321",
+                        },
+                        files={"file": ("meeting.mp4", b"new upload", "video/mp4")},
+                    )
+            finally:
+                main.ANALYSIS_JOBS.remove(job_id, cancel_event)
+
+            self.assertEqual(response.status_code, 409)
+            with open(upload_path, "rb") as handle:
+                self.assertEqual(handle.read(), b"existing upload")
+            state = load_json_checkpoint(checkpoint_paths.state_path)
+            self.assertEqual(state["stage"], "transcribing")
+            self.assertEqual(state["completed_chunk_indices"], [0])
+
+    def test_pipeline_reset_preserves_current_upload_for_same_job_rerun(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "unit_resume_reset"
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.upload_dir, exist_ok=True)
+            upload_path = os.path.join(checkpoint_paths.upload_dir, "source.wav")
+            with open(upload_path, "wb") as handle:
+                handle.write(b"new upload")
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "input_fingerprint": "old-fingerprint",
+                "config_fingerprint": "old-config",
+                "source_file": "meeting.mp4",
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+            })
+
+            seen = {}
+
+            def fake_convert_to_wav(input_file, output_path, _ffmpeg_path, preprocessing):
+                seen["input_exists_at_convert"] = os.path.exists(input_file)
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": upload_path, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                process_audio_pipeline(upload_path, job_id, config)
+
+            state = load_json_checkpoint(checkpoint_paths.state_path)
+            self.assertTrue(seen["input_exists_at_convert"])
+            self.assertEqual(state["source_filename"], "meeting.mp4")
+            self.assertEqual(state["source_size"], 1234)
+
+    def test_pipeline_returns_resume_reuse_metadata_when_chunk_checkpoint_exists(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "unit_resume_reuse_metadata"
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.stt_dir, exist_ok=True)
+            input_fingerprint = main.hash_file_contents(TEST_AUDIO_PATH)
+            config_fingerprint = main._analysis_config_fingerprint(main.normalize_app_config(config))
+            execution_fingerprint = main._stt_execution_fingerprint(
+                config["paths"]["stt_model"],
+                config["stt"]["device"],
+                config["stt"]["chunk_seconds"],
+            )
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "resume_requested": True,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "pipeline_version": main.ANALYSIS_PIPELINE_VERSION,
+                "checkpoint_version": main.ANALYSIS_CHECKPOINT_VERSION,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "completed_chunk_indices": [0],
+                "resume_supported": True,
+            })
+            atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
+                "chunk_index": 0,
+                "offset": 0.0,
+                "duration": 1.0,
+                "stt_execution_fingerprint": execution_fingerprint,
+                "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+            })
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", side_effect=AssertionError("transcribe should not run")),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+
+            self.assertEqual(result["resume"]["mode"], "reused_stt")
+            self.assertEqual(result["resume"]["reused_chunk_count"], 1)
+
+    def test_pipeline_reuses_diarization_checkpoints_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": True},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "unit_resume_diarization_reuse"
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.stt_dir, exist_ok=True)
+            input_fingerprint = main.hash_file_contents(TEST_AUDIO_PATH)
+            config_fingerprint = main._analysis_config_fingerprint(main.normalize_app_config(config))
+            base_segments = [{"start": 0.0, "end": 1.0, "text": "hello"}]
+            segments_fingerprint = main._segment_fingerprint(base_segments)
+            execution_fingerprint = main._stt_execution_fingerprint(
+                config["paths"]["stt_model"],
+                config["stt"]["device"],
+                config["stt"]["chunk_seconds"],
+            )
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "resume_requested": True,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "pipeline_version": main.ANALYSIS_PIPELINE_VERSION,
+                "checkpoint_version": main.ANALYSIS_CHECKPOINT_VERSION,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "completed_chunk_indices": [0],
+                "resume_supported": True,
+                "diarization_completed": True,
+            })
+            atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
+                "chunk_index": 0,
+                "offset": 0.0,
+                "duration": 1.0,
+                "stt_execution_fingerprint": execution_fingerprint,
+                "segments": base_segments,
+            })
+            atomic_write_json(checkpoint_paths.diarization_segments_path, {
+                "speaker_segments": [{"speaker": "SPEAKER_00", "start": 0.0, "end": 1.0}],
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "segments_fingerprint": segments_fingerprint,
+            })
+            atomic_write_json(checkpoint_paths.aligned_segments_path, {
+                "segments": [{"start": 0.0, "end": 1.0, "speaker": "화자000", "text": "hello"}],
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "segments_fingerprint": segments_fingerprint,
+            })
+            atomic_write_json(checkpoint_paths.display_segments_path, {
+                "segments": [{"start": 0.0, "end": 1.0, "speaker": "화자000", "speaker_name": "화자000", "text": "hello"}],
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "segments_fingerprint": segments_fingerprint,
+            })
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", side_effect=AssertionError("transcribe should not run")),
+                patch("pipeline.diarize.diarize_audio", side_effect=AssertionError("diarization should not run")),
+                patch("pipeline.align_speakers.align_segments_with_speakers", side_effect=AssertionError("alignment should not run")),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+
+            self.assertEqual(result["resume"]["mode"], "reused_stt_and_diarization")
+            self.assertEqual(result["result_data"]["segments"][0]["speaker"], "화자000")
+            self.assertEqual(result["result_data"]["display_segments"][0]["speaker_name"], "화자000")
+
+    def test_pipeline_returns_resume_fallback_metadata_on_fingerprint_mismatch(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "unit_resume_fallback_metadata"
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.root_dir, exist_ok=True)
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "resume_requested": True,
+                "input_fingerprint": "mismatch",
+                "config_fingerprint": "mismatch",
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "completed_chunk_indices": [0],
+                "resume_supported": True,
+            })
+
+            progress_messages: list[str] = []
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(
+                    TEST_AUDIO_PATH,
+                    job_id,
+                    config,
+                    progress_callback=lambda message, _progress: progress_messages.append(message),
+                )
+
+            self.assertEqual(result["resume"]["mode"], "fallback_fresh_start")
+            self.assertEqual(result["resume"]["fallback_reason"], "fingerprint_mismatch")
+            self.assertIn("이전 분석 기록과 일치하지 않아 처음부터 다시 분석합니다.", progress_messages)
+
+    def test_pipeline_does_not_reuse_stt_chunk_from_different_execution_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "unit_resume_execution_fingerprint"
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.stt_dir, exist_ok=True)
+            input_fingerprint = main.hash_file_contents(TEST_AUDIO_PATH)
+            config_fingerprint = main._analysis_config_fingerprint(main.normalize_app_config(config))
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "resume_requested": True,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "completed_chunk_indices": [0],
+                "resume_supported": True,
+            })
+            atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
+                "chunk_index": 0,
+                "offset": 0.0,
+                "duration": 1.0,
+                "stt_execution_fingerprint": "different-execution",
+                "segments": [{"start": 0.0, "end": 1.0, "text": "old"}],
+            })
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            transcribe_calls: list[str] = []
+
+            def fake_transcribe(*_args, **_kwargs):
+                transcribe_calls.append("called")
+                return [{"start": 0.0, "end": 1.0, "text": "new"}]
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", side_effect=fake_transcribe),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+
+            self.assertEqual(len(transcribe_calls), 1)
+            self.assertEqual(result["resume"]["mode"], "fresh_start")
+            self.assertEqual(result["result_data"]["segments"][0]["text"], "new")
+
     def test_pipeline_uses_configured_outer_chunk_seconds(self) -> None:
         seen = {}
 
@@ -410,30 +1044,31 @@ class AnalyzeApiTest(unittest.TestCase):
             seen["chunk_seconds"] = chunk_seconds
             return [{"path": wav_path, "offset": 0.0, "duration": 1.0, "index": 0}]
 
-        config = {
-            "paths": {
-                "ffmpeg": "ffmpeg",
-                "stt_model": "faster-whisper-large-v3",
-                "diarization_model": "",
-                "output_dir": "./outputs",
-                "temp_dir": "./temp",
-                "llm_model": "",
-            },
-            "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
-            "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
-            "preprocessing": {"enabled": False},
-            "diarization": {"enabled": False},
-            "summary": {"enabled": False},
-            "privacy": {"auto_delete_temp_audio": True},
-        }
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
 
-        with (
-            patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
-            patch("pipeline.chunk_audio.split_wav_by_duration", side_effect=fake_split),
-            patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
-            patch("pipeline.export_txt.export_txt"),
-        ):
-            process_audio_pipeline(TEST_AUDIO_PATH, "unit_chunk_seconds", config)
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.split_wav_by_duration", side_effect=fake_split),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                process_audio_pipeline(TEST_AUDIO_PATH, "unit_chunk_seconds", config)
 
         self.assertEqual(seen["chunk_seconds"], 30)
 
@@ -448,30 +1083,31 @@ class AnalyzeApiTest(unittest.TestCase):
             seen["stt_chunk_seconds"] = chunk_seconds
             return [{"start": 0.0, "end": 1.0, "text": "hello"}]
 
-        config = {
-            "paths": {
-                "ffmpeg": "ffmpeg",
-                "stt_model": "faster-whisper-large-v3",
-                "diarization_model": "",
-                "output_dir": "./outputs",
-                "temp_dir": "./temp",
-                "llm_model": "",
-            },
-            "stt": {"language": "ko", "device": "cpu"},
-            "processing": {"enable_long_audio_chunking": True},
-            "preprocessing": {"enabled": False},
-            "diarization": {"enabled": False},
-            "summary": {"enabled": False},
-            "privacy": {"auto_delete_temp_audio": True},
-        }
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu"},
+                "processing": {"enable_long_audio_chunking": True},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
 
-        with (
-            patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
-            patch("pipeline.chunk_audio.split_wav_by_duration", side_effect=fake_split),
-            patch("pipeline.transcribe.transcribe_audio", side_effect=fake_transcribe),
-            patch("pipeline.export_txt.export_txt"),
-        ):
-            process_audio_pipeline(TEST_AUDIO_PATH, "unit_default_chunk_seconds", config)
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.split_wav_by_duration", side_effect=fake_split),
+                patch("pipeline.transcribe.transcribe_audio", side_effect=fake_transcribe),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                process_audio_pipeline(TEST_AUDIO_PATH, "unit_default_chunk_seconds", config)
 
         self.assertEqual(seen["outer_chunk_seconds"], 30)
         self.assertEqual(seen["stt_chunk_seconds"], 30)
@@ -513,6 +1149,101 @@ class AnalyzeApiTest(unittest.TestCase):
         )
         diarize_mock.assert_not_called()
         summarize_mock.assert_not_called()
+
+    def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
+        progress_events = []
+        config = {
+            "paths": {
+                "ffmpeg": "ffmpeg",
+                "stt_model": "faster-whisper-large-v3",
+                "diarization_model": "pyannote-model",
+                "output_dir": "./outputs",
+                "temp_dir": "./temp",
+                "llm_model": "",
+            },
+            "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+            "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+            "preprocessing": {"enabled": False},
+            "diarization": {"enabled": True},
+            "summary": {"enabled": True},
+            "privacy": {"auto_delete_temp_audio": True},
+        }
+
+        def report(step, progress):
+            progress_events.append((step, progress))
+
+        with (
+            patch("main.get_model_spec"),
+            patch("main.model_exists", return_value=False),
+            patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+            patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                {"path": TEST_AUDIO_PATH, "offset": 1.0, "duration": 1.0, "index": 1},
+            ]),
+            patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+            patch("pipeline.diarize.diarize_audio", return_value=[]),
+            patch("pipeline.align_speakers.align_segments_with_speakers", side_effect=lambda segments, speakers: segments),
+            patch("pipeline.summarize.summarize_meeting", return_value={"overview": "요약"}),
+            patch("pipeline.export_txt.export_txt"),
+            patch("pipeline.export_markdown.export_markdown"),
+            patch("pipeline.export_docx.export_docx"),
+            patch("pipeline.export_hwpx.export_hwpx"),
+        ):
+            result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_post_transcription_progress", config, progress_callback=report)
+
+        self.assertIn(("음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.", 65), progress_events)
+        self.assertIn(("Speaker Diarization & Alignment...", 70), progress_events)
+        self.assertIn(("Summarizing with Local LLM...", 85), progress_events)
+        self.assertIn(("Saving results...", 95), progress_events)
+        self.assertEqual(len(result["result_data"]["raw_stt_segments"]), 2)
+        self.assertEqual(len(result["result_data"]["aligned_segments"]), 2)
+        self.assertIn("display_segments", result["result_data"])
+
+    def test_pipeline_writes_job_state_and_stt_checkpoints(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                process_audio_pipeline(TEST_AUDIO_PATH, "unit_job_checkpoints", config)
+
+            paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], "unit_job_checkpoints")
+            state = load_json_checkpoint(paths.state_path)
+            chunk_payload = load_json_checkpoint(os.path.join(paths.stt_dir, "chunk_001.json"))
+            merged_payload = load_json_checkpoint(paths.stt_merged_path)
+
+            self.assertEqual(state["stage"], "completed")
+            self.assertTrue(state["stt_completed"])
+            self.assertEqual(state["completed_chunk_indices"], [0])
+            self.assertTrue(os.path.exists(paths.source_wav_path))
+            self.assertEqual(chunk_payload["segments"][0]["text"], "hello")
+            self.assertEqual(merged_payload["segments"][0]["text"], "hello")
 
     def test_pipeline_does_not_retry_same_model_as_fallback(self) -> None:
         config = {
@@ -817,6 +1548,236 @@ class AnalyzeApiTest(unittest.TestCase):
                 result_data["summary"]["generation_status"]["speaker_context_summaries"],
                 "not_started",
             )
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_resets_downstream_sections(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_reset"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"speaker": "SPEAKER_00", "speaker_name": "화자00", "text": "Discuss budget."}],
+                        "display_segments": [{"speaker": "SPEAKER_00", "speaker_name": "화자00", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "old overview",
+                            "topics": ["old topic"],
+                            "topic_sections": [{"topic": "예산", "summary": "old section"}],
+                            "speaker_context_summaries": [{"speaker": "SPEAKER_00", "summary": "old speaker"}],
+                            "participant_summaries": [{"participant": "화자00", "summary": "old participant"}],
+                            "generation_status": {
+                                "summary": "completed",
+                                "topic_sections": "completed",
+                                "speaker_context_summaries": "completed",
+                            },
+                        },
+                    },
+                    f,
+                )
+
+            with patch(
+                "pipeline.summarize.summarize_meeting",
+                return_value={
+                    "overview": "new overview",
+                    "topics": ["new topic"],
+                    "decisions": ["new decision"],
+                    "actions": ["new action"],
+                    "needs_check": ["new check"],
+                },
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["summary"], "new overview")
+            self.assertEqual(payload["generation_status"]["summary"], "completed")
+            self.assertEqual(payload["generation_status"]["topic_sections"], "not_started")
+            self.assertEqual(payload["generation_status"]["speaker_context_summaries"], "not_started")
+            self.assertEqual(payload["topic_sections"], [])
+            self.assertEqual(payload["speaker_context_summaries"], [])
+            self.assertTrue(payload["cleared_topic_sections"])
+            self.assertTrue(payload["cleared_speaker_context_summaries"])
+
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["overview"], "new overview")
+            self.assertEqual(result_data["summary"]["topic_sections"], [])
+            self.assertEqual(result_data["summary"]["speaker_context_summaries"], [])
+            self.assertEqual(result_data["summary"]["participant_summaries"], [])
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_sync_record_clears_speaker_labels_and_reverts_display_segments(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_sync_record_clear_labels"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "김철수", "text": "원본 조각"}],
+                        "display_segments": [{"start": 0.0, "end": 8.0, "speaker": "화자000", "speaker_name": "김철수", "text": "이전 수정본"}],
+                        "speaker_labels": {"화자000": "김철수"},
+                        "summary": {"overview": "기존 요약", "generation_status": {}},
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            payload = {
+                "id": job_id,
+                "jobId": job_id,
+                "title": "새 회의 제목",
+                "date": "2026-05-13 10:00",
+                "participants": "새 참석자",
+                "segments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "원본 조각"}],
+                "displaySegments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "기본 표시본"}],
+                "editedDisplaySegments": [],
+                "speakerLabels": {},
+            }
+
+            with patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)):
+                response = self.client.post(f"/api/outputs/{job_id}/sync-record", json=payload)
+
+            self.assertEqual(response.status_code, 200, response.text)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+
+            self.assertEqual(result_data["speaker_labels"], {})
+            self.assertEqual(result_data["display_segments"][0]["text"], "기본 표시본")
+            self.assertEqual(result_data["summary"]["title"], "새 회의 제목")
+            self.assertEqual(result_data["participants"], "새 참석자")
+            self.assertEqual(result_data["created_at"], "2026-05-13 10:00")
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_keeps_newer_speaker_labels(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_latest_labels"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "이전 이름", "text": "Discuss budget."}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "이전 이름", "text": "Discuss budget."}],
+                        "speaker_labels": {"화자000": "이전 이름"},
+                        "summary": {"overview": "old overview", "generation_status": {"summary": "not_started"}},
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            def summarize_side_effect(*_args, **_kwargs):
+                with open(output_path, "r", encoding="utf-8") as f:
+                    concurrent_result = json.load(f)
+                concurrent_result["speaker_labels"] = {"화자000": "최신 이름"}
+                with open(output_path, "w", encoding="utf-8") as f:
+                    json.dump(concurrent_result, f, ensure_ascii=False, indent=2)
+                return {
+                    "overview": "new overview",
+                    "topics": ["new topic"],
+                    "actions": [],
+                    "decisions": [],
+                    "needs_check": [],
+                }
+
+            payload = {
+                "id": job_id,
+                "jobId": job_id,
+                "title": "테스트 회의",
+                "date": "2026-05-13 10:00",
+                "participants": "참석자",
+                "speakerLabels": {"화자000": "이전 이름"},
+                "displaySegments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "Discuss budget."}],
+            }
+
+            with (
+                patch("pipeline.summarize.summarize_meeting", side_effect=summarize_side_effect),
+                patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)),
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary", json=payload)
+
+            self.assertEqual(response.status_code, 200, response.text)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+
+            self.assertEqual(result_data["speaker_labels"], {"화자000": "최신 이름"})
+            self.assertEqual(result_data["summary"]["overview"], "new overview")
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_does_not_persist_rebuilt_result_when_generation_fails(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_rebuild_failure"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        payload = {
+            "id": job_id,
+            "jobId": job_id,
+            "title": "테스트 회의",
+            "date": "2026-05-13 10:00",
+            "participants": "참석자",
+            "displaySegments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "Discuss budget."}],
+        }
+
+        with patch("pipeline.summarize.summarize_meeting", side_effect=RuntimeError("boom")):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-summary", json=payload)
+
+        self.assertEqual(response.status_code, 500)
+        self.assertFalse(os.path.exists(output_path))
+
+    def test_generate_topic_sections_rejects_stale_input_change(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_topic_sections_stale"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "old overview",
+                            "topics": ["old topic"],
+                            "generation_status": {"topic_sections": "not_started"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            def side_effect(*_args, **_kwargs):
+                with open(output_path, "r", encoding="utf-8") as f:
+                    concurrent_result = json.load(f)
+                concurrent_result["summary"]["overview"] = "newer overview"
+                with open(output_path, "w", encoding="utf-8") as f:
+                    json.dump(concurrent_result, f, ensure_ascii=False, indent=2)
+                return [{"topic": "예산", "summary": "예산 논의"}]
+
+            with patch("pipeline.summarize.generate_topic_sections", side_effect=side_effect):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
+
+            self.assertEqual(response.status_code, 409, response.text)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "not_started")
+            self.assertEqual(result_data["summary"].get("topic_sections", []), [])
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)

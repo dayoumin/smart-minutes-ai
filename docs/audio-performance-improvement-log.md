@@ -238,6 +238,38 @@ Hermes Agent 60초 샘플:
    - 화자 분리 결과와 합치는 과정에서 문장 경계가 흔들리면 발화 기록 품질이 더 나빠 보일 수 있다.
 4. 샘플 기준 부재
    - 기존 4개 영상 원본 폴더가 배포 정리 과정에서 제거되어, 같은 입력으로 전후 비교하기 어려워졌다.
+
+## 8. 2026-05-12 장시간 파일 안정성 메모
+
+현재 구조를 다시 점검한 결과, 장시간 파일에서 가장 먼저 경계해야 할 지점은 STT보다 화자 분리 단계다.
+
+확인한 점:
+
+- STT는 `processing.long_audio_chunk_seconds` 기준으로 WAV를 나눠 처리한다.
+- 현재 기본값은 30초 청크이며, 긴 파일에서도 STT 자체는 한 번에 전체 WAV를 잡지 않는다.
+- 임시 WAV와 청크 폴더는 `privacy.auto_delete_temp_audio=true`일 때 작업 종료 후 정리된다.
+
+현재 리스크:
+
+- `pipeline/diarize.py`는 `soundfile.read(..., always_2d=True)`로 전체 WAV를 한 번에 메모리로 읽는다.
+- 따라서 1시간, 2시간, 5시간 파일에서는 메모리 피크와 처리 시간이 급격히 커질 수 있다.
+- 긴 파일에서 중단이 발생하면 현재는 job 전체가 실패하고, 화자 분리 이전 STT 결과를 재활용하는 resume 경로가 없다.
+
+우선순위 판단:
+
+1. 긴 파일 개선의 첫 대상은 청크 생성이 아니라 `pyannote diarization` 메모리/시간 리스크다.
+2. "한 번에 끝까지 처리"보다 아래 순서가 우선이다.
+   - STT 청크 결과 저장
+   - partial result 저장
+   - diarization 단계 실패/취소 시 재개 가능한 구조 설계
+   - 필요하면 긴 파일용 diarization 분할/병합 전략 검토
+3. 1시간 이상 파일 검증은 반드시 30분, 1시간, 2시간, 5시간 순서로 분리해 기록한다.
+
+설계 원칙:
+
+- 원본 WAV를 억지로 한 번에 끝까지 처리하려고 하지 않는다.
+- 중간 산출물을 저장해 두고 다시 불러와 이어서 쓰는 방향을 우선 검토한다.
+- 사용자에게는 "실패 시 처음부터 다시"보다 "이미 처리한 구간은 재사용"이 되도록 가야 한다.
    - 남아 있는 60초 WAV 파생 샘플과 새 기준 샘플을 사용해 회귀 테스트셋을 다시 고정해야 한다.
 
 점검 순서:
@@ -622,3 +654,45 @@ Hermes Agent 60초 샘플:
 - Topic generation: `/api/outputs/{job_id}/generate-topic-sections` completed in 2.37s and produced 3 topic sections.
 - Speaker context generation: `/api/outputs/{job_id}/generate-speaker-context` completed in 3.34s and produced 3 speaker context summaries plus 3 participant summaries.
 - Follow-up fix: source `backend/config.json` now defaults `diarization.enabled=true` so future portable rebuilds do not silently disable speaker separation.
+
+## 2026-05-13 장시간 파일 처리 계획 정리
+
+- 장시간 파일 구조 계획은 `docs/audio-long-file-processing-plan.md`로 분리했다.
+- 현재 구조 재확인:
+  - STT는 이미 외부 chunk 처리
+  - diarization은 전체 WAV를 한 번에 메모리로 읽음
+  - 중간 checkpoint 없이 최종 성공 시점에만 output JSON 저장
+- 1차 구현 목표:
+  - STT chunk checkpoint 저장
+  - `job_state.json` 기반 resume 판단
+  - diarization 실패 시 STT 완료분 재사용
+- 1차 제외:
+  - diarization 장문 분할/병합 알고리즘
+  - 요약 품질 개선
+  - 대규모 UI 개편
+- 추가 구현: `backend/job_checkpoints.py`를 도입해 job-scoped checkpoint 경로, atomic JSON write/read, config/file fingerprint 유틸을 추가했다.
+- 추가 구현: `process_audio_pipeline()`가 이제 `job_state.json`, STT chunk checkpoint, `merged_segments.json`, diarization/transcript checkpoint를 기록한다.
+- 정책 변경: 취소 시 checkpoint를 즉시 지우지 않고 `cancelled` 상태를 남긴다. 삭제는 명시적 output delete에서만 수행한다.
+- 정책 변경: 성공 시에도 `source.wav`와 checkpoint는 보존하고, `chunks/`만 정리한다.
+- 테스트: `backend.test_job_checkpoints`, `backend.test_api`에 checkpoint 생성/취소 보존 회귀 테스트를 추가했다.
+- 추가 구현: `/api/analyze/resume-candidates`를 추가해 현재 설정 fingerprint와 업로드 파일 메타데이터(`source_filename`, `source_size`, `source_last_modified`) 기준의 미완료 resume 후보를 찾을 수 있게 했다.
+- 추가 구현: `MeetingWriter`는 분석 시작 전에 resume 후보를 확인하고, 사용자가 동의하면 기존 `job_id`로 다시 업로드해서 STT checkpoint를 재사용한다.
+- 제약 명시: 현재 resume 1차는 "이전 음성 인식 진행분 재사용"이 핵심이다. 업로드 후 최종 hash가 다르면 fresh run으로 전환되고, diarization 이후 단계는 아직 재사용하지 않는다.
+- 정합성 보강: `/api/analyze`는 이제 active `job_id`를 업로드 전에 선점한다. 같은 `job_id` 중복 resume 요청이 들어와도 기존 upload/state를 먼저 덮어쓰지 않는다.
+- 정합성 보강: 같은 `job_id`를 설정 변경 또는 잘못된 재시도로 다시 실행할 때, 기존 checkpoint 정리 과정이 현재 업로드 파일까지 지우지 않도록 root reset 로직을 수정했다.
+- 추가 구현: 실패/취소 분석은 프론트 `analysisResumeDrafts` 로컬 저장소에 따로 남긴다. 완료된 회의록(`MeetingRecord`)과 섞지 않고, `새 회의록 작성` 화면에서 `이어서 분석` 카드로 다시 진입하게 했다.
+- UX 제약: 브라우저 환경에서는 파일 객체를 그대로 저장할 수 없으므로, 이어받기 카드에서 제목/일시/참석자를 복원한 뒤 사용자가 같은 파일을 다시 선택해야 한다.
+- 정정: 선택된 draft도 시작 직전에 다시 `/api/analyze/resume-candidates`로 서버 유효성을 확인한다. stale draft이거나 active job이면 resume를 막고, 유효한 candidate일 때만 저장된 `job_id`를 재사용한다.
+- 추가 구현: draft `삭제`는 로컬 draft 제거와 함께 같은 파일 메타데이터의 resume 후보를 다시 묻지 않도록 억제 키를 남긴다. 사용자가 draft를 다시 선택해 `재사용 준비`를 누르면 그 억제는 풀린다.
+- 추가 구현: `active` draft는 `진행 중이던 분석 기록`으로 따로 보여주고, 실패/취소 draft만 `이전 분석 기록`에서 재사용 후보로 노출한다.
+- 추가 구현: 사이드바는 전체 draft 수를 `미완료 분석 기록 N건`으로만 요약하고, 실제 resume 선택/삭제는 `MeetingWriter`에서 처리한다.
+- 추가 구현: backend `/api/analyze/draft-statuses`를 추가해 로컬 `active` draft를 backend `job_state.json` 기준으로 다시 맞춘다. 완료된 draft는 자동 제거하고, backend에서 더 이상 active가 아닌 항목은 실패/취소 resume 카드로 내려보낸다.
+- 추가 구현: 같은 파일의 분석이 완료되면 해당 파일 메타데이터와 매칭되는 예전 failed/cancelled/active draft와 suppress 키를 같이 정리한다. 한 파일에 대한 오래된 resume 카드가 남아 다음 시작을 방해하지 않게 한다.
+- 추가 구현: 2차 범위의 첫 단계로 diarization/aligned/display checkpoint 재사용을 넣었다. 같은 파일, 같은 설정, 같은 STT 결과 fingerprint면 `pyannote`와 alignment를 다시 돌리지 않고 저장된 화자 구분 결과를 재사용한다.
+- 테스트 추가:
+  - `backend.test_api.test_resume_candidates_returns_matching_unfinished_job`
+  - `backend.test_api.test_draft_statuses_returns_backend_truth_for_active_and_completed_jobs`
+  - `backend.test_api.test_pipeline_reset_preserves_current_upload_for_same_job_rerun`
+  - `backend.test_api.test_pipeline_reuses_diarization_checkpoints_when_available`
+  - 프론트 회귀 확인: `pnpm --dir desktop-app test:generation-flow`, `test:edit-guard-flow`, `test:meeting-detail-flow`
+  - resume draft 회귀 확인: `pnpm --dir desktop-app test:resume-draft-flow` (성공 resume, 완료 후 같은 파일 draft 정리, active draft backend sync, stale draft 제거, 삭제 후 후보 억제)

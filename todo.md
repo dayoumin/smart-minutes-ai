@@ -16,6 +16,16 @@
   - 현재처럼 워크트리가 많이 더러운 상태에서는 `main`에 바로 푸시하지 않는다.
   - 내가 작업한 파일만 별도 브랜치에서 선별 커밋 후 푸시한다.
   - 빌드 전 검증 작업과 기능 개발 변경이 섞여 있으면 푸시 단위를 먼저 분리한다.
+- [x] 2026-05-13 portable release 문서 단일화
+  - build venv, sidecar packaging, portable release, deploy-folder 검증 절차의 상세 원본은 `docs/tauri-desktop-release-checklist.md` 하나로 둔다.
+  - `AGENTS.md`에는 체크리스트를 먼저 읽으라는 짧은 운영 규칙만 남기고, 새 시행착오도 체크리스트에 추가한다.
+- [ ] 2026-05-13 clean manifest 재생성
+  - 현재 `releases\lmo_audio`는 빌드와 검증은 통과했지만, 작업 중 빌드라 `release-manifest.json`의 dirty 기록이 남았다.
+  - 외부 전달 직전에는 커밋 후 깨끗한 워크트리에서 `scripts\release_portable.ps1 -Python backend\.venv-desktop\Scripts\python.exe`를 다시 실행해 manifest dirty 상태를 정리한다.
+- [x] 2026-05-12 웹/데스크탑 테스트 차이 기록
+  - React 화면은 같지만 웹 테스트는 백엔드를 별도로 띄운다. 따라서 일반 Python이 아니라 `backend\.venv-desktop\Scripts\python.exe` 또는 packaged sidecar와 같은 런타임으로 실행해야 데스크탑앱과 조건이 맞는다.
+  - 일반 Python으로 웹 백엔드를 띄우면 `faster_whisper` 등 데스크탑 런타임 의존성이 빠져 데스크탑앱에서는 안 나던 실패가 생길 수 있다.
+  - 진행 UI는 전체 진행률 기준 남은 시간, 짧은 단계 문구, 인접 동일 화자 발화 묶음 표시로 간소화했다.
 - [x] 0-0-2순위: Cohere 보존 기준 유지
   - Cohere 관련 코드와 비교 기록은 삭제하지 않는다.
   - 다만 현재 기본 STT/회사 PC 배포 경로에서는 제외하고, `legacy/benchmark` 후보로 명시한다.
@@ -27,55 +37,83 @@
   - 현재 PC는 `LongPathsEnabled=0`이라 관리자 권한으로 Windows 긴 경로 설정을 켜기 전에는 설치 성공 검증을 하지 않는다.
 - [x] 0순위: 배포 혼돈 방지 기준 유지
   - 새 portable 배포는 `scripts\release_portable.ps1`로만 갱신한다.
-  - 실제 실행 기준은 루트 `lmo_audio` 폴더 하나로 고정한다.
+  - 실제 배포 기준은 `releases\lmo_audio` 폴더 하나로 고정한다.
   - `desktop-app\src-tauri\target\release\portable\lmo_audio`는 중간 산출물로만 본다.
   - 이상 상태가 보이면 `scripts\diagnose_portable.ps1` 결과와 `release-manifest.json` 해시를 먼저 확인한다.
   - `release-manifest.json`은 배포본의 신분증이다. verify/diagnose에서 해시 불일치를 확인한다.
   - WebView 캐시는 필요할 때 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
-  - 2026-05-11 확인: `lmo_audio` deploy 폴더 재구성, manifest/모델/sidecar/export smoke, deploy sidecar 15초 실제 분석을 통과했다.
+  - 2026-05-11 확인: 기존 `lmo_audio` deploy 폴더 재구성, manifest/모델/sidecar/export smoke, deploy sidecar 15초 실제 분석을 통과했다. 이후 배포 위치는 `releases\lmo_audio`로 정리한다.
 - [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
-  - `lmo_audio` 폴더 전체를 옮긴 뒤 실행한다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
-  - 기본 음성 인식 모델은 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
+  - `releases\lmo_audio` 폴더 전체를 옮긴 뒤 실행한다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
+  - 기본 음성 인식 모델은 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
   - 복사 후 `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`가 보여야 한다.
   - 화자 분리 모델은 `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
   - 2026-05-11 프로젝트 내부 company-smoke 복사본(`.codex-work\company-smoke\lmo_audio`) 기준으로 verify/export smoke와 15초 실제 분석은 통과했다. 실제 회사 PC 또는 회사 PC와 같은 별도 드라이브 이동 검증은 아직 남아 있다.
 - [ ] 2순위: 긴 파일 실전 테스트
   - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
-  - 결과는 `lmo_audio\backend\outputs`, 임시 파일은 `lmo_audio\backend\temp`에 생성된다.
-  - 실패 시 `lmo_audio\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
+  - 결과는 `releases\lmo_audio\backend\outputs`, 임시 파일은 `releases\lmo_audio\backend\temp`에 생성된다.
+  - 실패 시 `releases\lmo_audio\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
   - 2026-05-11 프로젝트 내부 company-smoke 복사본 기준 104초 파일은 55.32초, 365초 파일은 139.25초에 완료됐다. 30분 이상 파일은 아직 미검증이다.
+  - 2026-05-12 점검: 현재 병목/리스크는 STT 청크보다 `pyannote` 화자 분리 단계다. diarization이 전체 WAV를 한 번에 메모리로 읽으므로 1시간/2시간 파일은 여기서 중단될 가능성을 우선 본다.
+  - 대응 방향: 긴 파일은 내부적으로 나눠서 처리하고, STT/중간 산출물을 저장한 뒤 다시 불러와 이어서 쓰는 구조를 우선 검토한다.
 - [ ] 3순위: 품질 기준 샘플셋 만들기
   - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
   - STT 정확도, 화자 분리 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.
+- [ ] 3-0순위: 인식 후 정리 품질 개선
+  - 우선 모델 변경보다 `faster-whisper-large-v3 + pyannote` 결과를 회의록답게 정리하는 후처리를 개선한다.
+  - 백엔드에서 `sentence_segments` 또는 `display_segments`를 만들어 화면, TXT, MD, DOCX, HWPX 내보내기까지 같은 문장 단위 대화록을 사용한다.
+  - 같은 화자 발화는 너무 잘게 쪼개지 않되, 조사/연결어로 끝난 조각은 다음 조각과 합치고 종결어미/문장 완료 지점에서 나눈다.
+  - STT 후처리용 사용자 사전/도메인 사전 후보를 검토한다: 기관명, 위원회명, 법령명, `해양수산LMO`, `위해성 심사`, `가이드라인` 같은 전문용어.
+  - 반복/말더듬/중복 문장 정리와 문장부호 보정을 검토한다. 단, 원문 왜곡 위험이 있으므로 원문 세그먼트와 표시용 세그먼트를 분리한다.
+  - 실제 구현 전에는 큰 관점(회의록 품질/사용자 흐름)과 작은 관점(세그먼트 병합 로직/내보내기 회귀)으로 agent review를 진행한다.
+- [ ] 3-0-1순위: 대화록 사용자 수정본 구조 추가
+  - 원본 STT/정렬 결과는 보존하고, 사용자 수정은 `editedDisplaySegments` 같은 별도 필드에 저장한다.
+  - 대화록 편집은 원본 덮어쓰기가 아니라 사용자 수정본 기준으로 간다.
+  - 수정 후 `주제별 정리`, `참석자별 정리`, 내보내기 결과가 stale 상태인지 표시하고, 사용자 수정본 기준 재정리 경로를 추가한다.
+  - 설계 문서: `docs/transcript-editing-design.md`
 - [ ] 3-1순위: 내보내기 파일 실사용 검증
   - HWPX는 zip/XML 생성 smoke test뿐 아니라 한글 또는 HWPX 뷰어에서 실제 열기 검증을 한다.
   - Codex 자동 테스트로는 HWPX 구조와 XML 파싱까지만 확인했다. 한글/뷰어에서 직접 열기, 본문 표시, 서식 깨짐 여부는 사람이 확인해야 한다.
   - 화면에서 제목/일시/참석자를 수정한 뒤 HWPX, MD, TXT, DOCX 다운로드 내용도 같은 값으로 반영되는지 확인한다.
+- [ ] 3-2순위: 회의 요약 / 대화록 디자인 시스템 2차 정리
+  - `새 회의록 작성` 첫 화면에서 `이전 분석 기록` 패널 비중을 낮추고, 새 회의록 작성 폼이 먼저 읽히도록 재배치한다.
+  - resume 선택 + 같은 파일 일치 상태에서는 기본 CTA를 `분석 시작`이 아니라 `이어받기`로 바꾸고, active 충돌 상태는 비활성/안내로 분리한다.
+  - 사이드바 `미완료 분석 기록`과 resume 카드에 semantic status token을 적용해 `진행 중`, `이어받기 가능`, `취소/실패` 상태가 색으로도 구분되게 한다.
+  - `정리` 영역은 결과, 상태, 실행 버튼을 더 분리하고, 같은 뜻의 안내가 카드 메타/보조문/오류 문구로 반복되지 않게 줄인다.
+  - `참석자별 정리`는 읽기 화면 기준으로 제어 요소를 줄이고, 이름 연결/필터/접기 동작 밀도를 다시 조정한다.
+  - 완료/진행/주의/빈 상태 문구를 `docs/design.md` 규칙에 맞춰 다시 통일한다.
+  - resume 카드의 helper text, 완료 배너, 진행 패널 설명문 총량을 줄여 업무형 UI 밀도를 맞춘다.
 - [ ] 4순위: 전처리 품질 개선 순서대로 검증
   - 이미 적용됨: WAV 표준화, 긴 파일 청크, 자동 볼륨 정규화.
   - 다음 후보: AGC/`speechnorm` 자동 게인 보정, 무음 제거, 음성 강화, denoise.
   - denoise는 한국어 자음/말끝 손실 위험이 있어 마지막에 별도 검증한다.
 - [ ] 5순위: 실패/취소 UX 개선
   - 분석 중 취소, 실패한 청크만 재시도, partial result 저장, 임시 파일 정리를 추가한다.
+  - 화자 구분 모델 내부 진행률은 pyannote 호출 중 자세히 받을 수 없어 현재는 단계 전환 기준으로만 표시한다. 긴 파일에서 멈춘 것처럼 보이면 pyannote 세부 진행 이벤트 또는 별도 상태 heartbeat 설계를 후속 검토한다.
+  - 큰 파일 업로드 저장은 현재 SSE 스트림 시작 전 처리된다. FastAPI 업로드 파일 수명 문제 때문에 먼저 저장하지만, 긴 파일에서 초기 진행률/취소가 비어 보일 수 있어 job 등록과 업로드 진행 상태를 분리하는 후속 개선이 필요하다.
 - [ ] 6순위: 최종 배포 zip 재생성
   - 모델 미포함/포함 기준을 명확히 하고, 회사 PC용 설명 md와 함께 다시 묶는다.
+  - 2026-05-12 빌드 기록: sidecar/Tauri 빌드는 성공했고, 최상단 안내 파일 한글 파일명/PowerShell 인코딩 문제로 packaging 단계에서 실패했다. 안내 파일은 `START_HERE.txt`로 고정한다.
+  - 2026-05-12 검증 기록: `/api/health`, `/api/settings`는 통과했으나 `/api/models/status` 첫 호출이 5초를 넘겨 runtime smoke timeout이 났다. 검증 스크립트 모델 상태 요청 timeout은 최소 60초로 조정했다.
+  - 2026-05-12 경로 기록: 이 PC는 기본 `python`/`py`가 유효하지 않고, `backend\.venv-desktop\Scripts\python.exe`도 삭제된 Python 3.11 경로를 가리킬 수 있다. sidecar 재빌드 시에는 실제 실행 가능한 Python을 runtime probe로 확인한 뒤 사용한다.
+  - 2026-05-12 검증 기록: 포트 listen 조회는 권한/환경 영향을 받을 수 있으므로, portable smoke 기준은 `/api/health` 응답으로 둔다.
 
 # 0-1. 회사 PC에서 가장 먼저 할 일
-- [ ] `lmo_audio` 폴더 전체를 그대로 둔다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
-- [ ] 기본 음성 인식 모델은 별도로 받아서 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
+- [ ] 최종 배포본은 프로젝트 안에서는 `releases\lmo_audio`에 만든다. 회사 PC에는 이 `lmo_audio` 폴더 자체를 그대로 가져간다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
+- [ ] 기본 음성 인식 모델은 별도로 받아서 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
 - [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
 - [x] 회사 전달용 portable 기본 묶음에서는 Qwen ASR와 Qwen ForcedAligner 모델을 제외한다. Qwen 비교/벤치 기록은 남기되 회사 PC 이동 패키지에는 `faster-whisper-large-v3`와 화자 분리 모델만 포함한다.
 - [x] 2026-05-12 결정: 앱 기본 흐름과 설정 UI에서는 `faster-whisper-large-v3`만 사용한다. Qwen/Cohere는 기록과 벤치마크 코드만 보존하고 사용자 설정 후보로 다루지 않는다.
 - [ ] 회사에서 실행파일을 다시 만들 경우 모델은 빌드 전 원본 위치에 먼저 둔다.
-  - Whisper 원본 위치: `backend\models\stt\faster-whisper-large-v3`
-  - 화자 분리 원본 위치: `backend\models\diarization\speaker-diarization-community-1`
-  - 이후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1`를 실행하면 최종 실행 폴더 `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`로 복사된다.
-- [ ] 이미 만든 portable을 그대로 가져가서 실행 테스트만 할 경우에는 `lmo_audio` 폴더 전체를 가져간다. 이때 모델 위치는 `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`이면 된다.
-- [ ] 모델만 따로 가져갈 경우에는 회사 PC에서 재빌드할지, 기존 portable에 넣을지만 먼저 정한다. 재빌드용이면 `backend\models\...`에 넣고, 기존 portable 실행용이면 `lmo_audio\models\...`에 넣는다.
+  - Whisper 원본 위치: `models\faster-whisper-large-v3`
+  - 화자 분리 원본 위치: `models\speaker-diarization-community-1`
+  - 이후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1`를 실행하면 최종 실행 폴더 `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`로 복사된다.
+- [ ] 이미 만든 portable을 그대로 가져가서 실행 테스트만 할 경우에는 `releases\lmo_audio` 폴더 전체를 가져간다. 이때 모델 위치는 `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`이면 된다.
+- [ ] 모델만 따로 가져갈 경우에는 회사 PC에서 재빌드할지, 기존 portable에 넣을지만 먼저 정한다. 재빌드용이면 프로젝트 루트 `models\...`에 넣고, 기존 portable 실행용이면 `releases\lmo_audio\models\...`에 넣는다.
 - [ ] 앱 실행 후 시스템 설정 > 모델에서 누락 모델이 있는지 확인하고, 모델 복사 후 상태 새로고침을 누른다.
 - [x] 앱 안의 사용자용 모델 자동 다운로드 흐름을 제거하고, 관리자가 지정한 모델 파일을 `models`에 넣는 방식으로 정리한다.
-- [ ] 루트 정리 기준을 유지한다: 실제 실행 폴더는 `lmo_audio` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
+- [ ] 루트 정리 기준을 유지한다: 실제 배포 폴더는 `releases\lmo_audio` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
 
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)
 
@@ -87,13 +125,15 @@
 
 ## 2. 모델 및 환경 자동화 (오프라인 배포 준비)
 - [x] 사용자용 자동 모델 다운로드 흐름 제거
-- [ ] 관리자가 준비한 모델 묶음을 `lmo_audio\models\faster-whisper-large-v3`에 복사하는 배포 절차 확정
+- [ ] 관리자가 준비한 모델 묶음을 `releases\lmo_audio\models\faster-whisper-large-v3`에 복사하는 배포 절차 확정
 - [ ] 내부망 이관 후 모델 묶음 배포 위치와 파일 검증 절차 정리
 
 ## 3. 회의록 DB화 및 이력 관리
 - [x] 회의 단위 DB 스키마 설계 (IndexedDB 임시 적용 완료): 제목, 날짜, 참석자, 요약 데이터 저장
 - [x] 발화 세그먼트 스키마 추가 및 상세 모달 스크립트 탭 UI 구현 완료
 - [x] 발화 세그먼트 DB 저장(백엔드 연동 확정 시): 원문 텍스트 연계 로직 추가 완료
+- [x] 대화록 화면 표시 1차 개선: 같은 화자라도 문장 완료로 보이는 지점에서 나누고, 조사/연결어로 끝난 조각은 다음 조각과 이어서 보여준다.
+- [ ] 백엔드 출력용 `sentence_segments` 또는 `display_segments` 생성 검토: 화면뿐 아니라 TXT/MD/DOCX/HWPX 내보내기도 문장 단위 대화록으로 맞춘다.
 - [ ] 요약 결과 DB 저장: 핵심 요약, 주요 토픽, 결정 사항, 할 일, 후속 액션을 구조화해서 보관 (현재는 단일 요약 텍스트로 보관 중)
 - [x] 회의록 목록/상세 UI 추가: 최근 회의록 조회, 검색, 삭제, MD 결과 다운로드 기능 구현
 - [x] IndexedDB 저장소 로직을 `meetingRepository.ts`로 분리해 SQLite 마이그레이션 준비
@@ -101,6 +141,7 @@
 
 ## 4. 요약 프롬프트 및 문서 내보내기 고도화
 - [ ] `backend/pipeline/summarize.py`의 Gemma 프롬프트 세밀 튜닝 (결정사항, 할 일 추출 정확도 향상)
+- [ ] 요약 입력에 표시용 문장 세그먼트를 사용할지 검토한다. 너무 잘게 쪼개진 원 STT 세그먼트 대신 문장 단위 대화록을 주면 쟁점/결정사항 추출이 안정될 수 있다.
 - [ ] 한글(HWPX) 템플릿 지원 (미리 지정된 사내 회의록 양식에 맞게 결과 매핑)
 - [ ] 표 형식을 포함한 깔끔한 DOCX 내보내기 스타일(python-docx) 개선
 
@@ -146,8 +187,8 @@
   - 2026-05-07 추가 확인: `Qwen3-ASR-1.7B + Qwen3-ForcedAligner-0.6B` CPU 30초 테스트는 58.07초, 75개 timestamp segment 생성.
 - [x] 2026-05-12 결정: 회사 PC/사용자 실행 흐름에서는 대체 STT 후보를 더 진행하지 않는다. 비교 기록과 benchmark 코드는 보존한다.
 - [x] 포터블 앱 모델 폴더 구조 정리
-  - 사용자 실행 폴더 기준: `lmo_audio\models\faster-whisper-large-v3`
-  - 화자 분리 모델: `lmo_audio\models\speaker-diarization-community-1`
+  - 사용자 실행 폴더 기준: `releases\lmo_audio\models\faster-whisper-large-v3`
+  - 화자 분리 모델: `releases\lmo_audio\models\speaker-diarization-community-1`
   - Qwen/Cohere 모델 폴더는 사용자 실행 경로에서 안내하지 않는다.
 - [x] Qwen3-ASR vs faster-whisper 최종 후보 테스트 종료
   - 테스트 계획: `docs/qwen-vs-faster-whisper-test-plan.md`

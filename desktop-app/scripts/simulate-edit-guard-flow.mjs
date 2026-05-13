@@ -6,16 +6,11 @@ import { chromium } from 'playwright';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
-const meetingId = 'codex-detail-flow-simulation';
-const jobId = 'codex-detail-flow-job';
-const formats = ['hwpx', 'md', 'txt', 'docx'];
-
-const contentTypeByFormat = {
-  hwpx: 'application/hwp+zip',
-  md: 'text/markdown; charset=utf-8',
-  txt: 'text/plain; charset=utf-8',
-  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-};
+const meetingId = 'codex-edit-guard-simulation';
+const jobId = 'codex-edit-guard-job';
+const staleSummaryMessage = '정리 중에 대화록이 바뀌어 이번 결과는 저장하지 않았습니다. 다시 정리해 주세요.';
+const guardMessage = '저장되지 않은 변경이 있습니다. 정리 실행 전에 먼저 저장하거나 취소해 주세요.';
+const downloadGuardMessage = '저장되지 않은 변경이 있습니다. 다운로드 전에 먼저 저장하거나 취소해 주세요.';
 
 const waitForApp = async (url, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -117,9 +112,9 @@ const seedMeeting = async (page) => {
       id: meetingId,
       jobId,
       date: '2026-05-07 23:55',
-      title: '시뮬레이션 회의록',
-      summary: '기본 회의 요약입니다.',
-      participants: '화자1, 화자2',
+      title: '수정본 가드 시뮬레이션',
+      summary: '기본 요약입니다.',
+      participants: '화자1',
       sourceFile: 'simulation.mp4',
       topics: [],
       topicSections: [],
@@ -130,12 +125,13 @@ const seedMeeting = async (page) => {
           start: '00:00:01',
           end: '00:00:08',
           speaker: '화자1',
-          text: 'AI 시스템 통제권과 지식 확장을 논의했습니다.',
+          text: '처음 생성된 대화록입니다.',
         },
       ],
       actions: [],
       decisions: [],
       needsCheck: [],
+      speakerLabels: {},
     };
 
     await new Promise((resolve, reject) => {
@@ -148,73 +144,51 @@ const seedMeeting = async (page) => {
   }, { meetingId, jobId });
 };
 
-const installRoutes = async (page) => {
+const installRoutes = async (page, apiCalls) => {
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ ok: true }),
   }));
 
-  await page.route('**/api/dev/asr-benchmarks**', route => {
+  await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({
+    status: 404,
+    contentType: 'application/json',
+    body: JSON.stringify({ detail: 'benchmark fixtures disabled for this simulation' }),
+  }));
+
+  await page.route(`**/api/outputs/${jobId}/sync-record`, async route => {
+    const body = JSON.parse(route.request().postData() ?? '{}');
     return route.fulfill({
-      status: 404,
+      status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ detail: 'benchmark fixtures disabled for this simulation' }),
+      body: JSON.stringify({
+        outputs: body.outputFiles ?? {},
+        export_error: null,
+      }),
     });
   });
 
-  await page.route(`**/api/outputs/${jobId}/generate-topic-sections`, route => route.fulfill({
-    status: 200,
+  await page.route(`**/api/outputs/${jobId}/generate-summary`, route => route.fulfill({
+    status: 409,
     contentType: 'application/json',
-    body: JSON.stringify({
-      topics: ['AI 시스템 통제권'],
-      topic_sections: [
-        {
-          topic: 'AI 시스템 통제권',
-          summary: 'AI 시스템 통제권과 지식 확장 방향을 정리했습니다.',
-          evidence: ['화자1이 시스템 통제권을 언급했습니다.'],
-          actions: ['보안 보완 방안 확인'],
-        },
-      ],
-      generation_status: { topic_sections: 'completed', speaker_context_summaries: 'not_started' },
-      outputs: {},
-    }),
+    body: JSON.stringify({ detail: 'summary_input_changed' }),
   }));
 
-  await page.route(`**/api/outputs/${jobId}/generate-speaker-context`, route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
-      speaker_context_summaries: [
-        {
-          speaker: 'SPEAKER_00',
-          display_name: '화자1',
-          role_in_meeting: '주요 의견 제안자',
-          summary: 'AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.',
-          key_points: ['통제권 이동 방식 검토'],
-          actions: ['보안 보완 방안 확인'],
-          needs_check: ['실제 담당자 이름 확인'],
-        },
-      ],
-      participant_summaries: [
-        {
-          participant: '화자1',
-          summary: 'AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.',
-          key_points: ['통제권 이동 방식 검토'],
-          actions: ['보안 보완 방안 확인'],
-        },
-      ],
-      generation_status: { topic_sections: 'completed', speaker_context_summaries: 'completed' },
-      outputs: {},
-    }),
-  }));
+  await page.route('**/api/export-record/**', route => {
+    apiCalls.push(`UNEXPECTED_EXPORT ${route.request().url()}`);
+    return route.fulfill({
+      status: 500,
+      contentType: 'text/plain; charset=utf-8',
+      body: 'download should have been blocked',
+    });
+  });
 };
 
 const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
-  const exportCalls = [];
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const apiCalls = [];
   page.on('request', request => {
     if (request.url().includes('/api/')) {
@@ -223,48 +197,43 @@ const run = async () => {
   });
 
   try {
-    await installRoutes(page);
-    for (const format of formats) {
-      await page.route(`**/api/export-record/${format}`, route => {
-        exportCalls.push(format);
-        return route.fulfill({
-          status: 200,
-          contentType: contentTypeByFormat[format],
-          headers: { 'content-disposition': `attachment; filename="simulation.${format}"` },
-          body: `simulation ${format}`,
-        });
-      });
-    }
-
+    await installRoutes(page, apiCalls);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await seedMeeting(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await page.getByText('시뮬레이션 회의록').first().click();
+    await page.getByText('수정본 가드 시뮬레이션').first().click();
 
-    await page.getByText('주제별 정리 후 사용').waitFor({ timeout: 10000 });
-    const topicButton = page.getByRole('button', { name: '주제별 정리' });
-    const speakerButton = page.getByRole('button', { name: '참석자별 정리' });
-    assert.equal(await speakerButton.isDisabled(), true);
+    await page.getByRole('tab', { name: '대화록' }).click();
+    await page.getByRole('button', { name: '대화록 편집' }).click();
+    await page.getByLabel('화자1 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
 
-    await topicButton.click();
-    await page.getByText('AI 시스템 통제권과 지식 확장 방향을 정리했습니다.').waitFor({ timeout: 10000 });
-    await page.getByText('정리 가능').waitFor({ timeout: 10000 });
-    assert.equal(await speakerButton.isDisabled(), false);
+    await page.getByRole('tab', { name: '회의 요약' }).click();
+    await page.getByRole('button', { name: '전체 요약 다시 정리' }).click();
+    await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 
-    await speakerButton.click();
-    await page.getByText('AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.').waitFor({ timeout: 10000 });
-
-    const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
     await page.getByRole('button', { name: '회의록 HWPX 다운로드' }).click();
-    const download = await downloadPromise;
+    await page.getByText(downloadGuardMessage).waitFor({ timeout: 10000 });
+    assert.equal(
+      apiCalls.some(call => call.includes('/api/export-record/')),
+      false,
+      `download API should be blocked before request: ${apiCalls.join('\n')}`,
+    );
 
-    assert.deepEqual(exportCalls, ['hwpx']);
-    assert.equal(download.suggestedFilename(), '시뮬레이션 회의록.hwpx');
-    console.log('ok - meeting detail flow simulation');
+    await page.getByRole('tab', { name: '대화록' }).click();
+    await page.getByRole('button', { name: '수정본 저장' }).click();
+    await page.getByText('대화록 수정본을 저장했습니다.').waitFor({ timeout: 10000 });
+
+    await page.getByRole('tab', { name: '회의 요약' }).click();
+    await page.getByRole('button', { name: '전체 요약 다시 정리' }).click();
+    await page.getByText(staleSummaryMessage).waitFor({ timeout: 10000 });
+    await page.getByText('정리 전').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '전체 요약 정리' }).waitFor({ timeout: 10000 });
+
+    console.log('ok - edit guard and stale summary flow simulation');
   } catch (error) {
     console.error(error);
     console.error('api calls:', apiCalls);
-    console.error('body:', (await page.locator('body').innerText()).slice(0, 2000));
+    console.error('body:', (await page.locator('body').innerText()).slice(0, 3000));
     throw error;
   } finally {
     await browser.close();

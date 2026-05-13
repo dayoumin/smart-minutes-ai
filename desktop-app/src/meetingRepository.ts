@@ -2,8 +2,18 @@ export interface MeetingSegment {
     start: string;
     end: string;
     speaker: string;
+    displaySpeaker?: string;
     text: string;
     timingApproximate?: boolean;
+    displayOnly?: boolean;
+}
+
+export interface TranscriptEditMeta {
+    edited?: boolean;
+    editedAt?: string;
+    summaryOutdated?: boolean;
+    topicSectionsOutdated?: boolean;
+    speakerContextOutdated?: boolean;
 }
 
 export interface MeetingRecord {
@@ -13,6 +23,10 @@ export interface MeetingRecord {
     summary: string;
     participants: string;
     segments?: MeetingSegment[];
+    displaySegments?: MeetingSegment[];
+    editedDisplaySegments?: MeetingSegment[];
+    transcriptEditMeta?: TranscriptEditMeta;
+    speakerLabels?: Record<string, string>;
     sourceFile?: string;
     jobId?: string;
     pinned?: boolean;
@@ -35,19 +49,27 @@ export interface MeetingRecord {
 
 type StoredMeetingRecord = Partial<MeetingRecord> & {
     topic_sections?: MeetingTopicSection[];
+    display_segments?: MeetingSegment[];
+    edited_display_segments?: MeetingSegment[];
+    speaker_labels?: Record<string, string>;
     participant_summaries?: MeetingParticipantSummary[];
     speaker_context_summaries?: MeetingSpeakerContextSummary[];
     generation_status?: MeetingGenerationStatus;
     needs_check?: string[];
+    transcript_edit_meta?: TranscriptEditMeta;
 };
 
 const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => ({
     ...(record as MeetingRecord),
     topicSections: record.topicSections ?? record.topic_sections ?? [],
+    displaySegments: record.displaySegments ?? record.display_segments ?? [],
+    editedDisplaySegments: record.editedDisplaySegments ?? record.edited_display_segments ?? [],
+    speakerLabels: record.speakerLabels ?? record.speaker_labels ?? {},
     participantSummaries: record.participantSummaries ?? record.participant_summaries ?? [],
     speakerContextSummaries: record.speakerContextSummaries ?? record.speaker_context_summaries ?? [],
     generationStatus: record.generationStatus ?? record.generation_status ?? {},
     needsCheck: record.needsCheck ?? record.needs_check ?? [],
+    transcriptEditMeta: record.transcriptEditMeta ?? record.transcript_edit_meta ?? {},
 });
 
 export interface MeetingTopicSection {
@@ -75,6 +97,7 @@ export interface MeetingSpeakerContextSummary {
 }
 
 export interface MeetingGenerationStatus {
+    summary?: 'not_started' | 'generating' | 'completed' | 'failed';
     topicSections?: 'not_started' | 'generating' | 'completed' | 'failed';
     topic_sections?: 'not_started' | 'generating' | 'completed' | 'failed';
     speakerContextSummaries?: 'not_started' | 'generating' | 'completed' | 'failed';

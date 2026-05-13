@@ -54,44 +54,6 @@ const toMeetingSegments = (segments: Array<Record<string, unknown>> = []): Meeti
     timingApproximate: Boolean(segment.timing_approximate),
 }));
 
-const splitSentences = (text: string): string[] => {
-    const normalized = text.replace(/\s+/g, ' ').trim();
-    if (!normalized) return [];
-    return normalized.split(/(?<=[.!?。？！])\s+/).map(item => item.trim()).filter(Boolean);
-};
-
-const normalizeForRepeatCheck = (text: string): string => text.toLowerCase().replace(/[\W_]+/gu, '');
-
-const removeRepeatedSentences = (text: string): string => {
-    const sentences = splitSentences(text);
-    if (sentences.length < 2) return text.replace(/\s+/g, ' ').trim();
-    const cleaned: string[] = [];
-    const seen: string[] = [];
-    sentences.forEach((sentence, index) => {
-        const normalized = normalizeForRepeatCheck(sentence);
-        const previous = seen.at(-1) ?? '';
-        const isAdjacentRepeat = previous === normalized;
-        const isTrailingLoop = index === sentences.length - 1 && normalized.length >= 8 && seen.slice(0, -1).includes(normalized);
-        if (isAdjacentRepeat || isTrailingLoop) return;
-        cleaned.push(sentence);
-        seen.push(normalized);
-    });
-    return cleaned.join(' ');
-};
-
-const removeRepeatedMeetingSegments = (segments: MeetingSegment[]): MeetingSegment[] => {
-    const cleaned = segments
-        .map(segment => ({ ...segment, text: removeRepeatedSentences(segment.text) }))
-        .filter(segment => segment.text);
-    if (cleaned.length < 2) return cleaned;
-    return cleaned.filter((segment, index) => {
-        const normalized = normalizeForRepeatCheck(segment.text);
-        const previous = index > 0 ? normalizeForRepeatCheck(cleaned[index - 1].text) : '';
-        const earlier = cleaned.slice(0, index - 1).map(item => normalizeForRepeatCheck(item.text));
-        return previous !== normalized && !(index === cleaned.length - 1 && normalized.length >= 8 && earlier.includes(normalized));
-    });
-};
-
 const fetchBenchmarkPayload = async (apiBase: string, id: string): Promise<BenchmarkPayload> => {
     const response = await fetch(new URL(`/api/dev/asr-benchmarks/${id}`, apiBase), { cache: 'no-store' });
     if (!response.ok) throw new Error(`Failed to load benchmark: ${id}`);
@@ -188,13 +150,17 @@ export const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState('minutes');
     const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const leaveGuardRef = React.useRef<() => boolean>(() => true);
     const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
         active: false,
         progress: 0,
         message: '',
     });
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
+    const canLeaveCurrentMeeting = () => leaveGuardRef.current();
+
     const handleCreateMeeting = () => {
+        if (!canLeaveCurrentMeeting()) return;
         setSelectedMeetingId(null);
         setActiveTab('minutes');
     };
@@ -262,18 +228,24 @@ export const App: React.FC = () => {
         };
     }, [showAsrBenchmark]);
 
+    const handleTabChange = (tab: string) => {
+        if (tab !== activeTab && !canLeaveCurrentMeeting()) return;
+        setActiveTab(tab);
+    };
+
     return (
         <>
             <Layout
                 activeTab={activeTab}
                 selectedMeetingId={selectedMeetingId}
-                onTabChange={setActiveTab}
+                onTabChange={handleTabChange}
                 onOpenSettings={() => setIsSettingsOpen(true)}
                 onCreateMeeting={handleCreateMeeting}
                 onDeleteMeeting={handleDeleteMeeting}
                 analysisStatus={analysisStatus}
                 showAsrBenchmark={showAsrBenchmark}
                 onSelectMeeting={(id) => {
+                    if (id !== selectedMeetingId && !canLeaveCurrentMeeting()) return;
                     setSelectedMeetingId(id);
                     setActiveTab('history');
                 }}
@@ -285,6 +257,10 @@ export const App: React.FC = () => {
                     <MeetingHistory
                         selectedMeetingId={selectedMeetingId}
                         onCreateMeeting={handleCreateMeeting}
+                        onSelectMeetingId={setSelectedMeetingId}
+                        onRegisterLeaveGuard={(guard) => {
+                            leaveGuardRef.current = guard ?? (() => true);
+                        }}
                     />
                 </div>
                 {showAsrBenchmark && (

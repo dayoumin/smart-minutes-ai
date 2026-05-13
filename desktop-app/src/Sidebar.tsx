@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Clock3, MoreVertical, Pencil, Pin, PinOff, PlusCircle, Trash2 } from 'lucide-react';
+import { BarChart3, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, PlusCircle, Trash2 } from 'lucide-react';
+import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, listAnalysisResumeDrafts } from './analysisResumeDrafts';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
+import { ProgressBar } from './ProgressBar';
 
 export interface SidebarProps {
     activeTab?: string;
@@ -41,22 +43,34 @@ const getChunkProgress = (message: string): { current: number; total: number } |
     };
 };
 
-const formatRemaining = (elapsedMs: number, message: string, stalled: boolean): string => {
-    if (stalled) return '확인 필요';
-    const chunk = getChunkProgress(message);
-    if (!chunk || chunk.current <= 0 || chunk.total <= chunk.current) return '측정 중';
-    return `예상 ${formatElapsed((elapsedMs / chunk.current) * chunk.total - elapsedMs)}`;
+const formatRemaining = (elapsedMs: number, progressPercent: number): string => {
+    if (progressPercent < 10 || progressPercent >= 100) return progressPercent >= 100 ? '0:00' : '측정 중';
+    return formatElapsed((elapsedMs / (progressPercent / 100)) - elapsedMs);
 };
 
 const formatSidebarStatus = (message: string): string => {
-    const chunk = getChunkProgress(message);
-    if (chunk) return `음성 인식 ${chunk.current}/${chunk.total}`;
-    return (message || '회의록을 작성하고 있습니다.')
+    const baseMessage = (message || '분석 시작 중')
         .replace(' 같은 단계가 오래 걸리고 있습니다. 진행이 바뀌지 않으면 취소 후 다시 시도해 주세요.', '');
+    const chunk = getChunkProgress(baseMessage);
+    if (chunk) return `음성 인식 ${chunk.current}/${chunk.total} 처리 중`;
+    const statusMap: Record<string, string> = {
+        '업로드 파일 저장 완료': '파일 저장 완료',
+        '음성 인식 모델 확인 중': '모델 확인 중',
+        '음성 인식 모델 준비 완료': '모델 준비 완료',
+        'Converting to WAV...': '음성 추출 중',
+        'Preparing audio chunks...': '구간 나누는 중',
+        '음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.': '후처리 준비 중',
+        'Speaker Diarization & Alignment...': '화자 구분 중',
+        '화자 구간 분석 완료. 문장 시간과 맞추는 중': '문장 시간 맞추는 중',
+        'Summarizing with Local LLM...': '요약 정리 중',
+        'Saving results...': '저장 중',
+    };
+    return statusMap[baseMessage] || baseMessage;
 };
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
+    const [resumeDraftCount, setResumeDraftCount] = useState(0);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [showAllRecords, setShowAllRecords] = useState(false);
     const [now, setNow] = useState(() => Date.now());
@@ -71,13 +85,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         }
     };
 
+    const loadResumeDraftCount = () => {
+        setResumeDraftCount(
+            listAnalysisResumeDrafts().filter(draft => draft.status === 'active' || draft.resumeEligible !== false).length,
+        );
+    };
+
     useEffect(() => {
         void loadRecords();
+        loadResumeDraftCount();
         window.addEventListener('focus', loadRecords);
         window.addEventListener('meetings:updated', loadRecords);
+        window.addEventListener('focus', loadResumeDraftCount);
+        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDraftCount);
         return () => {
             window.removeEventListener('focus', loadRecords);
             window.removeEventListener('meetings:updated', loadRecords);
+            window.removeEventListener('focus', loadResumeDraftCount);
+            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDraftCount);
         };
     }, []);
 
@@ -169,6 +194,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     <PlusCircle size={15} />
                     새 회의록 작성
                 </button>
+                {resumeDraftCount > 0 && !analysisStatus?.active && (
+                    <button
+                        type="button"
+                        className="resume-summary-button mb-3 status-neutral"
+                        onClick={() => {
+                            setOpenMenuId(null);
+                            onCreateMeeting?.();
+                        }}
+                    >
+                        미완료 분석 기록 {resumeDraftCount}건
+                    </button>
+                )}
                 {analysisStatus?.active && (
                     <button
                         type="button"
@@ -176,16 +213,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         onClick={() => onCreateMeeting?.()}
                     >
                         <div className="flex items-center justify-between gap-2">
-                            <span className="sidebar-analysis-title">분석 중</span>
+                            <span className="sidebar-analysis-title inline-flex items-center gap-1.5">
+                                <Loader2 size={13} className="animate-spin text-primary" />
+                                분석 중
+                            </span>
                             <span className="sidebar-analysis-elapsed">
                                 <Clock3 size={12} />
                                 {formatElapsed(analysisElapsedMs)}
                             </span>
                         </div>
                         <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <span className="truncate">{analysisStatus.stalled ? '진행 확인 필요' : formatSidebarStatus(analysisRawMessage)}</span>
-                            <span className="shrink-0">{formatRemaining(analysisElapsedMs, analysisRawMessage, Boolean(analysisStatus.stalled))}</span>
+                            <span className="truncate">{formatSidebarStatus(analysisRawMessage)}</span>
+                            <span className="shrink-0">{formatRemaining(analysisElapsedMs, analysisStatus.progress)}</span>
                         </div>
+                        <ProgressBar
+                            value={analysisStatus.progress}
+                            size="sm"
+                            className="mt-2"
+                            decorative
+                        />
                     </button>
                 )}
                 <div className="flex min-h-0 max-h-56 flex-col overflow-y-auto pr-1 custom-scrollbar lg:max-h-none lg:flex-1">

@@ -2,6 +2,8 @@ import os
 from docx import Document
 from docx.shared import Pt, Inches
 
+from pipeline.transcript_display import get_transcript_segments
+
 
 def _format_time(value) -> str:
     if isinstance(value, str):
@@ -100,7 +102,7 @@ def export_docx(
         
     # 대화록
     doc.add_heading(f"{section_no}. 대화록", level=1)
-    segments = result.get("segments", [])
+    segments = get_transcript_segments(result)
     for seg in segments:
         time_str = f"[{_format_time(seg.get('start', 0.0))}]"
         speaker = seg.get("speaker_name") or seg.get("speaker") or ""

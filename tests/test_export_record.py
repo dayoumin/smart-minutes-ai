@@ -105,6 +105,35 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertGreater(len(response.content), 0)
 
+    def test_export_record_prefers_display_segments_and_speaker_labels(self):
+        payload = legacy_meeting_payload(
+            speakerLabels={"화자000": "김철수"},
+            segments=[
+                {
+                    "start": "00:00:00",
+                    "end": "00:00:05",
+                    "speaker": "화자000",
+                    "text": "원본 조각입니다.",
+                }
+            ],
+            displaySegments=[
+                {
+                    "start": "00:00:00",
+                    "end": "00:00:10",
+                    "speaker": "화자000",
+                    "text": "읽기 좋은 표시용 문장입니다.",
+                }
+            ],
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("읽기 좋은 표시용 문장입니다.", content)
+        self.assertNotIn("원본 조각입니다.", content)
+        self.assertIn("김철수", content)
+
     def test_exports_speaker_context_without_participant_summaries(self):
         payload = legacy_meeting_payload(
             participantSummaries=[],

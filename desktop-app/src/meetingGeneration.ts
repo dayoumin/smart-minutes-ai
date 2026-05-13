@@ -1,6 +1,7 @@
 export type GenerationState = 'not_started' | 'generating' | 'completed' | 'failed';
 
 export interface MeetingGenerationStatusShape {
+    summary?: GenerationState;
     topicSections?: GenerationState;
     topic_sections?: GenerationState;
     speakerContextSummaries?: GenerationState;
@@ -14,8 +15,8 @@ export interface TopicSectionShape {
 const pickGenerationStatus = (
     baseStatus: MeetingGenerationStatusShape | undefined,
     patchStatus: MeetingGenerationStatusShape | undefined,
-    camelKey: 'topicSections' | 'speakerContextSummaries',
-    snakeKey: 'topic_sections' | 'speaker_context_summaries',
+    camelKey: 'summary' | 'topicSections' | 'speakerContextSummaries',
+    snakeKey: 'summary' | 'topic_sections' | 'speaker_context_summaries',
 ): GenerationState | undefined => (
     patchStatus?.[camelKey]
     ?? patchStatus?.[snakeKey]
@@ -27,6 +28,7 @@ export const normalizeGenerationStatus = (
     baseStatus?: MeetingGenerationStatusShape,
     patchStatus?: MeetingGenerationStatusShape,
 ): MeetingGenerationStatusShape => ({
+    summary: pickGenerationStatus(baseStatus, patchStatus, 'summary', 'summary'),
     topicSections: pickGenerationStatus(baseStatus, patchStatus, 'topicSections', 'topic_sections'),
     speakerContextSummaries: pickGenerationStatus(
         baseStatus,
@@ -35,6 +37,14 @@ export const normalizeGenerationStatus = (
         'speaker_context_summaries',
     ),
 });
+
+export const getSummaryGenerationStatus = (
+    status?: MeetingGenerationStatusShape,
+    overview?: string,
+): GenerationState => (
+    status?.summary
+    ?? (overview?.trim() ? 'completed' : 'not_started')
+);
 
 export const getTopicGenerationStatus = (
     status?: MeetingGenerationStatusShape,

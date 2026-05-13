@@ -14,7 +14,7 @@ $AppExe = Join-Path $ReleaseDir "smart-minutes-ai.exe"
 $SidecarExe = Join-Path $TauriDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $SidecarDepsDir = Join-Path $TauriDir "binaries\_internal"
 $ResourceBackendDir = Join-Path $TauriDir "resources\backend"
-$ModelSourceRoot = Join-Path $RepoRoot "backend\models"
+$ModelSourceRoot = Join-Path $RepoRoot "models"
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
 $ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
@@ -120,6 +120,35 @@ foreach ($model in @($ModelLayout.models)) {
     $destination = Join-Path $PortableModelsDir ([string]$model.portableDir)
     Copy-ModelDirectory $source $destination ([string]$model.label) @($model.requiredMarkers)
 }
+
+$TopLevelReadme = @"
+LMO Smart Meeting System - Portable Quick Start
+
+1. Run
+   - Run lmo_audio.exe in this folder.
+   - Do not move only the exe file. Move the whole lmo_audio folder together.
+
+2. Model folders
+   - Speech recognition model: models\faster-whisper-large-v3
+   - Speaker diarization model: models\speaker-diarization-community-1
+   - Do not rename model folders or files.
+
+3. Folder guide
+   - lmo_audio.exe: app executable
+   - models: speech recognition and speaker diarization models
+   - backend: local analysis server files
+   - binaries: local analysis server executable and dependencies
+   - release-manifest.json: release verification manifest
+
+4. If something is wrong
+   - Open app settings and check model status first.
+   - After copying models again, refresh model status.
+"@
+[System.IO.File]::WriteAllText(
+    (Join-Path $PortableDir "START_HERE.txt"),
+    $TopLevelReadme,
+    [System.Text.UTF8Encoding]::new($false)
+)
 
 Write-Host "Created portable desktop package:"
 Write-Host $PortableDir

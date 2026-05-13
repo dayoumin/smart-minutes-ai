@@ -1,17 +1,51 @@
 param(
-    [string]$PortableDir = "lmo_audio",
+    [string]$PortableDir = "releases\lmo_audio",
     [int]$TimeoutSeconds = 240
 )
 
 $ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
 $ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
+function Normalize-FullPath([string]$Path) {
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+}
+
 function Resolve-InRepoPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
-        return (Resolve-Path -LiteralPath $Path).Path
+        if (Test-Path -LiteralPath $Path) {
+            return Normalize-FullPath (Resolve-Path -LiteralPath $Path).Path
+        }
+        return Normalize-FullPath $Path
     }
-    return (Resolve-Path -LiteralPath (Join-Path (Get-Location) $Path)).Path
+    return Normalize-FullPath (Join-Path $RepoRoot $Path)
+}
+
+function Assert-SafePortablePath([string]$Path) {
+    $resolvedPath = Normalize-FullPath $Path
+    $repoRootPath = Normalize-FullPath $RepoRoot.Path
+    $parentRepoPath = Normalize-FullPath (Split-Path -Parent $repoRootPath)
+
+    foreach ($unsafePath in @($repoRootPath, $parentRepoPath, (Join-Path $repoRootPath "desktop-app"), (Join-Path $repoRootPath "releases"))) {
+        $unsafeFullPath = Normalize-FullPath $unsafePath
+        if ($resolvedPath.Equals($unsafeFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe PortableDir points to a project, parent, or broad release directory: $resolvedPath"
+        }
+    }
+
+    if (-not (Split-Path -Leaf $resolvedPath).Equals("lmo_audio", [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Unsafe PortableDir must point to the lmo_audio folder itself: $resolvedPath"
+    }
+
+    foreach ($child in @("backend", "binaries", "models")) {
+        $childPath = Normalize-FullPath (Join-Path $resolvedPath $child)
+        if (-not $childPath.StartsWith($resolvedPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Unsafe PortableDir child path escaped portable root: $childPath"
+        }
+    }
+
+    return $resolvedPath
 }
 
 function Add-Result([string]$Name, [bool]$Passed, [string]$Detail = "") {
@@ -174,11 +208,26 @@ function Start-BackendSidecar([string]$ExePath, [string]$BackendRoot, [int]$Port
     return [System.Diagnostics.Process]::Start($startInfo)
 }
 
+function Test-BackendHealth([string]$BaseUrl) {
+    try {
+        $health = Invoke-RestMethod -Uri "$BaseUrl/api/health" -TimeoutSec 5
+        if ($health.ok -eq $true -and $health.service -eq "NIFS AI Meeting API") {
+            return $health
+        }
+    }
+    catch {
+        return $null
+    }
+
+    return $null
+}
+
 $script:Results = @()
 $script:Failed = $false
 
 $PortableAppExeName = "lmo_audio.exe"
-$portablePath = Resolve-InRepoPath $PortableDir
+$portablePath = Assert-SafePortablePath (Resolve-InRepoPath $PortableDir)
+$runtimeRequestTimeoutSeconds = [Math]::Max(60, [Math]::Min($TimeoutSeconds, 180))
 $appExe = Join-Path $portablePath $PortableAppExeName
 $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $backendDir = Join-Path $portablePath "backend"
@@ -228,6 +277,8 @@ $backendPort = $null
 try {
     $backendPort = Get-AvailableBackendPort
     $backendProcess = Start-BackendSidecar $sidecarExe $backendDir $backendPort
+    $baseUrl = "http://127.0.0.1:$backendPort"
+    $health = $null
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
 
     while ((Get-Date) -lt $deadline) {
@@ -237,33 +288,28 @@ try {
             break
         }
 
-        $connection = Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorAction SilentlyContinue |
-            Where-Object { $_.OwningProcess -eq $backendProcess.Id } |
-            Select-Object -First 1
-        if ($connection) {
+        $health = Test-BackendHealth $baseUrl
+        if ($null -ne $health) {
             break
         }
 
         Start-Sleep -Seconds 3
     }
 
-    $listening = $false
-    if ($backendProcess -and -not $backendProcess.HasExited) {
-        $listening = $null -ne (Get-NetTCPConnection -LocalPort $backendPort -State Listen -ErrorAction SilentlyContinue |
-            Where-Object { $_.OwningProcess -eq $backendProcess.Id } |
-            Select-Object -First 1)
+    $responding = $false
+    if ($backendProcess -and -not $backendProcess.HasExited -and $null -eq $health) {
+        $health = Test-BackendHealth $baseUrl
     }
-    Add-Result "sidecar process listens" $listening $(if ($listening) { "port $backendPort" } else { "no listen port found" })
+    $responding = $null -ne $health
+    Add-Result "sidecar health responds" $responding $(if ($responding) { "port $backendPort" } else { "no health response" })
 
-    if ($listening) {
-        $baseUrl = "http://127.0.0.1:$backendPort"
-        $health = Invoke-RestMethod -Uri "$baseUrl/api/health" -TimeoutSec 5
+    if ($responding) {
         Add-Result "health endpoint" ($health.ok -eq $true -and $health.service -eq "NIFS AI Meeting API") ($health | ConvertTo-Json -Compress)
 
         $settings = Invoke-RestMethod -Uri "$baseUrl/api/settings" -TimeoutSec 5
         Add-Result "settings endpoint" ($null -ne $settings) "analysis_mode=$($settings.analysis_mode)"
 
-        $models = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec 5
+        $models = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec $runtimeRequestTimeoutSeconds
         $missingRequired = @($models.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
         Add-Result "models endpoint" ($null -ne $models.models) "ready=$($models.ready); missing=$($missingRequired -join ', ')"
         Add-Result "required models ready" ($models.ready -eq $true) "selected=$($models.selected_stt_model); missing=$($missingRequired -join ', ')"
@@ -283,7 +329,7 @@ try {
             if ($qwenIncluded) {
                 $qwenBody = @{ stt = @{ selected_model = "qwen3-asr" } } | ConvertTo-Json -Depth 4
                 Invoke-RestMethod -Uri "$baseUrl/api/settings" -Method Patch -ContentType "application/json" -Body $qwenBody -TimeoutSec 5 | Out-Null
-                $qwenModels = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec 5
+                $qwenModels = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec $runtimeRequestTimeoutSeconds
                 $qwenMissingRequired = @($qwenModels.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
                 $qwenRequiredKeys = @($qwenModels.models | Where-Object { $_.required } | Select-Object -ExpandProperty key)
                 $qwenReady = (

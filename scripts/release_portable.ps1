@@ -1,5 +1,5 @@
 param(
-    [string]$DeployDir = "lmo_audio",
+    [string]$DeployDir = "releases\lmo_audio",
     [string]$Configuration = "release",
     [string]$Python = "python",
     [switch]$SkipSidecarBuild,
@@ -28,15 +28,96 @@ function Resolve-InRepoPath([string]$Path) {
     return (Join-Path $RepoRoot $Path)
 }
 
+function Normalize-FullPath([string]$Path) {
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+}
+
+function Resolve-PythonCommand([string]$PythonCommand) {
+    if ($PythonCommand -match '[\\/]') {
+        $resolvedPython = Resolve-InRepoPath $PythonCommand
+        if (-not (Test-Path -LiteralPath $resolvedPython)) {
+            throw "Python runtime not found: $resolvedPython"
+        }
+        return $resolvedPython
+    }
+
+    return $PythonCommand
+}
+
+function Get-VenvBasePython([string]$PythonCommand) {
+    if (-not ($PythonCommand -like "*\Scripts\python.exe")) {
+        return $null
+    }
+
+    $venvDir = Split-Path -Parent (Split-Path -Parent $PythonCommand)
+    $cfgPath = Join-Path $venvDir "pyvenv.cfg"
+    if (-not (Test-Path -LiteralPath $cfgPath)) {
+        return $null
+    }
+
+    foreach ($line in Get-Content -LiteralPath $cfgPath) {
+        if ($line -match '^\s*executable\s*=\s*(.+?)\s*$') {
+            return $matches[1].Trim()
+        }
+        if ($line -match '^\s*home\s*=\s*(.+?)\s*$') {
+            return (Join-Path $matches[1].Trim() "python.exe")
+        }
+    }
+
+    return $null
+}
+
+function Assert-PythonRuntime([string]$PythonCommand) {
+    $basePython = Get-VenvBasePython $PythonCommand
+    if ($basePython -and -not (Test-Path -LiteralPath $basePython)) {
+        throw "Python venv is broken because its base runtime is missing: $basePython`nRecreate the build env first: scripts\ensure_backend_build_env.ps1 -Python <python.exe> -RecreateBroken"
+    }
+
+    $probeOutput = $null
+    try {
+        $probeOutput = & $PythonCommand -c "import sys; print(sys.executable)"
+    }
+    catch {
+        throw "Python runtime is not usable: $PythonCommand. $($_.Exception.Message)`nIf this is a repo venv, recreate it first: scripts\ensure_backend_build_env.ps1 -Python <python.exe> -RecreateBroken"
+    }
+
+    if ($LASTEXITCODE -ne 0) {
+        throw "Python runtime probe failed: $PythonCommand"
+    }
+
+    Write-Host "Using Python runtime: $probeOutput"
+}
+
+function Assert-PythonBuildRequirements([string]$PythonCommand) {
+    $probeScript = @"
+import importlib.util
+import sys
+
+required = ["PyInstaller", "fastapi", "faster_whisper", "torch"]
+missing = [name for name in required if importlib.util.find_spec(name) is None]
+if missing:
+    print("Missing backend build requirements: " + ", ".join(missing))
+    sys.exit(42)
+print("Backend build requirements OK")
+"@
+
+    $probeOutput = $probeScript | & $PythonCommand -
+    if ($LASTEXITCODE -ne 0) {
+        throw "$probeOutput`nBackend build Python is incomplete. Run scripts\ensure_backend_build_env.ps1 -Python <python.exe> -RecreateBroken and let requirements installation finish."
+    }
+
+    Write-Host $probeOutput
+}
+
 function Assert-SafeDeployPath([string]$Path) {
     $resolvedPath = if (Test-Path -LiteralPath $Path) {
-        (Resolve-Path -LiteralPath $Path).Path
+        Normalize-FullPath (Resolve-Path -LiteralPath $Path).Path
     }
     else {
-        [System.IO.Path]::GetFullPath($Path)
+        Normalize-FullPath $Path
     }
     $repoRootPath = (Resolve-Path -LiteralPath $RepoRoot).Path
-    $expectedDeployPath = [System.IO.Path]::GetFullPath((Join-Path $repoRootPath $PortableFolderName))
+    $expectedDeployPath = Normalize-FullPath (Join-Path (Join-Path $repoRootPath "releases") $PortableFolderName)
 
     if (-not $resolvedPath.Equals($expectedDeployPath, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Unsafe DeployDir. Portable releases must deploy to $expectedDeployPath, got $resolvedPath"
@@ -195,6 +276,7 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
 
     Copy-Item -Force (Join-Path $SourceDir $PortableAppExeName) (Join-Path $DestinationDir $PortableAppExeName)
     Copy-Item -Force (Join-Path $SourceDir "release-manifest.json") (Join-Path $DestinationDir "release-manifest.json")
+    Copy-Item -Force (Join-Path $SourceDir "START_HERE.txt") (Join-Path $DestinationDir "START_HERE.txt")
 
     robocopy (Join-Path $SourceDir "binaries") (Join-Path $DestinationDir "binaries") /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
@@ -215,6 +297,17 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
 }
 
 $DeployPath = Assert-SafeDeployPath (Resolve-InRepoPath $DeployDir)
+$PythonCommand = Resolve-PythonCommand $Python
+
+if (-not $SkipSidecarBuild) {
+    Assert-PythonRuntime $PythonCommand
+    Assert-PythonBuildRequirements $PythonCommand
+}
+
+$legacyRootPortable = Join-Path $RepoRoot $PortableFolderName
+if (Test-Path -LiteralPath $legacyRootPortable) {
+    Write-Warning "Legacy root portable folder exists and is no longer the release target: $legacyRootPortable. Use $DeployPath instead."
+}
 
 Stop-AppProcesses $DeployPath
 if ($ClearWebViewCache) {
@@ -222,7 +315,7 @@ if ($ClearWebViewCache) {
 }
 
 if (-not $SkipSidecarBuild) {
-    & (Join-Path $PSScriptRoot "package_backend_sidecar.ps1") -Python $Python
+    & (Join-Path $PSScriptRoot "package_backend_sidecar.ps1") -Python $PythonCommand
 }
 
 & (Join-Path $PSScriptRoot "prepare_tauri_resources.ps1") -IncludeModels:$false

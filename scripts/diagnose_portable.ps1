@@ -1,18 +1,26 @@
 param(
-    [string]$PortableDir = "lmo_audio",
+    [string]$PortableDir = "releases\lmo_audio",
     [int]$FirstPort = 17863,
     [int]$LastPort = 17980
 )
 
 $ErrorActionPreference = "Continue"
+$RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
 $ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
+function Normalize-FullPath([string]$Path) {
+    return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
+}
+
 function Resolve-InRepoPath([string]$Path) {
     if ([System.IO.Path]::IsPathRooted($Path)) {
-        return (Resolve-Path -LiteralPath $Path).Path
+        if (Test-Path -LiteralPath $Path) {
+            return Normalize-FullPath (Resolve-Path -LiteralPath $Path).Path
+        }
+        return Normalize-FullPath $Path
     }
-    return (Resolve-Path -LiteralPath (Join-Path (Get-Location) $Path)).Path
+    return Normalize-FullPath (Join-Path $RepoRoot $Path)
 }
 
 function Get-HashIfExists([string]$Path) {
@@ -75,6 +83,7 @@ function Write-Section([string]$Title) {
 }
 
 $portablePath = Resolve-InRepoPath $PortableDir
+$legacyRootPortable = Join-Path $RepoRoot "lmo_audio"
 $appExe = Join-Path $portablePath "lmo_audio.exe"
 $sidecarExe = Join-Path $portablePath "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
 $manifestFile = Join-Path $portablePath "release-manifest.json"
@@ -83,6 +92,9 @@ $webViewDefault = Join-Path $env:LOCALAPPDATA "com.nifs.smart-minutes-ai\EBWebVi
 
 Write-Section "Portable Folder"
 Write-Host "Portable: $portablePath"
+if (Test-Path -LiteralPath $legacyRootPortable) {
+    Write-Warning "Legacy root portable folder exists and is no longer the release target: $legacyRootPortable. Default diagnostics use $portablePath."
+}
 Write-Host "App exe:  $(Test-Path -LiteralPath $appExe)  $appExe"
 Write-Host "Sidecar:  $(Test-Path -LiteralPath $sidecarExe)  $sidecarExe"
 Write-Host "Models:   $(Test-Path -LiteralPath $modelsDir)  $modelsDir"

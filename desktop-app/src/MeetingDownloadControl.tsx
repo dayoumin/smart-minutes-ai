@@ -25,14 +25,23 @@ interface MeetingDownloadControlProps {
     meeting: MeetingRecord;
     onMessage?: (message: string) => void;
     onDownloadingChange?: (isDownloading: boolean) => void;
+    beforeDownload?: () => boolean;
 }
 
 const safeFileName = (title: string): string => title.replace(/[/\\?%*:|"<>]/g, '-');
 
 const formatSegmentLine = (segment: MeetingSegment): string => {
     const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
-    return `${segment.start}-${segment.end}${timingLabel} ${segment.speaker}: ${segment.text}`;
+    return `${segment.start}-${segment.end}${timingLabel} ${segment.displaySpeaker || segment.speaker}: ${segment.text}`;
 };
+
+const transcriptSegmentsForExport = (meeting: MeetingRecord): MeetingSegment[] => (
+    meeting.editedDisplaySegments?.length
+        ? meeting.editedDisplaySegments
+        : meeting.displaySegments?.length
+            ? meeting.displaySegments
+            : meeting.segments ?? []
+);
 
 const buildTranscriptText = (meeting: MeetingRecord): string => {
     const lines = [
@@ -45,8 +54,11 @@ const buildTranscriptText = (meeting: MeetingRecord): string => {
         meeting.summary,
         '',
         '[대화록]',
-        ...(meeting.segments?.length
-            ? meeting.segments.map(formatSegmentLine)
+        ...(transcriptSegmentsForExport(meeting).length
+            ? transcriptSegmentsForExport(meeting).map(segment => ({
+                ...segment,
+                displaySpeaker: segment.displaySpeaker || meeting.speakerLabels?.[segment.speaker],
+            })).map(formatSegmentLine)
             : ['대화록이 없습니다. 다시 분석해 주세요.']),
     ];
     return lines.filter(Boolean).join('\n');
@@ -75,7 +87,7 @@ const filenameFromDisposition = (disposition: string | null, fallback: string): 
     return plainMatch?.[1] ?? fallback;
 };
 
-export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ meeting, onMessage, onDownloadingChange }) => {
+export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ meeting, onMessage, onDownloadingChange, beforeDownload }) => {
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadKind, setDownloadKind] = useState<DownloadFormat>(() => getDownloadFormatPreference());
     const isMountedRef = useRef(true);
@@ -128,6 +140,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
 
     const handleDownload = async () => {
         if (isDownloading) return;
+        if (beforeDownload && !beforeDownload()) return;
 
         updateDownloading(true);
         onMessage?.('');
@@ -137,7 +150,10 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
             const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(meeting),
+                body: JSON.stringify({
+                    ...meeting,
+                    displaySegments: transcriptSegmentsForExport(meeting),
+                }),
             });
 
             if (response.ok) {

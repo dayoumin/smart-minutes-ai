@@ -4,7 +4,7 @@
     {
       "key": "stt_faster_whisper",
       "label": "faster-whisper-large-v3",
-      "source": "stt/faster-whisper-large-v3",
+      "source": "faster-whisper-large-v3",
       "portableDir": "faster-whisper-large-v3",
       "role": "default_stt",
       "requiredMarkers": [
@@ -16,7 +16,7 @@
     {
       "key": "diarization",
       "label": "speaker-diarization-community-1",
-      "source": "diarization/speaker-diarization-community-1",
+      "source": "speaker-diarization-community-1",
       "portableDir": "speaker-diarization-community-1",
       "role": "diarization",
       "requiredMarkers": [

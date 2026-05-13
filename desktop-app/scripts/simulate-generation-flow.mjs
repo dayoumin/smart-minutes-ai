@@ -20,13 +20,13 @@ const {
     normalizeGenerationStatus,
 } = await import(moduleUrl);
 
-assert.deepEqual(
-    normalizeGenerationStatus(
-        { topicSections: 'generating', speakerContextSummaries: 'completed' },
-        { topic_sections: 'completed' },
-    ),
-    { topicSections: 'completed', speakerContextSummaries: 'completed' },
+const normalizedStatus = normalizeGenerationStatus(
+    { topicSections: 'generating', speakerContextSummaries: 'completed' },
+    { topic_sections: 'completed' },
 );
+assert.equal(normalizedStatus.summary, undefined);
+assert.equal(normalizedStatus.topicSections, 'completed');
+assert.equal(normalizedStatus.speakerContextSummaries, 'completed');
 
 assert.equal(getTopicGenerationStatus(undefined, []), 'not_started');
 assert.equal(getTopicGenerationStatus(undefined, [{ topic: '예산' }]), 'completed');

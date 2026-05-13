@@ -27,11 +27,14 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 
 ## Portable Release Debugging Rules
 
+- Before building, packaging, or verifying the portable desktop app, read `docs/tauri-desktop-release-checklist.md`; it is the single detailed source for release commands, build venv recovery, pip cache workarounds, and deploy-folder verification.
+- Use `backend\.venv-desktop\Scripts\python.exe` as the normal portable release build Python. Temporary venvs are emergency fallbacks only and must be called out in the work summary.
 - First classify the failing layer: sidecar packaging, desktop/Tauri build, portable packaging, or deploy-folder runtime.
 - Use the actual `lmo_audio` deploy folder as the runtime source of truth. Treat `dist`, `dist-sidecar`, `target`, and `target/release/portable` as intermediate artifacts unless the task explicitly asks about them.
 - Before diagnosing a portable bug, record the launched executable, backend directory from `/api/health`, and whether the app is dev, sidecar, or packaged portable.
 - Prefer `scripts/verify_portable.ps1` before rerunning a full portable build.
 - If intermediate portable packaging is locked, verify `lmo_audio` directly and rebuild only the missing layer.
+- When a new portable build lesson is learned, update `docs/tauri-desktop-release-checklist.md` instead of duplicating the detailed procedure here.
 
 ## Analysis Hang Debugging Rules
 
@@ -55,6 +58,12 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Prefer this order: deploy folder structure, backend health/config, specific API endpoint, frontend state/UI behavior, then full portable release build only when packaging is the proven failing layer or the user explicitly asks.
 - Do not rely on a full production build to diagnose an issue that can be isolated with a backend endpoint, deploy-folder inspection, or targeted script.
 
+## Frontend Simulation Rules
+
+- Treat `desktop-app/scripts/simulate-*.mjs` as project Playwright tests, not as Codex in-app browser checks.
+- Before rewriting a simulation to avoid Playwright, confirm whether the missing piece is simply the Playwright browser install or launch permission.
+- Keep detailed setup and recovery notes in `docs/frontend-simulation-testing.md`, not in this file.
+
 Related docs:
 
 - `docs/audio-performance-improvement-log.md`
@@ -63,4 +72,6 @@ Related docs:
 - `docs/audio-testset-manifest.csv`
 - `docs/audio-preprocessing-eval-template.csv`
 - `docs/design.md`
+- `docs/frontend-simulation-testing.md`
+- `docs/tauri-desktop-release-checklist.md`
 - `todo.md`

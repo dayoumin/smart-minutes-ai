@@ -249,11 +249,16 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const resumeCard = page.locator('.resume-draft-card').filter({ hasText: '중단된 회의' }).first();
-    await resumeCard.getByRole('button', { name: '이어하기' }).click();
+    await page.getByRole('button', { name: /미완료 분석 기록 2건/ }).click();
+    await page.locator('.sidebar-resume-draft-button').filter({ hasText: '중단된 회의' }).click();
+    await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
+    await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
+    await page.getByText('같은 음성 파일 선택 *').waitFor({ timeout: 10000 });
+    await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-participants', '홍길동, 김철수');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
+    await page.getByText('같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.').waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '이어하기' }).last().click();
     await page.getByText('이전 음성 인식 진행분 3개 구간을 재사용했습니다.').waitFor({ timeout: 10000 });
     assert.equal(resumeCandidatesCalled, true);

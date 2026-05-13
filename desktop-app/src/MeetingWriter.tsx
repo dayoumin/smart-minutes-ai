@@ -284,12 +284,14 @@ const getResumeDraftTone = (status: AnalysisResumeDraftStatus): 'info' | 'warnin
 };
 
 const canResumeDraft = (draft: AnalysisResumeDraft): boolean => (
-    draft.status !== 'completed'
+    draft.status !== 'active'
+    && draft.status !== 'completed'
     && draft.status !== 'unavailable'
     && draft.resumeEligible !== false
 );
 
 const getResumeUnavailableReasonLabel = (draft: AnalysisResumeDraft): string => {
+    if (draft.status === 'active') return '이미 분석이 진행 중입니다. 진행이 끝나거나 중단된 뒤 이어갈 수 있습니다.';
     if (draft.resumeUnavailableReason === 'no-checkpoint') return '재사용 가능한 체크포인트가 없습니다.';
     if (draft.resumeUnavailableReason === 'file-mismatch') return '선택한 파일이 이 기록의 파일과 다릅니다.';
     if (draft.resumeUnavailableReason === 'completed') return '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.';
@@ -358,13 +360,16 @@ const toResumeDraftFileKey = (selectedFile: File): AnalysisResumeDraftFileKey =>
 
 interface MeetingWriterProps {
     onOpenSettings?: () => void;
+    resumeDraftSelectionRequest?: { jobId: string; requestId: number } | null;
+    onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [participants, setParticipants] = useState('');
     const [file, setFile] = useState<File | null>(null);
+    const initialDateRef = useRef(date);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [progress, setProgress] = useState(0);
     const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
@@ -481,7 +486,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                         resumeEligible,
                         completedChunkCount: Number(remote.completed_chunk_count || 0),
                     };
-                    if (!getAnalysisResumeDraft(draft.jobId)) {
+                    const currentDraft = getAnalysisResumeDraft(draft.jobId);
+                    if (!currentDraft) {
+                        continue;
+                    }
+                    if (currentDraft.status === 'completed' || currentDraft.status === 'unavailable') {
                         continue;
                     }
                     if (
@@ -574,6 +583,28 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
         if (!file) fields.push('음성 파일');
         return fields;
     }, [date, file, participants, title]);
+
+    const hasDraftableInput = useMemo(() => (
+        Boolean(title.trim())
+        || Boolean(participants.trim())
+        || Boolean(file)
+        || Boolean(selectedResumeDraftId)
+        || date !== initialDateRef.current
+    ), [date, file, participants, selectedResumeDraftId, title]);
+
+    useEffect(() => {
+        if (!onRegisterLeaveGuard) return;
+        onRegisterLeaveGuard(() => {
+            if (isAnalyzing) {
+                return window.confirm('분석이 진행 중입니다. 화면을 이동하면 진행 상태 확인이 어려울 수 있습니다. 이동할까요?');
+            }
+            if (!hasDraftableInput) return true;
+            return window.confirm('작성 중인 내용이 있습니다. 다른 기록으로 이동할까요?');
+        });
+        return () => {
+            onRegisterLeaveGuard(null);
+        };
+    }, [hasDraftableInput, isAnalyzing, onRegisterLeaveGuard]);
 
     const selectedResumeDraft = useMemo(
         () => resumeDrafts.find(draft => draft.jobId === selectedResumeDraftId) ?? null,
@@ -798,24 +829,32 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
     };
 
     const handleResumeDraftPrepare = (draft: AnalysisResumeDraft) => {
-        if (!canResumeDraft(draft)) {
-            setSelectedResumeDraftId(null);
-            setCompletionNotice(null);
-            setStatusMessage('');
-            setProgress(0);
-            setErrorMessage(getResumeStartErrorMessage(draft));
-            return;
-        }
         setTitle(draft.title);
         setDate(draft.date);
         setParticipants(draft.participants);
         setSelectedResumeDraftId(draft.jobId);
-        unsuppressResumeCandidateKey(getResumeDraftKey(draft));
+        if (canResumeDraft(draft)) {
+            unsuppressResumeCandidateKey(getResumeDraftKey(draft));
+        }
         setCompletionNotice(null);
-        setErrorMessage('');
-        setStatusMessage('');
-        setProgress(0);
+        setErrorMessage(canResumeDraft(draft) ? '' : getResumeStartErrorMessage(draft));
+        setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
+        setRawStatusMessage(draft.lastMessage || '');
+        setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
     };
+
+    useEffect(() => {
+        if (!resumeDraftSelectionRequest) return;
+        const drafts = listAnalysisResumeDrafts();
+        setResumeDrafts(drafts);
+        const draft = drafts.find(item => item.jobId === resumeDraftSelectionRequest.jobId);
+        if (!draft) {
+            setSelectedResumeDraftId(null);
+            setErrorMessage('선택한 미완료 분석 기록을 찾지 못했습니다.');
+            return;
+        }
+        handleResumeDraftPrepare(draft);
+    }, [resumeDraftSelectionRequest?.requestId]);
 
     const handleDeleteResumeDraft = (draft: AnalysisResumeDraft) => {
         if (draft.status === 'active') {
@@ -1138,32 +1177,26 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
 
             await addMeeting(newRecord);
             const completedJobId = newRecord.jobId || analysisJobId;
-            const keepCompletedDraft = Boolean(selectedResumeDraft && selectedResumeDraft.jobId === completedJobId);
+            const completedDraftMessage = '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.';
             if (file) {
                 markAnalysisResumeDraftsForKeyUnavailable(
                     toResumeDraftFileKey(file),
                     'completed',
                     {
                         status: 'completed',
-                        errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
-                        exceptJobId: keepCompletedDraft ? null : completedJobId,
+                        errorMessage: completedDraftMessage,
+                        exceptJobId: null,
                     },
                 );
-                if (keepCompletedDraft) {
-                    markAnalysisResumeDraftUnavailable(
-                        completedJobId,
-                        'completed',
-                        {
-                            status: 'completed',
-                            errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
-                        },
-                    );
-                } else {
-                    removeAnalysisResumeDraft(completedJobId);
-                }
-            } else {
-                removeAnalysisResumeDraft(completedJobId);
             }
+            markAnalysisResumeDraftUnavailable(
+                completedJobId,
+                'completed',
+                {
+                    status: 'completed',
+                    errorMessage: completedDraftMessage,
+                },
+            );
             window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: newRecord.id, openHistory: false } }));
             const completedElapsedMs = getNowMs() - startedAt;
             setProgress(100);
@@ -1305,11 +1338,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                 완료되거나 중단될 때까지 목록에 유지됩니다.
                             </div>
                             <div className="mt-3 grid gap-2">
-                                {activeResumeDrafts.map(draft => (
-                                    <div key={draft.jobId} className="resume-draft-card status-info">
+                                {activeResumeDrafts.map(draft => {
+                                    const isSelected = selectedResumeDraftId === draft.jobId;
+                                    return (
+                                    <button
+                                        key={draft.jobId}
+                                        type="button"
+                                        className={`resume-draft-card w-full text-left status-info ${isSelected ? 'resume-draft-card-selected' : ''}`}
+                                        onClick={() => handleResumeDraftPrepare(draft)}
+                                    >
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                             <div className="min-w-0">
-                                                <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
+                                                <div className="flex items-center gap-2">
+                                                    <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
+                                                    {isSelected && <span className="status-pill status-info">선택됨</span>}
+                                                </div>
                                                 <div className="mt-1 text-xs text-muted-foreground">
                                                     <span className="status-pill status-info">{getResumeDraftStatusLabel(draft.status)}</span>
                                                     <span className="ml-2">{draft.sourceFilename}</span>
@@ -1319,8 +1362,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                                 </div>
                                             </div>
                                         </div>
-                                    </div>
-                                ))}
+                                    </button>
+                                );
+                                })}
                             </div>
                         </div>
                     )}
@@ -1353,7 +1397,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                             className={`resume-draft-card status-${toneClass} ${isSelected ? 'resume-draft-card-selected' : ''}`}
                                         >
                                             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                                <div className="min-w-0">
+                                                <button
+                                                    type="button"
+                                                    className="min-w-0 flex-1 text-left"
+                                                    onClick={() => handleResumeDraftPrepare(draft)}
+                                                >
                                                     <div className="flex items-center gap-2">
                                                         <div className="truncate text-sm font-semibold text-foreground">{draft.title || '이전 분석'}</div>
                                                         {isSelected && (
@@ -1376,7 +1424,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings }) 
                                                     {!draft.errorMessage && unavailableReason && (
                                                         <div className="mt-1 text-xs text-muted-foreground">{unavailableReason}</div>
                                                     )}
-                                                </div>
+                                                </button>
                                                 <div className="flex shrink-0 gap-2">
                                                     {draftCanResume && (
                                                         <IconButton

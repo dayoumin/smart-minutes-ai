@@ -19,12 +19,13 @@ export interface LayoutProps {
     onSelectMeeting?: (id: string) => void;
     onCreateMeeting?: () => void;
     onDeleteMeeting?: (id: string) => void;
+    onSelectResumeDraft?: (jobId: string) => void;
     onOpenSettings?: () => void;
     analysisStatus?: AnalysisStatus;
     showAsrBenchmark?: boolean;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
     return (
         <div className="flex h-screen min-w-[320px] flex-col bg-background text-foreground overflow-hidden">
             <Header
@@ -37,6 +38,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onSelectMeeting={onSelectMeeting}
                     onCreateMeeting={onCreateMeeting}
                     onDeleteMeeting={onDeleteMeeting}
+                    onSelectResumeDraft={onSelectResumeDraft}
                     onOpenAsrBenchmark={showAsrBenchmark ? () => onTabChange?.('asr-benchmark') : undefined}
                     analysisStatus={analysisStatus}
                 />

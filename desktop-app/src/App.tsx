@@ -149,20 +149,30 @@ const seedHermesComparisonMeetings = async (): Promise<string | null> => {
 export const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState('minutes');
     const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+    const [resumeDraftSelectionRequest, setResumeDraftSelectionRequest] = useState<{ jobId: string; requestId: number } | null>(null);
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const leaveGuardRef = React.useRef<() => boolean>(() => true);
+    const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
     const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
         active: false,
         progress: 0,
         message: '',
     });
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
-    const canLeaveCurrentMeeting = () => leaveGuardRef.current();
+    const canLeaveCurrentMeeting = () => (
+        activeTab === 'minutes' ? writerLeaveGuardRef.current() : leaveGuardRef.current()
+    );
 
     const handleCreateMeeting = () => {
         if (!canLeaveCurrentMeeting()) return;
         setSelectedMeetingId(null);
         setActiveTab('minutes');
+    };
+    const handleSelectResumeDraft = (jobId: string) => {
+        if (!canLeaveCurrentMeeting()) return;
+        setSelectedMeetingId(null);
+        setActiveTab('minutes');
+        setResumeDraftSelectionRequest({ jobId, requestId: Date.now() });
     };
     const handleDeleteMeeting = (id: string) => {
         setSelectedMeetingId(current => current === id ? null : current);
@@ -242,6 +252,7 @@ export const App: React.FC = () => {
                 onOpenSettings={() => setIsSettingsOpen(true)}
                 onCreateMeeting={handleCreateMeeting}
                 onDeleteMeeting={handleDeleteMeeting}
+                onSelectResumeDraft={handleSelectResumeDraft}
                 analysisStatus={analysisStatus}
                 showAsrBenchmark={showAsrBenchmark}
                 onSelectMeeting={(id) => {
@@ -251,7 +262,13 @@ export const App: React.FC = () => {
                 }}
             >
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
-                    <MeetingWriter onOpenSettings={() => setIsSettingsOpen(true)} />
+                    <MeetingWriter
+                        onOpenSettings={() => setIsSettingsOpen(true)}
+                        resumeDraftSelectionRequest={resumeDraftSelectionRequest}
+                        onRegisterLeaveGuard={(guard) => {
+                            writerLeaveGuardRef.current = guard ?? (() => true);
+                        }}
+                    />
                 </div>
                 <div className={activeTab === 'history' ? 'contents' : 'hidden'}>
                     <MeetingHistory

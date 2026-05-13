@@ -488,7 +488,7 @@
   }
 
   .resume-summary-button {
-    @apply w-full rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs font-medium shadow-sm transition-colors;
+    @apply flex w-full items-center justify-between gap-2 rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs font-medium shadow-sm transition-colors;
     background-color: var(--status-current-bg);
     border-color: var(--status-current-border);
     color: var(--status-current-fg);
@@ -506,6 +506,15 @@
 
   .resume-draft-card-selected {
     box-shadow: inset 0 0 0 1px var(--status-current-progress);
+  }
+
+  .sidebar-resume-draft-button {
+    @apply w-full rounded-md border border-border bg-background px-3 py-2 shadow-sm transition-colors;
+  }
+
+  .sidebar-resume-draft-button:hover {
+    background-color: var(--brand-primary-soft);
+    border-color: color-mix(in srgb, var(--brand-primary) 24%, var(--color-border));
   }
 
   .sidebar-create-button {

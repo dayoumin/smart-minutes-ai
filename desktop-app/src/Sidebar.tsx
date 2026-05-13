@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, PlusCircle, Trash2 } from 'lucide-react';
-import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, listAnalysisResumeDrafts } from './analysisResumeDrafts';
+import { BarChart3, ChevronDown, ChevronUp, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, PlusCircle, Trash2 } from 'lucide-react';
+import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, AnalysisResumeDraft, listAnalysisResumeDrafts } from './analysisResumeDrafts';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
 import { ProgressBar } from './ProgressBar';
@@ -11,6 +11,7 @@ export interface SidebarProps {
     onSelectMeeting?: (id: string) => void;
     onCreateMeeting?: () => void;
     onDeleteMeeting?: (id: string) => void;
+    onSelectResumeDraft?: (jobId: string) => void;
     onOpenAsrBenchmark?: () => void;
     analysisStatus?: {
         active: boolean;
@@ -68,9 +69,34 @@ const formatSidebarStatus = (message: string): string => {
     return statusMap[baseMessage] || baseMessage;
 };
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onOpenAsrBenchmark, analysisStatus }) => {
+const isVisibleResumeDraft = (draft: AnalysisResumeDraft): boolean => (
+    draft.status === 'active' || draft.resumeEligible !== false
+);
+
+const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
+    if (draft.status === 'active') return '진행 중';
+    if (draft.resumeEligible === false) return '이어하기 불가';
+    if (draft.status === 'stopped') return '중단됨';
+    if (draft.status === 'cancelled') return '취소됨';
+    if (draft.status === 'failed') return '실패';
+    return '이어하기 가능';
+};
+
+const formatResumeDraftUpdatedAt = (value: string): string => {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date.toLocaleString('ko-KR', {
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+    });
+};
+
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
-    const [resumeDraftCount, setResumeDraftCount] = useState(0);
+    const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
+    const [showResumeDrafts, setShowResumeDrafts] = useState(false);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [showAllRecords, setShowAllRecords] = useState(false);
     const [now, setNow] = useState(() => Date.now());
@@ -85,24 +111,24 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         }
     };
 
-    const loadResumeDraftCount = () => {
-        setResumeDraftCount(
-            listAnalysisResumeDrafts().filter(draft => draft.status === 'active' || draft.resumeEligible !== false).length,
-        );
+    const loadResumeDrafts = () => {
+        const drafts = listAnalysisResumeDrafts().filter(isVisibleResumeDraft);
+        setResumeDrafts(drafts);
+        if (drafts.length === 0) setShowResumeDrafts(false);
     };
 
     useEffect(() => {
         void loadRecords();
-        loadResumeDraftCount();
+        loadResumeDrafts();
         window.addEventListener('focus', loadRecords);
         window.addEventListener('meetings:updated', loadRecords);
-        window.addEventListener('focus', loadResumeDraftCount);
-        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDraftCount);
+        window.addEventListener('focus', loadResumeDrafts);
+        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDrafts);
         return () => {
             window.removeEventListener('focus', loadRecords);
             window.removeEventListener('meetings:updated', loadRecords);
-            window.removeEventListener('focus', loadResumeDraftCount);
-            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDraftCount);
+            window.removeEventListener('focus', loadResumeDrafts);
+            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDrafts);
         };
     }, []);
 
@@ -194,17 +220,45 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     <PlusCircle size={15} />
                     새 회의록 작성
                 </button>
-                {resumeDraftCount > 0 && !analysisStatus?.active && (
-                    <button
-                        type="button"
-                        className="resume-summary-button mb-3 status-neutral"
-                        onClick={() => {
-                            setOpenMenuId(null);
-                            onCreateMeeting?.();
-                        }}
-                    >
-                        미완료 분석 기록 {resumeDraftCount}건
-                    </button>
+                {resumeDrafts.length > 0 && !analysisStatus?.active && (
+                    <div className="mb-3">
+                        <button
+                            type="button"
+                            className="resume-summary-button w-full status-neutral"
+                            aria-expanded={showResumeDrafts}
+                            onClick={() => {
+                                setOpenMenuId(null);
+                                setShowResumeDrafts(current => !current);
+                            }}
+                        >
+                            <span>미완료 분석 기록 {resumeDrafts.length}건</span>
+                            {showResumeDrafts ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                        </button>
+                        {showResumeDrafts && (
+                            <div className="mt-2 grid gap-1.5">
+                                {resumeDrafts.map(draft => (
+                                    <button
+                                        key={draft.jobId}
+                                        type="button"
+                                        className="sidebar-resume-draft-button text-left"
+                                        onClick={() => {
+                                            setOpenMenuId(null);
+                                            onSelectResumeDraft?.(draft.jobId);
+                                        }}
+                                    >
+                                        <span className="flex min-w-0 items-center justify-between gap-2">
+                                            <span className="truncate font-medium text-foreground">{draft.title || draft.sourceFilename}</span>
+                                            <span className="shrink-0 text-[11px] text-primary">{getSidebarResumeDraftStatus(draft)}</span>
+                                        </span>
+                                        <span className="mt-1 block truncate text-[11px] text-muted-foreground">{draft.sourceFilename}</span>
+                                        <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                                            {formatResumeDraftUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${formatSidebarStatus(draft.lastMessage)}` : ''}
+                                        </span>
+                                    </button>
+                                ))}
+                            </div>
+                        )}
+                    </div>
                 )}
                 {analysisStatus?.active && (
                     <button

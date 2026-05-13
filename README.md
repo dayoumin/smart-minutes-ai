@@ -89,6 +89,16 @@ lmo_audio*.zip
 
 자세한 내용은 [Smart_Minutes_AI_Portable_회사_PC_사용법.md](Smart_Minutes_AI_Portable_회사_PC_사용법.md)를 봅니다.
 
+회사 PC에서 실행 파일을 다시 만들 때는 먼저 빌드 도구와 모델 원본 위치를 확인합니다.
+
+- Python/venv: `backend\.venv\Scripts\python.exe` 또는 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 지정할 수 있는 Python
+- Python 패키지: `backend\requirements-desktop.txt` 기준 설치, `PyInstaller` 사용 가능
+- Node/Tauri: `corepack`, `pnpm`, Rust/Cargo, Tauri 빌드 도구 사용 가능
+- 모델 원본 위치: `backend\models\stt\faster-whisper-large-v3`, `backend\models\diarization\speaker-diarization-community-1`
+- 최종 실행 위치: `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`
+
+Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 화자 분리 모델만 사용합니다.
+
 ## 배포 정리 기준
 
 헷갈리지 않도록 새 배포본은 한 명령으로 만들고 검증합니다.

@@ -70,6 +70,8 @@
 - [ ] 회사에서 실행파일을 다시 만들 경우 모델은 빌드 전 원본 위치에 먼저 둔다.
   - Whisper 원본 위치: `backend\models\stt\faster-whisper-large-v3`
   - 화자 분리 원본 위치: `backend\models\diarization\speaker-diarization-community-1`
+  - 빌드 도구 확인: Python/venv/PyInstaller, `corepack`, `pnpm`, Rust/Cargo, Tauri 빌드 도구가 준비되어 있어야 한다.
+  - Python이 여러 개면 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 사용할 Python을 명시한다.
   - 이후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1`를 실행하면 최종 실행 폴더 `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`로 복사된다.
 - [ ] 이미 만든 portable을 그대로 가져가서 실행 테스트만 할 경우에는 `lmo_audio` 폴더 전체를 가져간다. 이때 모델 위치는 `lmo_audio\models\faster-whisper-large-v3`, `lmo_audio\models\speaker-diarization-community-1`이면 된다.
 - [ ] 모델만 따로 가져갈 경우에는 회사 PC에서 재빌드할지, 기존 portable에 넣을지만 먼저 정한다. 재빌드용이면 `backend\models\...`에 넣고, 기존 portable 실행용이면 `lmo_audio\models\...`에 넣는다.

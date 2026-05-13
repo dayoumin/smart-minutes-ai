@@ -31,7 +31,7 @@
       "id": "qwen3-asr-1.7b-transformers",
       "label": "Qwen3-ASR-1.7B transformers",
       "engine": "qwen_asr",
-      "enabled": true,
+      "enabled": false,
       "model_id": "Qwen/Qwen3-ASR-1.7B",
       "model_path": "backend/models/stt/Qwen3-ASR-1.7B",
       "language": "Korean",
@@ -40,13 +40,13 @@
       "max_new_tokens": 4096,
       "max_inference_batch_size": 1,
       "return_time_stamps": false,
-      "notes": "Requires qwen-asr package. Official docs recommend a fresh Python 3.12 environment. Current local test environment is CPU-only, so use float32/cpu."
+      "notes": "Benchmark/archive candidate only. Requires qwen-asr package and explicit --engines id. Do not include in default all benchmark or current desktop app path."
     },
     {
       "id": "qwen3-asr-1.7b-transformers-aligner",
       "label": "Qwen3-ASR-1.7B + Qwen3-ForcedAligner",
       "engine": "qwen_asr",
-      "enabled": true,
+      "enabled": false,
       "model_id": "Qwen/Qwen3-ASR-1.7B",
       "model_path": "backend/models/stt/Qwen3-ASR-1.7B",
       "forced_aligner_id": "Qwen/Qwen3-ForcedAligner-0.6B",
@@ -63,7 +63,7 @@
       "merge_gap_seconds": 0.8,
       "merge_min_chars": 12,
       "build_display_segments": true,
-      "notes": "Use this to compare transcript quality and timestamp quality together. Current local test environment is CPU-only, so use float32/cpu."
+      "notes": "Benchmark/archive candidate only. Run explicitly by id when comparing Qwen timestamp quality. Do not include in default all benchmark or current desktop app path."
     },
     {
       "id": "qwen3-asr-1.7b-vllm-server",

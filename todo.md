@@ -1,4 +1,16 @@
 # 0. 다음 우선순위
+- [ ] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
+  - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
+  - 집에서 작업을 시작하면 먼저 `README.md`, `docs/tauri-desktop-release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.
+  - 재빌드용 모델 원본은 프로젝트 루트 `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`로 맞춘다.
+  - 최종 실행/검증 기준은 `releases\lmo_audio` 하나로 맞춘다.
+  - portable 빌드 Python은 기본적으로 `backend\.venv-desktop\Scripts\python.exe`를 사용하고, 다른 Python을 쓸 때는 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 명시한다.
+  - 집 PC 실제 경로가 다르면 빌드 전에 README/체크리스트/todo를 같이 고쳐서 다시 충돌나지 않게 한다.
+- [ ] 0-0-0-1순위: 회의 개요 입력을 요약/정리 모델 참고 정보로 연결
+  - 새 회의록 작성 흐름에서 사용자가 간단한 `회의 개요`, `참석자`, `목적`, `중요 키워드`를 선택 입력할 수 있게 한다.
+  - 이 정보는 주제별 정리, 참석자별 정리, 액션아이템, 회의 요약 생성 프롬프트에 참고 맥락으로 넣는다.
+  - 실제 대화록과 충돌하면 대화록을 우선하고, 개요에만 있는 내용은 확정 사실처럼 쓰지 않도록 프롬프트 규칙을 둔다.
+  - STT 품질 보조에는 긴 개요보다 고유명사, 기관명, 제품명, 참석자명 같은 짧은 힌트를 우선 검토한다.
 - [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
   - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization on` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
@@ -108,6 +120,8 @@
 - [ ] 회사에서 실행파일을 다시 만들 경우 모델은 빌드 전 원본 위치에 먼저 둔다.
   - Whisper 원본 위치: `models\faster-whisper-large-v3`
   - 화자 분리 원본 위치: `models\speaker-diarization-community-1`
+  - 빌드 도구 확인: Python/venv/PyInstaller, `corepack`, `pnpm`, Rust/Cargo, Tauri 빌드 도구가 준비되어 있어야 한다.
+  - Python이 여러 개면 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 사용할 Python을 명시한다.
   - 이후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1`를 실행하면 최종 실행 폴더 `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`로 복사된다.
 - [ ] 이미 만든 portable을 그대로 가져가서 실행 테스트만 할 경우에는 `releases\lmo_audio` 폴더 전체를 가져간다. 이때 모델 위치는 `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`이면 된다.
 - [ ] 모델만 따로 가져갈 경우에는 회사 PC에서 재빌드할지, 기존 portable에 넣을지만 먼저 정한다. 재빌드용이면 프로젝트 루트 `models\...`에 넣고, 기존 portable 실행용이면 `releases\lmo_audio\models\...`에 넣는다.

@@ -85,9 +85,19 @@ lmo_audio*.zip
 
 ## 회사 PC 이관
 
-회사 PC에는 실행용이면 `lmo_audio` 폴더 전체를 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
+회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
 
 자세한 내용은 [Smart_Minutes_AI_Portable_회사_PC_사용법.md](Smart_Minutes_AI_Portable_회사_PC_사용법.md)를 봅니다.
+
+회사 PC에서 실행 파일을 다시 만들 때는 먼저 빌드 도구와 모델 원본 위치를 확인합니다.
+
+- Python/venv: `backend\.venv-desktop\Scripts\python.exe` 또는 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 지정할 수 있는 Python
+- Python 패키지: `backend\requirements-desktop.txt` 기준 설치, `PyInstaller` 사용 가능
+- Node/Tauri: `corepack`, `pnpm`, Rust/Cargo, Tauri 빌드 도구 사용 가능
+- 모델 원본 위치: `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`
+- 최종 실행 위치: `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`
+
+Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 화자 분리 모델만 사용합니다.
 
 ## 배포 정리 기준
 
@@ -103,7 +113,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
 
-배포 후 기준 실행 폴더는 항상 `D:\Projects\audio\lmo_audio`입니다. `desktop-app\src-tauri\target\release\portable\lmo_audio`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
+프로젝트 안의 배포 기준 실행 폴더는 항상 `releases\lmo_audio`입니다. `desktop-app\src-tauri\target\release\portable\lmo_audio`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
 
 `release-manifest.json`은 배포본의 신분증입니다. 어떤 커밋에서 만들었는지, 앱 exe/분석 실행 파일/backend 설정 파일의 해시가 무엇인지 기록합니다. `verify_portable.ps1`과 `diagnose_portable.ps1`은 이 값을 다시 계산해 구버전 파일이나 손으로 바뀐 파일이 섞였는지 확인합니다.
 

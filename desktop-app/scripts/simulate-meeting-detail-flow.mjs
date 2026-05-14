@@ -120,17 +120,28 @@ const seedMeeting = async (page) => {
       title: '시뮬레이션 회의록',
       summary: '기본 회의 요약입니다.',
       participants: '화자1, 화자2',
+      meetingPurpose: 'AI 시스템 통제권 논의 정리',
       sourceFile: 'simulation.mp4',
       topics: [],
       topicSections: [],
       speakerContextSummaries: [],
       generationStatus: { summary: 'completed', topicSections: 'not_started', speakerContextSummaries: 'not_started' },
+      speakerLabels: { '화자1': '김검토' },
       segments: [
         {
           start: '00:00:01',
           end: '00:00:08',
           speaker: '화자1',
           text: 'AI 시스템 통제권과 지식 확장을 논의했습니다.',
+        },
+      ],
+      editedDisplaySegments: [
+        {
+          start: '00:00:01',
+          end: '00:00:08',
+          speaker: '화자1',
+          displaySpeaker: '김검토',
+          text: '사용자가 다듬은 대화록입니다.',
         },
       ],
       actions: [],
@@ -215,6 +226,7 @@ const run = async () => {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
   const exportCalls = [];
+  const exportBodies = [];
   const apiCalls = [];
   page.on('request', request => {
     if (request.url().includes('/api/')) {
@@ -225,6 +237,19 @@ const run = async () => {
   try {
     await installRoutes(page);
     for (const format of formats) {
+      await page.route(`**/api/export-record/${format}/save-copy`, route => {
+        exportCalls.push(`${format}:save-copy`);
+        exportBodies.push(JSON.parse(route.request().postData() ?? '{}'));
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            kind: format,
+            saved_path: `C:\\Users\\User\\Downloads\\simulation.${format}`,
+            size_bytes: 16,
+          }),
+        });
+      });
       await page.route(`**/api/export-record/${format}`, route => {
         exportCalls.push(format);
         return route.fulfill({
@@ -254,12 +279,13 @@ const run = async () => {
     await speakerButton.click();
     await page.getByText('AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.').waitFor({ timeout: 10000 });
 
-    const downloadPromise = page.waitForEvent('download', { timeout: 10000 });
-    await page.getByRole('button', { name: '회의록 HWPX 다운로드' }).click();
-    const download = await downloadPromise;
+    await page.getByRole('button', { name: '회의록 HWPX 저장' }).click();
+    await page.getByText('HWPX 파일을 다운로드 폴더에 저장했습니다.').waitFor({ timeout: 10000 });
 
-    assert.deepEqual(exportCalls, ['hwpx']);
-    assert.equal(download.suggestedFilename(), '시뮬레이션 회의록.hwpx');
+    assert.deepEqual(exportCalls, ['hwpx:save-copy']);
+    assert.equal(exportBodies[0]?.meetingPurpose, 'AI 시스템 통제권 논의 정리');
+    assert.equal(exportBodies[0]?.speakerLabels?.['화자1'], '김검토');
+    assert.equal(exportBodies[0]?.displaySegments?.[0]?.text, '사용자가 다듬은 대화록입니다.');
     console.log('ok - meeting detail flow simulation');
   } catch (error) {
     console.error(error);

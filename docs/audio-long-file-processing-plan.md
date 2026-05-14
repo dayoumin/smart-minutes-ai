@@ -343,3 +343,51 @@ backend/temp/jobs/{job_id}/
 - "이어서 분석"은 먼저 STT 재사용 중심으로 시작됨
 
 따라서 사용자 메시지는 "모든 단계 완전 재개"가 아니라 "이미 끝난 음성 인식은 다시 하지 않음"을 중심으로 설명한다.
+
+## 12. 화자 분리 장시간 대응 계획
+
+화자 분리는 현재 checkpoint/export 작업과 분리해서 진행한다. 첫 목표는 정확도 향상이 아니라 긴 파일에서 메모리와 실패 지점을 측정하고, 실패해도 STT 결과를 회수할 수 있게 하는 것이다.
+
+### 12-1. 구현 전 확인 질문
+
+1. 우선 보장할 길이는 30분, 1시간, 2시간, 5시간 중 어디까지인가?
+2. 기준 PC는 CPU 중심인가, GPU를 기본으로 믿을 수 있는가?
+3. 화자 분리가 실패해도 STT-only 회의록을 완료로 둘 것인가?
+4. `화자00/01` 수준의 근사 라벨이면 충분한가, 긴 회의 전체에서 같은 사람 라벨 안정성이 필요한가?
+5. 보존되는 `source.wav`, chunk, STT, diarization checkpoint를 얼마 동안 유지할 것인가?
+
+### 12-2. 먼저 측정할 지표
+
+- diarization-only 시간, 전체 분석 시간
+- backend peak memory
+- speaker count, speaker switch 빈도, 과분할 여부
+- STT segment와 speaker segment의 overlap 품질
+- 실패/취소 후 partial transcript와 STT checkpoint 회수 가능 여부
+- 보존 파일 용량과 cleanup 영향
+
+### 12-3. 단계별 게이트
+
+1. 5분, 15분, 30분, 60분 순서로 diarization off/on baseline을 측정한다.
+2. 첫 실패 길이와 peak memory를 확인하기 전에는 windowed diarization을 구현하지 않는다.
+3. 먼저 pyannote에 파일 경로 입력 등 더 낮은 메모리 경로가 가능한지 확인한다.
+4. 그 방법이 부족할 때만 10~15분 window와 30~60초 overlap prototype을 만든다.
+5. window prototype은 raw speaker label을 저장하고, 짧은 파일에서 whole-file diarization과 비교한 뒤 merge 설계를 진행한다.
+
+### 12-4. window/merge 원칙
+
+- 모든 window 결과는 절대 timestamp를 유지한다.
+- overlap 구간은 중복을 제거하되 speech를 지우지 않는 쪽을 우선한다.
+- window 내부 label은 `window03:SPEAKER_01`처럼 보존한다.
+- 인접 window의 label merge는 overlap 시간 매칭을 1차 기준으로 한다.
+- 확신이 낮으면 잘못 합치기보다 새 화자 라벨을 유지한다.
+- 최종 global speaker timeline을 만든 뒤 transcript alignment를 한 번 다시 수행한다.
+
+### 12-5. 같이 하지 말 것
+
+- denoise, silence trim, AGC 기본값 변경
+- STT 모델/청크 길이 변경
+- 요약 프롬프트 개편
+- speaker identity naming
+- UI 전면 개편
+
+화자 분리의 첫 실행 게이트는 30분 diarization-on baseline이다. 기록해야 할 값은 peak memory, diarization 시간, speaker count, segment count, 실패 시 STT partial 회수 가능 여부다.

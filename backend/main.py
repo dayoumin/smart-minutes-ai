@@ -14,9 +14,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse
 
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from config_normalization import (
@@ -61,6 +61,10 @@ DETAIL_TOPIC_INPUT_CHANGED = "topic_input_changed"
 DETAIL_SPEAKER_INPUT_CHANGED = "speaker_input_changed"
 ANALYSIS_CHECKPOINT_VERSION = 1
 ANALYSIS_PIPELINE_VERSION = "2026-05-13-long-file-v1"
+MAX_EXPORT_STEM_CHARS = 96
+DIARIZATION_WAVEFORM_SAMPLE_RATE = 16000
+DIARIZATION_WAVEFORM_CHANNELS = 1
+DIARIZATION_WAVEFORM_BYTES_PER_SAMPLE = 4
 
 app.add_middleware(
     CORSMiddleware,
@@ -134,6 +138,58 @@ def _write_job_state(paths, payload: dict) -> dict:
     }
     atomic_write_json(paths.state_path, merged)
     return merged
+
+
+def _estimate_diarization_waveform_mb(duration_seconds: float) -> float:
+    if duration_seconds <= 0:
+        return 0.0
+    bytes_count = (
+        duration_seconds
+        * DIARIZATION_WAVEFORM_SAMPLE_RATE
+        * DIARIZATION_WAVEFORM_CHANNELS
+        * DIARIZATION_WAVEFORM_BYTES_PER_SAMPLE
+    )
+    return bytes_count / (1024 * 1024)
+
+
+def _diarization_resource_decision(config: dict, source_wav_duration: float) -> dict:
+    diarization_config = config.get("diarization", {})
+    requested = bool(diarization_config.get("enabled", True))
+    max_duration = int(diarization_config.get("max_duration_seconds") or 0)
+    max_waveform_mb = int(diarization_config.get("max_waveform_mb") or 0)
+    estimated_waveform_mb = _estimate_diarization_waveform_mb(source_wav_duration)
+    decision = {
+        "requested": requested,
+        "run": requested,
+        "skipped": False,
+        "skip_reason": "",
+        "skip_message": "",
+        "duration_seconds": float(source_wav_duration or 0.0),
+        "estimated_waveform_mb": round(estimated_waveform_mb, 1),
+        "max_duration_seconds": max_duration,
+        "max_waveform_mb": max_waveform_mb,
+    }
+    if not requested:
+        decision["run"] = False
+        return decision
+    if not diarization_config.get("auto_skip_long_audio", True):
+        return decision
+    if max_duration > 0 and source_wav_duration > max_duration:
+        decision.update({
+            "run": False,
+            "skipped": True,
+            "skip_reason": "duration_limit",
+            "skip_message": "긴 음성 파일이라 발화자 구분을 건너뛰고 대화록과 요약을 먼저 만들었습니다.",
+        })
+        return decision
+    if max_waveform_mb > 0 and estimated_waveform_mb > max_waveform_mb:
+        decision.update({
+            "run": False,
+            "skipped": True,
+            "skip_reason": "memory_limit",
+            "skip_message": "음성 파일이 커서 발화자 구분을 건너뛰고 대화록과 요약을 먼저 만들었습니다.",
+        })
+    return decision
 
 
 def _normalize_resume_file_size(value: int | None) -> int | None:
@@ -439,6 +495,15 @@ async def update_settings(payload: dict = Body(...)) -> dict:
                 raise HTTPException(status_code=400, detail="stt.device must be cpu or cuda")
             config.setdefault("stt", {})["device"] = device
 
+    if "privacy" in payload:
+        privacy = payload["privacy"] or {}
+        if "preserve_extracted_audio" in privacy:
+            config.setdefault("privacy", {})["preserve_extracted_audio"] = bool(privacy["preserve_extracted_audio"])
+        if "auto_save_hwpx_copy" in privacy:
+            config.setdefault("privacy", {})["auto_save_hwpx_copy"] = bool(privacy["auto_save_hwpx_copy"])
+        if "auto_save_audio_copy" in privacy:
+            config.setdefault("privacy", {})["auto_save_audio_copy"] = bool(privacy["auto_save_audio_copy"])
+
     save_config(config)
     return await get_settings()
 
@@ -557,7 +622,8 @@ async def get_asr_benchmark(file_id: str) -> dict:
 
 
 @app.get("/api/outputs/{job_id}/{kind}")
-async def download_output(job_id: str, kind: str) -> FileResponse:
+async def download_output(job_id: str, kind: str, request: Request) -> FileResponse:
+    job_id = _validate_job_id(job_id)
     allowed = {
         "json": (f"{job_id}_result.json", "application/json"),
         "txt": (f"{job_id}_transcript.txt", "text/plain; charset=utf-8"),
@@ -565,6 +631,14 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
         "docx": (f"{job_id}_report.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         "hwpx": (f"{job_id}_report.hwpx", "application/hwp+zip"),
     }
+    if kind == "audio":
+        _require_save_copy_origin(request)
+        config = load_config()
+        audio_path = _resolve_job_audio_path(config, job_id)
+        if not audio_path:
+            raise HTTPException(status_code=404, detail="Audio file not found")
+        return FileResponse(audio_path, filename=f"{job_id}_audio.wav", media_type="audio/wav")
+
     if kind not in allowed:
         raise HTTPException(status_code=404, detail="Unknown output type")
 
@@ -583,6 +657,66 @@ async def download_output(job_id: str, kind: str) -> FileResponse:
         raise HTTPException(status_code=404, detail="Output file not found")
 
     return FileResponse(file_path, filename=filename, media_type=media_type)
+
+
+@app.head("/api/outputs/{job_id}/audio")
+async def head_output_audio(job_id: str, request: Request) -> Response:
+    _require_save_copy_origin(request)
+    job_id = _validate_job_id(job_id)
+    config = load_config()
+    audio_path = _resolve_job_audio_path(config, job_id)
+    if not audio_path:
+        raise HTTPException(status_code=404, detail="Audio file not found")
+    return Response(headers={
+        "content-length": str(os.path.getsize(audio_path)),
+        "content-type": "audio/wav",
+    })
+
+
+@app.post("/api/outputs/{job_id}/{kind}/save-copy")
+async def save_output_copy(job_id: str, kind: str, request: Request) -> dict:
+    _require_save_copy_origin(request)
+    job_id = _validate_job_id(job_id)
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    allowed = {
+        "txt": (f"{job_id}_transcript.txt", "txt"),
+        "md": (f"{job_id}_report.md", "md"),
+        "docx": (f"{job_id}_report.docx", "docx"),
+        "hwpx": (f"{job_id}_report.hwpx", "hwpx"),
+    }
+
+    if kind == "audio":
+        source_path = _resolve_job_audio_path(config, job_id)
+        extension = "wav"
+        if not source_path:
+            raise HTTPException(status_code=404, detail="Audio file not found")
+    elif kind in allowed:
+        filename, extension = allowed[kind]
+        source_path = os.path.abspath(os.path.join(output_dir, filename))
+        if kind == "hwpx" and source_path.startswith(output_dir + os.sep) and not os.path.exists(source_path):
+            json_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_result.json"))
+            if json_path.startswith(output_dir + os.sep) and os.path.exists(json_path):
+                from pipeline.export_hwpx import export_hwpx
+
+                with open(json_path, "r", encoding="utf-8") as f:
+                    export_hwpx(json.load(f), source_path)
+    else:
+        raise HTTPException(status_code=404, detail="Unknown output type")
+
+    if not os.path.exists(source_path):
+        raise HTTPException(status_code=404, detail="Output file not found")
+
+    target_path = _unique_download_path(f"{_safe_export_id(job_id)}_{kind}.{extension}")
+    _copy_file_atomic(source_path, target_path)
+
+    return {
+        "job_id": job_id,
+        "kind": kind,
+        "saved_path": str(target_path),
+        "size_bytes": target_path.stat().st_size,
+    }
 
 
 def _validate_job_id(job_id: str) -> str:
@@ -614,6 +748,8 @@ def _artifact_belongs_to_job(name: str, job_id: str) -> bool:
             f"{candidate}_upload.webm",
             f"{candidate}_chunks",
             f"{candidate}_result.json",
+            f"{candidate}_partial_result.json",
+            f"{candidate}_partial_transcript.txt",
             f"{candidate}_transcript.txt",
             f"{candidate}_report.md",
             f"{candidate}_report.docx",
@@ -745,8 +881,8 @@ def _ensure_generation_status(summary: dict) -> dict:
     return status
 
 
-def _result_outputs(job_id: str) -> dict:
-    return {
+def _result_outputs(job_id: str, include_audio: bool | None = None) -> dict:
+    outputs = {
         "job_id": job_id,
         "json": f"/api/outputs/{job_id}/json",
         "txt": f"/api/outputs/{job_id}/txt",
@@ -754,6 +890,14 @@ def _result_outputs(job_id: str) -> dict:
         "docx": f"/api/outputs/{job_id}/docx",
         "hwpx": f"/api/outputs/{job_id}/hwpx",
     }
+    if include_audio is None:
+        try:
+            include_audio = _resolve_job_audio_path(load_config(), job_id) is not None
+        except Exception:
+            include_audio = False
+    if include_audio:
+        outputs["audio"] = f"/api/outputs/{job_id}/audio"
+    return outputs
 
 
 def _begin_generation(job_id: str, kind: str) -> tuple[str, str]:
@@ -813,7 +957,7 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
             segments = get_transcript_segments(result_data)
             if not segments:
                 raise HTTPException(status_code=400, detail="Transcript segments are required")
-            segments_fingerprint = _segment_fingerprint(segments)
+            input_fingerprint = _generation_input_fingerprint(result_data, segments)
 
             summary = result_data.setdefault("summary", {})
             status = _ensure_generation_status(summary)
@@ -827,9 +971,15 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
         try:
             config = load_config()
             summary_data = await asyncio.to_thread(
-                summarize_meeting,
-                segments,
-                _resolve_summary_model(config),
+                lambda: summarize_meeting(
+                    segments,
+                    _resolve_summary_model(config),
+                    meeting_context={
+                        "title": result_data.get("summary", {}).get("title", ""),
+                        "date": result_data.get("created_at", ""),
+                        "meeting_purpose": result_data.get("meeting_purpose", ""),
+                    },
+                )
             )
         except Exception:
             with GENERATION_STATUS_LOCK:
@@ -844,7 +994,7 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
 
         with GENERATION_STATUS_LOCK:
             latest_result = _load_latest_generation_result(job_id, result_data)
-            if _segment_fingerprint(get_transcript_segments(latest_result)) != segments_fingerprint:
+            if _generation_input_fingerprint(latest_result, get_transcript_segments(latest_result)) != input_fingerprint:
                 latest_summary = latest_result.setdefault("summary", {})
                 latest_status = _ensure_generation_status(latest_summary)
                 latest_status["summary"] = "not_started"
@@ -912,6 +1062,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             if not segments:
                 raise HTTPException(status_code=400, detail="Transcript segments are required")
             segments_fingerprint = _segment_fingerprint(segments)
+            input_fingerprint = _generation_input_fingerprint(result_data, segments)
 
             summary = result_data.setdefault("summary", {})
             summary_fingerprint = _summary_generation_fingerprint(summary)
@@ -949,6 +1100,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             latest_summary = latest_result.setdefault("summary", {})
             if (
                 _segment_fingerprint(get_transcript_segments(latest_result)) != segments_fingerprint
+                or _generation_input_fingerprint(latest_result, get_transcript_segments(latest_result)) != input_fingerprint
                 or _summary_generation_fingerprint(latest_summary) != summary_fingerprint
             ):
                 latest_status = _ensure_generation_status(latest_summary)
@@ -1002,6 +1154,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             if not segments:
                 raise HTTPException(status_code=400, detail="Transcript segments are required")
             segments_fingerprint = _segment_fingerprint(segments)
+            input_fingerprint = _generation_input_fingerprint(result_data, segments)
 
             summary = result_data.setdefault("summary", {})
             summary_fingerprint = _summary_generation_fingerprint(summary)
@@ -1046,6 +1199,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             latest_summary = latest_result.setdefault("summary", {})
             if (
                 _segment_fingerprint(get_transcript_segments(latest_result)) != segments_fingerprint
+                or _generation_input_fingerprint(latest_result, get_transcript_segments(latest_result)) != input_fingerprint
                 or _summary_generation_fingerprint(latest_summary) != summary_fingerprint
             ):
                 latest_status = _ensure_generation_status(latest_summary)
@@ -1086,6 +1240,8 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
 
 def _safe_export_name(title: str, extension: str) -> str:
     safe = "".join("-" if ch in '/\\?%*:|"<> ' else ch for ch in title.strip())
+    safe = safe.strip(".- ")
+    safe = safe[:MAX_EXPORT_STEM_CHARS].rstrip(".- ")
     return f"{safe or 'meeting-minutes'}.{extension}"
 
 
@@ -1093,6 +1249,153 @@ def _safe_export_id(value: str) -> str:
     safe = re.sub(r"[^A-Za-z0-9_.-]+", "_", value.strip())
     safe = safe.strip("._-")
     return safe[:80] or "record"
+
+
+def _unique_download_path(filename: str) -> Path:
+    downloads_dir = Path.home() / "Downloads"
+    if not downloads_dir.exists():
+        downloads_dir = Path.home()
+    downloads_dir.mkdir(parents=True, exist_ok=True)
+
+    candidate = downloads_dir / filename
+    stem = candidate.stem
+    suffix = candidate.suffix
+    counter = 1
+    while candidate.exists():
+        candidate = downloads_dir / f"{stem}_{counter}{suffix}"
+        counter += 1
+    return candidate
+
+
+def _allowed_save_copy_origins() -> set[str]:
+    configured = os.environ.get("MEETING_AI_SAVE_COPY_ALLOWED_ORIGINS", "")
+    origins = {
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://tauri.localhost",
+        "https://tauri.localhost",
+        "tauri://localhost",
+    }
+    origins.update(origin.strip() for origin in configured.split(",") if origin.strip())
+    return origins
+
+
+def _require_save_copy_origin(request: Request) -> None:
+    origin = request.headers.get("origin")
+    if not origin or origin not in _allowed_save_copy_origins():
+        raise HTTPException(status_code=403, detail="Save-copy is only available from the desktop app")
+
+
+def _path_is_within(path: str, root: str) -> bool:
+    try:
+        return os.path.commonpath([os.path.abspath(path), os.path.abspath(root)]) == os.path.abspath(root)
+    except ValueError:
+        return False
+
+
+def _resolve_job_audio_path(config: dict, job_id: str) -> str | None:
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+    jobs_root = os.path.abspath(os.path.join(temp_dir, "jobs"))
+    candidates = [
+        os.path.abspath(checkpoint_paths.source_wav_path),
+        os.path.abspath(os.path.join(checkpoint_paths.root_dir, "source.wav")),
+    ]
+    for candidate in candidates:
+        if _path_is_within(candidate, jobs_root) and os.path.exists(candidate):
+            return candidate
+    return None
+
+
+def _copy_file_atomic(source_path: str, target_path: Path) -> None:
+    temp_path = target_path.with_name(f".{target_path.name}.{time.time_ns()}.part")
+    try:
+        with open(source_path, "rb") as source, open(temp_path, "xb") as target:
+            shutil.copyfileobj(source, target, length=1024 * 1024)
+        os.replace(temp_path, target_path)
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
+def _export_record_to_download_path(kind: str, payload: dict, target_path: Path) -> dict:
+    temp_path = target_path.with_name(f".{target_path.name}.{time.time_ns()}.part")
+    try:
+        result_data = _export_record_to_path(kind, payload, str(temp_path))
+        os.replace(temp_path, target_path)
+        return result_data
+    except Exception:
+        try:
+            temp_path.unlink(missing_ok=True)
+        except Exception:
+            pass
+        raise
+
+
+def _auto_save_completed_outputs(
+    *,
+    result_data: dict,
+    title: str,
+    hwpx_path: str | None,
+    audio_path: str | None,
+    privacy_config: dict,
+) -> tuple[dict[str, str], dict[str, str]]:
+    saved: dict[str, str] = {}
+    errors: dict[str, str] = {}
+    safe_title = title or result_data.get("summary", {}).get("title") or "회의록"
+
+    if privacy_config.get("auto_save_hwpx_copy", False) and (not hwpx_path or not os.path.exists(hwpx_path)):
+        errors["hwpx"] = "HWPX 파일이 아직 만들어지지 않았습니다."
+    elif privacy_config.get("auto_save_hwpx_copy", False):
+        try:
+            target_path = _unique_download_path(_safe_export_name(safe_title, "hwpx"))
+            _copy_file_atomic(str(hwpx_path), target_path)
+            saved["hwpx"] = str(target_path)
+        except Exception as exc:
+            logging.exception("Failed to auto-save HWPX copy")
+            errors["hwpx"] = str(exc) or "HWPX 자동 저장 실패"
+
+    if privacy_config.get("auto_save_audio_copy", False) and (not audio_path or not os.path.exists(audio_path)):
+        errors["audio"] = "음성 파일이 아직 만들어지지 않았습니다."
+    elif privacy_config.get("auto_save_audio_copy", False):
+        try:
+            target_path = _unique_download_path(_safe_export_name(f"{safe_title}_음성", "wav"))
+            _copy_file_atomic(str(audio_path), target_path)
+            saved["audio"] = str(target_path)
+        except Exception as exc:
+            logging.exception("Failed to auto-save audio copy")
+            errors["audio"] = str(exc) or "음성 파일 자동 저장 실패"
+
+    return saved, errors
+
+
+def _export_record_to_path(kind: str, payload: dict, output_path: str) -> dict:
+    result_data = _meeting_record_to_export_result(payload)
+    if kind == "txt":
+        from pipeline.export_txt import export_txt
+        from pipeline.transcript_display import get_transcript_segments
+
+        export_txt(get_transcript_segments(result_data), output_path)
+    elif kind == "md":
+        from pipeline.export_markdown import export_markdown
+
+        export_markdown(result_data, output_path)
+    elif kind == "docx":
+        from pipeline.export_docx import export_docx
+
+        export_docx(result_data, output_path)
+    elif kind == "hwpx":
+        from pipeline.export_hwpx import export_hwpx
+
+        export_hwpx(result_data, output_path)
+    else:
+        raise HTTPException(status_code=404, detail="Unknown export type")
+    return result_data
 
 
 def _time_to_seconds(value) -> float:
@@ -1193,9 +1496,14 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
         "source_file": payload.get("sourceFile") or "",
         "created_at": payload.get("date") or datetime.now().isoformat(timespec="seconds"),
         "participants": payload.get("participants") or "",
+        "meeting_purpose": payload.get("meetingPurpose") or payload.get("meeting_purpose") or "",
         "segments": segments,
         "display_segments": display_segments,
         "speaker_labels": speaker_labels,
+        "settings": {
+            "diarization_skipped": bool(payload.get("diarizationSkipped") or payload.get("diarization_skipped")),
+            "diarization_skip_message": payload.get("diarizationSkipMessage") or payload.get("diarization_skip_message") or "",
+        },
         "summary": {
             "title": title,
             "overview": payload.get("summary") or "",
@@ -1221,6 +1529,8 @@ def _apply_payload_metadata_override(result_data: dict, payload: dict | None) ->
         result_data["created_at"] = payload.get("date") or result_data.get("created_at") or ""
     if "participants" in payload:
         result_data["participants"] = payload.get("participants") or ""
+    if "meetingPurpose" in payload or "meeting_purpose" in payload:
+        result_data["meeting_purpose"] = payload.get("meetingPurpose") or payload.get("meeting_purpose") or ""
     if "title" in payload:
         summary = result_data.setdefault("summary", {})
         summary["title"] = payload.get("title") or summary.get("title") or "회의록"
@@ -1293,6 +1603,17 @@ def _summary_generation_fingerprint(summary: dict) -> str:
     return _stable_json_fingerprint(normalized)
 
 
+def _generation_input_fingerprint(result_data: dict, segments: list[dict]) -> str:
+    summary = result_data.get("summary") or {}
+    normalized = {
+        "segments": _segment_fingerprint(segments),
+        "title": summary.get("title", ""),
+        "created_at": result_data.get("created_at", ""),
+        "meeting_purpose": result_data.get("meeting_purpose", ""),
+    }
+    return _stable_json_fingerprint(normalized)
+
+
 def _load_latest_generation_result(job_id: str, fallback_result: dict) -> dict:
     try:
         return _load_job_result(job_id)
@@ -1342,7 +1663,6 @@ async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
     output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
     os.makedirs(output_dir, exist_ok=True)
 
-    result_data = _meeting_record_to_export_result(payload)
     extension, media_type = allowed[kind]
     record_id = _safe_export_id(str(payload.get("jobId") or payload.get("id") or "record"))
     export_id = f"{record_id}_export_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}"
@@ -1350,40 +1670,53 @@ async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
     if not output_path.startswith(output_dir + os.sep):
         raise HTTPException(status_code=400, detail="Invalid export path")
 
-    if kind == "txt":
-        from pipeline.export_txt import export_txt
-        from pipeline.transcript_display import get_transcript_segments
-
-        export_txt(get_transcript_segments(result_data), output_path)
-    elif kind == "md":
-        from pipeline.export_markdown import export_markdown
-
-        export_markdown(result_data, output_path)
-    elif kind == "docx":
-        from pipeline.export_docx import export_docx
-
-        export_docx(result_data, output_path)
-    else:
-        from pipeline.export_hwpx import export_hwpx
-
-        export_hwpx(result_data, output_path)
+    result_data = _export_record_to_path(kind, payload, output_path)
 
     filename = _safe_export_name(result_data["summary"]["title"], extension)
     return FileResponse(output_path, filename=filename, media_type=media_type)
+
+
+@app.post("/api/export-record/{kind}/save-copy")
+async def save_export_record_copy(kind: str, request: Request, payload: dict = Body(...)) -> dict:
+    _require_save_copy_origin(request)
+    allowed = {
+        "txt": "txt",
+        "md": "md",
+        "docx": "docx",
+        "hwpx": "hwpx",
+    }
+    if kind not in allowed:
+        raise HTTPException(status_code=404, detail="Unknown export type")
+
+    extension = allowed[kind]
+    title = str(payload.get("title") or "회의록")
+    target_path = _unique_download_path(_safe_export_name(title, extension))
+    result_data = _export_record_to_download_path(kind, payload, target_path)
+    return {
+        "kind": kind,
+        "saved_path": str(target_path),
+        "size_bytes": target_path.stat().st_size,
+        "title": result_data.get("summary", {}).get("title", title),
+    }
 
 
 @app.post("/api/analyze")
 async def analyze_meeting(
     title: str = Form(...),
     date: str = Form(...),
-    participants: str = Form(...),
+    participants: str = Form(""),
     file: UploadFile = File(...),
     mode: str = Form("real"),
     job_id: str | None = Form(None),
     file_size: int | None = Form(None),
     file_last_modified: int | None = Form(None),
     resume_requested: bool = Form(False),
+    meeting_purpose: str = Form(""),
 ) -> StreamingResponse:
+    if not isinstance(meeting_purpose, str):
+        meeting_purpose = ""
+    if not isinstance(participants, str):
+        participants = ""
     if mode not in {"mock", "real"}:
         raise HTTPException(status_code=400, detail="mode must be 'mock' or 'real'")
 
@@ -1414,6 +1747,7 @@ async def analyze_meeting(
                 participants,
                 None,
                 analysis_job_id,
+                meeting_purpose=meeting_purpose,
                 prepared_upload_path=upload_path,
                 source_filename=file.filename,
                 prepared_cancel_event=cancel_event,
@@ -1577,6 +1911,7 @@ async def stream_real_analysis(
     file: UploadFile | None,
     requested_job_id: str | None = None,
     *,
+    meeting_purpose: str = "",
     prepared_upload_path: str | None = None,
     source_filename: str | None = None,
     prepared_cancel_event=None,
@@ -1680,6 +2015,12 @@ async def stream_real_analysis(
             await queue.put(dict(last_progress))
 
             config = await prepare_real_config()
+            config["_meeting_context"] = {
+                "title": title,
+                "date": date,
+                "participants": participants,
+                "meeting_purpose": meeting_purpose,
+            }
             raise_if_cancelled()
             result = await asyncio.to_thread(
                 process_audio_pipeline,
@@ -1691,6 +2032,7 @@ async def stream_real_analysis(
             )
             raise_if_cancelled()
             result_data = result["result_data"]
+            result_settings = result_data.get("settings", {}) if isinstance(result_data, dict) else {}
             final_data = {
                 "type": "result",
                 "mode": "real",
@@ -1700,6 +2042,7 @@ async def stream_real_analysis(
                     "title": title,
                     "date": date,
                     "participants": participants,
+                    "meeting_purpose": meeting_purpose,
                     "source_file": source_filename or (file.filename if file else ""),
                     "job_id": result["job_id"],
                 },
@@ -1710,7 +2053,10 @@ async def stream_real_analysis(
                     "md": f"/api/outputs/{result['job_id']}/md" if result.get("md_file") else None,
                     "docx": f"/api/outputs/{result['job_id']}/docx" if result.get("docx_file") else None,
                     "hwpx": f"/api/outputs/{result['job_id']}/hwpx" if result.get("hwpx_file") else None,
+                    "audio": f"/api/outputs/{result['job_id']}/audio" if result.get("audio_file") else None,
                 },
+                "auto_saved_files": result.get("auto_saved_files", {}),
+                "auto_save_errors": result.get("auto_save_errors", {}),
                 "summary": format_summary_for_ui(result_data.get("summary", {}), title, date, participants),
                 "topics": result_data.get("summary", {}).get("topics", []),
                 "topic_sections": result_data.get("summary", {}).get("topic_sections", []),
@@ -1722,6 +2068,9 @@ async def stream_real_analysis(
                 "needs_check": result_data.get("summary", {}).get("needs_check", []),
                 "segments": segments_for_ui(result_data.get("segments", [])),
                 "display_segments": segments_for_ui(result_data.get("display_segments", [])),
+                "diarization_skipped": bool(result_settings.get("diarization_skipped")),
+                "diarization_skip_message": str(result_settings.get("diarization_skip_message") or ""),
+                "diarization_skip_reason": str(result_settings.get("diarization_skip_reason") or ""),
             }
             await queue.put(final_data)
             await queue.put("[DONE]")
@@ -1860,10 +2209,17 @@ def save_config(config: dict, config_path: str = "config.json") -> None:
         json.dump(config, f, ensure_ascii=False, indent=2)
         f.write("\n")
 
-def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = None, progress_callback=None, cancel_event=None) -> dict:
+def process_audio_pipeline(
+    input_file: str,
+    job_id: str = None,
+    config: dict = None,
+    progress_callback=None,
+    cancel_event=None,
+    meeting_context: dict | None = None,
+) -> dict:
     from pipeline.align_speakers import align_segments_with_speakers
     from pipeline.audio_preprocess import convert_to_wav
-    from pipeline.chunk_audio import apply_time_offset, split_wav_by_duration
+    from pipeline.chunk_audio import apply_time_offset, get_wav_duration_seconds, split_wav_by_duration
     from pipeline.diarize import diarize_audio
     from pipeline.export_docx import export_docx
     from pipeline.export_hwpx import export_hwpx
@@ -1877,6 +2233,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         config = load_config()
     else:
         config = normalize_app_config(config)
+    meeting_context = meeting_context or config.get("_meeting_context") or {}
 
     def _raise_if_cancelled():
         if cancel_event is not None and cancel_event.is_set():
@@ -1980,10 +2337,14 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
 
     temp_wav_path = checkpoint_paths.source_wav_path
     out_json_path = os.path.join(output_dir, f"{job_id}_result.json")
+    out_partial_json_path = os.path.join(output_dir, f"{job_id}_partial_result.json")
+    out_partial_txt_path = os.path.join(output_dir, f"{job_id}_partial_transcript.txt")
     out_txt_path = os.path.join(output_dir, f"{job_id}_transcript.txt")
     out_md_path = os.path.join(output_dir, f"{job_id}_report.md")
     out_docx_path = os.path.join(output_dir, f"{job_id}_report.docx")
     out_hwpx_path = os.path.join(output_dir, f"{job_id}_report.hwpx")
+    privacy_config = config.get("privacy", {})
+    preserve_source_audio = bool(privacy_config.get("preserve_extracted_audio", True))
 
     print(f"--- Local Meeting AI Pipeline ---")
     print(f"Input: {input_file}")
@@ -1996,15 +2357,39 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     ffmpeg_path = config["paths"]["ffmpeg"]
     if not ffmpeg_path.lower() == "ffmpeg" and not os.path.isabs(ffmpeg_path):
         ffmpeg_path = os.path.normpath(os.path.join(BASE_DIR, ffmpeg_path))
-    preprocess_result = convert_to_wav(
-        input_file,
-        temp_wav_path,
-        ffmpeg_path,
-        preprocessing=config.get("preprocessing", {}),
+    can_reuse_source_wav = (
+        bool(existing_state.get("source_wav_completed"))
+        and os.path.exists(temp_wav_path)
+        and os.path.getsize(temp_wav_path) > 0
+        and existing_state.get("input_fingerprint") == input_fingerprint
+        and existing_state.get("config_fingerprint") == config_fingerprint
     )
-    preprocessing_applied = preprocess_result.get("preprocessing", {}) if isinstance(preprocess_result, dict) else {}
+    if can_reuse_source_wav:
+        _report_progress("저장된 음성 파일을 재사용합니다.", 10)
+        preprocessing_applied = existing_state.get("preprocessing_applied", {})
+    else:
+        preprocess_result = convert_to_wav(
+            input_file,
+            temp_wav_path,
+            ffmpeg_path,
+            preprocessing=config.get("preprocessing", {}),
+        )
+        preprocessing_applied = preprocess_result.get("preprocessing", {}) if isinstance(preprocess_result, dict) else {}
+    try:
+        source_wav_duration = get_wav_duration_seconds(temp_wav_path)
+    except Exception:
+        source_wav_duration = float(existing_state.get("source_wav_duration") or 0.0)
+    source_wav_size = os.path.getsize(temp_wav_path) if os.path.exists(temp_wav_path) else 0
+    diarization_decision = _diarization_resource_decision(config, source_wav_duration)
     _write_job_state(checkpoint_paths, {
+        "source_wav_completed": True,
+        "source_wav_path": temp_wav_path,
+        "source_wav_size": source_wav_size,
+        "source_wav_duration": source_wav_duration,
         "preprocessing_applied": preprocessing_applied,
+        "diarization_decision": diarization_decision,
+        "resume_supported": True,
+        "preserve_source_audio": preserve_source_audio,
     })
     _raise_if_cancelled()
     
@@ -2030,20 +2415,118 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     enable_chunking = processing_config.get("enable_long_audio_chunking", True)
     long_chunk_seconds = int(processing_config.get("long_audio_chunk_seconds", DEFAULT_LONG_AUDIO_CHUNK_SECONDS))
     chunk_dir = checkpoint_paths.chunks_dir
-    chunks = (
-        split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
-        if enable_chunking
-        else [{"path": temp_wav_path, "offset": 0.0, "duration": None, "index": 0}]
+
+    def _chunk_path_allowed(path: str) -> bool:
+        absolute_path = os.path.abspath(path)
+        return (
+            _path_is_within(absolute_path, chunk_dir)
+            or os.path.normcase(absolute_path) == os.path.normcase(os.path.abspath(temp_wav_path))
+        )
+
+    def _chunk_entry(chunk: dict, idx: int) -> dict:
+        path = os.path.abspath(str(chunk.get("path") or ""))
+        return {
+            **chunk,
+            "path": path,
+            "index": int(chunk.get("index", idx) or idx),
+            "offset": float(chunk.get("offset", 0.0) or 0.0),
+            "duration": float(chunk.get("duration", 0.0) or 0.0),
+            "size_bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+        }
+
+    def _chunk_manifest_entries(raw_chunks: list[dict]) -> list[dict]:
+        return [_chunk_entry(chunk, idx) for idx, chunk in enumerate(raw_chunks)]
+
+    def _manifest_chunks_are_reusable(manifest: dict) -> bool:
+        raw_chunks = manifest.get("chunks")
+        if not isinstance(raw_chunks, list):
+            return False
+        for idx, chunk in enumerate(raw_chunks):
+            if not isinstance(chunk, dict):
+                return False
+            path = os.path.abspath(str(chunk.get("path") or ""))
+            if not path or not _chunk_path_allowed(path) or not os.path.exists(path):
+                return False
+            if int(chunk.get("index", idx) or idx) != idx:
+                return False
+            expected_size = int(chunk.get("size_bytes") or 0)
+            if expected_size and os.path.getsize(path) != expected_size:
+                return False
+        return True
+
+    chunk_manifest = load_json_checkpoint(checkpoint_paths.chunk_manifest_path)
+    can_reuse_chunks = (
+        isinstance(chunk_manifest, dict)
+        and chunk_manifest.get("input_fingerprint") == input_fingerprint
+        and chunk_manifest.get("config_fingerprint") == config_fingerprint
+        and int(chunk_manifest.get("source_wav_size") or 0) == int(source_wav_size or 0)
+        and int(chunk_manifest.get("long_chunk_seconds") or 0) == long_chunk_seconds
+        and bool(chunk_manifest.get("enable_chunking")) == bool(enable_chunking)
+        and _manifest_chunks_are_reusable(chunk_manifest)
     )
+    if can_reuse_chunks:
+        _report_progress("저장된 음성 구간을 재사용합니다.", 25)
+        chunks = _chunk_manifest_entries(chunk_manifest["chunks"])
+    else:
+        chunks = _chunk_manifest_entries(
+            split_wav_by_duration(temp_wav_path, chunk_dir, long_chunk_seconds, ffmpeg_path)
+            if enable_chunking
+            else [{"path": temp_wav_path, "offset": 0.0, "duration": source_wav_duration, "index": 0}]
+        )
+        atomic_write_json(checkpoint_paths.chunk_manifest_path, {
+            "input_fingerprint": input_fingerprint,
+            "config_fingerprint": config_fingerprint,
+            "source_wav_path": temp_wav_path,
+            "source_wav_duration": source_wav_duration,
+            "source_wav_size": source_wav_size,
+            "enable_chunking": bool(enable_chunking),
+            "long_chunk_seconds": long_chunk_seconds,
+            "chunks": chunks,
+        })
     _write_job_state(checkpoint_paths, {
         "chunk_count": len(chunks),
         "long_chunk_seconds": long_chunk_seconds,
+        "chunks_manifest_completed": True,
+        "resume_supported": True,
     })
     _raise_if_cancelled()
 
     stt_language = config["stt"].get("language", "ko")
     stt_device = config["stt"].get("device", "auto")
     stt_chunk_seconds = int(config["stt"].get("chunk_seconds", DEFAULT_STT_CHUNK_SECONDS))
+
+    def _stt_chunk_checkpoint_metadata(chunk: dict, idx: int, execution_fingerprint: str) -> dict:
+        path = os.path.abspath(str(chunk.get("path") or ""))
+        return {
+            "chunk_index": idx,
+            "input_fingerprint": input_fingerprint,
+            "config_fingerprint": config_fingerprint,
+            "source_wav_size": source_wav_size,
+            "source_wav_duration": source_wav_duration,
+            "chunk_path": path,
+            "chunk_size_bytes": os.path.getsize(path) if os.path.exists(path) else 0,
+            "offset": float(chunk.get("offset", 0.0)),
+            "duration": float(chunk.get("duration", 0.0) or 0.0),
+            "stt_execution_fingerprint": execution_fingerprint,
+        }
+
+    def _stt_chunk_checkpoint_matches(checkpoint_payload: dict, chunk: dict, idx: int, execution_fingerprint: str) -> bool:
+        if not isinstance(checkpoint_payload.get("segments"), list):
+            return False
+        expected = _stt_chunk_checkpoint_metadata(chunk, idx, execution_fingerprint)
+        return (
+            checkpoint_payload.get("chunk_index") == expected["chunk_index"]
+            and checkpoint_payload.get("input_fingerprint") == expected["input_fingerprint"]
+            and checkpoint_payload.get("config_fingerprint") == expected["config_fingerprint"]
+            and int(checkpoint_payload.get("source_wav_size") or 0) == int(expected["source_wav_size"] or 0)
+            and abs(float(checkpoint_payload.get("source_wav_duration") or 0.0) - float(expected["source_wav_duration"] or 0.0)) < 0.001
+            and os.path.normcase(os.path.abspath(str(checkpoint_payload.get("chunk_path") or ""))) == os.path.normcase(expected["chunk_path"])
+            and int(checkpoint_payload.get("chunk_size_bytes") or 0) == int(expected["chunk_size_bytes"] or 0)
+            and abs(float(checkpoint_payload.get("offset") or 0.0) - float(expected["offset"] or 0.0)) < 0.001
+            and abs(float(checkpoint_payload.get("duration") or 0.0) - float(expected["duration"] or 0.0)) < 0.001
+            and checkpoint_payload.get("stt_execution_fingerprint") == expected["stt_execution_fingerprint"]
+        )
+
     def _transcribe_chunks(chunks_to_process, model_path, allow_internal_fallback):
         nonlocal reused_chunk_count
         collected_segments = []
@@ -2059,8 +2542,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
             checkpoint_payload = load_json_checkpoint(chunk_checkpoint_path) if os.path.exists(chunk_checkpoint_path) else None
             if (
                 checkpoint_payload
-                and checkpoint_payload.get("stt_execution_fingerprint") == execution_fingerprint
-                and isinstance(checkpoint_payload.get("segments"), list)
+                and _stt_chunk_checkpoint_matches(checkpoint_payload, chunk, idx, execution_fingerprint)
             ):
                 reused_chunk_count += 1
                 collected_segments.extend(apply_time_offset(checkpoint_payload["segments"], float(chunk.get("offset", 0.0))))
@@ -2076,10 +2558,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
                 )
                 _raise_if_cancelled()
                 atomic_write_json(chunk_checkpoint_path, {
-                    "chunk_index": idx,
-                    "offset": float(chunk.get("offset", 0.0)),
-                    "duration": chunk.get("duration"),
-                    "stt_execution_fingerprint": execution_fingerprint,
+                    **_stt_chunk_checkpoint_metadata(chunk, idx, execution_fingerprint),
                     "segments": chunk_segments,
                 })
                 state = _load_job_state(checkpoint_paths)
@@ -2149,6 +2628,56 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     _report_progress("음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.", 65)
     raw_stt_segments = copy.deepcopy(segments)
     segments_fingerprint = _segment_fingerprint(segments)
+    partial_display_segments = build_display_segments(copy.deepcopy(raw_stt_segments))
+    partial_result_data = {
+        "job_id": job_id,
+        "source_file": os.path.basename(input_file),
+        "created_at": datetime.now().isoformat(),
+        "language": config["stt"]["language"],
+        "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
+        "settings": {
+            "stt_model": stt_model_path,
+            "diarization_model": config["paths"].get("diarization_model"),
+            "llm_model": config["paths"].get("llm_model"),
+            "diarization": False,
+            "diarization_requested": bool(diarization_decision.get("requested")),
+            "diarization_skipped": bool(diarization_decision.get("skipped")),
+            "diarization_skip_reason": diarization_decision.get("skip_reason") or "",
+            "diarization_skip_message": diarization_decision.get("skip_message") or "",
+            "diarization_resource_decision": diarization_decision,
+            "summary": False,
+            "preprocessing": preprocessing_applied,
+            "partial": True,
+        },
+        "segments": raw_stt_segments,
+        "raw_stt_segments": raw_stt_segments,
+        "aligned_segments": copy.deepcopy(raw_stt_segments),
+        "display_segments": partial_display_segments,
+        "summary": {
+            "title": (meeting_context or {}).get("title") or "회의록",
+            "overview": "음성 인식까지 완료된 임시 저장본입니다.",
+            "topics": [],
+            "topic_sections": [],
+            "participant_summaries": [],
+            "speaker_context_summaries": [],
+            "actions": [],
+            "decisions": [],
+            "needs_check": [],
+            "generation_status": {
+                "summary": "not_started",
+                "topic_sections": "not_started",
+                "speaker_context_summaries": "not_started",
+            },
+        },
+    }
+    save_result_json(partial_result_data, out_partial_json_path)
+    export_txt(get_transcript_segments(partial_result_data), out_partial_txt_path)
+    _write_job_state(checkpoint_paths, {
+        "partial_result_path": out_partial_json_path,
+        "partial_transcript_path": out_partial_txt_path,
+        "stt_partial_saved": True,
+        "resume_supported": True,
+    })
 
     if not segments:
         print("[STT] No transcript segments were returned; skipping diarization and summary.")
@@ -2159,7 +2688,7 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         summary_data = {}
     
     # 3. Diarization (Optional)
-    if segments and config.get("diarization", {}).get("enabled", True):
+    if segments and diarization_decision.get("run"):
         _set_stage("diarization")
         diarization_checkpoint = load_json_checkpoint(checkpoint_paths.diarization_segments_path)
         aligned_checkpoint = load_json_checkpoint(checkpoint_paths.aligned_segments_path)
@@ -2221,6 +2750,9 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
             aligned_segments = copy.deepcopy(segments)
             display_segments = build_display_segments(segments)
     else:
+        if segments and diarization_decision.get("skipped"):
+            _set_stage("diarization_skipped")
+            _report_progress(str(diarization_decision.get("skip_message") or "발화자 구분을 건너뜁니다."), 70)
         aligned_segments = copy.deepcopy(segments)
         display_segments = build_display_segments(segments)
     atomic_write_json(checkpoint_paths.aligned_segments_path, {
@@ -2244,7 +2776,11 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         llm_model = config["summary"].get("model", "gemma-4b")
         if llm_model and llm_model.startswith((".", "..")):
             llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
-        summary_data = summarize_meeting(segments, model_name_or_path=llm_model)
+        summary_data = summarize_meeting(
+            segments,
+            model_name_or_path=llm_model,
+            meeting_context=meeting_context or {},
+        )
         _raise_if_cancelled()
     if summary_data:
         _ensure_generation_status(summary_data)
@@ -2258,11 +2794,17 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         "source_file": os.path.basename(input_file),
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
+        "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
         "settings": {
             "stt_model": stt_model_path,
             "diarization_model": config["paths"].get("diarization_model"),
             "llm_model": config["paths"].get("llm_model"),
-            "diarization": config.get("diarization", {}).get("enabled", True),
+            "diarization": bool(diarization_decision.get("run")),
+            "diarization_requested": bool(diarization_decision.get("requested")),
+            "diarization_skipped": bool(diarization_decision.get("skipped")),
+            "diarization_skip_reason": diarization_decision.get("skip_reason") or "",
+            "diarization_skip_message": diarization_decision.get("skip_message") or "",
+            "diarization_resource_decision": diarization_decision,
             "summary": config.get("summary", {}).get("enabled", True),
             "preprocessing": preprocessing_applied,
         },
@@ -2280,6 +2822,14 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         export_markdown(result_data, out_md_path)
         export_docx(result_data, out_docx_path)
         export_hwpx(result_data, out_hwpx_path)
+
+    auto_saved_files, auto_save_errors = _auto_save_completed_outputs(
+        result_data=result_data,
+        title=str(meeting_context.get("title") or result_data.get("summary", {}).get("title") or "회의록"),
+        hwpx_path=out_hwpx_path if summary_data else None,
+        audio_path=temp_wav_path if os.path.exists(temp_wav_path) else None,
+        privacy_config=privacy_config,
+    )
     
     if reused_diarization:
         if reused_chunk_count > 0:
@@ -2293,16 +2843,24 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
     _write_job_state(checkpoint_paths, {
         "stage": "completed",
         "summary_completed": bool(summary_data),
-        "diarization_completed": bool(config.get("diarization", {}).get("enabled", True) and segments),
+        "diarization_completed": bool(diarization_decision.get("run") and segments),
+        "diarization_skipped": bool(diarization_decision.get("skipped")),
         "resume_supported": True,
         "resume_mode": resume_mode,
         "resume_message": resume_message,
         "resume_fallback_reason": resume_fallback_reason,
     })
 
-    if config["privacy"].get("auto_delete_temp_audio", True):
+    if privacy_config.get("auto_delete_temp_audio", True):
         if os.path.isdir(chunk_dir):
             shutil.rmtree(chunk_dir, ignore_errors=True)
+        if not preserve_source_audio and os.path.exists(temp_wav_path):
+            os.remove(temp_wav_path)
+            _write_job_state(checkpoint_paths, {
+                "source_wav_completed": False,
+                "source_wav_deleted": True,
+                "resume_supported": False,
+            })
             
     return {
         "success": True,
@@ -2312,6 +2870,9 @@ def process_audio_pipeline(input_file: str, job_id: str = None, config: dict = N
         "md_file": out_md_path if summary_data else None,
         "docx_file": out_docx_path if summary_data else None,
         "hwpx_file": out_hwpx_path if summary_data else None,
+        "audio_file": temp_wav_path if preserve_source_audio and os.path.exists(temp_wav_path) else None,
+        "auto_saved_files": auto_saved_files,
+        "auto_save_errors": auto_save_errors,
         "result_data": result_data,
         "resume": {
             "requested": resume_requested,

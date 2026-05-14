@@ -39,6 +39,9 @@ interface SettingsPayload {
     };
     diarization?: {
         enabled?: boolean;
+        auto_skip_long_audio?: boolean;
+        max_duration_seconds?: number;
+        max_waveform_mb?: number;
     };
     stt?: {
         language?: string;
@@ -53,6 +56,11 @@ interface SettingsPayload {
         enabled?: boolean;
         normalize_audio?: boolean;
         normalization_mode?: 'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm';
+    };
+    privacy?: {
+        preserve_extracted_audio?: boolean;
+        auto_save_hwpx_copy?: boolean;
+        auto_save_audio_copy?: boolean;
     };
 }
 
@@ -110,6 +118,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
     const [normalizeAudio, setNormalizeAudio] = useState(true);
     const [normalizationMode, setNormalizationMode] = useState<'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm'>('auto');
+    const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(true);
+    const [autoSaveHwpxCopy, setAutoSaveHwpxCopy] = useState(false);
+    const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState(false);
 
     const userVisibleModels = useMemo(
         () => (models?.models || []).filter(
@@ -126,6 +137,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setNormalizeAudio(nextSettings.preprocessing?.normalize_audio ?? true);
         setNormalizationMode(nextSettings.preprocessing?.normalization_mode ?? 'auto');
+        setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
+        setAutoSaveHwpxCopy(nextSettings.privacy?.auto_save_hwpx_copy ?? false);
+        setAutoSaveAudioCopy(nextSettings.privacy?.auto_save_audio_copy ?? false);
     }, []);
 
     const loadModelsStatus = useCallback(async (base: string, options: { surfaceErrors?: boolean } = {}): Promise<ModelsPayload | null> => {
@@ -231,6 +245,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                         enabled: preprocessingEnabled,
                         normalize_audio: normalizeAudio,
                         normalization_mode: normalizationMode,
+                    },
+                    privacy: {
+                        preserve_extracted_audio: preserveExtractedAudio,
+                        auto_save_hwpx_copy: autoSaveHwpxCopy,
+                        auto_save_audio_copy: autoSaveAudioCopy,
                     },
                 }),
             });
@@ -349,7 +368,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 />
                                 <span>
                                     <span className="block font-medium text-foreground">발화자 구분</span>
-                                    <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다.</span>
+                                    <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다. 긴 파일은 먼저 대화록과 요약을 만듭니다.</span>
                                 </span>
                             </label>
 
@@ -362,6 +381,42 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 <span>
                                     <span className="block font-medium text-foreground">음성 정리</span>
                                     <span className="text-sm text-muted-foreground">분석하기 좋은 형태로 음성을 정리합니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={preserveExtractedAudio}
+                                    onChange={event => setPreserveExtractedAudio(event.target.checked)}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">음성 재생 파일 보관</span>
+                                    <span className="text-sm text-muted-foreground">결과 화면에서 재생하거나 나중에 저장할 수 있도록 내부 음성 파일을 남깁니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={autoSaveHwpxCopy}
+                                    onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">HWPX 자동 저장</span>
+                                    <span className="text-sm text-muted-foreground">분석이 끝나면 회의록 HWPX 파일을 다운로드 폴더에 저장합니다.</span>
+                                </span>
+                            </label>
+
+                            <label className="flex items-center gap-3 rounded-md border border-border bg-muted/20 p-4">
+                                <input
+                                    type="checkbox"
+                                    checked={autoSaveAudioCopy}
+                                    onChange={event => setAutoSaveAudioCopy(event.target.checked)}
+                                />
+                                <span>
+                                    <span className="block font-medium text-foreground">음성 파일 자동 저장</span>
+                                    <span className="text-sm text-muted-foreground">분석이 끝나면 음성 파일을 다운로드 폴더에 저장합니다. 내부 보관을 끄면 저장 후 앱 안의 음성 파일은 삭제됩니다.</span>
                                 </span>
                             </label>
                         </section>

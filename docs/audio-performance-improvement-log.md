@@ -696,3 +696,95 @@ Hermes Agent 60초 샘플:
   - `backend.test_api.test_pipeline_reuses_diarization_checkpoints_when_available`
   - 프론트 회귀 확인: `pnpm --dir desktop-app test:generation-flow`, `test:edit-guard-flow`, `test:meeting-detail-flow`
   - resume draft 회귀 확인: `pnpm --dir desktop-app test:resume-draft-flow` (성공 resume, 완료 후 같은 파일 draft 정리, active draft backend sync, stale draft 제거, 삭제 후 후보 억제)
+
+## 2026-05-14 장시간 영상 중간 산출물 보존 1차
+
+- 변경: 작업별 체크포인트 안에 `audio/source.wav`를 별도 폴더로 보존한다. 같은 `job_id`, 같은 입력 fingerprint, 같은 설정 fingerprint면 영상에서 음성을 다시 추출하지 않고 저장된 음성 파일을 재사용한다.
+- 변경: `chunks/manifest.json`을 저장해 청크 경로, offset, duration, chunk 설정을 남긴다. 재시작 시 manifest와 실제 청크 파일이 모두 남아 있으면 청크 생성을 건너뛴다.
+- 변경: STT가 끝나는 즉시 `outputs/{job_id}_partial_result.json`과 `outputs/{job_id}_partial_transcript.txt`를 먼저 저장한다. 이후 화자 분리나 요약에서 실패해도 임시 대화록 텍스트는 남기되, 최종 transcript URL에는 노출하지 않는다.
+- 변경: `/api/outputs/{job_id}/audio`로 추출된 음성 WAV를 다운로드할 수 있게 했다. 완료 결과의 `outputs.audio`에도 같은 URL을 내려준다.
+- 변경: 대용량 WAV를 WebView `blob()`에 올리지 않도록 `/api/outputs/{job_id}/{kind}/save-copy`를 추가했다. 백엔드가 내부 산출물을 `Downloads` 폴더로 1MB 단위 복사한다.
+- 변경: 결과 화면에서 추출 음성은 `<audio preload="metadata">`로 URL을 직접 재생한다. 사용자가 음성 저장을 누르면 `audio/save-copy`를 호출해 내부 `source.wav`를 다운로드 폴더로 복사한다.
+- 변경: HWPX/MD/TXT/DOCX 다운로드도 먼저 `save-copy`를 시도하고, 실패할 때만 기존 브라우저 다운로드 방식으로 내려간다.
+- 보정: 회의록 파일은 저장된 산출물을 먼저 복사하지 않고, 현재 화면 payload로 새로 export한 뒤 `Downloads` 폴더에 직접 저장한다. 음성 파일만 내부 `source.wav` 복사 경로를 쓴다.
+- 보정: 저장 완료 배너에는 긴 로컬 경로를 노출하지 않고, 버튼 라벨도 `저장` 동작으로 통일했다.
+- 보정: 긴 회의 제목은 Windows 파일명 오류가 나지 않도록 저장 파일명 길이를 제한하고, 다운로드 폴더 쓰기는 `.part` 임시 파일 후 교체한다.
+- 보정: 예전 체크포인트의 루트 `source.wav`도 오디오 조회/저장 경로에서 찾되, 새 작업은 `audio/source.wav`를 우선한다.
+- 보정: STT 청크 체크포인트 재사용은 입력 fingerprint, 설정 fingerprint, 원본 WAV 크기/길이, 청크 경로/크기/offset/duration까지 맞을 때만 허용한다.
+- 보정: `auto_delete_temp_audio`와 추출 음성 보존 정책을 분리해 `preserve_extracted_audio`를 명시했다. 기본값은 사용자 재생/저장을 위해 보존이다.
+- 보정: `preserve_extracted_audio`를 설정 화면에서 켜고 끌 수 있게 연결했다. 끄면 완료 후 추출 음성은 삭제되고 오디오 재생/저장도 노출하지 않는다.
+- 보정: 결과 화면은 `outputs.audio` 또는 기존 job의 `/audio` HEAD 확인이 성공할 때만 오디오 플레이어와 저장 버튼을 보여준다.
+- 보정: `save-copy` 계열은 기본 허용 desktop/dev origin에서만 실행하도록 origin guard를 추가했다. 완전한 앱 세션 토큰은 패키징 전 별도 작업으로 남긴다.
+- 보정: 회의록 저장 메시지를 성공/오류 callback으로 분리해 fallback 오류가 성공 배너로 표시되지 않게 했다.
+- 보정: 예전 기록의 `participants`는 `회의 목적`으로 자동 승격하지 않고, 목적이 없는 기록은 `참석자`로 표시한다.
+- 변경: 새 회의록 입력은 `참석자` 대신 `회의 목적`을 받도록 바꿨다. 회의 목적은 요약 프롬프트에서 정리 방향 참고 정보로만 사용하고, 대화록과 충돌하면 대화록을 우선하도록 규칙을 넣었다.
+- 변경: 편집 화면 저장은 기존 `sync-record` 경로를 유지하면서 HWPX/MD/DOCX 재생성을 계속 수행한다. 결과 화면에는 저장된 음성 파일 다운로드 버튼을 추가했다.
+- 남은 작업: 화자 분리는 여전히 전체 WAV를 메모리에 올린다. 1시간 이상 파일에서 메모리 문제가 계속 나면 다음 단계는 diarization 청크 처리와 화자 라벨 병합 설계다.
+- 남은 작업: `save-copy`는 origin guard만으로는 로컬 앱 세션까지 증명하지 않는다. 패키징 전 앱 세션 토큰이나 Tauri-mediated file save로 PC 파일 쓰기 권한을 더 좁히는 검토가 필요하다.
+- 계획: 화자 분리는 바로 구현하지 않고 30분 diarization-on baseline에서 peak memory, diarization 시간, speaker count, 실패 시 STT partial 회수 가능 여부를 먼저 측정한다. 세부 계획은 `docs/audio-long-file-processing-plan.md` 12장에 둔다.
+- 검증:
+  - `python -m py_compile backend\main.py backend\job_checkpoints.py backend\pipeline\summarize.py backend\pipeline\export_markdown.py backend\pipeline\export_docx.py backend\pipeline\export_hwpx.py`
+  - `corepack pnpm --dir desktop-app run typecheck`
+  - `python -m unittest backend.test_job_checkpoints backend.test_api`
+  - `node --check desktop-app\scripts\simulate-meeting-detail-flow.mjs desktop-app\scripts\simulate-edit-guard-flow.mjs desktop-app\scripts\simulate-resume-flow.mjs desktop-app\scripts\simulate-resume-draft-flow.mjs`
+
+## 2026-05-14 장시간 파일 발화자 구분 자동 우회
+
+- 변경: 발화자 구분이 켜져 있어도 `diarization.auto_skip_long_audio=true`이면 음성 길이 또는 예상 waveform 메모리 기준을 넘는 파일은 발화자 구분을 건너뛴다.
+- 기본 기준: 30분 초과 또는 float32 waveform 추정 256MB 초과.
+- 이유: 현재 `pipeline/diarize.py`는 전체 WAV를 `soundfile.read(..., dtype="float32")`로 한 번에 읽기 때문에, 긴 파일의 메모리 피크를 안정적으로 낮추려면 우선 이 단계를 자동 우회해야 한다.
+- 동작: STT 청크, 임시 대화록, 요약, 결과 저장은 계속 진행하고, 결과 JSON과 회의 기록에는 발화자 구분을 건너뛴 사유를 남긴다.
+- UI: 결과 화면 상단에 짧은 상태 안내를 표시한다.
+- 남은 작업: 30분 diarization-on baseline에서 peak memory와 처리 시간을 실제로 측정한 뒤, 필요하면 windowed diarization과 화자 라벨 병합을 별도 단계로 구현한다.
+
+## 2026-05-14 장시간 실제 파이프라인 평가 계획
+
+- 판단 정정: 긴 파일 문제를 바로 메모리 부족으로 단정하지 않는다. 기존 기록상 10분 이상 STT checkpoint가 남은 사례가 있고, 예전 멈춤은 STT 내부 정지, CPU thread 설정, SSE heartbeat, 빈 STT 결과 후속 처리 문제가 섞여 있었다.
+- 추가한 스크립트: `scripts/run_long_audio_pipeline_eval.py`
+- 목적: 실제 `process_audio_pipeline()`을 길이와 profile별로 돌려 elapsed time, peak RSS, stage, chunk 완료 수, STT/diarization/summary 완료 여부, 산출물 생성 여부를 JSON으로 기록한다.
+- profile:
+  - `prep`: STT/diarization 없이 클립 생성과 청크 분할만 수행
+  - `stt`: 발화자 구분 off, 요약 off
+  - `stt-summary`: 발화자 구분 off, 요약 on
+  - `diarization`: 발화자 구분 on, 요약 off
+  - `full`: 발화자 구분 on, 요약 on
+- 기본 결과 경로: `backend/temp/long_audio_pipeline_eval/latest.json`
+- 권장 실행 순서:
+
+```powershell
+python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --durations 600 --profiles stt
+python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --durations 600 --profiles diarization --reuse-clips
+python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --durations 1800 --profiles stt --reuse-clips
+python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --durations 1800 --profiles diarization --reuse-clips
+```
+
+- 60분 이상은 30분 `stt`와 30분 `diarization` 결과를 본 뒤 실행한다.
+- 주의: 여러 profile을 한 프로세스에서 연속 실행하면 모델 캐시가 다음 케이스 메모리에 남을 수 있다. profile 간 peak memory를 비교할 때는 profile을 하나씩 별도 실행한다.
+- 검증:
+  - `python -m py_compile scripts\run_long_audio_pipeline_eval.py`
+  - `python scripts\run_long_audio_pipeline_eval.py --help`
+
+## 2026-05-14 장시간 prep 30/60분 빠른 검증
+
+- 입력: `backend/temp/jobs/1fa6f7be-c02c-4f62-b849-bb2b02bf687f/source.wav`
+- 입력 길이: 약 5,219.93초, 16kHz mono WAV
+- 실행: `scripts/run_long_audio_pipeline_eval.py --durations 1800,3600 --profiles prep`
+- 결과 파일: `backend/temp/long_audio_pipeline_eval/prep_30_60.json`
+- 30분 결과: 성공, 60개 30초 청크 생성, 8.61초, peak RSS 44.5MB
+- 60분 결과: 성공, 120개 30초 청크 생성, 16.94초, peak RSS 44.7MB
+- 판단: 30/60분 길이의 WAV 읽기, 클립 생성, 청크 분할 단계는 메모리 병목으로 보이지 않는다.
+- 주의: 이 검증은 STT와 diarization을 실행하지 않는다. STT CPU 추론은 10분 `stt` profile에서 약 920초와 peak RSS 4.36GB가 확인되어, 30/60분 full pipeline을 빠른 테스트로 돌리는 것은 부적합하다.
+
+## 2026-05-14 제142차 LMO 심사위원회 산출 재개
+
+- 입력: `releases/lmo_audio/제142차 LMO 심사위원회  2026-04-24 14-19-07.mp4`
+- 파일 크기: 약 6.1GB
+- prep 결과: 2시간 상한 추출 기준 실제 174개 30초 청크, 약 5,219.93초, 성공, 14.96초, peak RSS 44.9MB
+- 기존 checkpoint: `backend/temp/jobs/1fa6f7be-c02c-4f62-b849-bb2b02bf687f`
+- 기존 STT 재사용: legacy `stt/chunk_001.json`부터 `chunk_021.json`까지 21개를 현재 checkpoint metadata 형식으로 보강했다.
+- 실행 스크립트: `scripts/run_lmo_142_resume_pipeline.py`
+- 실행 방식: `diarization.enabled=true`, `diarization.auto_skip_long_audio=false`, `summary.enabled=true`로 백엔드 직접 실행한다.
+- 로그:
+  - stdout: `backend/logs/long_runs/lmo_142_resume_stdout.log`
+  - stderr: `backend/logs/long_runs/lmo_142_resume_stderr.log`
+- 상태: 21개 STT 청크는 즉시 재사용됐고, `chunk 22/174`부터 faster-whisper CPU 추론을 진행 중이다.

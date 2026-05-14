@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Edit3, Loader2, PlusCircle, Save, Search, X } from 'lucide-react';
+import { CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Edit3, FileAudio, Loader2, PlusCircle, Save, Search, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -24,6 +24,7 @@ interface MeetingHistoryProps {
 
 type DetailTab = 'summary' | 'script';
 type GenerationKind = 'summary' | 'topicSections' | 'speakerContextSummaries';
+type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
 
 interface GenerateSummaryResponse {
     summary?: string;
@@ -259,6 +260,13 @@ const buildTranscriptFingerprint = (segments: MeetingSegment[]): string => JSON.
     })),
 );
 
+const buildGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON.stringify({
+    transcript: buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(meeting)),
+    title: meeting.title || '',
+    date: meeting.date || '',
+    meetingPurpose: meeting.meetingPurpose || '',
+});
+
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -269,12 +277,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState('');
     const [editDate, setEditDate] = useState('');
-    const [editParticipants, setEditParticipants] = useState('');
+    const [editMeetingPurpose, setEditMeetingPurpose] = useState('');
     const [speakerLabelDrafts, setSpeakerLabelDrafts] = useState<Record<string, string>>({});
     const [isTranscriptEditing, setIsTranscriptEditing] = useState(false);
     const [transcriptSegmentDrafts, setTranscriptSegmentDrafts] = useState<MeetingSegment[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [isDownloading, setIsDownloading] = useState(false);
+    const [audioSourceUrl, setAudioSourceUrl] = useState('');
+    const [audioAvailability, setAudioAvailability] = useState<AudioAvailability>('idle');
     const [generatingKind, setGeneratingKind] = useState<GenerationKind | null>(null);
     const [selectedTopicKey, setSelectedTopicKey] = useState<string | null>(null);
     const [selectedSpeakerSummaryKey, setSelectedSpeakerSummaryKey] = useState<string>('all');
@@ -350,6 +360,37 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     useEffect(() => {
         selectedMeetingRef.current = selectedMeeting;
     }, [selectedMeeting]);
+
+    useEffect(() => {
+        let cancelled = false;
+        const loadAudioUrl = async () => {
+            if (!selectedMeeting?.jobId) {
+                setAudioSourceUrl('');
+                setAudioAvailability('idle');
+                return;
+            }
+            setAudioAvailability('checking');
+            const audioUrl = selectedMeeting.outputFiles?.audio
+                || `/api/outputs/${encodeURIComponent(selectedMeeting.jobId)}/audio`;
+            const resolved = await toApiUrl(audioUrl);
+            try {
+                const response = await fetch(resolved, { method: 'HEAD' });
+                if (!cancelled) {
+                    setAudioSourceUrl(response.ok ? resolved : '');
+                    setAudioAvailability(response.ok ? 'available' : 'missing');
+                }
+            } catch {
+                if (!cancelled) {
+                    setAudioSourceUrl('');
+                    setAudioAvailability('missing');
+                }
+            }
+        };
+        void loadAudioUrl();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedMeeting?.jobId, selectedMeeting?.outputFiles?.audio]);
 
     useEffect(() => {
         recordsRef.current = records;
@@ -432,6 +473,35 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         }
     };
 
+    const handleSaveAudioCopy = async () => {
+        if (!selectedMeeting?.jobId || isDownloading) return;
+
+        try {
+            setIsDownloading(true);
+            setErrorMessage('');
+            setNoticeMessage('');
+            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(selectedMeeting.jobId)}/audio/save-copy`), {
+                method: 'POST',
+            });
+            if (!response.ok) {
+                const detail = await response.text().catch(() => '');
+                if (response.status === 403) {
+                    throw new Error('앱 화면에서만 음성 파일을 저장할 수 있습니다. 새 창이나 외부 페이지에서 실행 중이면 앱 화면으로 돌아와 다시 시도해 주세요.');
+                }
+                if (response.status === 404) {
+                    throw new Error('저장된 음성 파일을 찾지 못했습니다.');
+                }
+                throw new Error(detail || '음성 파일을 저장하지 못했습니다.');
+            }
+            await response.json().catch(() => undefined);
+            setNoticeMessage('음성 파일을 다운로드 폴더에 저장했습니다.');
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : '음성 파일을 저장하지 못했습니다.');
+        } finally {
+            setIsDownloading(false);
+        }
+    };
+
     const setLocalGenerationStatus = (meetingId: string, kind: GenerationKind, state: 'generating' | 'completed' | 'failed') => {
         setSelectedMeeting(prev => {
             if (!prev || prev.id !== meetingId) return prev;
@@ -448,7 +518,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const targetJobId = selectedMeeting.jobId;
         const title = editTitle.trim();
         const date = editDate.trim();
-        const participants = editParticipants.trim();
+        const meetingPurpose = editMeetingPurpose.trim();
+        const inputMetadataChanged = title !== (selectedMeeting.title || '').trim()
+            || date !== (selectedMeeting.date || '').trim()
+            || meetingPurpose !== (selectedMeeting.meetingPurpose || '').trim();
         if (!title || !date) {
             setErrorMessage('회의 제목과 일시는 비워둘 수 없습니다.');
             return;
@@ -457,7 +530,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         try {
             setErrorMessage('');
             setNoticeMessage('');
-            await updateSelectedMeeting({ title, date, participants });
+            await updateSelectedMeeting(currentMeeting => ({
+                title,
+                date,
+                meetingPurpose,
+                participants: currentMeeting.participants || '',
+                transcriptEditMeta: inputMetadataChanged
+                    ? buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.transcriptEditMeta?.edited || currentMeeting.editedDisplaySegments?.length))
+                    : currentMeeting.transcriptEditMeta,
+            }));
             setIsEditing(false);
             setNoticeMessage('회의 정보를 저장했습니다.');
             const syncMessage = await syncMeetingOutputRecordSafely(targetMeetingId, targetJobId);
@@ -505,7 +586,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
-        const transcriptFingerprint = buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(targetMeeting));
+        const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -519,9 +600,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '핵심 요약을 다시 만들지 못했습니다.'));
 
             const data = await response.json() as GenerateSummaryResponse;
+            let inputChangedBeforeSave = false;
             await updateSelectedMeeting(currentMeeting => {
-                const currentFingerprint = buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(currentMeeting));
-                const transcriptChangedSinceRequest = currentFingerprint !== transcriptFingerprint;
+                const inputChangedSinceRequest = buildGenerationInputFingerprint(currentMeeting) !== inputFingerprint;
+                if (inputChangedSinceRequest) {
+                    inputChangedBeforeSave = true;
+                    return {
+                        generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { summary: 'not_started' }),
+                        transcriptEditMeta: buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.transcriptEditMeta?.edited || currentMeeting.editedDisplaySegments?.length)),
+                    };
+                }
                 return {
                     summary: data.summary ?? currentMeeting.summary,
                     topics: data.topics ?? [],
@@ -532,17 +620,20 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     speakerContextSummaries: data.speakerContextSummaries ?? data.speaker_context_summaries ?? [],
                     participantSummaries: data.participantSummaries ?? data.participant_summaries ?? [],
                     generationStatus: data.generationStatus ?? data.generation_status ?? { summary: 'completed' },
-                    transcriptEditMeta: transcriptChangedSinceRequest
-                        ? buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.editedDisplaySegments?.length))
-                        : {
-                            ...(currentMeeting.transcriptEditMeta ?? {}),
-                            summaryOutdated: false,
-                            topicSectionsOutdated: false,
-                            speakerContextOutdated: false,
-                        },
+                    transcriptEditMeta: {
+                        ...(currentMeeting.transcriptEditMeta ?? {}),
+                        summaryOutdated: false,
+                        topicSectionsOutdated: false,
+                        speakerContextOutdated: false,
+                    },
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (inputChangedBeforeSave) {
+                setNoticeMessage('');
+                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 전체 요약은 저장하지 않았습니다. 다시 정리해 주세요.');
+                return;
+            }
             if (searchQuery.trim()) {
                 setSearchQuery('');
             }
@@ -636,7 +727,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
-        const transcriptFingerprint = buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(targetMeeting));
+        const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -650,23 +741,33 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '주제별 정리를 만들지 못했습니다.'));
 
             const data = await response.json() as GenerateTopicSectionsResponse;
+            let inputChangedBeforeSave = false;
             await updateSelectedMeeting(currentMeeting => {
-                const currentFingerprint = buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(currentMeeting));
-                const transcriptChangedSinceRequest = currentFingerprint !== transcriptFingerprint;
+                const inputChangedSinceRequest = buildGenerationInputFingerprint(currentMeeting) !== inputFingerprint;
+                if (inputChangedSinceRequest) {
+                    inputChangedBeforeSave = true;
+                    return {
+                        generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { topicSections: 'not_started' }),
+                        transcriptEditMeta: buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.transcriptEditMeta?.edited || currentMeeting.editedDisplaySegments?.length)),
+                    };
+                }
                 return {
                     topics: data.topics ?? currentMeeting.topics ?? [],
                     topicSections: data.topicSections ?? data.topic_sections ?? [],
                     generationStatus: data.generationStatus ?? data.generation_status ?? { topicSections: 'completed' },
-                    transcriptEditMeta: transcriptChangedSinceRequest
-                        ? buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.editedDisplaySegments?.length))
-                        : {
-                            ...(currentMeeting.transcriptEditMeta ?? {}),
-                            topicSectionsOutdated: false,
-                            speakerContextOutdated: Boolean(currentMeeting.speakerContextSummaries?.length || currentMeeting.participantSummaries?.length),
-                        },
+                    transcriptEditMeta: {
+                        ...(currentMeeting.transcriptEditMeta ?? {}),
+                        topicSectionsOutdated: false,
+                        speakerContextOutdated: Boolean(currentMeeting.speakerContextSummaries?.length || currentMeeting.participantSummaries?.length),
+                    },
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (inputChangedBeforeSave) {
+                setNoticeMessage('');
+                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 주제별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
+                return;
+            }
             if (searchQuery.trim()) {
                 setSearchQuery('');
             }
@@ -711,7 +812,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
-        const transcriptFingerprint = buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(targetMeeting));
+        const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -725,22 +826,32 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '참석자별 정리를 만들지 못했습니다.'));
 
             const data = await response.json() as GenerateSpeakerContextResponse;
+            let inputChangedBeforeSave = false;
             await updateSelectedMeeting(currentMeeting => {
-                const currentFingerprint = buildTranscriptFingerprint(resolveEffectiveTranscriptSegments(currentMeeting));
-                const transcriptChangedSinceRequest = currentFingerprint !== transcriptFingerprint;
+                const inputChangedSinceRequest = buildGenerationInputFingerprint(currentMeeting) !== inputFingerprint;
+                if (inputChangedSinceRequest) {
+                    inputChangedBeforeSave = true;
+                    return {
+                        generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { speakerContextSummaries: 'not_started' }),
+                        transcriptEditMeta: buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.transcriptEditMeta?.edited || currentMeeting.editedDisplaySegments?.length)),
+                    };
+                }
                 return {
                     speakerContextSummaries: data.speakerContextSummaries ?? data.speaker_context_summaries ?? [],
                     participantSummaries: data.participantSummaries ?? data.participant_summaries ?? currentMeeting.participantSummaries ?? [],
                     generationStatus: data.generationStatus ?? data.generation_status ?? { speakerContextSummaries: 'completed' },
-                    transcriptEditMeta: transcriptChangedSinceRequest
-                        ? buildTranscriptOutdatedMeta(currentMeeting, Boolean(currentMeeting.editedDisplaySegments?.length))
-                        : {
-                            ...(currentMeeting.transcriptEditMeta ?? {}),
-                            speakerContextOutdated: false,
-                        },
+                    transcriptEditMeta: {
+                        ...(currentMeeting.transcriptEditMeta ?? {}),
+                        speakerContextOutdated: false,
+                    },
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (inputChangedBeforeSave) {
+                setNoticeMessage('');
+                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 참석자별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
+                return;
+            }
             if (searchQuery.trim()) {
                 setSearchQuery('');
             }
@@ -919,7 +1030,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const hasMeetingInfoChanges = isEditing && (
         editTitle.trim() !== (selectedMeeting?.title ?? '').trim()
         || editDate.trim() !== (selectedMeeting?.date ?? '').trim()
-        || editParticipants.trim() !== (selectedMeeting?.participants ?? '').trim()
+        || editMeetingPurpose.trim() !== (selectedMeeting?.meetingPurpose || '').trim()
     );
     const hasUnsavedDraftChanges = hasMeetingInfoChanges || hasSpeakerLabelChanges || hasTranscriptDraftChanges;
 
@@ -929,7 +1040,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (meetingChanged || !isEditing) {
             setEditTitle(selectedMeeting.title);
             setEditDate(selectedMeeting.date);
-            setEditParticipants(selectedMeeting.participants);
+            setEditMeetingPurpose(selectedMeeting.meetingPurpose || '');
         }
         if (meetingChanged || !hasSpeakerLabelChanges) {
             setSpeakerLabelDrafts(selectedMeeting.speakerLabels ?? {});
@@ -973,7 +1084,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const ensureNoUnsavedDraftChanges = (actionLabel: string): boolean => {
         if (!hasUnsavedDraftChanges) return true;
         setNoticeMessage('');
-        setErrorMessage(`저장되지 않은 변경이 있습니다. ${actionLabel} 전에 먼저 저장하거나 취소해 주세요.`);
+        setErrorMessage(`저장되지 않은 변경이 있습니다. ${actionLabel} 전에 변경 내용을 저장하거나 취소해 주세요.`);
         return false;
     };
 
@@ -1164,19 +1275,48 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 <Input value={editTitle} onChange={event => setEditTitle(event.target.value)} aria-label="회의 제목" />
                                 <div className="grid gap-3 sm:grid-cols-2">
                                     <Input value={editDate} onChange={event => setEditDate(event.target.value)} aria-label="회의 일시" />
-                                    <Input value={editParticipants} onChange={event => setEditParticipants(event.target.value)} aria-label="참석자" />
+                                    <Input value={editMeetingPurpose} onChange={event => setEditMeetingPurpose(event.target.value)} aria-label="회의 목적" />
                                 </div>
+                                {!selectedMeeting.meetingPurpose && selectedMeeting.participants && (
+                                    <div className="text-xs text-muted-foreground">
+                                        기존 참석자: {selectedMeeting.participants}
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <div className="min-w-0 flex-1">
                                 <h2 className="break-words text-xl font-semibold text-foreground">{selectedMeeting.title}</h2>
                                 <div className="mt-3 grid gap-2 text-sm text-muted-foreground sm:grid-cols-2">
                                     <div><span className="font-medium text-foreground">일시:</span> {selectedMeeting.date}</div>
-                                    <div><span className="font-medium text-foreground">참석자:</span> {selectedMeeting.participants || '-'}</div>
+                                    <div>
+                                        <span className="font-medium text-foreground">
+                                            {selectedMeeting.meetingPurpose ? '회의 목적:' : '참석자:'}
+                                        </span> {selectedMeeting.meetingPurpose || selectedMeeting.participants || '-'}
+                                    </div>
                                 </div>
                                 {selectedMeeting.sourceFile && (
                                     <div className="mt-2 break-words text-sm text-muted-foreground">
                                         <span className="font-medium text-foreground">원본 파일:</span> {selectedMeeting.sourceFile}
+                                    </div>
+                                )}
+                                {selectedMeeting.diarizationSkipped && (
+                                    <div className="status-note mt-3">
+                                        {selectedMeeting.diarizationSkipMessage || '긴 음성 파일이라 발화자 구분을 건너뛰고 대화록과 요약을 먼저 만들었습니다.'}
+                                    </div>
+                                )}
+                                {audioSourceUrl && (
+                                    <audio
+                                        className="mt-3 h-9 w-full max-w-xl"
+                                        aria-label="추출 음성"
+                                        controls
+                                        crossOrigin="anonymous"
+                                        preload="metadata"
+                                        src={audioSourceUrl}
+                                    />
+                                )}
+                                {selectedMeeting.jobId && audioAvailability === 'missing' && (
+                                    <div className="mt-2 text-xs text-muted-foreground">
+                                        저장된 음성 파일이 없습니다. 설정에서 음성 재생 파일 보관을 켜고 다시 분석하면 결과 화면에서 재생하거나 저장할 수 있습니다.
                                     </div>
                                 )}
                             </div>
@@ -1200,10 +1340,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 <>
                                     <MeetingDownloadControl
                                         meeting={selectedMeeting}
-                                        onMessage={setErrorMessage}
+                                        onNotice={setNoticeMessage}
+                                        onError={setErrorMessage}
                                         onDownloadingChange={setIsDownloading}
-                                        beforeDownload={() => ensureNoUnsavedDraftChanges('다운로드')}
+                                        beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                        disabled={isDownloading}
                                     />
+                                    {selectedMeeting.jobId && audioSourceUrl && (
+                                        <IconButton
+                                            aria-label="음성 파일 저장"
+                                            title="음성 파일 저장"
+                                            icon={<FileAudio size={18} />}
+                                            onClick={handleSaveAudioCopy}
+                                            disabled={isDownloading}
+                                        />
+                                    )}
                                     <IconButton
                                         aria-label="회의 정보 수정"
                                         title="회의 정보 수정"
@@ -1258,7 +1409,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     <h3 className="section-title mb-2">핵심 요약</h3>
                                     {summaryOutdated && (
                                         <div className="detail-inline-note mb-3">
-                                            대화록 수정본이 저장되어 현재 핵심 요약은 수정 전 기준일 수 있습니다.
+                                            회의 정보나 대화록이 바뀌어 현재 핵심 요약은 이전 기준일 수 있습니다.
                                         </div>
                                     )}
                                     <div className="detail-callout">{selectedMeeting.summary || '요약 내용이 없습니다.'}</div>

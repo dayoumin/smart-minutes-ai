@@ -44,6 +44,8 @@ def export_docx(
     # 메타 정보
     doc.add_paragraph(f"파일명: {result.get('source_file', '')}")
     doc.add_paragraph(f"처리일시: {result.get('created_at', '')}")
+    if result.get("meeting_purpose"):
+        doc.add_paragraph(f"회의 목적: {result.get('meeting_purpose', '')}")
     
     # 회의 요약
     doc.add_heading(f"{section_no}. 회의 요약", level=1)

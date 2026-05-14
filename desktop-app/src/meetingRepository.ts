@@ -22,6 +22,7 @@ export interface MeetingRecord {
     title: string;
     summary: string;
     participants: string;
+    meetingPurpose?: string;
     segments?: MeetingSegment[];
     displaySegments?: MeetingSegment[];
     editedDisplaySegments?: MeetingSegment[];
@@ -38,12 +39,15 @@ export interface MeetingRecord {
     actions?: string[];
     decisions?: string[];
     needsCheck?: string[];
+    diarizationSkipped?: boolean;
+    diarizationSkipMessage?: string;
     outputFiles?: {
         json?: string | null;
         txt?: string | null;
         md?: string | null;
         docx?: string | null;
         hwpx?: string | null;
+        audio?: string | null;
     };
 }
 
@@ -56,7 +60,10 @@ type StoredMeetingRecord = Partial<MeetingRecord> & {
     speaker_context_summaries?: MeetingSpeakerContextSummary[];
     generation_status?: MeetingGenerationStatus;
     needs_check?: string[];
+    diarization_skipped?: boolean;
+    diarization_skip_message?: string;
     transcript_edit_meta?: TranscriptEditMeta;
+    meeting_purpose?: string;
 };
 
 const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => ({
@@ -69,7 +76,10 @@ const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => (
     speakerContextSummaries: record.speakerContextSummaries ?? record.speaker_context_summaries ?? [],
     generationStatus: record.generationStatus ?? record.generation_status ?? {},
     needsCheck: record.needsCheck ?? record.needs_check ?? [],
+    diarizationSkipped: record.diarizationSkipped ?? record.diarization_skipped ?? false,
+    diarizationSkipMessage: record.diarizationSkipMessage ?? record.diarization_skip_message ?? '',
     transcriptEditMeta: record.transcriptEditMeta ?? record.transcript_edit_meta ?? {},
+    meetingPurpose: record.meetingPurpose ?? record.meeting_purpose ?? '',
 });
 
 export interface MeetingTopicSection {

@@ -84,8 +84,27 @@ def _normalize_summary(data: dict) -> dict:
     return summary
 
 
-def _build_prompt(transcript_text: str, partial: bool = False) -> str:
+def _build_prompt(transcript_text: str, partial: bool = False, meeting_context: dict | None = None) -> str:
     scope = "partial transcript" if partial else "transcript"
+    context_lines = []
+    if meeting_context:
+        title = str(meeting_context.get("title") or "").strip()
+        date = str(meeting_context.get("date") or "").strip()
+        purpose = str(meeting_context.get("meeting_purpose") or meeting_context.get("purpose") or "").strip()
+        if title:
+            context_lines.append(f"- 회의 제목: {title}")
+        if date:
+            context_lines.append(f"- 회의 일시: {date}")
+        if purpose:
+            context_lines.append(f"- 회의 목적: {purpose}")
+    context_block = ""
+    if context_lines:
+        context_block = (
+            "Meeting context for orientation only:\n"
+            + "\n".join(context_lines)
+            + "\nUse this context to choose what to emphasize, but if it conflicts with the transcript, trust the transcript. "
+            "Do not state context-only information as a confirmed discussion result.\n\n"
+        )
     return f"""You are a Korean meeting-minutes assistant.
 Summarize the {scope} into strict JSON only. Do not wrap it in Markdown.
 Write all JSON values in Korean unless a source term must remain in English.
@@ -101,6 +120,7 @@ Required JSON schema:
   "needs_check": ["unclear item"]
 }}
 
+{context_block}
 Transcript:
 {transcript_text}
 """
@@ -383,6 +403,7 @@ def summarize_meeting(
     model_name_or_path: str = "./models/llm/gemma.gguf",
     mode: str = "meeting_minutes",
     api_url: str = "",
+    meeting_context: dict | None = None,
 ) -> dict:
     transcript_text = ""
     for segment in transcript_segments:
@@ -394,7 +415,7 @@ def summarize_meeting(
     if not transcript_text.strip():
         return _error_summary("회의록", "요약할 transcript가 없습니다.")
 
-    prompt = _build_prompt(transcript_text)
+    prompt = _build_prompt(transcript_text, meeting_context=meeting_context)
 
     if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
         try:
@@ -402,9 +423,9 @@ def summarize_meeting(
             if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:
                 partial_summaries = []
                 for index, chunk in enumerate(_split_text_for_summary(transcript_text), start=1):
-                    partial = _generate_summary_once(model_name_or_path, _build_prompt(chunk, partial=True))
+                    partial = _generate_summary_once(model_name_or_path, _build_prompt(chunk, partial=True, meeting_context=meeting_context))
                     partial_summaries.append(f"부분 {index}: {json.dumps(partial, ensure_ascii=False)}")
-                summary = _generate_summary_once(model_name_or_path, _build_prompt("\n".join(partial_summaries)))
+                summary = _generate_summary_once(model_name_or_path, _build_prompt("\n".join(partial_summaries), meeting_context=meeting_context))
             else:
                 summary = _generate_summary_once(model_name_or_path, prompt)
             return summary if _summary_has_content(summary) else _fallback_extract_summary(transcript_text)

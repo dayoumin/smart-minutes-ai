@@ -188,9 +188,9 @@ const runResumeReuseScenario = async (browser, fixturePath) => {
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('회의 제목 *').fill('resume reuse scenario');
-    await page.getByLabel('참석자 *').fill('홍길동');
+    await page.getByLabel('회의 목적 *').fill('중단된 분석 재개 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixturePath);
-    await page.getByRole('button', { name: 'AI 분석 시작' }).click();
+    await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('이전 음성 인식 진행분 2개 구간을 재사용했습니다.').waitFor({ timeout: 10000 });
     assert.match(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\nresume-job-001/);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\ntrue/);
@@ -261,9 +261,9 @@ const runResumeFallbackScenario = async (browser, fixturePath) => {
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('회의 제목 *').fill('resume fallback scenario');
-    await page.getByLabel('참석자 *').fill('홍길동');
+    await page.getByLabel('회의 목적 *').fill('fingerprint 불일치 시 재분석 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixturePath);
-    await page.getByRole('button', { name: 'AI 분석 시작' }).click();
+    await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('이전 분석 기록과 일치하지 않아 이번 분석은 처음부터 다시 진행했습니다.').waitFor({ timeout: 10000 });
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\ntrue/);
     console.log('ok - resume fallback flow simulation');

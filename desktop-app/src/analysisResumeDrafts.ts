@@ -6,6 +6,7 @@ export interface AnalysisResumeDraft {
     title: string;
     date: string;
     participants: string;
+    meetingPurpose?: string;
     sourceFilename: string;
     sourceSize: number;
     sourceLastModified: number;

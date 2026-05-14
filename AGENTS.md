@@ -57,6 +57,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - For release or runtime issues, verify the narrowest suspected layer first.
 - Prefer this order: deploy folder structure, backend health/config, specific API endpoint, frontend state/UI behavior, then full portable release build only when packaging is the proven failing layer or the user explicitly asks.
 - Do not rely on a full production build to diagnose an issue that can be isolated with a backend endpoint, deploy-folder inspection, or targeted script.
+- When reading line ranges in PowerShell, do not use `Select-Object -Index 600..650`; PowerShell treats that as a string in this context. Use `$lines = Get-Content path; $lines[600..650]` or `Select-Object -Skip 600 -First 51` instead.
 
 ## Frontend Simulation Rules
 

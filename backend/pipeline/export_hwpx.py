@@ -79,6 +79,7 @@ def export_hwpx(result: dict, output_path: str) -> str:
         _paragraph(title),
         _paragraph(f"원본 파일: {result.get('source_file', '')}"),
         _paragraph(f"처리 일시: {result.get('created_at', '')}"),
+        *([_paragraph(f"회의 목적: {result.get('meeting_purpose', '')}")] if result.get("meeting_purpose") else []),
         _paragraph(""),
         _paragraph("1. 회의 요약"),
         _paragraph(summary.get("overview") or "내용 없음"),

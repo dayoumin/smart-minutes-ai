@@ -23,8 +23,10 @@ class JobCheckpointTest(unittest.TestCase):
 
             self.assertTrue(paths.root_dir.startswith(os.path.abspath(temp_dir)))
             self.assertEqual(paths.state_path, os.path.join(paths.root_dir, "job_state.json"))
-            self.assertEqual(paths.source_wav_path, os.path.join(paths.root_dir, "source.wav"))
+            self.assertEqual(paths.audio_dir, os.path.join(paths.root_dir, "audio"))
+            self.assertEqual(paths.source_wav_path, os.path.join(paths.audio_dir, "source.wav"))
             self.assertEqual(paths.chunks_dir, os.path.join(paths.root_dir, "chunks"))
+            self.assertEqual(paths.chunk_manifest_path, os.path.join(paths.chunks_dir, "manifest.json"))
             self.assertEqual(paths.stt_dir, os.path.join(paths.root_dir, "stt"))
 
     def test_ensure_job_checkpoint_dirs_creates_expected_directories(self) -> None:
@@ -33,6 +35,7 @@ class JobCheckpointTest(unittest.TestCase):
             ensure_job_checkpoint_dirs(paths)
 
             self.assertTrue(os.path.isdir(paths.root_dir))
+            self.assertTrue(os.path.isdir(paths.audio_dir))
             self.assertTrue(os.path.isdir(paths.chunks_dir))
             self.assertTrue(os.path.isdir(paths.stt_dir))
             self.assertTrue(os.path.isdir(paths.diarization_dir))

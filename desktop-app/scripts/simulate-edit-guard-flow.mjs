@@ -9,8 +9,8 @@ const shouldStartServer = !process.env.APP_URL;
 const meetingId = 'codex-edit-guard-simulation';
 const jobId = 'codex-edit-guard-job';
 const staleSummaryMessage = '정리 중에 대화록이 바뀌어 이번 결과는 저장하지 않았습니다. 다시 정리해 주세요.';
-const guardMessage = '저장되지 않은 변경이 있습니다. 정리 실행 전에 먼저 저장하거나 취소해 주세요.';
-const downloadGuardMessage = '저장되지 않은 변경이 있습니다. 다운로드 전에 먼저 저장하거나 취소해 주세요.';
+const guardMessage = '저장되지 않은 변경이 있습니다. 정리 실행 전에 변경 내용을 저장하거나 취소해 주세요.';
+const downloadGuardMessage = '저장되지 않은 변경이 있습니다. 파일 저장 전에 변경 내용을 저장하거나 취소해 주세요.';
 
 const waitForApp = async (url, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -211,7 +211,7 @@ const run = async () => {
     await page.getByRole('button', { name: '전체 요약 다시 정리' }).click();
     await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 
-    await page.getByRole('button', { name: '회의록 HWPX 다운로드' }).click();
+    await page.getByRole('button', { name: '회의록 HWPX 저장' }).click();
     await page.getByText(downloadGuardMessage).waitFor({ timeout: 10000 });
     assert.equal(
       apiCalls.some(call => call.includes('/api/export-record/')),

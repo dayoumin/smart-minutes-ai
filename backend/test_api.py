@@ -6,6 +6,7 @@ import types
 import tempfile
 import unittest
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -77,6 +78,155 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertFalse(payload["diarization_enabled"])
         self.assertFalse(payload["ready"])
         self.assertEqual(payload["selected_stt_model"], "faster-whisper-large-v3")
+
+    def test_save_copy_rejects_missing_origin(self) -> None:
+        response = self.client.post("/api/export-record/txt/save-copy", json={"title": "테스트 회의"})
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_save_copy_rejects_disallowed_origin(self) -> None:
+        response = self.client.post(
+            "/api/export-record/txt/save-copy",
+            json={"title": "테스트 회의"},
+            headers={"Origin": "https://example.invalid"},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_save_copy_accepts_allowed_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_path = Path(tmpdir) / "meeting.txt"
+
+            def fake_export_record_to_download_path(kind, payload, output_path):
+                output_path.write_text("ok", encoding="utf-8")
+                return {"summary": {"title": payload.get("title") or "회의록"}}
+
+            with (
+                patch.object(main, "_unique_download_path", return_value=target_path),
+                patch.object(main, "_export_record_to_download_path", side_effect=fake_export_record_to_download_path),
+            ):
+                response = self.client.post(
+                    "/api/export-record/txt/save-copy",
+                    json={"title": "테스트 회의"},
+                    headers={"Origin": "http://localhost:5173"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["kind"], "txt")
+
+    def test_save_copy_accepts_env_configured_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_path = Path(tmpdir) / "meeting.txt"
+
+            def fake_export_record_to_download_path(kind, payload, output_path):
+                output_path.write_text("ok", encoding="utf-8")
+                return {"summary": {"title": payload.get("title") or "회의록"}}
+
+            with (
+                patch.dict(os.environ, {"MEETING_AI_SAVE_COPY_ALLOWED_ORIGINS": "http://localhost:5174"}),
+                patch.object(main, "_unique_download_path", return_value=target_path),
+                patch.object(main, "_export_record_to_download_path", side_effect=fake_export_record_to_download_path),
+            ):
+                response = self.client.post(
+                    "/api/export-record/txt/save-copy",
+                    json={"title": "테스트 회의"},
+                    headers={"Origin": "http://localhost:5174"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+
+    def test_audio_output_rejects_missing_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = build_job_checkpoint_paths(tmpdir, "unit_audio_origin")
+            os.makedirs(os.path.dirname(paths.source_wav_path), exist_ok=True)
+            Path(paths.source_wav_path).write_bytes(b"wav")
+            with patch.object(main, "load_config", return_value={"paths": {"temp_dir": tmpdir}}):
+                response = self.client.get("/api/outputs/unit_audio_origin/audio")
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_audio_output_accepts_allowed_origin(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            paths = build_job_checkpoint_paths(tmpdir, "unit_audio_origin_ok")
+            os.makedirs(os.path.dirname(paths.source_wav_path), exist_ok=True)
+            Path(paths.source_wav_path).write_bytes(b"wav")
+            with patch.object(main, "load_config", return_value={"paths": {"temp_dir": tmpdir}}):
+                response = self.client.get(
+                    "/api/outputs/unit_audio_origin_ok/audio",
+                    headers={"Origin": "http://localhost:5173"},
+                )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.content, b"wav")
+
+    def test_auto_save_completed_outputs_copies_enabled_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_dir = Path(tmpdir) / "source"
+            download_dir = Path(tmpdir) / "downloads"
+            source_dir.mkdir()
+            download_dir.mkdir()
+            hwpx_path = source_dir / "report.hwpx"
+            audio_path = source_dir / "source.wav"
+            hwpx_path.write_bytes(b"hwpx")
+            audio_path.write_bytes(b"wav")
+
+            def fake_unique_download_path(filename: str) -> Path:
+                return download_dir / filename
+
+            with patch.object(main, "_unique_download_path", side_effect=fake_unique_download_path):
+                saved, errors = main._auto_save_completed_outputs(
+                    result_data={"summary": {"title": "회의"}},
+                    title="회의",
+                    hwpx_path=str(hwpx_path),
+                    audio_path=str(audio_path),
+                    privacy_config={
+                        "auto_save_hwpx_copy": True,
+                        "auto_save_audio_copy": True,
+                    },
+                )
+
+        self.assertEqual(errors, {})
+        self.assertIn("hwpx", saved)
+        self.assertIn("audio", saved)
+        self.assertTrue(saved["hwpx"].endswith(".hwpx"))
+        self.assertTrue(saved["audio"].endswith(".wav"))
+
+    def test_auto_save_completed_outputs_respects_disabled_options(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "report.hwpx"
+            source_path.write_bytes(b"hwpx")
+
+            with patch.object(main, "_unique_download_path") as unique_download_path:
+                saved, errors = main._auto_save_completed_outputs(
+                    result_data={"summary": {"title": "회의"}},
+                    title="회의",
+                    hwpx_path=str(source_path),
+                    audio_path=None,
+                    privacy_config={
+                        "auto_save_hwpx_copy": False,
+                        "auto_save_audio_copy": False,
+                    },
+                )
+
+        self.assertEqual(saved, {})
+        self.assertEqual(errors, {})
+        unique_download_path.assert_not_called()
+
+    def test_auto_save_completed_outputs_reports_enabled_missing_artifact(self) -> None:
+        saved, errors = main._auto_save_completed_outputs(
+            result_data={"summary": {"title": "회의"}},
+            title="회의",
+            hwpx_path=None,
+            audio_path=None,
+            privacy_config={
+                "auto_save_hwpx_copy": True,
+                "auto_save_audio_copy": True,
+            },
+        )
+
+        self.assertEqual(saved, {})
+        self.assertIn("hwpx", errors)
+        self.assertIn("audio", errors)
 
     def test_model_status_requires_diarization_only_when_enabled(self) -> None:
         fake_status = {
@@ -781,6 +931,8 @@ class AnalyzeApiTest(unittest.TestCase):
                 config["stt"]["device"],
                 config["stt"]["chunk_seconds"],
             )
+            chunk_path = os.path.abspath(TEST_AUDIO_PATH)
+            chunk_size = os.path.getsize(chunk_path)
             atomic_write_json(checkpoint_paths.state_path, {
                 "job_id": job_id,
                 "resume_requested": True,
@@ -796,6 +948,12 @@ class AnalyzeApiTest(unittest.TestCase):
             })
             atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
                 "chunk_index": 0,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "source_wav_size": 3,
+                "source_wav_duration": 0.0,
+                "chunk_path": chunk_path,
+                "chunk_size_bytes": chunk_size,
                 "offset": 0.0,
                 "duration": 1.0,
                 "stt_execution_fingerprint": execution_fingerprint,
@@ -850,6 +1008,8 @@ class AnalyzeApiTest(unittest.TestCase):
                 config["stt"]["device"],
                 config["stt"]["chunk_seconds"],
             )
+            chunk_path = os.path.abspath(TEST_AUDIO_PATH)
+            chunk_size = os.path.getsize(chunk_path)
             atomic_write_json(checkpoint_paths.state_path, {
                 "job_id": job_id,
                 "resume_requested": True,
@@ -866,6 +1026,12 @@ class AnalyzeApiTest(unittest.TestCase):
             })
             atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
                 "chunk_index": 0,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "source_wav_size": 3,
+                "source_wav_duration": 0.0,
+                "chunk_path": chunk_path,
+                "chunk_size_bytes": chunk_size,
                 "offset": 0.0,
                 "duration": 1.0,
                 "stt_execution_fingerprint": execution_fingerprint,
@@ -1149,6 +1315,58 @@ class AnalyzeApiTest(unittest.TestCase):
         )
         diarize_mock.assert_not_called()
         summarize_mock.assert_not_called()
+
+    def test_pipeline_auto_skips_diarization_for_long_audio(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {
+                    "enabled": True,
+                    "auto_skip_long_audio": True,
+                    "max_duration_seconds": 60,
+                    "max_waveform_mb": 256,
+                },
+                "summary": {"enabled": True},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=61.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 61.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 61.0, "text": "hello"}]),
+                patch("pipeline.diarize.diarize_audio") as diarize_mock,
+                patch("pipeline.summarize.summarize_meeting", return_value={"overview": "요약"}),
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.export_markdown.export_markdown"),
+                patch("pipeline.export_docx.export_docx"),
+                patch("pipeline.export_hwpx.export_hwpx"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_long_audio_skip_diarization", config)
+
+            settings = result["result_data"]["settings"]
+            self.assertTrue(settings["diarization_requested"])
+            self.assertTrue(settings["diarization_skipped"])
+            self.assertFalse(settings["diarization"])
+            self.assertEqual(settings["diarization_skip_reason"], "duration_limit")
+            diarize_mock.assert_not_called()
 
     def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
         progress_events = []
@@ -1715,6 +1933,57 @@ class AnalyzeApiTest(unittest.TestCase):
 
             self.assertEqual(result_data["speaker_labels"], {"화자000": "최신 이름"})
             self.assertEqual(result_data["summary"]["overview"], "new overview")
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_rejects_meeting_purpose_change(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_purpose_stale"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "created_at": "2026-05-13 10:00",
+                        "meeting_purpose": "기존 목적",
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "summary": {
+                            "title": "테스트 회의",
+                            "overview": "old overview",
+                            "generation_status": {"summary": "not_started"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            def summarize_side_effect(*_args, **_kwargs):
+                with open(output_path, "r", encoding="utf-8") as f:
+                    concurrent_result = json.load(f)
+                concurrent_result["meeting_purpose"] = "변경된 목적"
+                with open(output_path, "w", encoding="utf-8") as f:
+                    json.dump(concurrent_result, f, ensure_ascii=False, indent=2)
+                return {
+                    "overview": "new overview",
+                    "topics": [],
+                    "actions": [],
+                    "decisions": [],
+                    "needs_check": [],
+                }
+
+            with patch("pipeline.summarize.summarize_meeting", side_effect=summarize_side_effect):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["detail"], main.DETAIL_SUMMARY_INPUT_CHANGED)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["overview"], "old overview")
+            self.assertEqual(result_data["summary"]["generation_status"]["summary"], "not_started")
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)

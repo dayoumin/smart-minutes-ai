@@ -10,6 +10,8 @@ DEFAULT_STT_MODEL_PATH = "../models/faster-whisper-large-v3"
 DEFAULT_STT_DEVICE = "cpu"
 DEFAULT_LONG_AUDIO_CHUNK_SECONDS = 30
 DEFAULT_STT_CHUNK_SECONDS = 30
+DEFAULT_DIARIZATION_MAX_DURATION_SECONDS = 30 * 60
+DEFAULT_DIARIZATION_MAX_WAVEFORM_MB = 256
 MIN_LONG_AUDIO_CHUNK_SECONDS = 10
 MAX_LONG_AUDIO_CHUNK_SECONDS = 3600
 
@@ -28,6 +30,7 @@ def normalize_app_config(config: dict) -> dict:
     stt = normalized.setdefault("stt", {})
     processing = normalized.setdefault("processing", {})
     diarization = normalized.setdefault("diarization", {})
+    privacy = normalized.setdefault("privacy", {})
 
     selected_model = stt.get("selected_model")
     stt_model_path = str(paths.get("stt_model", ""))
@@ -61,8 +64,20 @@ def normalize_app_config(config: dict) -> dict:
 
     stt["chunk_seconds"] = max(1, _safe_int(stt.get("chunk_seconds"), DEFAULT_STT_CHUNK_SECONDS))
     diarization["enabled"] = bool(diarization.get("enabled", False))
+    diarization["auto_skip_long_audio"] = bool(diarization.get("auto_skip_long_audio", True))
+    diarization["max_duration_seconds"] = max(
+        60,
+        _safe_int(diarization.get("max_duration_seconds"), DEFAULT_DIARIZATION_MAX_DURATION_SECONDS),
+    )
+    diarization["max_waveform_mb"] = max(
+        32,
+        _safe_int(diarization.get("max_waveform_mb"), DEFAULT_DIARIZATION_MAX_WAVEFORM_MB),
+    )
     diarization.setdefault("min_speakers", None)
     diarization.setdefault("max_speakers", None)
+    privacy["preserve_extracted_audio"] = bool(privacy.get("preserve_extracted_audio", True))
+    privacy["auto_save_hwpx_copy"] = bool(privacy.get("auto_save_hwpx_copy", False))
+    privacy["auto_save_audio_copy"] = bool(privacy.get("auto_save_audio_copy", False))
     processing.setdefault("enable_long_audio_chunking", True)
     processing["long_audio_chunk_seconds"] = min(
         MAX_LONG_AUDIO_CHUNK_SECONDS,

@@ -78,9 +78,14 @@ interface AnalyzeResult {
     decisions?: string[];
     needs_check?: string[];
     needsCheck?: string[];
+    diarization_skipped?: boolean;
+    diarizationSkipped?: boolean;
+    diarization_skip_message?: string;
+    diarizationSkipMessage?: string;
     meeting?: {
         source_file?: string;
         job_id?: string;
+        meeting_purpose?: string;
     };
     outputs?: {
         job_id?: string;
@@ -89,7 +94,10 @@ interface AnalyzeResult {
         md?: string | null;
         docx?: string | null;
         hwpx?: string | null;
+        audio?: string | null;
     };
+    auto_saved_files?: Partial<Record<'hwpx' | 'audio', string>>;
+    auto_save_errors?: Partial<Record<'hwpx' | 'audio', string>>;
     resume?: {
         requested?: boolean;
         mode?: string;
@@ -161,6 +169,7 @@ interface CompletionNotice {
     meetingId: string;
     elapsedMs: number;
     note?: string;
+    autoSaveNote?: string;
 }
 
 interface ReadinessCheck {
@@ -352,6 +361,26 @@ const getCompletionResumeNote = (resume?: AnalyzeResult['resume']): string | und
     return undefined;
 };
 
+const getAutoSaveCompletionNote = (result: AnalyzeResult): string | undefined => {
+    const savedKinds = [
+        result.auto_saved_files?.hwpx ? 'HWPX' : '',
+        result.auto_saved_files?.audio ? '음성 파일' : '',
+    ].filter(Boolean);
+    const failedKinds = [
+        result.auto_save_errors?.hwpx ? `HWPX(${result.auto_save_errors.hwpx})` : '',
+        result.auto_save_errors?.audio ? `음성 파일(${result.auto_save_errors.audio})` : '',
+    ].filter(Boolean);
+
+    const notes: string[] = [];
+    if (savedKinds.length) {
+        notes.push(`${savedKinds.join(', ')}을 다운로드 폴더에 저장했습니다.`);
+    }
+    if (failedKinds.length) {
+        notes.push(`${failedKinds.join(', ')} 자동 저장은 실패했습니다.`);
+    }
+    return notes.length ? notes.join(' ') : undefined;
+};
+
 const toResumeDraftFileKey = (selectedFile: File): AnalysisResumeDraftFileKey => ({
     sourceFilename: selectedFile.name,
     sourceSize: selectedFile.size,
@@ -367,7 +396,7 @@ interface MeetingWriterProps {
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
-    const [participants, setParticipants] = useState('');
+    const [meetingPurpose, setMeetingPurpose] = useState('');
     const [file, setFile] = useState<File | null>(null);
     const initialDateRef = useRef(date);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -579,18 +608,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         const fields: string[] = [];
         if (!title.trim()) fields.push('회의 제목');
         if (!date) fields.push('일시');
-        if (!participants.trim()) fields.push('참석자');
+        if (!meetingPurpose.trim()) fields.push('회의 목적');
         if (!file) fields.push('음성 파일');
         return fields;
-    }, [date, file, participants, title]);
+    }, [date, file, meetingPurpose, title]);
 
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
-        || Boolean(participants.trim())
+        || Boolean(meetingPurpose.trim())
         || Boolean(file)
         || Boolean(selectedResumeDraftId)
         || date !== initialDateRef.current
-    ), [date, file, participants, selectedResumeDraftId, title]);
+    ), [date, file, meetingPurpose, selectedResumeDraftId, title]);
 
     useEffect(() => {
         if (!onRegisterLeaveGuard) return;
@@ -624,6 +653,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const resumableResumeDrafts = useMemo(
         () => resumeDrafts.filter(
             draft => draft.status !== 'active'
+                && canResumeDraft(draft)
                 && !activeResumeDraftKeys.has(getResumeDraftKey(draft)),
         ),
         [activeResumeDraftKeys, resumeDrafts],
@@ -791,7 +821,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             jobId,
             title: title.trim(),
             date,
-            participants: participants.trim(),
+            participants: '',
+            meetingPurpose: meetingPurpose.trim(),
             sourceFilename: file.name,
             sourceSize: file.size,
             sourceLastModified: file.lastModified,
@@ -831,7 +862,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const handleResumeDraftPrepare = (draft: AnalysisResumeDraft) => {
         setTitle(draft.title);
         setDate(draft.date);
-        setParticipants(draft.participants);
+        setMeetingPurpose(draft.meetingPurpose || draft.participants || '');
         setSelectedResumeDraftId(draft.jobId);
         if (canResumeDraft(draft)) {
             unsuppressResumeCandidateKey(getResumeDraftKey(draft));
@@ -1062,7 +1093,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             const formData = new FormData();
             formData.append('title', title.trim());
             formData.append('date', date);
-            formData.append('participants', participants.trim());
+            formData.append('participants', '');
+            formData.append('meeting_purpose', meetingPurpose.trim());
             formData.append('mode', ANALYSIS_MODE);
             formData.append('job_id', analysisJobId);
             formData.append('file', file as File);
@@ -1157,7 +1189,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 id: crypto.randomUUID(),
                 date: date.replace('T', ' '),
                 title: title.trim(),
-                participants: participants.trim(),
+                participants: '',
+                meetingPurpose: meetingPurpose.trim(),
                 summary: finalData.summary || '요약 결과가 없습니다.',
                 segments: finalData.segments || [],
                 displaySegments: finalData.displaySegments || finalData.display_segments || [],
@@ -1172,6 +1205,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 actions: finalData.actions || [],
                 decisions: finalData.decisions || [],
                 needsCheck: finalData.needsCheck || finalData.needs_check || [],
+                diarizationSkipped: finalData.diarizationSkipped ?? finalData.diarization_skipped ?? false,
+                diarizationSkipMessage: finalData.diarizationSkipMessage || finalData.diarization_skip_message || '',
                 outputFiles: finalData.outputs,
             };
 
@@ -1206,9 +1241,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 meetingId: newRecord.id,
                 elapsedMs: completedElapsedMs,
                 note: getCompletionResumeNote(finalData.resume),
+                autoSaveNote: getAutoSaveCompletionNote(finalData),
             });
             setTitle('');
-            setParticipants('');
+            setMeetingPurpose('');
+            const nextInitialDate = new Date().toISOString().slice(0, 16);
+            initialDateRef.current = nextInitialDate;
+            setDate(nextInitialDate);
             setFile(null);
             clearResumeDraftSelection();
             if (fileInputRef.current) {
@@ -1473,13 +1512,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
                     </div>
                     <div className="flex flex-col gap-2">
-                        <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-participants">참석자 *</label>
-                        <Input id="meeting-participants" value={participants} onChange={e => setParticipants(e.target.value)} placeholder="예: 홍길동, 김철수" disabled={isAnalyzing} />
+                        <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-purpose">회의 목적 *</label>
+                        <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 추진 현황을 점검하고 후속 조치를 정리" disabled={isAnalyzing} />
                     </div>
                 </div>
 
                 <div className="flex flex-col gap-2 mt-2">
-                    <label className="text-[13px] font-semibold text-foreground">
+                    <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-file-input">
                         {resumeSelectionActive ? '같은 음성 파일 선택 *' : '음성 파일 *'}
                     </label>
                     <input
@@ -1492,9 +1531,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         id="meeting-file-input"
                     />
                     <div
+                        role="button"
+                        tabIndex={isAnalyzing ? -1 : 0}
+                        aria-controls="meeting-file-input"
+                        aria-disabled={isAnalyzing}
                         className={`file-drop-zone ${file ? 'file-drop-zone-selected' : ''}`}
                         onClick={() => {
                             if (!isAnalyzing) fileInputRef.current?.click();
+                        }}
+                        onKeyDown={(event) => {
+                            if (isAnalyzing) return;
+                            if (event.key === 'Enter' || event.key === ' ') {
+                                event.preventDefault();
+                                fileInputRef.current?.click();
+                            }
                         }}
                     >
                         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -1520,6 +1570,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                         onClick={(event) => {
                                             event.stopPropagation();
                                             clearFile();
+                                        }}
+                                        onKeyDown={(event) => {
+                                            event.stopPropagation();
                                         }}
                                         disabled={isAnalyzing}
                                         aria-label="음성 파일 제거"
@@ -1629,6 +1682,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     <div>소요 시간 {formatElapsedDuration(completionNotice.elapsedMs)}. 결과 보기를 눌러 회의록을 확인하세요.</div>
                     {completionNotice.note && (
                         <div className="mt-2 text-sm text-muted-foreground">{completionNotice.note}</div>
+                    )}
+                    {completionNotice.autoSaveNote && (
+                        <div className="mt-2 text-sm text-muted-foreground">{completionNotice.autoSaveNote}</div>
                     )}
                 </StatusBanner>
             )}

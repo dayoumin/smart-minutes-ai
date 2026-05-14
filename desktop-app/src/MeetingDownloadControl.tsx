@@ -23,12 +23,19 @@ const downloadFormatLabels: Record<DownloadFormat, string> = {
 
 interface MeetingDownloadControlProps {
     meeting: MeetingRecord;
-    onMessage?: (message: string) => void;
+    onNotice?: (message: string) => void;
+    onError?: (message: string) => void;
     onDownloadingChange?: (isDownloading: boolean) => void;
     beforeDownload?: () => boolean;
+    disabled?: boolean;
 }
 
-const safeFileName = (title: string): string => title.replace(/[/\\?%*:|"<>]/g, '-');
+const MAX_DOWNLOAD_STEM_CHARS = 96;
+
+const safeFileName = (title: string): string => {
+    const safe = title.replace(/[/\\?%*:|"<>]/g, '-').trim().replace(/^[.\-\s]+|[.\-\s]+$/g, '');
+    return safe.slice(0, MAX_DOWNLOAD_STEM_CHARS).replace(/[.\-\s]+$/g, '') || 'meeting-minutes';
+};
 
 const formatSegmentLine = (segment: MeetingSegment): string => {
     const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
@@ -47,7 +54,7 @@ const buildTranscriptText = (meeting: MeetingRecord): string => {
     const lines = [
         meeting.title,
         `일시: ${meeting.date}`,
-        `참석자: ${meeting.participants}`,
+        `회의 목적: ${meeting.meetingPurpose || '-'}`,
         meeting.sourceFile ? `원본 파일: ${meeting.sourceFile}` : '',
         '',
         '[요약]',
@@ -87,7 +94,7 @@ const filenameFromDisposition = (disposition: string | null, fallback: string): 
     return plainMatch?.[1] ?? fallback;
 };
 
-export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ meeting, onMessage, onDownloadingChange, beforeDownload }) => {
+export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ meeting, onNotice, onError, onDownloadingChange, beforeDownload, disabled = false }) => {
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadKind, setDownloadKind] = useState<DownloadFormat>(() => getDownloadFormatPreference());
     const isMountedRef = useRef(true);
@@ -138,15 +145,39 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
         }
     };
 
+    const trySaveCopyToDownloads = async (): Promise<boolean> => {
+        try {
+            const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}/save-copy`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    ...meeting,
+                    displaySegments: transcriptSegmentsForExport(meeting),
+                }),
+            });
+            if (!response.ok) return false;
+            await response.json().catch(() => undefined);
+            onNotice?.(`${downloadFormatLabels[downloadKind]} 파일을 다운로드 폴더에 저장했습니다.`);
+            return true;
+        } catch {
+            return false;
+        }
+    };
+
     const handleDownload = async () => {
-        if (isDownloading) return;
+        if (isDownloading || disabled) return;
         if (beforeDownload && !beforeDownload()) return;
 
         updateDownloading(true);
-        onMessage?.('');
+        onNotice?.('');
+        onError?.('');
         const fallbackName = `${safeFileName(meeting.title)}.${extensionByKind[downloadKind]}`;
 
         try {
+            if (await trySaveCopyToDownloads()) {
+                return;
+            }
+
             const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -167,24 +198,24 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
             const outputUrl = meeting.outputFiles?.[downloadKind]
                 || (meeting.jobId ? `/api/outputs/${encodeURIComponent(meeting.jobId)}/${downloadKind}` : null);
             if (outputUrl && await tryDownloadFromUrl(outputUrl, fallbackName)) {
-                onMessage?.(`${downloadKind.toUpperCase()} 파일을 현재 화면 기준으로 새로 만들지 못해 저장된 파일로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
+                onError?.(`${downloadKind.toUpperCase()} 파일을 현재 화면 기준으로 새로 만들지 못해 저장된 파일로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
                 return;
             }
 
             downloadLocalText();
-            onMessage?.(`${downloadKind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
+            onError?.(`${downloadKind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
         } catch (error) {
             const outputUrl = meeting.outputFiles?.[downloadKind]
                 || (meeting.jobId ? `/api/outputs/${encodeURIComponent(meeting.jobId)}/${downloadKind}` : null);
             if (outputUrl && await tryDownloadFromUrl(outputUrl, fallbackName)) {
                 const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
-                onMessage?.(`${message} 저장된 파일로 다운로드했습니다.`);
+                onError?.(`${message} 저장된 파일로 다운로드했습니다.`);
                 return;
             }
 
             downloadLocalText();
             const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
-            onMessage?.(`${message} TXT로 다운로드했습니다.`);
+            onError?.(`${message} TXT로 다운로드했습니다.`);
         } finally {
             updateDownloading(false);
         }
@@ -194,13 +225,17 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
         <div className="flex overflow-hidden rounded-md border border-input bg-background shadow-sm transition-shadow focus-within:ring-2 focus-within:ring-primary/30">
             <button
                 type="button"
-                className="inline-flex h-10 w-10 items-center justify-center text-muted-foreground transition-colors hover:bg-muted/50 hover:text-primary disabled:cursor-wait disabled:opacity-60"
+                className="inline-flex h-10 items-center justify-center gap-2 px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted/50 hover:text-primary disabled:cursor-wait disabled:opacity-60"
                 onClick={handleDownload}
-                disabled={isDownloading}
-                title={`${downloadFormatLabels[downloadKind]} 다운로드`}
-                aria-label={`회의록 ${downloadFormatLabels[downloadKind]} 다운로드`}
+                disabled={isDownloading || disabled}
+                title={`${downloadFormatLabels[downloadKind]} 저장`}
+                aria-label={`회의록 ${downloadFormatLabels[downloadKind]} 저장`}
             >
                 <Download size={18} />
+                <span className="whitespace-nowrap">회의록 저장</span>
+                <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
+                    {downloadFormatLabels[downloadKind]}
+                </span>
             </button>
         </div>
     );

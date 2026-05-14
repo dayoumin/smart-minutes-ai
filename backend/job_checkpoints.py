@@ -17,8 +17,10 @@ class JobCheckpointPaths:
     root_dir: str
     state_path: str
     upload_dir: str
+    audio_dir: str
     source_wav_path: str
     chunks_dir: str
+    chunk_manifest_path: str
     stt_dir: str
     stt_merged_path: str
     diarization_dir: str
@@ -34,8 +36,10 @@ def build_job_checkpoint_paths(temp_dir: str, job_id: str) -> JobCheckpointPaths
         root_dir=root_dir,
         state_path=os.path.join(root_dir, "job_state.json"),
         upload_dir=os.path.join(root_dir, "upload"),
-        source_wav_path=os.path.join(root_dir, "source.wav"),
+        audio_dir=os.path.join(root_dir, "audio"),
+        source_wav_path=os.path.join(root_dir, "audio", "source.wav"),
         chunks_dir=os.path.join(root_dir, "chunks"),
+        chunk_manifest_path=os.path.join(root_dir, "chunks", "manifest.json"),
         stt_dir=os.path.join(root_dir, "stt"),
         stt_merged_path=os.path.join(root_dir, "stt", "merged_segments.json"),
         diarization_dir=os.path.join(root_dir, "diarization"),
@@ -49,6 +53,7 @@ def build_job_checkpoint_paths(temp_dir: str, job_id: str) -> JobCheckpointPaths
 def ensure_job_checkpoint_dirs(paths: JobCheckpointPaths) -> None:
     os.makedirs(paths.root_dir, exist_ok=True)
     os.makedirs(paths.upload_dir, exist_ok=True)
+    os.makedirs(paths.audio_dir, exist_ok=True)
     os.makedirs(paths.chunks_dir, exist_ok=True)
     os.makedirs(paths.stt_dir, exist_ok=True)
     os.makedirs(paths.diarization_dir, exist_ok=True)

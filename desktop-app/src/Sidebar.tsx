@@ -70,7 +70,8 @@ const formatSidebarStatus = (message: string): string => {
 };
 
 const isVisibleResumeDraft = (draft: AnalysisResumeDraft): boolean => (
-    draft.status === 'active' || draft.resumeEligible !== false
+    draft.status === 'active'
+    || (draft.status !== 'completed' && draft.status !== 'unavailable' && draft.resumeEligible !== false)
 );
 
 const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
@@ -192,7 +193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
 
     const handleDeleteRecord = async (record: MeetingRecord) => {
         setOpenMenuId(null);
-        if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?`)) return;
+        if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?\n\n앱 안의 회의 기록과 분석 산출물은 삭제되지만, 다운로드 폴더에 저장한 HWPX/음성 파일은 직접 삭제해야 합니다.`)) return;
         await deleteMeeting(record.id);
         if (record.jobId) {
             await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(record.jobId)}`), {

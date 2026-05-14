@@ -603,6 +603,12 @@
     background-color: var(--bg-surface-hover);
   }
 
+  .file-drop-zone:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 2px;
+    border-color: var(--border-brand);
+  }
+
   .file-drop-zone-selected {
     border-color: var(--border-strong);
     background-color: var(--bg-surface-hover);

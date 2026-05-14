@@ -29,6 +29,8 @@ def export_markdown(result: dict, output_path: str) -> str:
     md_content = f"# {summary.get('title', '회의록')}\n\n"
     md_content += f"**파일명:** {result.get('source_file', '')}\n"
     md_content += f"**처리일시:** {result.get('created_at', '')}\n\n"
+    if result.get("meeting_purpose"):
+        md_content += f"**회의 목적:** {result.get('meeting_purpose', '')}\n\n"
     
     md_content += f"## {section_no}. 회의 요약\n\n"
     section_no += 1

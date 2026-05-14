@@ -133,7 +133,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     jobId: 'draft-job-001',
     title: '중단된 회의',
     date: '2026-05-13T09:30',
-    participants: '홍길동, 김철수',
+    meetingPurpose: '중단된 분석 이어하기 확인',
     sourceFilename: 'resume-draft-target.mp4',
     sourceSize: fixtureUpload.size,
     sourceLastModified: fixtureUpload.lastModified,
@@ -147,7 +147,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     jobId: 'draft-job-older',
     title: '예전 실패 분석',
     date: '2026-05-13T08:00',
-    participants: '홍길동',
+    meetingPurpose: '예전 실패 분석 재사용 확인',
     sourceFilename: 'resume-draft-target.mp4',
     sourceSize: fixtureUpload.size,
     sourceLastModified: fixtureUpload.lastModified,
@@ -256,7 +256,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.getByText('같은 음성 파일 선택 *').waitFor({ timeout: 10000 });
     await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
     await expectValue(page, '#meeting-title', '중단된 회의');
-    await expectValue(page, '#meeting-participants', '홍길동, 김철수');
+    await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByText('같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.').waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '이어하기' }).last().click();
@@ -288,7 +288,7 @@ const runActiveDraftBackendSyncScenario = async (browser, fixtureUpload) => {
     jobId: 'active-draft-job-001',
     title: '진행 중이던 분석',
     date: '2026-05-13T09:30',
-    participants: '홍길동',
+    meetingPurpose: '진행 중 분석 상태 확인',
     sourceFilename: fixtureUpload.name,
     sourceSize: fixtureUpload.size,
     sourceLastModified: fixtureUpload.lastModified,
@@ -347,7 +347,7 @@ const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
     jobId: 'stale-draft-job-001',
     title: '오래된 분석',
     date: '2026-05-13T09:30',
-    participants: '홍길동',
+    meetingPurpose: '오래된 분석 정리 확인',
     sourceFilename: 'resume-draft-target.mp4',
     sourceSize: fixtureUpload.size,
     sourceLastModified: fixtureUpload.lastModified,
@@ -481,7 +481,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await waitForApp(APP_URL);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('회의 제목 *').fill('suppressed resume candidate');
-    await page.getByLabel('참석자 *').fill('홍길동');
+    await page.getByLabel('회의 목적 *').fill('재개 후보 숨김 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });

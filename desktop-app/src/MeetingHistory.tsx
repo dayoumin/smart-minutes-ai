@@ -23,7 +23,7 @@ interface MeetingHistoryProps {
 }
 
 type DetailTab = 'summary' | 'script';
-type GenerationKind = 'summary' | 'topicSections' | 'speakerContextSummaries';
+type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries';
 type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
 
 interface GenerateSummaryResponse {
@@ -62,6 +62,28 @@ interface GenerateSpeakerContextResponse {
     participantSummaries?: MeetingRecord['participantSummaries'];
     generation_status?: MeetingRecord['generationStatus'];
     generationStatus?: MeetingRecord['generationStatus'];
+    outputs?: MeetingRecord['outputFiles'];
+    export_error?: string | null;
+}
+
+interface GenerateDiarizationResponse {
+    segments?: MeetingSegment[];
+    display_segments?: MeetingSegment[];
+    displaySegments?: MeetingSegment[];
+    diarization_applied?: boolean;
+    diarizationApplied?: boolean;
+    diarization_requested?: boolean;
+    diarizationRequested?: boolean;
+    diarization_skipped?: boolean;
+    diarizationSkipped?: boolean;
+    diarization_deferred?: boolean;
+    diarizationDeferred?: boolean;
+    generation_status?: MeetingRecord['generationStatus'];
+    generationStatus?: MeetingRecord['generationStatus'];
+    speaker_context_summaries?: MeetingSpeakerContextSummary[];
+    speakerContextSummaries?: MeetingSpeakerContextSummary[];
+    participant_summaries?: MeetingRecord['participantSummaries'];
+    participantSummaries?: MeetingRecord['participantSummaries'];
     outputs?: MeetingRecord['outputFiles'];
     export_error?: string | null;
 }
@@ -110,6 +132,21 @@ const getGenerationErrorMessage = async (response: Response, fallback: string): 
         }
         if (parsed.detail === 'speaker_input_changed') {
             return '대화록이나 주제별 정리가 바뀌어 참석자별 정리를 저장하지 않았습니다. 다시 정리해 주세요.';
+        }
+        if (parsed.detail === 'audio_required_for_diarization') {
+            return '발화자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.';
+        }
+        if (parsed.detail === 'diarization_model_not_ready') {
+            return '발화자 구분 모델이 준비되지 않았습니다. models 폴더를 확인해 주세요.';
+        }
+        if (parsed.detail === 'diarization_resource_limit') {
+            return '음성 파일이 너무 길거나 커서 발화자 구분을 실행하지 않았습니다. 대화록은 그대로 사용할 수 있습니다.';
+        }
+        if (parsed.detail === 'diarization_already_completed') {
+            return '이미 발화자 구분이 완료된 대화록입니다.';
+        }
+        if (parsed.detail === 'diarization generation is already running') {
+            return '발화자 구분이 이미 진행 중입니다.';
         }
         return parsed.detail || fallback;
     } catch {
@@ -579,6 +616,58 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         }
     };
 
+    const handleGenerateDiarization = async () => {
+        if (generatingKind !== null) return;
+        if (!ensureNoUnsavedDraftChanges('발화자 구분 실행')) return;
+        if (!canGenerateDiarization || !selectedMeeting?.jobId) {
+            setNoticeMessage('');
+            setErrorMessage(hasTranscriptData ? '분석 원본이 있어야 발화자 구분을 실행할 수 있습니다.' : '대화록이 있어야 발화자 구분을 실행할 수 있습니다.');
+            return;
+        }
+
+        const targetMeeting = selectedMeeting;
+        const targetJobId = selectedMeeting.jobId;
+        try {
+            setErrorMessage('');
+            setNoticeMessage('');
+            setGeneratingKind('diarization');
+            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-diarization`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(targetMeeting),
+            });
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '발화자 구분을 실행하지 못했습니다.'));
+
+            const data = await response.json() as GenerateDiarizationResponse;
+            await updateSelectedMeeting(currentMeeting => ({
+                segments: data.segments ?? currentMeeting.segments,
+                displaySegments: data.displaySegments ?? data.display_segments ?? currentMeeting.displaySegments,
+                diarizationApplied: data.diarizationApplied ?? data.diarization_applied ?? true,
+                diarizationRequested: data.diarizationRequested ?? data.diarization_requested ?? true,
+                diarizationSkipped: data.diarizationSkipped ?? data.diarization_skipped ?? false,
+                diarizationDeferred: data.diarizationDeferred ?? data.diarization_deferred ?? false,
+                diarizationSkipMessage: '',
+                diarizationSkipReason: '',
+                diarizationDeferMessage: '',
+                speakerContextSummaries: data.speakerContextSummaries ?? data.speaker_context_summaries ?? currentMeeting.speakerContextSummaries,
+                participantSummaries: data.participantSummaries ?? data.participant_summaries ?? currentMeeting.participantSummaries,
+                generationStatus: data.generationStatus ?? data.generation_status ?? currentMeeting.generationStatus,
+                transcriptEditMeta: {
+                    ...(currentMeeting.transcriptEditMeta ?? {}),
+                    speakerContextOutdated: Boolean(currentMeeting.speakerContextSummaries?.length || currentMeeting.participantSummaries?.length),
+                },
+                outputFiles: data.outputs ?? currentMeeting.outputFiles,
+            }), targetMeeting.id);
+            setDetailTab('script');
+            setNoticeMessage(data.export_error || '발화자 구분을 완료했습니다.');
+        } catch (error) {
+            setNoticeMessage('');
+            setErrorMessage(error instanceof Error ? error.message : '발화자 구분을 실행하지 못했습니다.');
+        } finally {
+            setGeneratingKind(null);
+        }
+    };
+
     const handleGenerateSummary = async () => {
         if (generatingKind !== null || summaryGenerationStatus === 'generating') return;
         if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
@@ -683,7 +772,39 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         || (selectedMeeting?.displaySegments?.length ?? 0)
         || (selectedMeeting?.segments?.length ?? 0),
     );
+    const summarySkippedForDeferredAnalysis = summaryGenerationStatus === 'skipped'
+        && Boolean(selectedMeeting?.summary?.includes('정리는 회의 기록에서 별도로 실행'));
+    const diarizationApplied = selectedMeeting?.diarizationApplied;
+    const diarizationStatus = (() => {
+        if (!hasTranscriptData) return { label: '대기', tone: 'neutral' };
+        if (selectedMeeting?.diarizationSkipped) return { label: '제외', tone: 'warning' };
+        if (diarizationApplied === true) return { label: '완료', tone: 'success' };
+        if (selectedMeeting?.diarizationDeferred) return { label: '별도 실행', tone: 'neutral' };
+        if (selectedMeeting?.diarizationRequested === false || diarizationApplied === false) return { label: '미사용', tone: 'neutral' };
+        return { label: '별도 실행', tone: 'neutral' };
+    })();
+    const summaryStatus = (() => {
+        if (summaryGenerationStatus === 'completed') return { label: '완료', tone: 'success' };
+        if (summaryGenerationStatus === 'generating') return { label: '정리 중', tone: 'info' };
+        if (summaryGenerationStatus === 'failed') return { label: '정리 필요', tone: 'warning' };
+        if (summaryGenerationStatus === 'skipped' && !summarySkippedForDeferredAnalysis) return { label: '준비 필요', tone: 'warning' };
+        return { label: '별도 실행', tone: 'neutral' };
+    })();
     const canGenerateSummary = Boolean(selectedMeeting?.jobId && hasTranscriptData);
+    const canGenerateDiarization = Boolean(
+        selectedMeeting?.jobId
+        && hasTranscriptData
+        && !selectedMeeting?.diarizationApplied
+        && !selectedMeeting?.diarizationSkipped
+        && selectedMeeting?.diarizationRequested !== false,
+    );
+    const diarizationActionMeta = canGenerateDiarization
+        ? (generatingKind === 'diarization' ? '구분 중' : '별도 실행')
+        : selectedMeeting?.diarizationApplied
+            ? '완료'
+            : selectedMeeting?.diarizationSkipped
+                ? '제외'
+                : '';
     const canGenerateTopicSections = Boolean(selectedMeeting?.jobId && hasTranscriptData && summaryGenerationStatus !== 'skipped');
     const speakerGenerationStatus = getSpeakerGenerationStatus(
         selectedMeeting?.generationStatus,
@@ -695,7 +816,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     );
     const canCreateSpeakerContext = baseCanCreateSpeakerContext && !topicSectionsOutdated;
     const summaryActionMeta = canGenerateSummary
-        ? (summaryOutdated ? '수정 필요' : generationStatusLabel[summaryGenerationStatus])
+        ? (summaryOutdated
+            ? '수정 필요'
+            : summarySkippedForDeferredAnalysis
+                ? '정리 전'
+                : generationStatusLabel[summaryGenerationStatus])
         : '';
     const speakerGenerationStatusText = canCreateSpeakerContext && speakerGenerationStatus === 'not_started'
         ? '정리 가능'
@@ -718,7 +843,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         : !selectedMeeting?.jobId
             ? '분석 원본이 있어야 정리할 수 있습니다.'
             : summaryGenerationStatus === 'skipped'
-                ? '요약 AI가 준비되면 전체 요약과 추가 정리를 만들 수 있습니다.'
+                ? summarySkippedForDeferredAnalysis
+                    ? '대화록은 저장됐습니다. 필요한 정리를 선택해서 실행하세요.'
+                    : '요약 AI가 준비되면 전체 요약과 추가 정리를 만들 수 있습니다.'
             : !baseCanCreateSpeakerContext
                 ? '참석자별 정리 전에 주제별 정리를 먼저 해 주세요.'
                 : summaryRegenerationWillResetDerived && summaryOutdated
@@ -1308,9 +1435,34 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         <span className="font-medium text-foreground">원본 파일:</span> {selectedMeeting.sourceFile}
                                     </div>
                                 )}
+                                <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                                    <div className="flex items-center justify-between gap-2 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-xs">
+                                        <span className="font-semibold text-foreground">대화록</span>
+                                        <span className={`status-pill status-${hasTranscriptData ? 'success' : 'neutral'}`}>
+                                            {hasTranscriptData ? '완료' : '대기'}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-xs">
+                                        <span className="font-semibold text-foreground">발화자 구분</span>
+                                        <span className={`status-pill status-${diarizationStatus.tone}`}>
+                                            {diarizationStatus.label}
+                                        </span>
+                                    </div>
+                                    <div className="flex items-center justify-between gap-2 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-xs">
+                                        <span className="font-semibold text-foreground">정리</span>
+                                        <span className={`status-pill status-${summaryStatus.tone}`}>
+                                            {summaryStatus.label}
+                                        </span>
+                                    </div>
+                                </div>
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note mt-3">
-                                        {selectedMeeting.diarizationSkipMessage || '긴 음성 파일이라 발화자 구분을 건너뛰고 대화록과 요약을 먼저 만들었습니다.'}
+                                        {selectedMeeting.diarizationSkipMessage || '발화자 구분은 제외하고 대화록을 먼저 저장했습니다.'}
+                                    </div>
+                                )}
+                                {selectedMeeting.diarizationDeferred && !selectedMeeting.diarizationSkipped && !selectedMeeting.diarizationApplied && (
+                                    <div className="status-note mt-3">
+                                        {selectedMeeting.diarizationDeferMessage || '발화자 구분은 회의 기록에서 별도로 실행할 수 있습니다.'}
                                     </div>
                                 )}
                                 {audioSourceUrl && (
@@ -1424,6 +1576,31 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     <div className="detail-callout">{selectedMeeting.summary || '요약 내용이 없습니다.'}</div>
                                 </section>
                             )}
+
+                            <section className="detail-action-row">
+                                <h3 className="section-title mb-3">대화록</h3>
+                                <div className="ai-action-item">
+                                    <div className="min-w-0">
+                                        <div className="ai-action-title">
+                                            발화자 구분
+                                            {generatingKind === 'diarization' && <Loader2 size={15} className="animate-spin" />}
+                                        </div>
+                                        <div className="ai-action-meta">{diarizationActionMeta}</div>
+                                    </div>
+                                    {!selectedMeeting.diarizationApplied && (
+                                        <Button
+                                            variant="outline"
+                                            className="detail-action-button"
+                                            aria-label="발화자 구분"
+                                            disabled={!canGenerateDiarization || generatingKind !== null}
+                                            onClick={handleGenerateDiarization}
+                                        >
+                                            {generatingKind === 'diarization' && <Loader2 size={15} className="animate-spin" />}
+                                            {generatingKind === 'diarization' ? '구분 중' : '구분'}
+                                        </Button>
+                                    )}
+                                </div>
+                            </section>
 
                             <section className="detail-action-row">
                                 <h3 className="section-title mb-3">정리</h3>

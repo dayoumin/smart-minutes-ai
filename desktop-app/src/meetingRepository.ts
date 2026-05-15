@@ -41,6 +41,11 @@ export interface MeetingRecord {
     needsCheck?: string[];
     diarizationSkipped?: boolean;
     diarizationSkipMessage?: string;
+    diarizationApplied?: boolean;
+    diarizationRequested?: boolean;
+    diarizationSkipReason?: string;
+    diarizationDeferred?: boolean;
+    diarizationDeferMessage?: string;
     outputFiles?: {
         json?: string | null;
         txt?: string | null;
@@ -62,6 +67,11 @@ type StoredMeetingRecord = Partial<MeetingRecord> & {
     needs_check?: string[];
     diarization_skipped?: boolean;
     diarization_skip_message?: string;
+    diarization_applied?: boolean;
+    diarization_requested?: boolean;
+    diarization_skip_reason?: string;
+    diarization_deferred?: boolean;
+    diarization_defer_message?: string;
     transcript_edit_meta?: TranscriptEditMeta;
     meeting_purpose?: string;
 };
@@ -78,6 +88,11 @@ const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => (
     needsCheck: record.needsCheck ?? record.needs_check ?? [],
     diarizationSkipped: record.diarizationSkipped ?? record.diarization_skipped ?? false,
     diarizationSkipMessage: record.diarizationSkipMessage ?? record.diarization_skip_message ?? '',
+    diarizationApplied: record.diarizationApplied ?? record.diarization_applied,
+    diarizationRequested: record.diarizationRequested ?? record.diarization_requested,
+    diarizationSkipReason: record.diarizationSkipReason ?? record.diarization_skip_reason ?? '',
+    diarizationDeferred: record.diarizationDeferred ?? record.diarization_deferred ?? false,
+    diarizationDeferMessage: record.diarizationDeferMessage ?? record.diarization_defer_message ?? '',
     transcriptEditMeta: record.transcriptEditMeta ?? record.transcript_edit_meta ?? {},
     meetingPurpose: record.meetingPurpose ?? record.meeting_purpose ?? '',
 });

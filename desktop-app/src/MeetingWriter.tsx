@@ -63,8 +63,18 @@ interface AnalyzeResult {
     needsCheck?: string[];
     diarization_skipped?: boolean;
     diarizationSkipped?: boolean;
+    diarization_applied?: boolean;
+    diarizationApplied?: boolean;
+    diarization_requested?: boolean;
+    diarizationRequested?: boolean;
     diarization_skip_message?: string;
     diarizationSkipMessage?: string;
+    diarization_skip_reason?: string;
+    diarizationSkipReason?: string;
+    diarization_deferred?: boolean;
+    diarizationDeferred?: boolean;
+    diarization_defer_message?: string;
+    diarizationDeferMessage?: string;
     meeting?: {
         source_file?: string;
         job_id?: string;
@@ -169,7 +179,7 @@ const getFallbackAnalysisMessage = (phase: AnalysisPhase, progressPercent: numbe
     if (phase === 'checking-server') return '분석 기능 확인 중';
     if (phase === 'checking-models') return '모델 확인 중';
     if (progressPercent >= 95) return '저장 중';
-    if (progressPercent >= 80) return '요약 정리 중';
+    if (progressPercent >= 80) return '대화록 저장 중';
     if (progressPercent >= 25) return '음성 인식 중';
     return '분석 시작 중';
 };
@@ -228,6 +238,7 @@ const translateStatusMessage = (message: string): string => {
         'Speaker Diarization & Alignment...': '화자 구분 중',
         '화자 구간 분석 완료. 문장 시간과 맞추는 중': '문장 시간 맞추는 중',
         'Summarizing with Local LLM...': '요약 정리 중',
+        '대화록 생성이 완료되었습니다. 정리는 회의 기록에서 별도로 실행해 주세요.': '대화록 저장 완료',
         'Saving results...': '저장 중',
     };
 
@@ -1189,7 +1200,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 decisions: finalData.decisions || [],
                 needsCheck: finalData.needsCheck || finalData.needs_check || [],
                 diarizationSkipped: finalData.diarizationSkipped ?? finalData.diarization_skipped ?? false,
+                diarizationApplied: finalData.diarizationApplied ?? finalData.diarization_applied,
+                diarizationRequested: finalData.diarizationRequested ?? finalData.diarization_requested,
                 diarizationSkipMessage: finalData.diarizationSkipMessage || finalData.diarization_skip_message || '',
+                diarizationSkipReason: finalData.diarizationSkipReason || finalData.diarization_skip_reason || '',
+                diarizationDeferred: finalData.diarizationDeferred ?? finalData.diarization_deferred ?? false,
+                diarizationDeferMessage: finalData.diarizationDeferMessage || finalData.diarization_defer_message || '',
                 outputFiles: finalData.outputs,
             };
 
@@ -1711,7 +1727,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <div className="text-right">
                                 <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                                     <span>예상 시간</span>
-                                    <span title="대화록 생성 완료까지의 추정 시간입니다. 정리와 저장 시간은 포함하지 않습니다." className="inline-flex items-center">
+                                    <span title="대화록이 저장될 때까지의 추정 시간입니다. 발화자 구분과 정리, 요약은 포함하지 않습니다." className="inline-flex items-center">
                                         <CircleHelp size={13} />
                                     </span>
                                 </div>

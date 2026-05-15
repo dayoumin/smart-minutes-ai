@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -72,12 +74,26 @@ def get_stt_chunk_checkpoint_path(paths: JobCheckpointPaths, chunk_index: int) -
 def atomic_write_json(path: str, payload: dict[str, Any]) -> None:
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    temp_path = target.with_name(f"{target.name}.tmp")
+    temp_path = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex}.tmp")
     with temp_path.open("w", encoding="utf-8") as handle:
         json.dump(payload, handle, ensure_ascii=False, indent=2)
         handle.flush()
         os.fsync(handle.fileno())
-    os.replace(temp_path, target)
+    try:
+        for attempt in range(5):
+            try:
+                os.replace(temp_path, target)
+                return
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        if temp_path.exists():
+            try:
+                temp_path.unlink()
+            except OSError:
+                pass
 
 
 def load_json_checkpoint(path: str) -> dict[str, Any] | None:

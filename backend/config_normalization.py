@@ -10,8 +10,8 @@ DEFAULT_STT_MODEL_PATH = "../models/faster-whisper-large-v3"
 DEFAULT_STT_DEVICE = "cpu"
 DEFAULT_LONG_AUDIO_CHUNK_SECONDS = 30
 DEFAULT_STT_CHUNK_SECONDS = 30
-DEFAULT_DIARIZATION_MAX_DURATION_SECONDS = 30 * 60
-DEFAULT_DIARIZATION_MAX_WAVEFORM_MB = 256
+DEFAULT_DIARIZATION_MAX_DURATION_SECONDS = 150 * 60
+DEFAULT_DIARIZATION_MAX_WAVEFORM_MB = 512
 MIN_LONG_AUDIO_CHUNK_SECONDS = 10
 MAX_LONG_AUDIO_CHUNK_SECONDS = 3600
 
@@ -64,6 +64,7 @@ def normalize_app_config(config: dict) -> dict:
 
     stt["chunk_seconds"] = max(1, _safe_int(stt.get("chunk_seconds"), DEFAULT_STT_CHUNK_SECONDS))
     diarization["enabled"] = bool(diarization.get("enabled", False))
+    diarization["generate_during_analysis"] = bool(diarization.get("generate_during_analysis", False))
     diarization["auto_skip_long_audio"] = bool(diarization.get("auto_skip_long_audio", True))
     diarization["max_duration_seconds"] = max(
         60,

@@ -17,6 +17,7 @@ const isTranscriptReadyStage = (message: string, progressPercent: number): boole
     return progressPercent >= TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT
         || normalized === 'Summarizing with Local LLM...'
         || normalized === 'Saving results...'
+        || normalized.includes('대화록 생성이 완료')
         || normalized.includes('요약 AI가 준비되지 않아')
         || normalized.includes('회의록을 저장했습니다');
 };

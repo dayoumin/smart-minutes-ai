@@ -788,3 +788,42 @@ python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --d
   - stdout: `backend/logs/long_runs/lmo_142_resume_stdout.log`
   - stderr: `backend/logs/long_runs/lmo_142_resume_stderr.log`
 - 상태: 21개 STT 청크는 즉시 재사용됐고, `chunk 22/174`부터 faster-whisper CPU 추론을 진행 중이다.
+
+## 2026-05-15 긴 파일 대화록 완료와 정리 분리
+
+대상:
+
+- `D:\Projects\smart-minutes-ai\releases\lmo_audio\제142차 LMO 심사위원회  2026-04-24 14-19-07.mp4`
+- 5219초, 174개 STT chunk
+
+확인한 현상:
+
+- STT 174/174와 `display_segments.json`, partial TXT/JSON 생성은 완료됐다.
+- 이후 초기 분석 흐름이 `Summarizing with Local LLM...` 단계로 들어갔고, 일반 단계 stall timeout 180초에 걸려 작업이 취소 상태로 기록됐다.
+- 사용자는 대화록이 이미 준비됐는데도 최종 회의 기록을 받지 못했고, 이어하기 후보도 현재 설정 fingerprint와 달라 빈 목록이 됐다.
+- `job_state.json.tmp -> job_state.json` 교체 중 `WinError 32`도 반복됐다. heartbeat와 worker가 같은 고정 tmp 파일명을 쓰는 Windows 파일 잠금 경쟁으로 보인다.
+
+조치:
+
+- 초기 분석은 대화록 생성까지만 완료 기준으로 삼고, 정리/요약은 회의 기록에서 별도 생성하도록 분리한다.
+- 요약/LLM 설정은 STT/대화록 체크포인트 재사용 fingerprint에서 제외한다.
+- checkpoint JSON atomic write는 고유 tmp 파일명과 짧은 retry를 사용해 Windows 파일 잠금에 덜 민감하게 한다.
+
+판단:
+
+- 긴 파일의 병목과 실패 위험은 STT 이후 요약/정리 단계에서도 발생한다.
+- 사용자가 먼저 필요한 것은 대화록이므로, 요약이 느리거나 Ollama 상태가 불안정해도 대화록 저장은 막지 않아야 한다.
+
+## 2026-05-15 대화록/발화자 구분/정리 상태 분리
+
+- 결과 화면에서 `대화록`, `발화자 구분`, `정리` 상태를 따로 표시하도록 정리했다. 긴 파일에서 발화자 구분이 자원 한계로 제외되면 대화록 저장 완료와 발화자 구분 제외를 동시에 보여주고, 정리/요약은 별도 실행 상태로 남긴다.
+- 기본 발화자 구분 자동 제외 기준을 30분/256MB에서 150분/512MB로 올렸다. 87분 LMO 파일은 기본 설정에서 발화자 구분 대상에 들어가며, 2시간 안팎 회의도 우선 시도한다.
+- `job_state.json` 갱신은 같은 프로세스 안에서 per-job lock을 잡고 병합/저장하도록 보강했다. 고유 tmp 파일명만으로는 heartbeat와 worker가 서로의 필드를 덮어쓸 수 있어, 긴 분석의 재개 상태 보존 위험을 줄였다.
+
+## 2026-05-15 STT 대화록과 발화자 구분 실행 분리
+
+- 기본 분석 흐름에서 발화자 구분도 지연하도록 바꿨다. 긴 파일은 먼저 STT 대화록 TXT/JSON과 회의 기록을 저장하고, 발화자 구분은 기록 화면에서 별도 실행한다.
+- 새 기본값: `diarization.generate_during_analysis=false`. 기존처럼 분석 중 바로 발화자 구분을 실행해야 하는 회귀 테스트는 이 값을 `true`로 켠다.
+- 별도 실행 API: `POST /api/outputs/{job_id}/generate-diarization`. 저장된 `source.wav`와 STT 세그먼트를 사용하므로 파일을 다시 업로드하지 않는다. 원본 음성이 없으면 실행하지 않고 다시 분석을 안내한다.
+- UI 변경: 회의 기록 상세에 `대화록` 섹션을 두고 `발화자 구분` 버튼을 추가했다. `정리` 섹션은 전체 요약, 주제별 정리, 참석자별 정리만 담당한다.
+- 판단: 1시간 이상 파일에서 “대화록은 이미 준비됐지만 발화자 구분 또는 요약 때문에 전체 작업이 취소처럼 보이는” 위험을 줄인다. 발화자 구분은 시간이 오래 걸릴 수 있으므로 사용자가 대화록을 먼저 확보한 뒤 선택 실행하는 편이 안전하다.

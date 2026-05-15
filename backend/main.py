@@ -57,6 +57,8 @@ app = FastAPI(title="NIFS AI Meeting API")
 
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.Lock()
+JOB_STATE_LOCKS_LOCK = threading.Lock()
+JOB_STATE_LOCKS: dict[str, threading.RLock] = {}
 ACTIVE_GENERATIONS: set[tuple[str, str]] = set()
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
@@ -117,6 +119,15 @@ def _analysis_config_fingerprint(config: dict) -> str:
         "processing": config.get("processing", {}),
         "preprocessing": config.get("preprocessing", {}),
         "diarization": config.get("diarization", {}),
+    })
+
+
+def _analysis_legacy_config_fingerprint(config: dict) -> str:
+    return build_config_fingerprint({
+        "stt": config.get("stt", {}),
+        "processing": config.get("processing", {}),
+        "preprocessing": config.get("preprocessing", {}),
+        "diarization": config.get("diarization", {}),
         "summary": {
             "enabled": config.get("summary", {}).get("enabled", True),
             "model": config.get("summary", {}).get("model", ""),
@@ -129,6 +140,32 @@ def _analysis_config_fingerprint(config: dict) -> str:
     })
 
 
+def _analysis_prepared_legacy_config(config: dict) -> dict:
+    prepared = copy.deepcopy(config)
+    prepared.setdefault("stt", {})["selected_model"] = "faster-whisper-large-v3"
+    try:
+        stt_spec = get_model_spec("stt_faster_whisper")
+        prepared.setdefault("paths", {})["stt_model"] = resolve_model_path(BASE_DIR, stt_spec)
+    except Exception:
+        pass
+    try:
+        diarization_spec = get_model_spec("diarization")
+        if model_exists(BASE_DIR, diarization_spec):
+            prepared.setdefault("paths", {})["diarization_model"] = resolve_model_path(BASE_DIR, diarization_spec)
+    except Exception:
+        pass
+    return prepared
+
+
+def _analysis_compatible_config_fingerprints(config: dict) -> set[str]:
+    prepared_legacy = _analysis_prepared_legacy_config(config)
+    return {
+        _analysis_config_fingerprint(config),
+        _analysis_legacy_config_fingerprint(config),
+        _analysis_legacy_config_fingerprint(prepared_legacy),
+    }
+
+
 def _load_job_state(paths) -> dict:
     try:
         return load_json_checkpoint(paths.state_path) or {}
@@ -137,14 +174,18 @@ def _load_job_state(paths) -> dict:
 
 
 def _write_job_state(paths, payload: dict) -> dict:
-    current = _load_job_state(paths)
-    merged = {
-        **current,
-        **payload,
-        "updated_at": datetime.now().isoformat(),
-    }
-    atomic_write_json(paths.state_path, merged)
-    return merged
+    state_path = os.path.abspath(paths.state_path)
+    with JOB_STATE_LOCKS_LOCK:
+        lock = JOB_STATE_LOCKS.setdefault(state_path, threading.RLock())
+    with lock:
+        current = _load_job_state(paths)
+        merged = {
+            **current,
+            **payload,
+            "updated_at": datetime.now().isoformat(),
+        }
+        atomic_write_json(paths.state_path, merged)
+        return merged
 
 
 def _estimate_diarization_waveform_mb(duration_seconds: float) -> float:
@@ -186,7 +227,7 @@ def _diarization_resource_decision(config: dict, source_wav_duration: float) -> 
             "run": False,
             "skipped": True,
             "skip_reason": "duration_limit",
-            "skip_message": "긴 음성 파일이라 발화자 구분을 건너뛰고 대화록과 요약을 먼저 만들었습니다.",
+            "skip_message": "긴 음성 파일이라 발화자 구분은 제외하고 대화록을 먼저 저장했습니다.",
         })
         return decision
     if max_waveform_mb > 0 and estimated_waveform_mb > max_waveform_mb:
@@ -194,9 +235,26 @@ def _diarization_resource_decision(config: dict, source_wav_duration: float) -> 
             "run": False,
             "skipped": True,
             "skip_reason": "memory_limit",
-            "skip_message": "음성 파일이 커서 발화자 구분을 건너뛰고 대화록과 요약을 먼저 만들었습니다.",
+            "skip_message": "음성 파일이 커서 발화자 구분은 제외하고 대화록을 먼저 저장했습니다.",
         })
     return decision
+
+
+def _defer_diarization_decision(decision: dict) -> dict:
+    deferred = {**decision}
+    deferred.update({
+        "run": False,
+        "skipped": False,
+        "deferred": True,
+        "defer_reason": "manual",
+        "defer_message": "발화자 구분은 회의 기록에서 별도로 실행할 수 있습니다.",
+    })
+    return deferred
+
+
+def _should_generate_diarization_during_analysis(config: dict) -> bool:
+    diarization_config = config.get("diarization", {})
+    return bool(diarization_config.get("generate_during_analysis", False))
 
 
 def _normalize_resume_file_size(value: int | None) -> int | None:
@@ -303,7 +361,7 @@ def _find_resume_candidates(
 
     expected_size = _normalize_resume_file_size(source_size)
     expected_last_modified = _normalize_resume_last_modified(source_last_modified)
-    config_fingerprint = _analysis_config_fingerprint(config)
+    compatible_config_fingerprints = _analysis_compatible_config_fingerprints(config)
     candidates: list[dict] = []
 
     for entry in os.scandir(jobs_root):
@@ -321,7 +379,7 @@ def _find_resume_candidates(
         completed_chunk_count = len(state.get("completed_chunk_indices") or [])
         if completed_chunk_count <= 0:
             continue
-        if state.get("config_fingerprint") != config_fingerprint:
+        if state.get("config_fingerprint") not in compatible_config_fingerprints:
             continue
         if str(state.get("source_filename") or "") != source_filename:
             continue
@@ -933,6 +991,11 @@ def _skipped_summary(message: str) -> dict:
     }
 
 
+def _should_generate_summary_during_analysis(config: dict) -> bool:
+    summary_config = config.get("summary", {})
+    return bool(summary_config.get("generate_during_analysis", False))
+
+
 def _ensure_generation_status(summary: dict) -> dict:
     status = summary.get("generation_status")
     if not isinstance(status, dict):
@@ -1023,6 +1086,172 @@ def _participant_summaries_from_speaker_context(items: list[dict]) -> list[dict]
         }
         for item in items
     ]
+
+
+@app.post("/api/outputs/{job_id}/generate-diarization")
+async def generate_output_diarization(job_id: str, payload: dict | None = Body(None)) -> dict:
+    from pipeline.align_speakers import align_segments_with_speakers
+    from pipeline.diarize import diarize_audio
+    from pipeline.export_txt import export_txt
+    from pipeline.transcript_display import build_display_segments, get_transcript_segments
+
+    job_id = _validate_job_id(job_id)
+    generation_key = None
+    try:
+        with GENERATION_STATUS_LOCK:
+            result_data, had_saved_result = _load_or_rebuild_job_result(job_id, payload, persist_rebuilt=False)
+            source_segments = (
+                result_data.get("raw_stt_segments")
+                or result_data.get("aligned_segments")
+                or result_data.get("segments")
+                or []
+            )
+            raw_segments = numeric_transcript_segments(source_segments)
+            if not raw_segments:
+                raise HTTPException(status_code=400, detail="Transcript segments are required")
+            result_settings = result_data.setdefault("settings", {})
+            if result_settings.get("diarization"):
+                raise HTTPException(status_code=409, detail="diarization_already_completed")
+            generation_key = _begin_generation(job_id, "diarization")
+            result_settings["diarization_generation_status"] = "generating"
+            if had_saved_result:
+                _save_job_result(job_id, result_data)
+
+        config = load_config()
+        source_audio_path = _resolve_job_audio_path(config, job_id)
+        if not source_audio_path:
+            raise HTTPException(status_code=404, detail="audio_required_for_diarization")
+
+        decision = _diarization_resource_decision(config, get_wav_duration_seconds(source_audio_path))
+        if decision.get("skipped"):
+            raise HTTPException(status_code=409, detail="diarization_resource_limit")
+        if not decision.get("requested"):
+            raise HTTPException(status_code=409, detail="diarization_disabled")
+
+        diarization_spec = get_model_spec("diarization")
+        if model_exists(BASE_DIR, diarization_spec):
+            diarize_model_path = resolve_model_path(BASE_DIR, diarization_spec)
+        else:
+            diarize_model_path = str(config.get("paths", {}).get("diarization_model") or "")
+            if diarize_model_path.startswith((".", "..")):
+                diarize_model_path = os.path.normpath(os.path.join(BASE_DIR, diarize_model_path))
+        if not diarize_model_path or not os.path.exists(diarize_model_path):
+            raise HTTPException(status_code=409, detail="diarization_model_not_ready")
+
+        min_spk = config.get("diarization", {}).get("min_speakers")
+        max_spk = config.get("diarization", {}).get("max_speakers")
+        speaker_segments = await asyncio.to_thread(
+            lambda: diarize_audio(source_audio_path, diarize_model_path, min_spk, max_spk)
+        )
+        aligned_segments = align_segments_with_speakers(copy.deepcopy(raw_segments), speaker_segments)
+        display_segments = build_display_segments(copy.deepcopy(aligned_segments))
+
+        output_dir = _get_output_dir()
+        temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+        checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+        ensure_job_checkpoint_dirs(checkpoint_paths)
+        segments_fingerprint = _segment_fingerprint(raw_segments)
+        config_fingerprint = _analysis_config_fingerprint(config)
+        atomic_write_json(checkpoint_paths.diarization_segments_path, {
+            "speaker_segments": speaker_segments,
+            "config_fingerprint": config_fingerprint,
+            "segments_fingerprint": segments_fingerprint,
+        })
+        atomic_write_json(checkpoint_paths.aligned_segments_path, {
+            "segments": aligned_segments,
+            "config_fingerprint": config_fingerprint,
+            "segments_fingerprint": segments_fingerprint,
+        })
+        atomic_write_json(checkpoint_paths.display_segments_path, {
+            "segments": display_segments,
+            "config_fingerprint": config_fingerprint,
+            "segments_fingerprint": segments_fingerprint,
+        })
+
+        with GENERATION_STATUS_LOCK:
+            latest_result = _load_latest_generation_result(job_id, result_data)
+            latest_result["segments"] = aligned_segments
+            latest_result["aligned_segments"] = aligned_segments
+            latest_result["display_segments"] = display_segments
+            latest_result.setdefault("raw_stt_segments", raw_segments)
+            latest_settings = latest_result.setdefault("settings", {})
+            latest_settings.update({
+                "diarization": True,
+                "diarization_requested": True,
+                "diarization_skipped": False,
+                "diarization_deferred": False,
+                "diarization_skip_reason": "",
+                "diarization_skip_message": "",
+                "diarization_defer_message": "",
+                "diarization_generation_status": "completed",
+                "diarization_resource_decision": {**decision, "run": True, "skipped": False},
+            })
+            latest_summary = latest_result.setdefault("summary", {})
+            latest_status = _ensure_generation_status(latest_summary)
+            if latest_status.get("speaker_context_summaries") == "completed":
+                latest_status["speaker_context_summaries"] = "not_started"
+                latest_summary["speaker_context_summaries"] = []
+                latest_summary["participant_summaries"] = []
+            latest_summary["generation_status"] = latest_status
+            _save_job_result(job_id, latest_result)
+            result_data = latest_result
+
+        out_txt_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_transcript.txt"))
+        if not out_txt_path.startswith(output_dir + os.sep):
+            raise HTTPException(status_code=400, detail="Invalid export path")
+        export_txt(get_transcript_segments(result_data), out_txt_path)
+        export_error = None
+        try:
+            outputs = _refresh_summary_exports(job_id, result_data)
+        except Exception:
+            logging.exception("Failed to refresh summary exports after diarization")
+            outputs = _result_outputs(job_id)
+            export_error = "발화자 구분은 저장했지만 일부 문서 파일을 갱신하지 못했습니다."
+
+        _write_job_state(checkpoint_paths, {
+            "diarization_completed": True,
+            "diarization_skipped": False,
+            "diarization_deferred": False,
+            "resume_supported": True,
+        })
+        return {
+            "job_id": job_id,
+            "segments": segments_for_ui(result_data.get("segments", [])),
+            "display_segments": segments_for_ui(result_data.get("display_segments", [])),
+            "diarization_applied": True,
+            "diarization_requested": True,
+            "diarization_skipped": False,
+            "diarization_deferred": False,
+            "generation_status": result_data.get("summary", {}).get("generation_status", {}),
+            "speaker_context_summaries": result_data.get("summary", {}).get("speaker_context_summaries", []),
+            "participant_summaries": result_data.get("summary", {}).get("participant_summaries", []),
+            "outputs": outputs,
+            "export_error": export_error,
+        }
+    except HTTPException:
+        with GENERATION_STATUS_LOCK:
+            try:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    latest_result = _load_latest_generation_result(job_id, result_data if "result_data" in locals() else {})
+                    latest_result.setdefault("settings", {})["diarization_generation_status"] = "failed"
+                    _save_job_result(job_id, latest_result)
+            except Exception:
+                pass
+        raise
+    except Exception:
+        with GENERATION_STATUS_LOCK:
+            try:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    latest_result = _load_latest_generation_result(job_id, result_data if "result_data" in locals() else {})
+                    latest_result.setdefault("settings", {})["diarization_generation_status"] = "failed"
+                    _save_job_result(job_id, latest_result)
+            except Exception:
+                pass
+        logging.exception("Failed to generate diarization")
+        raise HTTPException(status_code=500, detail="Failed to generate diarization")
+    finally:
+        with GENERATION_STATUS_LOCK:
+            _end_generation(generation_key)
 
 
 @app.post("/api/outputs/{job_id}/generate-summary")
@@ -2177,8 +2406,12 @@ async def stream_real_analysis(
                 "segments": segments_for_ui(result_data.get("segments", [])),
                 "display_segments": segments_for_ui(result_data.get("display_segments", [])),
                 "diarization_skipped": bool(result_settings.get("diarization_skipped")),
+                "diarization_applied": bool(result_settings.get("diarization")),
+                "diarization_requested": bool(result_settings.get("diarization_requested")),
+                "diarization_deferred": bool(result_settings.get("diarization_deferred")),
                 "diarization_skip_message": str(result_settings.get("diarization_skip_message") or ""),
                 "diarization_skip_reason": str(result_settings.get("diarization_skip_reason") or ""),
+                "diarization_defer_message": str(result_settings.get("diarization_defer_message") or ""),
             }
             await queue.put(final_data)
             await queue.put("[DONE]")
@@ -2278,6 +2511,43 @@ def seconds_to_timestamp(seconds: float) -> str:
     return f"{h:02d}:{m:02d}:{s:02d}"
 
 
+def timestamp_to_seconds(value) -> float:
+    if isinstance(value, (int, float)):
+        return float(value)
+    if not isinstance(value, str):
+        return 0.0
+    parts = value.strip().split(":")
+    try:
+        if len(parts) == 3:
+            hours, minutes, seconds = parts
+            return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+        if len(parts) == 2:
+            minutes, seconds = parts
+            return int(minutes) * 60 + float(seconds)
+        return float(value)
+    except ValueError:
+        return 0.0
+
+
+def numeric_transcript_segments(segments: list[dict]) -> list[dict]:
+    numeric_segments: list[dict] = []
+    for segment in segments or []:
+        if not isinstance(segment, dict):
+            continue
+        start = timestamp_to_seconds(segment.get("start", 0.0))
+        end = timestamp_to_seconds(segment.get("end", start))
+        if end < start:
+            end = start
+        numeric_segments.append({
+            **segment,
+            "start": start,
+            "end": end,
+            "speaker": segment.get("speaker") or segment.get("speaker_name") or "Speaker",
+            "text": segment.get("text", ""),
+        })
+    return numeric_segments
+
+
 def segments_for_ui(segments: list[dict]) -> list[dict]:
     return [
         {
@@ -2363,6 +2633,7 @@ def process_audio_pipeline(
     except OSError:
         input_fingerprint = hashlib.sha256(input_file.encode("utf-8")).hexdigest()
     config_fingerprint = _analysis_config_fingerprint(config)
+    compatible_config_fingerprints = _analysis_compatible_config_fingerprints(config)
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
     existing_state = _load_job_state(checkpoint_paths)
     resume_requested = bool(existing_state.get("resume_requested"))
@@ -2379,7 +2650,7 @@ def process_audio_pipeline(
     }
     if existing_state and (
         existing_state.get("input_fingerprint") != input_fingerprint
-        or existing_state.get("config_fingerprint") != config_fingerprint
+        or existing_state.get("config_fingerprint") not in compatible_config_fingerprints
     ):
         _reset_checkpoint_root_for_new_run(checkpoint_paths, preserve_upload_path=input_file)
         if resume_requested:
@@ -2470,7 +2741,7 @@ def process_audio_pipeline(
         and os.path.exists(temp_wav_path)
         and os.path.getsize(temp_wav_path) > 0
         and existing_state.get("input_fingerprint") == input_fingerprint
-        and existing_state.get("config_fingerprint") == config_fingerprint
+        and existing_state.get("config_fingerprint") in compatible_config_fingerprints
     )
     if can_reuse_source_wav:
         _report_progress("저장된 음성 파일을 재사용합니다.", 10)
@@ -2489,6 +2760,8 @@ def process_audio_pipeline(
         source_wav_duration = float(existing_state.get("source_wav_duration") or 0.0)
     source_wav_size = os.path.getsize(temp_wav_path) if os.path.exists(temp_wav_path) else 0
     diarization_decision = _diarization_resource_decision(config, source_wav_duration)
+    if diarization_decision.get("run") and not _should_generate_diarization_during_analysis(config):
+        diarization_decision = _defer_diarization_decision(diarization_decision)
     _write_job_state(checkpoint_paths, {
         "source_wav_completed": True,
         "source_wav_path": temp_wav_path,
@@ -2566,7 +2839,7 @@ def process_audio_pipeline(
     can_reuse_chunks = (
         isinstance(chunk_manifest, dict)
         and chunk_manifest.get("input_fingerprint") == input_fingerprint
-        and chunk_manifest.get("config_fingerprint") == config_fingerprint
+        and chunk_manifest.get("config_fingerprint") in compatible_config_fingerprints
         and int(chunk_manifest.get("source_wav_size") or 0) == int(source_wav_size or 0)
         and int(chunk_manifest.get("long_chunk_seconds") or 0) == long_chunk_seconds
         and bool(chunk_manifest.get("enable_chunking")) == bool(enable_chunking)
@@ -2625,7 +2898,7 @@ def process_audio_pipeline(
         return (
             checkpoint_payload.get("chunk_index") == expected["chunk_index"]
             and checkpoint_payload.get("input_fingerprint") == expected["input_fingerprint"]
-            and checkpoint_payload.get("config_fingerprint") == expected["config_fingerprint"]
+            and checkpoint_payload.get("config_fingerprint") in compatible_config_fingerprints
             and int(checkpoint_payload.get("source_wav_size") or 0) == int(expected["source_wav_size"] or 0)
             and abs(float(checkpoint_payload.get("source_wav_duration") or 0.0) - float(expected["source_wav_duration"] or 0.0)) < 0.001
             and os.path.normcase(os.path.abspath(str(checkpoint_payload.get("chunk_path") or ""))) == os.path.normcase(expected["chunk_path"])
@@ -2750,8 +3023,10 @@ def process_audio_pipeline(
             "diarization": False,
             "diarization_requested": bool(diarization_decision.get("requested")),
             "diarization_skipped": bool(diarization_decision.get("skipped")),
+            "diarization_deferred": bool(diarization_decision.get("deferred")),
             "diarization_skip_reason": diarization_decision.get("skip_reason") or "",
             "diarization_skip_message": diarization_decision.get("skip_message") or "",
+            "diarization_defer_message": diarization_decision.get("defer_message") or "",
             "diarization_resource_decision": diarization_decision,
             "summary": False,
             "preprocessing": preprocessing_applied,
@@ -2810,13 +3085,13 @@ def process_audio_pipeline(
             and isinstance(aligned_checkpoint, dict)
             and isinstance(display_checkpoint, dict)
             and diarization_checkpoint.get("input_fingerprint") == input_fingerprint
-            and diarization_checkpoint.get("config_fingerprint") == config_fingerprint
+            and diarization_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
             and diarization_checkpoint.get("segments_fingerprint") == segments_fingerprint
             and aligned_checkpoint.get("input_fingerprint") == input_fingerprint
-            and aligned_checkpoint.get("config_fingerprint") == config_fingerprint
+            and aligned_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
             and aligned_checkpoint.get("segments_fingerprint") == segments_fingerprint
             and display_checkpoint.get("input_fingerprint") == input_fingerprint
-            and display_checkpoint.get("config_fingerprint") == config_fingerprint
+            and display_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
             and display_checkpoint.get("segments_fingerprint") == segments_fingerprint
             and isinstance(aligned_checkpoint.get("segments"), list)
             and isinstance(display_checkpoint.get("segments"), list)
@@ -2858,7 +3133,10 @@ def process_audio_pipeline(
             aligned_segments = copy.deepcopy(segments)
             display_segments = build_display_segments(segments)
     else:
-        if segments and diarization_decision.get("skipped"):
+        if segments and diarization_decision.get("deferred"):
+            _set_stage("diarization_deferred")
+            _report_progress(str(diarization_decision.get("defer_message") or "발화자 구분은 별도로 실행할 수 있습니다."), 70)
+        elif segments and diarization_decision.get("skipped"):
             _set_stage("diarization_skipped")
             _report_progress(str(diarization_decision.get("skip_message") or "발화자 구분을 건너뜁니다."), 70)
         aligned_segments = copy.deepcopy(segments)
@@ -2880,18 +3158,23 @@ def process_audio_pipeline(
     if segments and config.get("summary", {}).get("enabled", True):
         _set_stage("summary")
         _raise_if_cancelled()
-        readiness = _summary_model_readiness(config)
-        if not readiness["ready"]:
-            _report_progress(readiness["message"], 85)
-            summary_data = _skipped_summary(readiness["message"])
+        if not _should_generate_summary_during_analysis(config):
+            message = "대화록 생성이 완료되었습니다. 정리는 회의 기록에서 별도로 실행해 주세요."
+            _report_progress(message, 85)
+            summary_data = _skipped_summary(message)
         else:
-            _report_progress("Summarizing with Local LLM...", 85)
-            llm_model = _resolve_summary_model(config)
-            summary_data = summarize_meeting(
-                segments,
-                model_name_or_path=llm_model,
-                meeting_context=meeting_context or {},
-            )
+            readiness = _summary_model_readiness(config)
+            if not readiness["ready"]:
+                _report_progress(readiness["message"], 85)
+                summary_data = _skipped_summary(readiness["message"])
+            else:
+                _report_progress("Summarizing with Local LLM...", 85)
+                llm_model = _resolve_summary_model(config)
+                summary_data = summarize_meeting(
+                    segments,
+                    model_name_or_path=llm_model,
+                    meeting_context=meeting_context or {},
+                )
         _raise_if_cancelled()
     if summary_data:
         _ensure_generation_status(summary_data)
@@ -2913,8 +3196,10 @@ def process_audio_pipeline(
             "diarization": bool(diarization_decision.get("run")),
             "diarization_requested": bool(diarization_decision.get("requested")),
             "diarization_skipped": bool(diarization_decision.get("skipped")),
+            "diarization_deferred": bool(diarization_decision.get("deferred")),
             "diarization_skip_reason": diarization_decision.get("skip_reason") or "",
             "diarization_skip_message": diarization_decision.get("skip_message") or "",
+            "diarization_defer_message": diarization_decision.get("defer_message") or "",
             "diarization_resource_decision": diarization_decision,
             "summary": config.get("summary", {}).get("enabled", True),
             "preprocessing": preprocessing_applied,
@@ -2958,6 +3243,7 @@ def process_audio_pipeline(
         "summary_failed": _summary_status(summary_data) == "failed" if summary_data else False,
         "diarization_completed": bool(diarization_decision.get("run") and segments),
         "diarization_skipped": bool(diarization_decision.get("skipped")),
+        "diarization_deferred": bool(diarization_decision.get("deferred")),
         "resume_supported": True,
         "resume_mode": resume_mode,
         "resume_message": resume_message,

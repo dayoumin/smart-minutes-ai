@@ -1,4 +1,5 @@
 import asyncio
+import copy
 import json
 import os
 import sys
@@ -742,6 +743,136 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(payload["candidates"][0]["job_id"], "resume_match")
             self.assertEqual(payload["candidates"][0]["completed_chunk_count"], 2)
 
+    def test_analysis_config_fingerprint_ignores_summary_settings(self) -> None:
+        base_config = {
+            "paths": {
+                "stt_model": "../models/faster-whisper-large-v3",
+                "diarization_model": "../models",
+                "llm_model": "./models/llm/old.gguf",
+            },
+            "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+            "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+            "preprocessing": {"enabled": True},
+            "diarization": {"enabled": True},
+            "summary": {"enabled": True, "model": "old-model"},
+        }
+        changed_summary_config = copy.deepcopy(base_config)
+        changed_summary_config["summary"] = {
+            "enabled": False,
+            "model": "new-model",
+            "generate_during_analysis": True,
+        }
+        changed_summary_config["paths"]["llm_model"] = "./models/llm/new.gguf"
+        changed_summary_config["paths"]["stt_model"] = "D:/resolved/models/faster-whisper-large-v3"
+        changed_summary_config["paths"]["diarization_model"] = "D:/resolved/models/diarization"
+
+        self.assertEqual(
+            main._analysis_config_fingerprint(base_config),
+            main._analysis_config_fingerprint(changed_summary_config),
+        )
+
+    def test_resume_candidates_accepts_legacy_summary_fingerprint(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "llm_model": "./models/llm/gemma.gguf",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": True, "model": "gemma4:e2b"},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "legacy_resume")
+            os.makedirs(os.path.dirname(paths.state_path), exist_ok=True)
+            atomic_write_json(paths.state_path, {
+                "job_id": "legacy_resume",
+                "stage": "cancelled",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "config_fingerprint": main._analysis_legacy_config_fingerprint(fake_config),
+                "completed_chunk_indices": [0, 1, 2],
+                "chunk_count": 3,
+                "last_progress": {"message": "Summarizing with Local LLM...", "progress": 85, "status": "processing"},
+            })
+
+            with patch("main.load_config", return_value=fake_config):
+                response = self.client.post(
+                    "/api/analyze/resume-candidates",
+                    json={
+                        "source_filename": "meeting.mp4",
+                        "source_size": 1234,
+                        "source_last_modified": 987654321,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["recommended_job_id"], "legacy_resume")
+
+    def test_resume_candidates_accepts_prepared_legacy_model_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "diarization_model": "../models",
+                    "llm_model": "./models/llm/gemma.gguf",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": True, "generate_during_analysis": True},
+                "summary": {"enabled": True, "model": "gemma4:e2b"},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            prepared_config = copy.deepcopy(fake_config)
+            prepared_config["paths"]["stt_model"] = os.path.join(work_dir, "models", "faster-whisper-large-v3")
+            prepared_config["paths"]["diarization_model"] = os.path.join(work_dir, "models", "speaker-diarization-community-1")
+            paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "prepared_legacy_resume")
+            os.makedirs(os.path.dirname(paths.state_path), exist_ok=True)
+            atomic_write_json(paths.state_path, {
+                "job_id": "prepared_legacy_resume",
+                "stage": "cancelled",
+                "resume_supported": True,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "config_fingerprint": main._analysis_legacy_config_fingerprint(prepared_config),
+                "completed_chunk_indices": [0, 1, 2],
+                "chunk_count": 3,
+                "last_progress": {"message": "Summarizing with Local LLM...", "progress": 85, "status": "processing"},
+            })
+
+            with (
+                patch("main.load_config", return_value=fake_config),
+                patch("main.model_exists", return_value=True),
+                patch("main.resolve_model_path", side_effect=[
+                    prepared_config["paths"]["stt_model"],
+                    prepared_config["paths"]["diarization_model"],
+                ]),
+            ):
+                response = self.client.post(
+                    "/api/analyze/resume-candidates",
+                    json={
+                        "source_filename": "meeting.mp4",
+                        "source_size": 1234,
+                        "source_last_modified": 987654321,
+                    },
+                )
+
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertEqual(payload["recommended_job_id"], "prepared_legacy_resume")
+
     def test_draft_statuses_returns_backend_truth_for_active_and_completed_jobs(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:
             fake_config = {
@@ -1008,7 +1139,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
                 "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
                 "preprocessing": {"enabled": False},
-                "diarization": {"enabled": True},
+                "diarization": {"enabled": True, "generate_during_analysis": True},
                 "summary": {"enabled": False},
                 "privacy": {"auto_delete_temp_audio": True},
             }
@@ -1307,13 +1438,13 @@ class AnalyzeApiTest(unittest.TestCase):
             "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
             "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
             "preprocessing": {"enabled": False},
-            "diarization": {"enabled": True},
-            "summary": {"enabled": True},
+            "diarization": {"enabled": True, "generate_during_analysis": True},
+            "summary": {"enabled": True, "generate_during_analysis": True},
             "privacy": {"auto_delete_temp_audio": True},
         }
 
         with (
-            patch("main.get_model_spec"),
+            patch("main.resolve_model_path", return_value="resolved-model"),
             patch("main.model_exists", return_value=False),
             patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
             patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[{"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0}]),
@@ -1348,6 +1479,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "preprocessing": {"enabled": False},
                 "diarization": {
                     "enabled": True,
+                    "generate_during_analysis": True,
                     "auto_skip_long_audio": True,
                     "max_duration_seconds": 60,
                     "max_waveform_mb": 256,
@@ -1399,7 +1531,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
                 "preprocessing": {"enabled": False},
                 "diarization": {"enabled": False},
-                "summary": {"enabled": True, "model": "missing-model"},
+                "summary": {"enabled": True, "generate_during_analysis": True, "model": "missing-model"},
                 "privacy": {"auto_delete_temp_audio": True},
             }
 
@@ -1438,6 +1570,100 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertFalse(state["summary_completed"])
             self.assertTrue(state["summary_skipped"])
 
+    def test_pipeline_defers_summary_by_default_after_transcript(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": True},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 5.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 5.0, "text": "hello"}]),
+                patch("pipeline.summarize.summarize_meeting") as summarize_mock,
+                patch.object(main, "_summary_model_readiness") as readiness_mock,
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.export_markdown.export_markdown"),
+                patch("pipeline.export_docx.export_docx"),
+                patch("pipeline.export_hwpx.export_hwpx"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_summary_deferred_default", config)
+
+            summarize_mock.assert_not_called()
+            readiness_mock.assert_not_called()
+            summary = result["result_data"]["summary"]
+            self.assertEqual(summary["generation_status"]["summary"], "skipped")
+            self.assertIn("정리는 회의 기록에서 별도로 실행", summary["overview"])
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], "unit_summary_deferred_default")
+            with open(checkpoint_paths.state_path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+            self.assertTrue(state["summary_skipped"])
+
+    def test_pipeline_defers_diarization_by_default_after_transcript(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": True},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 5.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 5.0, "text": "hello"}]),
+                patch("pipeline.diarize.diarize_audio") as diarize_mock,
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_diarization_deferred_default", config)
+
+            settings = result["result_data"]["settings"]
+            self.assertTrue(settings["diarization_requested"])
+            self.assertTrue(settings["diarization_deferred"])
+            self.assertFalse(settings["diarization"])
+            self.assertFalse(settings["diarization_skipped"])
+            self.assertIn("별도로 실행", settings["diarization_defer_message"])
+            diarize_mock.assert_not_called()
+
     def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
         progress_events = []
         config = {
@@ -1452,8 +1678,8 @@ class AnalyzeApiTest(unittest.TestCase):
             "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
             "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
             "preprocessing": {"enabled": False},
-            "diarization": {"enabled": True},
-            "summary": {"enabled": True},
+            "diarization": {"enabled": True, "generate_during_analysis": True},
+            "summary": {"enabled": True, "generate_during_analysis": True},
             "privacy": {"auto_delete_temp_audio": True},
         }
 
@@ -1461,7 +1687,7 @@ class AnalyzeApiTest(unittest.TestCase):
             progress_events.append((step, progress))
 
         with (
-            patch("main.get_model_spec"),
+            patch("main.resolve_model_path", return_value="resolved-model"),
             patch("main.model_exists", return_value=False),
             patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
             patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[

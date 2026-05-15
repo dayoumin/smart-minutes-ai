@@ -33,14 +33,16 @@
   },
   "diarization": {
     "enabled": true,
+    "generate_during_analysis": false,
     "auto_skip_long_audio": true,
-    "max_duration_seconds": 1800,
-    "max_waveform_mb": 256,
+    "max_duration_seconds": 9000,
+    "max_waveform_mb": 512,
     "min_speakers": null,
     "max_speakers": null
   },
   "summary": {
     "enabled": true,
+    "generate_during_analysis": false,
     "mode": "meeting_minutes",
     "provider": "ollama",
     "model": "gemma4:e2b"

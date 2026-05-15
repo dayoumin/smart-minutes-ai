@@ -385,7 +385,7 @@ def _split_text_for_summary(transcript_text: str, max_chars: int = SUMMARY_CHUNK
         chunks.append("\n".join(current))
     return chunks or [transcript_text]
 
-def _error_summary(title: str, overview: str) -> dict:
+def _error_summary(title: str, overview: str, status: str = "failed") -> dict:
     return {
         "title": title,
         "overview": overview,
@@ -395,6 +395,11 @@ def _error_summary(title: str, overview: str) -> dict:
         "decisions": [],
         "actions": [],
         "needs_check": [],
+        "generation_status": {
+            "summary": status,
+            "topic_sections": "not_started",
+            "speaker_context_summaries": "not_started",
+        },
     }
 
 

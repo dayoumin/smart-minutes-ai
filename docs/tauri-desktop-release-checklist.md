@@ -105,6 +105,10 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 분석 결과와 임시 파일은 portable 실행 폴더 하위 `backend\outputs`, `backend\temp`에 생성된다.
 - 회사 PC에서는 portable 폴더를 쓰기 가능한 위치에 둔다.
+- 회사 PC에서 Ollama 설치/모델 준비가 확실하지 않으면 요약 AI를 필수 조건으로 보지 않는다.
+  - STT, 화자 구분, 대화록 TXT/JSON 생성은 계속 완료되어야 한다.
+  - 요약 AI가 준비되지 않으면 결과의 `generation_status.summary`는 `skipped`로 남기고, 사용자는 대화록을 먼저 사용한다.
+  - Ollama와 요약 모델은 준비된 PC에서 전체 요약, 주제별 정리, 참석자별 정리를 다시 실행하는 선택 기능으로 다룬다.
 - `backend\.venv-desktop`는 PC 간에 복사해서 쓰는 공용 자산이 아니다.
   - 이 폴더는 생성 당시의 로컬 Python 설치 경로를 내부에 기록한다.
   - 회사 PC에서 만든 `venv`를 집 PC로 가져오거나, 기준 Python을 삭제/교체하면 같은 경로 오류가 다시 난다.

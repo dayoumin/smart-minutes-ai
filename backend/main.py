@@ -35,7 +35,14 @@ from job_checkpoints import (
     hash_file_contents,
     load_json_checkpoint,
 )
-from model_manager import get_model_status, model_exists, get_model_spec, normalize_windows_path, resolve_model_path
+from model_manager import (
+    get_model_status,
+    model_exists,
+    get_model_spec,
+    normalize_windows_path,
+    ollama_model_exists,
+    resolve_model_path,
+)
 from pipeline.transcribe import get_stt_device_status
 
 BASE_DIR = os.path.abspath(
@@ -516,6 +523,7 @@ async def models_status() -> dict:
         selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
+        summary_readiness = _summary_model_readiness(config)
         stt_device_status = get_stt_device_status()
         required_stt_keys = {"stt_faster_whisper"}
         for model in status.get("models", []):
@@ -529,6 +537,9 @@ async def models_status() -> dict:
         status["selected_stt_model"] = selected_stt
         status["selected_stt_device"] = selected_device
         status["diarization_enabled"] = diarization_enabled
+        status["summary_ready"] = bool(summary_readiness.get("ready"))
+        status["summary_status"] = summary_readiness.get("status")
+        status["summary_message"] = summary_readiness.get("message", "")
         status["stt_device_status"] = stt_device_status
         if selected_device == "cuda" and not stt_device_status.get("gpu_usable"):
             status["ready"] = False
@@ -867,6 +878,61 @@ def _resolve_summary_model(config: dict) -> str:
     return llm_model
 
 
+def _summary_model_readiness(config: dict) -> dict:
+    summary_config = config.get("summary", {})
+    if not summary_config.get("enabled", True):
+        return {
+            "ready": False,
+            "status": "skipped",
+            "message": "요약 기능이 꺼져 있어 대화록만 생성했습니다.",
+        }
+
+    model_name_or_path = _resolve_summary_model(config)
+    if not model_name_or_path:
+        return {
+            "ready": False,
+            "status": "skipped",
+            "message": "요약 AI 설정이 없어 대화록만 생성했습니다.",
+        }
+
+    if os.path.exists(model_name_or_path):
+        return {"ready": True, "status": "ready", "message": ""}
+
+    if model_name_or_path.endswith((".gguf", ".bin")):
+        return {
+            "ready": False,
+            "status": "skipped",
+            "message": "요약 AI 모델 파일이 없어 대화록만 생성했습니다.",
+        }
+
+    if ollama_model_exists(model_name_or_path):
+        return {"ready": True, "status": "ready", "message": ""}
+
+    return {
+        "ready": False,
+        "status": "skipped",
+        "message": f"요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 Ollama에 {model_name_or_path} 모델을 준비해 주세요.",
+    }
+
+
+def _skipped_summary(message: str) -> dict:
+    return {
+        "title": "회의록",
+        "overview": message,
+        "topics": [],
+        "topic_sections": [],
+        "participant_summaries": [],
+        "decisions": [],
+        "actions": [],
+        "needs_check": [message],
+        "generation_status": {
+            "summary": "skipped",
+            "topic_sections": "skipped",
+            "speaker_context_summaries": "skipped",
+        },
+    }
+
+
 def _ensure_generation_status(summary: dict) -> dict:
     status = summary.get("generation_status")
     if not isinstance(status, dict):
@@ -879,6 +945,21 @@ def _ensure_generation_status(summary: dict) -> dict:
     )
     summary["generation_status"] = status
     return status
+
+
+def _summary_status(summary: dict) -> str:
+    status = _ensure_generation_status(summary)
+    value = status.get("summary")
+    return value if isinstance(value, str) else "not_started"
+
+
+def _has_existing_summary_content(summary: dict | None) -> bool:
+    if not isinstance(summary, dict):
+        return False
+    return any(
+        bool(summary.get(key))
+        for key in ("overview", "topics", "topic_sections", "speaker_context_summaries", "participant_summaries")
+    )
 
 
 def _result_outputs(job_id: str, include_audio: bool | None = None) -> dict:
@@ -963,6 +1044,8 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
             status = _ensure_generation_status(summary)
             if status.get("summary") == "generating":
                 raise HTTPException(status_code=409, detail="Summary is already being generated")
+            had_existing_summary_content = _has_existing_summary_content(summary)
+            previous_summary_status = status.get("summary") if isinstance(status.get("summary"), str) else "not_started"
             generation_key = _begin_generation(job_id, "summary")
             status["summary"] = "generating"
             if had_saved_result:
@@ -970,17 +1053,21 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
 
         try:
             config = load_config()
-            summary_data = await asyncio.to_thread(
-                lambda: summarize_meeting(
-                    segments,
-                    _resolve_summary_model(config),
-                    meeting_context={
-                        "title": result_data.get("summary", {}).get("title", ""),
-                        "date": result_data.get("created_at", ""),
-                        "meeting_purpose": result_data.get("meeting_purpose", ""),
-                    },
+            readiness = await asyncio.to_thread(_summary_model_readiness, config)
+            if not readiness["ready"]:
+                summary_data = _skipped_summary(readiness["message"])
+            else:
+                summary_data = await asyncio.to_thread(
+                    lambda: summarize_meeting(
+                        segments,
+                        _resolve_summary_model(config),
+                        meeting_context={
+                            "title": result_data.get("summary", {}).get("title", ""),
+                            "date": result_data.get("created_at", ""),
+                            "meeting_purpose": result_data.get("meeting_purpose", ""),
+                        },
+                    )
                 )
-            )
         except Exception:
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
@@ -1007,13 +1094,30 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
             previous_speaker_context = latest_summary.get("speaker_context_summaries", [])
             previous_participant_summaries = latest_summary.get("participant_summaries", [])
 
+            summary_state = (
+                _summary_status(summary_data)
+                if isinstance(summary_data.get("generation_status"), dict)
+                else "completed"
+            )
+            if summary_state == "skipped" and had_existing_summary_content:
+                latest_status["summary"] = previous_summary_status if previous_summary_status != "generating" else "completed"
+                latest_summary["generation_status"] = latest_status
+                _save_job_result(job_id, latest_result)
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
             latest_summary.update(summary_data)
             latest_summary["topic_sections"] = []
             latest_summary["speaker_context_summaries"] = []
             latest_summary["participant_summaries"] = []
-            latest_status["summary"] = "completed"
-            latest_status["topic_sections"] = "not_started"
-            latest_status["speaker_context_summaries"] = "not_started"
+            latest_status["summary"] = summary_state
+            if summary_state == "completed":
+                latest_status["topic_sections"] = "not_started"
+                latest_status["speaker_context_summaries"] = "not_started"
+            elif summary_state == "skipped":
+                latest_status["topic_sections"] = "skipped"
+                latest_status["speaker_context_summaries"] = "skipped"
+            else:
+                latest_status["topic_sections"] = "not_started"
+                latest_status["speaker_context_summaries"] = "not_started"
             latest_summary["generation_status"] = latest_status
             _save_job_result(job_id, latest_result)
             result_data = latest_result
@@ -1069,6 +1173,8 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             status = _ensure_generation_status(summary)
             if status.get("topic_sections") == "generating":
                 raise HTTPException(status_code=409, detail="Topic sections are already being generated")
+            if status.get("summary") == "skipped":
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
             generation_key = _begin_generation(job_id, "topic_sections")
             status["topic_sections"] = "generating"
             if had_saved_result:
@@ -1165,6 +1271,8 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
                     status_code=409,
                     detail="Topic sections must be generated before speaker context summaries",
                 )
+            if status.get("summary") == "skipped":
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
             if status.get("speaker_context_summaries") == "generating":
                 raise HTTPException(status_code=409, detail="Speaker context summaries are already being generated")
             generation_key = _begin_generation(job_id, "speaker_context_summaries")
@@ -2771,16 +2879,19 @@ def process_audio_pipeline(
     # 4. Summary (Optional)
     if segments and config.get("summary", {}).get("enabled", True):
         _set_stage("summary")
-        _report_progress("Summarizing with Local LLM...", 85)
         _raise_if_cancelled()
-        llm_model = config["summary"].get("model", "gemma-4b")
-        if llm_model and llm_model.startswith((".", "..")):
-            llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
-        summary_data = summarize_meeting(
-            segments,
-            model_name_or_path=llm_model,
-            meeting_context=meeting_context or {},
-        )
+        readiness = _summary_model_readiness(config)
+        if not readiness["ready"]:
+            _report_progress(readiness["message"], 85)
+            summary_data = _skipped_summary(readiness["message"])
+        else:
+            _report_progress("Summarizing with Local LLM...", 85)
+            llm_model = _resolve_summary_model(config)
+            summary_data = summarize_meeting(
+                segments,
+                model_name_or_path=llm_model,
+                meeting_context=meeting_context or {},
+            )
         _raise_if_cancelled()
     if summary_data:
         _ensure_generation_status(summary_data)
@@ -2842,7 +2953,9 @@ def process_audio_pipeline(
     # Cleanup temp wav
     _write_job_state(checkpoint_paths, {
         "stage": "completed",
-        "summary_completed": bool(summary_data),
+        "summary_completed": _summary_status(summary_data) == "completed" if summary_data else False,
+        "summary_skipped": _summary_status(summary_data) == "skipped" if summary_data else False,
+        "summary_failed": _summary_status(summary_data) == "failed" if summary_data else False,
         "diarization_completed": bool(diarization_decision.get("run") and segments),
         "diarization_skipped": bool(diarization_decision.get("skipped")),
         "resume_supported": True,

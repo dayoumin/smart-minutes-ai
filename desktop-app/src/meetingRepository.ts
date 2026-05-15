@@ -107,11 +107,11 @@ export interface MeetingSpeakerContextSummary {
 }
 
 export interface MeetingGenerationStatus {
-    summary?: 'not_started' | 'generating' | 'completed' | 'failed';
-    topicSections?: 'not_started' | 'generating' | 'completed' | 'failed';
-    topic_sections?: 'not_started' | 'generating' | 'completed' | 'failed';
-    speakerContextSummaries?: 'not_started' | 'generating' | 'completed' | 'failed';
-    speaker_context_summaries?: 'not_started' | 'generating' | 'completed' | 'failed';
+    summary?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
+    topicSections?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
+    topic_sections?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
+    speakerContextSummaries?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
+    speaker_context_summaries?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
 }
 
 const DB_NAME = 'MeetingHistoryDB';

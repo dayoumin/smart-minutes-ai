@@ -76,6 +76,7 @@ const generationStatusLabel = {
     generating: '정리 중',
     completed: '완료',
     failed: '정리 필요',
+    skipped: '요약 AI 준비 필요',
 };
 
 const isStaleGenerationMessage = (message: string): boolean => (
@@ -100,6 +101,9 @@ const getGenerationErrorMessage = async (response: Response, fallback: string): 
         }
         if (parsed.detail === 'summary_input_changed') {
             return '대화록이 바뀌어 이번 정리는 저장하지 않았습니다. 다시 정리해 주세요.';
+        }
+        if (parsed.detail === 'summary_model_not_ready') {
+            return '요약 AI가 준비되지 않았습니다. 대화록은 사용할 수 있고, 요약은 Ollama 모델을 준비한 뒤 다시 실행해 주세요.';
         }
         if (parsed.detail === 'topic_input_changed') {
             return '대화록이나 요약이 바뀌어 주제별 정리를 저장하지 않았습니다. 다시 정리해 주세요.';
@@ -640,9 +644,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             window.requestAnimationFrame(() => {
                 document.querySelector('[data-summary-section="overview"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
-            setNoticeMessage(summaryRegenerationWillResetDerived
-                ? '전체 요약을 정리했습니다. 아래 정리도 다시 해 주세요.'
-                : '전체 요약을 정리했습니다.');
+            const nextSummaryStatus = data.generationStatus?.summary ?? data.generation_status?.summary;
+            setNoticeMessage(nextSummaryStatus === 'skipped'
+                ? '요약 AI가 준비되지 않아 대화록만 유지했습니다.'
+                : summaryRegenerationWillResetDerived
+                    ? '전체 요약을 정리했습니다. 아래 정리도 다시 해 주세요.'
+                    : '전체 요약을 정리했습니다.');
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setErrorMessage(data.export_error);
             }
@@ -676,8 +683,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         || (selectedMeeting?.displaySegments?.length ?? 0)
         || (selectedMeeting?.segments?.length ?? 0),
     );
-    const canGenerateTopicSections = Boolean(selectedMeeting?.jobId && hasTranscriptData);
     const canGenerateSummary = Boolean(selectedMeeting?.jobId && hasTranscriptData);
+    const canGenerateTopicSections = Boolean(selectedMeeting?.jobId && hasTranscriptData && summaryGenerationStatus !== 'skipped');
     const speakerGenerationStatus = getSpeakerGenerationStatus(
         selectedMeeting?.generationStatus,
         selectedMeeting?.speakerContextSummaries,
@@ -710,6 +717,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         ? '대화록이 있어야 정리할 수 있습니다.'
         : !selectedMeeting?.jobId
             ? '분석 원본이 있어야 정리할 수 있습니다.'
+            : summaryGenerationStatus === 'skipped'
+                ? '요약 AI가 준비되면 전체 요약과 추가 정리를 만들 수 있습니다.'
             : !baseCanCreateSpeakerContext
                 ? '참석자별 정리 전에 주제별 정리를 먼저 해 주세요.'
                 : summaryRegenerationWillResetDerived && summaryOutdated
@@ -1428,6 +1437,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <Button
                                                 variant="outline"
                                                 className="detail-action-button"
+                                                aria-label="전체 요약 정리"
                                                 disabled={!canGenerateSummary || generatingKind !== null || summaryGenerationStatus === 'generating'}
                                                 onClick={handleGenerateSummary}
                                             >
@@ -1445,6 +1455,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <Button
                                                 variant="outline"
                                                 className="detail-action-button"
+                                                aria-label="주제별 정리"
                                                 disabled={!canGenerateTopicSections || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                 onClick={handleGenerateTopicSections}
                                             >
@@ -1462,6 +1473,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <Button
                                                 variant="outline"
                                                 className="detail-action-button"
+                                                aria-label="참석자별 정리"
                                                 disabled={!canGenerateTopicSections || generatingKind !== null || speakerGenerationStatus === 'generating' || !canCreateSpeakerContext}
                                                 onClick={handleGenerateSpeakerContext}
                                                 title={canCreateSpeakerContext ? '참석자별 정리' : '주제별 정리를 먼저 만들어 주세요.'}

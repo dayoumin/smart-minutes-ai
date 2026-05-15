@@ -67,6 +67,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch("main.get_model_status", return_value=fake_status),
             patch("main.load_config", return_value={"stt": {"selected_model": "qwen3-asr"}, "diarization": {"enabled": False}}),
             patch("main.get_stt_device_status", return_value={"gpu_usable": False, "gpu_reason": "GPU unavailable", "recommended_device": "cpu", "selected_device_allowed": ["cpu"]}),
+            patch.object(main, "ollama_model_exists", return_value=False),
         ):
             response = self.client.get("/api/models/status")
 
@@ -78,6 +79,21 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertFalse(payload["diarization_enabled"])
         self.assertFalse(payload["ready"])
         self.assertEqual(payload["selected_stt_model"], "faster-whisper-large-v3")
+
+    def test_summary_model_readiness_reports_missing_default_ollama_model(self) -> None:
+        with patch.object(main, "ollama_model_exists", return_value=False):
+            readiness = main._summary_model_readiness({"summary": {"enabled": True}, "paths": {}})
+
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["status"], "skipped")
+        self.assertIn("gemma-4b", readiness["message"])
+
+    def test_summary_model_readiness_accepts_available_ollama_model(self) -> None:
+        with patch.object(main, "ollama_model_exists", return_value=True):
+            readiness = main._summary_model_readiness({"summary": {"enabled": True, "model": "gemma-4b"}, "paths": {}})
+
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["status"], "ready")
 
     def test_save_copy_rejects_missing_origin(self) -> None:
         response = self.client.post("/api/export-record/txt/save-copy", json={"title": "테스트 회의"})
@@ -1368,6 +1384,60 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(settings["diarization_skip_reason"], "duration_limit")
             diarize_mock.assert_not_called()
 
+    def test_pipeline_marks_summary_skipped_when_summary_model_is_not_ready(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": True, "model": "missing-model"},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 5.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 5.0, "text": "hello"}]),
+                patch("pipeline.summarize.summarize_meeting") as summarize_mock,
+                patch.object(main, "_summary_model_readiness", return_value={
+                    "ready": False,
+                    "status": "skipped",
+                    "message": "요약 AI가 준비되지 않아 대화록만 생성했습니다.",
+                }),
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.export_markdown.export_markdown"),
+                patch("pipeline.export_docx.export_docx"),
+                patch("pipeline.export_hwpx.export_hwpx"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_summary_model_skip", config)
+
+            summarize_mock.assert_not_called()
+            summary = result["result_data"]["summary"]
+            self.assertEqual(summary["generation_status"]["summary"], "skipped")
+            self.assertIn("요약 AI", summary["overview"])
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], "unit_summary_model_skip")
+            with open(checkpoint_paths.state_path, "r", encoding="utf-8") as handle:
+                state = json.load(handle)
+            self.assertFalse(state["summary_completed"])
+            self.assertTrue(state["summary_skipped"])
+
     def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
         progress_events = []
         config = {
@@ -1402,6 +1472,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch("pipeline.diarize.diarize_audio", return_value=[]),
             patch("pipeline.align_speakers.align_segments_with_speakers", side_effect=lambda segments, speakers: segments),
             patch("pipeline.summarize.summarize_meeting", return_value={"overview": "요약"}),
+            patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
             patch("pipeline.export_txt.export_txt"),
             patch("pipeline.export_markdown.export_markdown"),
             patch("pipeline.export_docx.export_docx"),
@@ -1807,7 +1878,7 @@ class AnalyzeApiTest(unittest.TestCase):
                     "actions": ["new action"],
                     "needs_check": ["new check"],
                 },
-            ):
+            ), patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
 
             self.assertEqual(response.status_code, 200)
@@ -1827,6 +1898,98 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(result_data["summary"]["topic_sections"], [])
             self.assertEqual(result_data["summary"]["speaker_context_summaries"], [])
             self.assertEqual(result_data["summary"]["participant_summaries"], [])
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_marks_skipped_when_summary_model_is_not_ready(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_model_skip"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"speaker": "SPEAKER_00", "speaker_name": "화자00", "text": "Discuss budget."}],
+                        "display_segments": [{"speaker": "SPEAKER_00", "speaker_name": "화자00", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "",
+                            "generation_status": {"summary": "not_started"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            with (
+                patch.object(main, "_summary_model_readiness", return_value={
+                    "ready": False,
+                    "status": "skipped",
+                    "message": "요약 AI가 준비되지 않아 대화록만 생성했습니다.",
+                }),
+                patch("pipeline.summarize.summarize_meeting") as summarize_mock,
+                patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)),
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["generation_status"]["summary"], "skipped")
+            self.assertEqual(payload["generation_status"]["topic_sections"], "skipped")
+            self.assertIn("요약 AI", payload["summary"])
+            summarize_mock.assert_not_called()
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_preserves_existing_summary_when_summary_model_is_not_ready(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_model_skip_preserve"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"speaker": "SPEAKER_00", "speaker_name": "화자00", "text": "Discuss budget."}],
+                        "display_segments": [{"speaker": "SPEAKER_00", "speaker_name": "화자00", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "기존 요약",
+                            "topic_sections": [{"topic": "예산", "summary": "기존 주제 정리"}],
+                            "speaker_context_summaries": [{"speaker": "SPEAKER_00", "summary": "기존 참석자 정리"}],
+                            "participant_summaries": [{"participant": "화자00", "summary": "기존 참석자 정리"}],
+                            "generation_status": {
+                                "summary": "completed",
+                                "topic_sections": "completed",
+                                "speaker_context_summaries": "completed",
+                            },
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            with (
+                patch.object(main, "_summary_model_readiness", return_value={
+                    "ready": False,
+                    "status": "skipped",
+                    "message": "요약 AI가 준비되지 않아 대화록만 생성했습니다.",
+                }),
+                patch("pipeline.summarize.summarize_meeting") as summarize_mock,
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["detail"], "summary_model_not_ready")
+            summarize_mock.assert_not_called()
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["overview"], "기존 요약")
+            self.assertEqual(result_data["summary"]["topic_sections"][0]["summary"], "기존 주제 정리")
+            self.assertEqual(result_data["summary"]["generation_status"]["summary"], "completed")
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)
@@ -1924,6 +2087,7 @@ class AnalyzeApiTest(unittest.TestCase):
             with (
                 patch("pipeline.summarize.summarize_meeting", side_effect=summarize_side_effect),
                 patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)),
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
             ):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-summary", json=payload)
 
@@ -1975,7 +2139,10 @@ class AnalyzeApiTest(unittest.TestCase):
                     "needs_check": [],
                 }
 
-            with patch("pipeline.summarize.summarize_meeting", side_effect=summarize_side_effect):
+            with (
+                patch("pipeline.summarize.summarize_meeting", side_effect=summarize_side_effect),
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
+            ):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
 
             self.assertEqual(response.status_code, 409, response.text)
@@ -2003,7 +2170,10 @@ class AnalyzeApiTest(unittest.TestCase):
             "displaySegments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "Discuss budget."}],
         }
 
-        with patch("pipeline.summarize.summarize_meeting", side_effect=RuntimeError("boom")):
+        with (
+            patch("pipeline.summarize.summarize_meeting", side_effect=RuntimeError("boom")),
+            patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
+        ):
             response = self.client.post(f"/api/outputs/{job_id}/generate-summary", json=payload)
 
         self.assertEqual(response.status_code, 500)

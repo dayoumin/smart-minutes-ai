@@ -8,6 +8,8 @@ const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
 const meetingId = 'codex-detail-flow-simulation';
 const jobId = 'codex-detail-flow-job';
+const skippedMeetingId = 'codex-detail-flow-summary-skipped';
+const skippedJobId = 'codex-detail-flow-summary-skipped-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
 
 const contentTypeByFormat = {
@@ -159,6 +161,58 @@ const seedMeeting = async (page) => {
   }, { meetingId, jobId });
 };
 
+const seedSkippedSummaryMeeting = async (page) => {
+  await page.evaluate(async ({ skippedMeetingId, skippedJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: skippedMeetingId,
+      jobId: skippedJobId,
+      date: '2026-05-07 23:58',
+      title: '요약 AI 미준비 회의록',
+      summary: '요약 AI가 준비되지 않아 대화록만 생성했습니다.',
+      participants: '화자1, 화자2',
+      meetingPurpose: '회사 PC 요약 AI 미준비 상태 확인',
+      sourceFile: 'summary-skipped.mp4',
+      topics: [],
+      topicSections: [],
+      speakerContextSummaries: [],
+      generationStatus: { summary: 'skipped', topicSections: 'skipped', speakerContextSummaries: 'skipped' },
+      speakerLabels: { '화자1': '김검토' },
+      segments: [
+        {
+          start: '00:00:01',
+          end: '00:00:08',
+          speaker: '화자1',
+          text: '요약 AI가 없어도 대화록은 확인할 수 있습니다.',
+        },
+      ],
+      editedDisplaySegments: [],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { skippedMeetingId, skippedJobId });
+};
+
 const installRoutes = async (page) => {
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
@@ -263,7 +317,15 @@ const run = async () => {
 
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await seedMeeting(page);
+    await seedSkippedSummaryMeeting(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
+
+    await page.getByText('요약 AI 미준비 회의록').first().click();
+    await page.getByText('요약 AI 준비 필요').waitFor({ timeout: 10000 });
+    await page.getByText('요약 AI가 준비되면 전체 요약과 추가 정리를 만들 수 있습니다.').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '주제별 정리' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '참석자별 정리' }).isDisabled(), true);
+
     await page.getByText('시뮬레이션 회의록').first().click();
 
     await page.getByText('주제별 정리 후 사용').waitFor({ timeout: 10000 });

@@ -1,4 +1,4 @@
-export type GenerationState = 'not_started' | 'generating' | 'completed' | 'failed';
+export type GenerationState = 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
 
 export interface MeetingGenerationStatusShape {
     summary?: GenerationState;

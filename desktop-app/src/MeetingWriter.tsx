@@ -32,7 +32,7 @@ import {
 import { getApiBase, writeFrontendLog } from './apiBase';
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
-import { formatAnalysisDuration, formatTranscriptReadyEstimate } from './analysisTimeEstimate';
+import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -1336,6 +1336,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         : '음성 파일을 선택해 주세요.';
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
     const transcriptEstimateLabel = formatTranscriptReadyEstimate(elapsedMs, progressPercent, rawStatusMessage || currentStatusMessage);
+    const transcriptProgressPercent = getTranscriptReadyProgressPercent(progressPercent, rawStatusMessage || currentStatusMessage);
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
@@ -1689,11 +1690,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                     </div>
                                 )}
                                 <ProgressBar
-                                    value={progressPercent}
+                                    value={transcriptProgressPercent}
                                     size="sm"
                                     tone={errorMessage ? 'error' : 'primary'}
                                     className="mt-3"
-                                    label="분석 진행률"
+                                    label="대화록 생성률"
                                 />
                             </div>
                         </div>
@@ -1710,7 +1711,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <div className="text-right">
                                 <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                                     <span>예상 시간</span>
-                                    <span title="화자 구분이 반영된 대화록이 준비되는 시점까지의 추정 시간입니다. 요약 정리와 파일 저장 시간은 포함하지 않습니다." className="inline-flex items-center">
+                                    <span title="대화록 생성 완료까지의 추정 시간입니다. 정리와 저장 시간은 포함하지 않습니다." className="inline-flex items-center">
                                         <CircleHelp size={13} />
                                     </span>
                                 </div>
@@ -1730,7 +1731,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             )}
 
             {showProgressBar && !showAnalysisPanel && (
-                <ProgressBar value={progress} tone={errorMessage ? 'error' : 'primary'} />
+                <ProgressBar value={transcriptProgressPercent} tone={errorMessage ? 'error' : 'primary'} label="대화록 생성률" />
             )}
         </div>
     );

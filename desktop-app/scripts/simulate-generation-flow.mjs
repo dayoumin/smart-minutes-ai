@@ -24,6 +24,7 @@ const {
 const {
   formatAnalysisDuration,
   formatTranscriptReadyEstimate,
+  getTranscriptReadyProgressPercent,
 } = await importTsModule('src/analysisTimeEstimate.ts');
 
 const normalizedStatus = normalizeGenerationStatus(
@@ -48,6 +49,9 @@ assert.equal(canGenerateSpeakerContext({ topic_sections: 'completed' }, []), fal
 assert.equal(canGenerateSpeakerContext({ topic_sections: 'completed' }, [{ topic: '예산' }]), true);
 
 assert.equal(formatAnalysisDuration(65_000), '1:05');
+assert.equal(getTranscriptReadyProgressPercent(42.5, 'Transcribing chunk 2/4...'), 50);
+assert.equal(getTranscriptReadyProgressPercent(85, 'Summarizing with Local LLM...'), 100);
+assert.equal(getTranscriptReadyProgressPercent(95, 'Saving results...'), 100);
 assert.equal(formatTranscriptReadyEstimate(10 * 60_000, 50, 'Transcribing chunk 2/4...'), '약 17:00');
 assert.equal(formatTranscriptReadyEstimate(10 * 60_000, 85, 'Summarizing with Local LLM...'), '대화록 준비됨');
 

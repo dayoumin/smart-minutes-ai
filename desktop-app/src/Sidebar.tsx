@@ -4,7 +4,7 @@ import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, AnalysisResumeDraft, listAnalysis
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
 import { ProgressBar } from './ProgressBar';
-import { formatAnalysisDuration, formatTranscriptReadyEstimate } from './analysisTimeEstimate';
+import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
 export interface SidebarProps {
     activeTab?: string;
@@ -140,6 +140,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const transcriptEstimateLabel = analysisStatus
         ? formatTranscriptReadyEstimate(analysisElapsedMs, analysisStatus.progress, analysisRawMessage || analysisStatus.message)
         : '';
+    const transcriptProgressPercent = analysisStatus
+        ? getTranscriptReadyProgressPercent(analysisStatus.progress, analysisRawMessage || analysisStatus.message)
+        : 0;
     const sidebarEstimateLabel = transcriptEstimateLabel === '대화록 준비됨' || transcriptEstimateLabel === '측정 중'
         ? transcriptEstimateLabel
         : `예상 ${transcriptEstimateLabel}`;
@@ -272,7 +275,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                             <span className="shrink-0">{sidebarEstimateLabel}</span>
                         </div>
                         <ProgressBar
-                            value={analysisStatus.progress}
+                            value={transcriptProgressPercent}
                             size="sm"
                             className="mt-2"
                             decorative

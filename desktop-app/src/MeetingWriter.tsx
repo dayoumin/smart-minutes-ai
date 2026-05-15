@@ -32,30 +32,13 @@ import {
 import { getApiBase, writeFrontendLog } from './apiBase';
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
+import { formatAnalysisDuration, formatTranscriptReadyEstimate } from './analysisTimeEstimate';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
 const BACKEND_READY_INTERVAL_MS = 1_000;
 const ANALYSIS_STALL_WARNING_MS = 120_000;
 const getNowMs = (): number => Date.now();
-
-const formatElapsedDuration = (milliseconds: number): string => {
-    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    if (minutes >= 60) {
-        const hours = Math.floor(minutes / 60);
-        const remainingMinutes = minutes % 60;
-        return `${hours}시간 ${remainingMinutes}분`;
-    }
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-};
-
-const formatEstimatedRemaining = (elapsedMs: number, progressPercent: number): string => {
-    if (progressPercent < 10 || progressPercent >= 100) return progressPercent >= 100 ? '0:00' : '측정 중';
-    const estimatedTotalMs = elapsedMs / (progressPercent / 100);
-    return formatElapsedDuration(estimatedTotalMs - elapsedMs);
-};
 
 interface AnalyzeResult {
     status?: string;
@@ -1343,8 +1326,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const showAnalysisPanel = isAnalyzing;
     const progressPercent = Math.min(100, Math.max(0, progress));
     const elapsedMs = analysisStartedAt ? analysisNow - analysisStartedAt : 0;
-    const elapsedLabel = formatElapsedDuration(elapsedMs);
-    const remainingLabel = formatEstimatedRemaining(elapsedMs, progressPercent);
+    const elapsedLabel = formatAnalysisDuration(elapsedMs);
     const selectedFileMeta = file
         ? [
             fileKind === 'video' ? '영상' : fileKind === 'audio' ? '음성' : '파일',
@@ -1353,6 +1335,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         ].filter(Boolean).join(' · ')
         : '음성 파일을 선택해 주세요.';
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
+    const transcriptEstimateLabel = formatTranscriptReadyEstimate(elapsedMs, progressPercent, rawStatusMessage || currentStatusMessage);
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
@@ -1562,7 +1545,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 </div>
                             </div>
                             <div className="flex shrink-0 gap-2">
-                                {file && (
+                                {file && !isAnalyzing && (
                                     <IconButton
                                         variant="outline"
                                         className="border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
@@ -1593,7 +1576,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                     : '같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.'}
                         </div>
                     )}
-                    {matchingActiveDraft && (
+                    {matchingActiveDraft && !isAnalyzing && (
                         <div className="text-xs text-muted-foreground">
                             같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
                         </div>
@@ -1679,7 +1662,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         </Button>
                     )}
                 >
-                    <div>소요 시간 {formatElapsedDuration(completionNotice.elapsedMs)}. 결과 보기를 눌러 회의록을 확인하세요.</div>
+                    <div>소요 시간 {formatAnalysisDuration(completionNotice.elapsedMs)}. 결과 보기를 눌러 회의록을 확인하세요.</div>
                     {completionNotice.note && (
                         <div className="mt-2 text-sm text-muted-foreground">{completionNotice.note}</div>
                     )}
@@ -1692,11 +1675,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             {showAnalysisPanel && (
                 <div className="app-panel border-primary/20 bg-primary/5 p-4">
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex min-w-0 gap-3">
+                        <div className="flex min-w-0 flex-1 gap-3">
                             <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
                                 {progressPercent >= 100 ? <CheckCircle2 size={18} /> : <Loader2 size={18} className="animate-spin" />}
                             </div>
-                            <div className="min-w-0">
+                            <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-foreground">
                                     {currentStatusMessage}
                                 </div>
@@ -1726,12 +1709,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             </div>
                             <div className="text-right">
                                 <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                    <span>예상 남음</span>
-                                    <span title="현재 전체 진행률과 경과 시간을 기준으로 계산한 추정 시간입니다." className="inline-flex items-center">
+                                    <span>예상 시간</span>
+                                    <span title="화자 구분이 반영된 대화록이 준비되는 시점까지의 추정 시간입니다. 요약 정리와 파일 저장 시간은 포함하지 않습니다." className="inline-flex items-center">
                                         <CircleHelp size={13} />
                                     </span>
                                 </div>
-                                <div className="mt-1 text-sm font-semibold text-foreground">{remainingLabel}</div>
+                                <div className="mt-1 text-sm font-semibold text-foreground">{transcriptEstimateLabel}</div>
                             </div>
                             <IconButton
                                 variant="outline"

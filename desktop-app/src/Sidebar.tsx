@@ -4,6 +4,7 @@ import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, AnalysisResumeDraft, listAnalysis
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
 import { ProgressBar } from './ProgressBar';
+import { formatAnalysisDuration, formatTranscriptReadyEstimate } from './analysisTimeEstimate';
 
 export interface SidebarProps {
     activeTab?: string;
@@ -23,18 +24,6 @@ export interface SidebarProps {
     };
 }
 
-const formatElapsed = (milliseconds: number): string => {
-    const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    if (minutes >= 60) {
-        const hours = Math.floor(minutes / 60);
-        const remainingMinutes = minutes % 60;
-        return `${hours}시간 ${remainingMinutes}분`;
-    }
-    return `${minutes}:${seconds.toString().padStart(2, '0')}`;
-};
-
 const getChunkProgress = (message: string): { current: number; total: number } | null => {
     const match = message.trim().match(/^Transcribing chunk (\d+)\/(\d+)/);
     if (!match) return null;
@@ -42,11 +31,6 @@ const getChunkProgress = (message: string): { current: number; total: number } |
         current: Number(match[1]),
         total: Number(match[2]),
     };
-};
-
-const formatRemaining = (elapsedMs: number, progressPercent: number): string => {
-    if (progressPercent < 10 || progressPercent >= 100) return progressPercent >= 100 ? '0:00' : '측정 중';
-    return formatElapsed((elapsedMs / (progressPercent / 100)) - elapsedMs);
 };
 
 const formatSidebarStatus = (message: string): string => {
@@ -153,6 +137,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     );
     const analysisElapsedMs = now - (analysisStatus?.startedAt || now);
     const analysisRawMessage = analysisStatus?.rawMessage || analysisStatus?.message || '';
+    const transcriptEstimateLabel = analysisStatus
+        ? formatTranscriptReadyEstimate(analysisElapsedMs, analysisStatus.progress, analysisRawMessage || analysisStatus.message)
+        : '';
+    const sidebarEstimateLabel = transcriptEstimateLabel === '대화록 준비됨' || transcriptEstimateLabel === '측정 중'
+        ? transcriptEstimateLabel
+        : `예상 ${transcriptEstimateLabel}`;
 
     useEffect(() => {
         const closeMenu = (event: PointerEvent) => {
@@ -274,12 +264,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                             </span>
                             <span className="sidebar-analysis-elapsed">
                                 <Clock3 size={12} />
-                                {formatElapsed(analysisElapsedMs)}
+                                {formatAnalysisDuration(analysisElapsedMs)}
                             </span>
                         </div>
                         <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
                             <span className="truncate">{formatSidebarStatus(analysisRawMessage)}</span>
-                            <span className="shrink-0">{formatRemaining(analysisElapsedMs, analysisStatus.progress)}</span>
+                            <span className="shrink-0">{sidebarEstimateLabel}</span>
                         </div>
                         <ProgressBar
                             value={analysisStatus.progress}

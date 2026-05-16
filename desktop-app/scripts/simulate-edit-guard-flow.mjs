@@ -8,7 +8,7 @@ const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
 const meetingId = 'codex-edit-guard-simulation';
 const jobId = 'codex-edit-guard-job';
-const staleSummaryMessage = '정리 중에 대화록이 바뀌어 이번 결과는 저장하지 않았습니다. 다시 정리해 주세요.';
+const staleSummaryMessage = '대화록이 바뀌어 이번 정리는 저장하지 않았습니다. 다시 정리해 주세요.';
 const guardMessage = '저장되지 않은 변경이 있습니다. 정리 실행 전에 변경 내용을 저장하거나 취소해 주세요.';
 const downloadGuardMessage = '저장되지 않은 변경이 있습니다. 파일 저장 전에 변경 내용을 저장하거나 취소해 주세요.';
 
@@ -208,7 +208,7 @@ const run = async () => {
     await page.getByLabel('화자1 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
 
     await page.getByRole('tab', { name: '회의 요약' }).click();
-    await page.getByRole('button', { name: '전체 요약 다시 정리' }).click();
+    await page.getByRole('button', { name: '주제별 정리' }).click();
     await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 
     await page.getByRole('button', { name: '회의록 HWPX 저장' }).click();
@@ -224,9 +224,9 @@ const run = async () => {
     await page.getByText('대화록 수정본을 저장했습니다.').waitFor({ timeout: 10000 });
 
     await page.getByRole('tab', { name: '회의 요약' }).click();
-    await page.getByRole('button', { name: '전체 요약 다시 정리' }).click();
+    await page.getByRole('button', { name: '전체 요약 정리' }).click();
     await page.getByText(staleSummaryMessage).waitFor({ timeout: 10000 });
-    await page.getByText('정리 전').waitFor({ timeout: 10000 });
+    await page.getByText('정리 전', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '전체 요약 정리' }).waitFor({ timeout: 10000 });
 
     console.log('ok - edit guard and stale summary flow simulation');

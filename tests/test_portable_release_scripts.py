@@ -151,7 +151,8 @@ $RepoRoot = Resolve-Path "{ROOT}"
 {helpers}
 Set-Location $env:TEMP
 $resolved = Resolve-InRepoPath "releases\\lmo_audio"
-if (-not $resolved.EndsWith("smart-minutes-ai\\releases\\lmo_audio")) {{
+$expected = Normalize-FullPath (Join-Path $RepoRoot "releases\\lmo_audio")
+if (-not $resolved.Equals($expected, [System.StringComparison]::OrdinalIgnoreCase)) {{
     throw "Expected default portable path to resolve from repo root, got $resolved"
 }}
 $safe = Assert-SafePortablePath $resolved

@@ -325,7 +325,11 @@ const runActiveDraftBackendSyncScenario = async (browser, fixtureUpload) => {
     await waitForApp(APP_URL);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.waitForTimeout(800);
-    await page.getByText('정리됨').waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => {
+      const stored = window.localStorage.getItem('analysisResumeDrafts');
+      const parsed = JSON.parse(stored ?? '[]');
+      return parsed[0]?.status === 'completed';
+    }, undefined, { timeout: 10000 });
     const storedDrafts = await page.evaluate(() => window.localStorage.getItem('analysisResumeDrafts'));
     const parsedDrafts = JSON.parse(storedDrafts ?? '[]');
     assert.equal(parsedDrafts.length, 1);
@@ -401,7 +405,11 @@ const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '이어하기' }).last().click();
     await page.getByText('이전 분석 기록을 이어서 진행할 수 없습니다. 현재 재사용 후보로 확인되지 않았습니다. 새 분석으로 시작할 수 있습니다.').waitFor({ timeout: 10000 });
-    await page.getByText('이어하기 불가').first().waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => {
+      const stored = window.localStorage.getItem('analysisResumeDrafts');
+      const parsed = JSON.parse(stored ?? '[]');
+      return parsed[0]?.status === 'unavailable' && parsed[0]?.resumeUnavailableReason === 'not-candidate';
+    }, undefined, { timeout: 10000 });
     assert.equal(analyzeCalled, false);
     const storedDrafts = await page.evaluate(() => window.localStorage.getItem('analysisResumeDrafts'));
     const parsedDrafts = JSON.parse(storedDrafts ?? '[]');

@@ -390,9 +390,9 @@ interface MeetingWriterProps {
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
+    const [initialDateValue, setInitialDateValue] = useState(date);
     const [meetingPurpose, setMeetingPurpose] = useState('');
     const [file, setFile] = useState<File | null>(null);
-    const initialDateRef = useRef(date);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [progress, setProgress] = useState(0);
     const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
@@ -612,8 +612,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         || Boolean(meetingPurpose.trim())
         || Boolean(file)
         || Boolean(selectedResumeDraftId)
-        || date !== initialDateRef.current
-    ), [date, file, meetingPurpose, selectedResumeDraftId, title]);
+        || date !== initialDateValue
+    ), [date, file, initialDateValue, meetingPurpose, selectedResumeDraftId, title]);
 
     useEffect(() => {
         if (!onRegisterLeaveGuard) return;
@@ -868,18 +868,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
     };
 
+    const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
+    const resumeDraftSelectionRequestId = resumeDraftSelectionRequest?.requestId;
+
     useEffect(() => {
-        if (!resumeDraftSelectionRequest) return;
+        if (!resumeDraftSelectionJobId) return;
         const drafts = listAnalysisResumeDrafts();
         setResumeDrafts(drafts);
-        const draft = drafts.find(item => item.jobId === resumeDraftSelectionRequest.jobId);
+        const draft = drafts.find(item => item.jobId === resumeDraftSelectionJobId);
         if (!draft) {
             setSelectedResumeDraftId(null);
             setErrorMessage('선택한 미완료 분석 기록을 찾지 못했습니다.');
             return;
         }
         handleResumeDraftPrepare(draft);
-    }, [resumeDraftSelectionRequest?.requestId]);
+    }, [resumeDraftSelectionJobId, resumeDraftSelectionRequestId]);
 
     const handleDeleteResumeDraft = (draft: AnalysisResumeDraft) => {
         if (draft.status === 'active') {
@@ -1245,7 +1248,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setTitle('');
             setMeetingPurpose('');
             const nextInitialDate = new Date().toISOString().slice(0, 16);
-            initialDateRef.current = nextInitialDate;
+            setInitialDateValue(nextInitialDate);
             setDate(nextInitialDate);
             setFile(null);
             clearResumeDraftSelection();

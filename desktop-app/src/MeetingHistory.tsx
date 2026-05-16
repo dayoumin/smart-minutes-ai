@@ -3,7 +3,7 @@ import { ChevronDown, ChevronRight, CircleHelp, Edit3, FileAudio, Loader2, Play,
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
-import { isTauriRuntime, toApiUrl } from './apiBase';
+import { isTauriRuntime, openSavedFileLocation, toApiUrl } from './apiBase';
 import { Input } from './Input';
 import { StatusBanner } from './StatusBanner';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
@@ -26,6 +26,11 @@ type DetailTab = 'summary' | 'script';
 type OrganizeTab = 'summary' | 'topics' | 'speakers';
 type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries';
 type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
+
+interface SavedFileToast {
+    id: number;
+    path: string | null;
+}
 
 interface ModelsStatusResponse {
     summary_ready?: boolean;
@@ -355,6 +360,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
     const [noticeMessage, setNoticeMessage] = useState('');
+    const [savedFileToast, setSavedFileToast] = useState<SavedFileToast | null>(null);
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
     const [detailTab, setDetailTab] = useState<DetailTab>('script');
     const [organizeTab, setOrganizeTab] = useState<OrganizeTab>('summary');
@@ -389,6 +395,29 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const speakerLabelsPanelRef = useRef<HTMLDivElement | null>(null);
 
     const normalizeTopicKey = React.useCallback((value: string) => value.trim().toLocaleLowerCase(), []);
+
+    const showSavedFileToast = React.useCallback((path: string | null) => {
+        setSavedFileToast({
+            id: Date.now(),
+            path,
+        });
+    }, []);
+
+    const handleOpenSavedFileLocation = async () => {
+        if (!savedFileToast?.path) return;
+        try {
+            await openSavedFileLocation(savedFileToast.path);
+            setSavedFileToast(null);
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : '저장 폴더를 열지 못했습니다.');
+        }
+    };
+
+    useEffect(() => {
+        if (!savedFileToast) return undefined;
+        const timeoutId = window.setTimeout(() => setSavedFileToast(null), 3500);
+        return () => window.clearTimeout(timeoutId);
+    }, [savedFileToast]);
 
     const loadRecords = React.useCallback(async (event?: Event) => {
         try {
@@ -610,7 +639,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 }
                 throw new Error(detail || '음성 파일을 저장하지 못했습니다.');
             }
-            await response.json().catch(() => null);
+            const data = await response.json().catch(() => null) as { saved_path?: string | null } | null;
+            showSavedFileToast(data?.saved_path ?? null);
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '음성 파일을 저장하지 못했습니다.');
         } finally {
@@ -1630,6 +1660,28 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     {errorMessage}
                 </StatusBanner>
             )}
+            {savedFileToast && (
+                <div className="save-toast" role="status" aria-live="polite">
+                    <span className="font-semibold text-foreground">저장됨</span>
+                    {savedFileToast.path && isTauriRuntime() && (
+                        <button
+                            type="button"
+                            className="save-toast-action"
+                            onClick={handleOpenSavedFileLocation}
+                        >
+                            폴더 열기
+                        </button>
+                    )}
+                    <button
+                        type="button"
+                        className="save-toast-close"
+                        aria-label="저장 알림 닫기"
+                        onClick={() => setSavedFileToast(null)}
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
 
             <article className="app-panel overflow-hidden">
                 <div className="app-panel-header flex flex-col gap-4 border-b border-border p-5">
@@ -1663,6 +1715,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             meeting={selectedMeeting}
                                             onNotice={setNoticeMessage}
                                             onError={setErrorMessage}
+                                            onSaved={showSavedFileToast}
                                             onDownloadingChange={setIsDownloading}
                                             beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
                                             disabled={isDownloading}

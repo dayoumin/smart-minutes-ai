@@ -25,9 +25,14 @@ interface MeetingDownloadControlProps {
     meeting: MeetingRecord;
     onNotice?: (message: string) => void;
     onError?: (message: string) => void;
+    onSaved?: (savedPath: string | null) => void;
     onDownloadingChange?: (isDownloading: boolean) => void;
     beforeDownload?: () => boolean;
     disabled?: boolean;
+}
+
+interface SaveCopyResponse {
+    saved_path?: string | null;
 }
 
 const MAX_DOWNLOAD_STEM_CHARS = 96;
@@ -94,7 +99,7 @@ const filenameFromDisposition = (disposition: string | null, fallback: string): 
     return plainMatch?.[1] ?? fallback;
 };
 
-export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ meeting, onNotice, onError, onDownloadingChange, beforeDownload, disabled = false }) => {
+export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ meeting, onNotice, onError, onSaved, onDownloadingChange, beforeDownload, disabled = false }) => {
     const [isDownloading, setIsDownloading] = useState(false);
     const [downloadKind, setDownloadKind] = useState<DownloadFormat>(() => getDownloadFormatPreference());
     const isMountedRef = useRef(true);
@@ -156,8 +161,8 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
                 }),
             });
             if (!response.ok) return false;
-            await response.json().catch(() => null);
-            onNotice?.(`${downloadFormatLabels[downloadKind]} 파일을 다운로드 폴더에 저장했습니다.`);
+            const data = await response.json().catch(() => null) as SaveCopyResponse | null;
+            onSaved?.(data?.saved_path ?? null);
             return true;
         } catch {
             return false;

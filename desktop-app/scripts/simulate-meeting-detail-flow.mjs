@@ -346,7 +346,11 @@ const run = async () => {
     await page.getByText('AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.').waitFor({ timeout: 10000 });
 
     await page.getByRole('button', { name: '회의록 HWPX 파일을 다운로드 폴더에 저장' }).click();
-    await page.getByText('HWPX 파일을 다운로드 폴더에 저장했습니다.').waitFor({ timeout: 10000 });
+    for (let attempt = 0; attempt < 50 && exportCalls.length === 0; attempt += 1) {
+      await sleep(100);
+    }
+    await page.getByText('저장됨', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('HWPX 파일을 다운로드 폴더에 저장했습니다.').count(), 0);
 
     assert.deepEqual(exportCalls, ['hwpx:save-copy']);
     assert.equal(exportBodies[0]?.meetingPurpose, 'AI 시스템 통제권 논의 정리');

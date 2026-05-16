@@ -41,6 +41,12 @@ export const setTauriCloseGuardActive = async (active: boolean): Promise<void> =
     }
 };
 
+export const openSavedFileLocation = async (savedPath: string): Promise<void> => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) throw new Error('데스크탑 앱에서만 저장 폴더를 열 수 있습니다.');
+    await invoke('open_saved_file_location', { savedPath });
+};
+
 export const isTauriRuntime = (): boolean => {
     if (typeof window === 'undefined') return false;
     if (window.__TAURI__?.core?.invoke) return true;

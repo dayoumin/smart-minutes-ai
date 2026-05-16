@@ -360,19 +360,12 @@ const getCompletionResumeNote = (resume?: AnalyzeResult['resume']): string | und
 };
 
 const getAutoSaveCompletionNote = (result: AnalyzeResult): string | undefined => {
-    const savedKinds = [
-        result.auto_saved_files?.hwpx ? 'HWPX' : '',
-        result.auto_saved_files?.audio ? '음성 파일' : '',
-    ].filter(Boolean);
     const failedKinds = [
         result.auto_save_errors?.hwpx ? `HWPX(${result.auto_save_errors.hwpx})` : '',
         result.auto_save_errors?.audio ? `음성 파일(${result.auto_save_errors.audio})` : '',
     ].filter(Boolean);
 
     const notes: string[] = [];
-    if (savedKinds.length) {
-        notes.push(`${savedKinds.join(', ')}을 다운로드 폴더에 저장했습니다.`);
-    }
     if (failedKinds.length) {
         notes.push(`${failedKinds.join(', ')} 자동 저장은 실패했습니다.`);
     }

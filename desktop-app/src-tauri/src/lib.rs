@@ -68,6 +68,54 @@ fn write_frontend_log(app: AppHandle, message: String) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+fn open_saved_file_location(saved_path: String) -> Result<(), String> {
+    let path = std::path::PathBuf::from(saved_path);
+    let canonical_path = path
+        .canonicalize()
+        .map_err(|error| format!("Could not locate saved file: {error}"))?;
+    if !canonical_path.is_file() {
+        return Err("Saved path is not a file.".to_string());
+    }
+
+    let home_dir = std::env::var_os("USERPROFILE")
+        .map(std::path::PathBuf::from)
+        .ok_or_else(|| "Could not resolve user profile folder.".to_string())?;
+    let downloads_dir = home_dir.join("Downloads");
+    let allowed_root = if downloads_dir.exists() {
+        downloads_dir
+    } else {
+        home_dir
+    }
+    .canonicalize()
+    .map_err(|error| format!("Could not resolve download folder: {error}"))?;
+
+    if !canonical_path.starts_with(&allowed_root) {
+        return Err("Saved file is outside the download folder.".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Command::new("explorer")
+            .arg(format!("/select,{}", canonical_path.display()))
+            .spawn()
+            .map_err(|error| format!("Could not open download folder: {error}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        let parent = canonical_path
+            .parent()
+            .ok_or_else(|| "Could not resolve saved file folder.".to_string())?;
+        Command::new("open")
+            .arg(parent)
+            .spawn()
+            .map_err(|error| format!("Could not open download folder: {error}"))?;
+        Ok(())
+    }
+}
+
 #[cfg(target_os = "windows")]
 fn to_wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
@@ -174,6 +222,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_backend_base_url,
             set_close_guard_active,
+            open_saved_file_location,
             write_frontend_log
         ])
         .setup(move |app| {

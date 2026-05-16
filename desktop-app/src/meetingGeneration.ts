@@ -69,4 +69,7 @@ export const getSpeakerGenerationStatus = (
 export const canGenerateSpeakerContext = (
     status?: MeetingGenerationStatusShape,
     topicSections?: TopicSectionShape[],
-): boolean => getTopicGenerationStatus(status, topicSections) === 'completed' && Boolean(topicSections?.length);
+): boolean => {
+    const sectionCount = topicSections?.filter(section => section.topic?.trim()).length ?? 0;
+    return getTopicGenerationStatus(status, topicSections) === 'completed' && sectionCount >= 2;
+};

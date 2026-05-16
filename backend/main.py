@@ -1104,6 +1104,33 @@ def _mark_generation_failed(job_id: str, result_data: dict, summary_key: str, de
     return latest_result
 
 
+def _restore_topic_section_status_after_custom_failure(
+    job_id: str,
+    result_data: dict,
+    fallback_status: str,
+    detail: str = "",
+) -> dict:
+    latest_result = _load_latest_generation_result(job_id, result_data)
+    latest_summary = latest_result.setdefault("summary", {})
+    latest_status = _ensure_generation_status(latest_summary)
+    topic_sections = latest_summary.get("topic_sections") or []
+    valid_topic_section_count = len([
+        section
+        for section in topic_sections
+        if isinstance(section, dict) and section.get("topic")
+    ])
+    if valid_topic_section_count >= 2:
+        latest_status["topic_sections"] = "completed"
+        latest_summary.pop("generation_error_detail", None)
+    else:
+        latest_status["topic_sections"] = fallback_status
+        if detail and fallback_status == "failed":
+            latest_summary["generation_error_detail"] = detail
+    latest_summary["generation_status"] = latest_status
+    _save_job_result(job_id, latest_result)
+    return latest_result
+
+
 def _mark_diarization_failed(job_id: str, result_data: dict, detail: str, message: str = "") -> None:
     if not os.path.exists(_get_job_result_path(job_id)):
         return
@@ -1460,7 +1487,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             logging.exception("Failed to generate topic sections")
             raise HTTPException(status_code=500, detail="Failed to generate topic sections")
 
-        if not topic_sections:
+        if len(topic_sections) < 2:
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
                     _mark_generation_failed(job_id, result_data, "topic_sections", DETAIL_TOPIC_EMPTY_RESULT)
@@ -1513,6 +1540,151 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             _end_generation(generation_key)
 
 
+@app.post("/api/outputs/{job_id}/generate-topic-section")
+async def generate_output_topic_section(job_id: str, payload: dict | None = Body(None)) -> dict:
+    from pipeline.transcript_display import get_transcript_segments
+
+    job_id = _validate_job_id(job_id)
+    payload = payload or {}
+    topic_title = str(
+        payload.get("topicTitle")
+        or payload.get("topic_title")
+        or payload.get("title")
+        or ""
+    ).strip()
+    if not topic_title:
+        raise HTTPException(status_code=400, detail="Topic title is required")
+
+    generation_key = None
+    try:
+        with GENERATION_STATUS_LOCK:
+            result_data, had_saved_result = _load_or_rebuild_job_result(job_id, payload, persist_rebuilt=False)
+            segments = get_transcript_segments(result_data)
+            if not segments:
+                raise HTTPException(status_code=400, detail="Transcript segments are required")
+            segments_fingerprint = _segment_fingerprint(segments)
+            input_fingerprint = _generation_input_fingerprint(result_data, segments)
+
+            summary = result_data.setdefault("summary", {})
+            summary_fingerprint = _summary_generation_fingerprint(summary)
+            status = _ensure_generation_status(summary)
+            if status.get("topic_sections") == "generating":
+                raise HTTPException(status_code=409, detail="Topic sections are already being generated")
+            if status.get("summary") == "skipped":
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
+            generation_key = _begin_generation(job_id, "topic_sections")
+            status["topic_sections"] = "generating"
+            if had_saved_result:
+                _save_job_result(job_id, result_data)
+
+        try:
+            config = load_config()
+            readiness = await asyncio.to_thread(_summary_model_readiness, config)
+            if not readiness["ready"]:
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
+
+            from pipeline.summarize import generate_topic_section_for_title
+
+            topic_section = await asyncio.to_thread(
+                generate_topic_section_for_title,
+                segments,
+                summary,
+                topic_title,
+                _resolve_summary_model(config),
+            )
+        except HTTPException:
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _restore_topic_section_status_after_custom_failure(job_id, result_data, "not_started")
+            raise
+        except Exception:
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _restore_topic_section_status_after_custom_failure(
+                        job_id,
+                        result_data,
+                        "failed",
+                        "topic_generation_error",
+                    )
+            logging.exception("Failed to generate topic section")
+            raise HTTPException(status_code=500, detail="Failed to generate topic section")
+
+        if not topic_section:
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _restore_topic_section_status_after_custom_failure(
+                        job_id,
+                        result_data,
+                        "failed",
+                        DETAIL_TOPIC_EMPTY_RESULT,
+                    )
+            raise HTTPException(status_code=502, detail=DETAIL_TOPIC_EMPTY_RESULT)
+
+        with GENERATION_STATUS_LOCK:
+            latest_result = _load_latest_generation_result(job_id, result_data)
+            latest_summary = latest_result.setdefault("summary", {})
+            if (
+                _segment_fingerprint(get_transcript_segments(latest_result)) != segments_fingerprint
+                or _generation_input_fingerprint(latest_result, get_transcript_segments(latest_result)) != input_fingerprint
+                or _summary_generation_fingerprint(latest_summary) != summary_fingerprint
+            ):
+                latest_status = _ensure_generation_status(latest_summary)
+                latest_status["topic_sections"] = "not_started"
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _save_job_result(job_id, latest_result)
+                raise HTTPException(status_code=409, detail=DETAIL_TOPIC_INPUT_CHANGED)
+
+            latest_status = _ensure_generation_status(latest_summary)
+            existing_sections = [
+                section
+                for section in latest_summary.get("topic_sections", [])
+                if isinstance(section, dict) and section.get("topic")
+            ]
+            topic_key = topic_title.strip().casefold()
+            replaced = False
+            next_sections = []
+            for section in existing_sections:
+                if str(section.get("topic", "")).strip().casefold() == topic_key:
+                    next_sections.append(topic_section)
+                    replaced = True
+                else:
+                    next_sections.append(section)
+            if not replaced:
+                next_sections.append(topic_section)
+
+            latest_summary["topic_sections"] = next_sections
+            existing_topics = [topic for topic in latest_summary.get("topics", []) if isinstance(topic, str) and topic.strip()]
+            latest_summary["topics"] = list(dict.fromkeys(existing_topics + [section["topic"] for section in next_sections if section.get("topic")]))
+            latest_status["topic_sections"] = "completed" if len(next_sections) >= 2 else "not_started"
+            latest_summary["generation_status"] = latest_status
+            latest_summary.pop("generation_error_detail", None)
+            _save_job_result(job_id, latest_result)
+            result_data = latest_result
+            summary = latest_summary
+            status = latest_status
+
+        export_error = None
+        try:
+            outputs = _refresh_summary_exports(job_id, result_data)
+        except Exception:
+            logging.exception("Failed to refresh exports after custom topic section generation")
+            outputs = _result_outputs(job_id)
+            export_error = "정리는 완료됐지만 다운로드 파일 갱신은 실패했습니다."
+
+        return {
+            "job_id": job_id,
+            "topic_section": topic_section,
+            "topic_sections": summary.get("topic_sections", []),
+            "topics": summary.get("topics", []),
+            "generation_status": status,
+            "outputs": outputs,
+            "export_error": export_error,
+        }
+    finally:
+        with GENERATION_STATUS_LOCK:
+            _end_generation(generation_key)
+
+
 @app.post("/api/outputs/{job_id}/generate-speaker-context")
 async def generate_output_speaker_context(job_id: str, payload: dict | None = Body(None)) -> dict:
     from pipeline.transcript_display import get_transcript_segments
@@ -1532,7 +1704,8 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             summary_fingerprint = _summary_generation_fingerprint(summary)
             status = _ensure_generation_status(summary)
             topic_sections = summary.get("topic_sections") or []
-            if status.get("topic_sections") != "completed" or not topic_sections:
+            valid_topic_section_count = len([section for section in topic_sections if isinstance(section, dict) and section.get("topic")])
+            if status.get("topic_sections") != "completed" or valid_topic_section_count < 2:
                 raise HTTPException(
                     status_code=409,
                     detail="Topic sections must be generated before speaker context summaries",

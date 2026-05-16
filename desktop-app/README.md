@@ -1,4 +1,4 @@
-# Smart Minutes AI Desktop UI
+# LMO 회의 인사이트 Desktop UI
 
 ## Active UI Path
 

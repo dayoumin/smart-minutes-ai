@@ -2502,7 +2502,10 @@ class AnalyzeApiTest(unittest.TestCase):
                 concurrent_result["summary"]["overview"] = "newer overview"
                 with open(output_path, "w", encoding="utf-8") as f:
                     json.dump(concurrent_result, f, ensure_ascii=False, indent=2)
-                return [{"topic": "예산", "summary": "예산 논의"}]
+                return [
+                    {"topic": "예산", "summary": "예산 논의"},
+                    {"topic": "일정", "summary": "일정 논의"},
+                ]
 
             with patch("pipeline.summarize.generate_topic_sections", side_effect=side_effect):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
@@ -2512,6 +2515,131 @@ class AnalyzeApiTest(unittest.TestCase):
                 result_data = json.load(f)
             self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "not_started")
             self.assertEqual(result_data["summary"].get("topic_sections", []), [])
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_topic_sections_rejects_single_broad_topic(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_topic_sections_single_topic"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "old overview",
+                            "topics": ["old topic"],
+                            "generation_status": {"summary": "completed", "topic_sections": "not_started"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            with patch(
+                "pipeline.summarize.generate_topic_sections",
+                return_value=[{"topic": "핵심 주제", "summary": "전체 대화 요약", "evidence": [], "actions": []}],
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
+
+            self.assertEqual(response.status_code, 502, response.text)
+            self.assertEqual(response.json()["detail"], main.DETAIL_TOPIC_EMPTY_RESULT)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "failed")
+            self.assertEqual(result_data["summary"]["generation_error_detail"], main.DETAIL_TOPIC_EMPTY_RESULT)
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_single_topic_section_does_not_complete_topic_sections(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_single_topic_section"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "old overview",
+                            "topics": [],
+                            "generation_status": {"summary": "completed", "topic_sections": "not_started"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            with (
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
+                patch(
+                    "pipeline.summarize.generate_topic_section_for_title",
+                    return_value={"topic": "예산", "summary": "예산 논의", "evidence": [], "actions": []},
+                ),
+            ):
+                response = self.client.post(
+                    f"/api/outputs/{job_id}/generate-topic-section",
+                    json={"topicTitle": "예산"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertEqual(payload["generation_status"]["topic_sections"], "not_started")
+            self.assertEqual(len(payload["topic_sections"]), 1)
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_single_topic_section_failure_preserves_completed_topic_sections(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_single_topic_section_failure_preserve"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "old overview",
+                            "topics": ["예산", "일정"],
+                            "topic_sections": [
+                                {"topic": "예산", "summary": "예산 논의"},
+                                {"topic": "일정", "summary": "일정 논의"},
+                            ],
+                            "generation_status": {"summary": "completed", "topic_sections": "completed"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            with (
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
+                patch("pipeline.summarize.generate_topic_section_for_title", return_value={}),
+            ):
+                response = self.client.post(
+                    f"/api/outputs/{job_id}/generate-topic-section",
+                    json={"topicTitle": "추가 검토"},
+                )
+
+            self.assertEqual(response.status_code, 502, response.text)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "completed")
+            self.assertEqual(len(result_data["summary"]["topic_sections"]), 2)
+            self.assertNotIn("generation_error_detail", result_data["summary"])
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)

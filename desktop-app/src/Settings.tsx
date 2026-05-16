@@ -86,7 +86,7 @@ type SettingsTab = 'general' | 'models' | 'advanced';
 
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '기본 음성 인식 파일';
-    if (model.key === 'diarization') return '화자 구분';
+    if (model.key === 'diarization') return '참석자 구분';
     return model.label;
 };
 
@@ -367,7 +367,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     onChange={event => setDiarizationEnabled(event.target.checked)}
                                 />
                                 <span>
-                                    <span className="block font-medium text-foreground">발화자 구분</span>
+                                    <span className="block font-medium text-foreground">참석자 구분</span>
                                     <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다. 긴 파일은 먼저 대화록과 요약을 만듭니다.</span>
                                 </span>
                             </label>

@@ -226,6 +226,27 @@ def _trim_followup_transcript(transcript_text: str, max_chars: int = 12000) -> s
     return f"{transcript_text[:half]}\n...\n{transcript_text[-half:]}"
 
 
+def _speaker_focused_transcript(
+    transcript_segments: list[dict],
+    max_chars_per_speaker: int = 3500,
+    max_total_chars: int = 12000,
+) -> str:
+    grouped: dict[str, list[str]] = {}
+    for segment in transcript_segments:
+        speaker = str(segment.get("speaker_name") or segment.get("speaker") or "UNKNOWN").strip() or "UNKNOWN"
+        text = str(segment.get("text", "")).strip()
+        if not text:
+            continue
+        grouped.setdefault(speaker, []).append(text)
+
+    blocks = []
+    per_speaker_budget = max(800, min(max_chars_per_speaker, max_total_chars // max(1, len(grouped))))
+    for speaker, utterances in grouped.items():
+        speaker_text = "\n".join(f"- {text}" for text in utterances)
+        blocks.append(f"{speaker}\n{_trim_followup_transcript(speaker_text, per_speaker_budget)}")
+    return _trim_followup_transcript("\n\n".join(blocks), max_total_chars)
+
+
 def _normalize_topic_sections(items) -> list[dict]:
     if not isinstance(items, list):
         return []
@@ -376,7 +397,8 @@ def generate_topic_sections(
         return []
 
     prompt = f"""You are a Korean meeting-minutes assistant.
-Create topic-by-topic meeting notes from the transcript and the basic meeting summary.
+Create 3 to 7 topic-by-topic meeting notes from the transcript and the basic meeting summary.
+Do not collapse the whole meeting into a single generic topic such as "핵심 주제".
 Return strict JSON only. Do not wrap it in Markdown.
 Do not invent facts. Write all JSON values in Korean unless a source term must remain in English.
 
@@ -400,12 +422,13 @@ Transcript:
 """
     data = _generate_json_once(model_name_or_path, prompt)
     sections = _topic_sections_from_response(data)
-    if sections:
+    if len(sections) >= 2:
         return sections
 
     retry_prompt = f"""Return only valid JSON with exactly one top-level key named "topic_sections".
 Do not use top-level keys named "summary" or "keywords".
 Create 3 to 7 Korean topic sections from this transcript.
+Do not return only one broad topic. Split by concrete discussion subjects, decisions, model details, risks, or follow-up work.
 Each item must include "topic", "summary", "evidence", and "actions".
 
 Schema:
@@ -419,9 +442,66 @@ Transcript:
 """
     retry_data = _generate_json_once(model_name_or_path, retry_prompt)
     sections = _topic_sections_from_response(retry_data)
-    if sections:
+    if len(sections) >= 2:
         return sections
-    return _fallback_topic_sections_from_response(retry_data) or _fallback_topic_sections_from_response(data)
+    fallback_sections = _fallback_topic_sections_from_response(retry_data) or _fallback_topic_sections_from_response(data)
+    return fallback_sections if len(fallback_sections) >= 2 else []
+
+
+def generate_topic_section_for_title(
+    transcript_segments: list[dict],
+    base_summary: dict,
+    topic_title: str,
+    model_name_or_path: str = "./models/llm/gemma.gguf",
+) -> dict:
+    topic_title = str(topic_title or "").strip()
+    if not topic_title:
+        return {}
+
+    transcript_text = _segments_to_transcript(transcript_segments)
+    if not transcript_text.strip():
+        return {}
+
+    topic_title_json = json.dumps(topic_title, ensure_ascii=False)
+    prompt = f"""You are a Korean meeting-minutes assistant.
+Create one focused topic section for the requested topic title.
+Use the transcript as the source of truth. If the requested topic is only partially discussed, summarize the related parts and add uncertainty to evidence or actions.
+Return strict JSON only. Do not wrap it in Markdown.
+Do not invent facts. Write all JSON values in Korean unless a source term must remain in English.
+
+Required JSON schema:
+{{
+  "topic_sections": [
+    {{
+      "topic": {topic_title_json},
+      "summary": "what was discussed about this requested topic",
+      "evidence": ["short transcript-based evidence"],
+      "actions": ["topic-specific task"]
+    }}
+  ]
+}}
+
+Requested topic title:
+{topic_title}
+
+Basic summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text)}
+"""
+    data = _generate_json_once(model_name_or_path, prompt)
+    sections = _topic_sections_from_response(data)
+    if sections:
+        section = sections[0]
+        section["topic"] = topic_title
+        return section
+    fallback_sections = _fallback_topic_sections_from_response(data)
+    if fallback_sections:
+        section = fallback_sections[0]
+        section["topic"] = topic_title
+        return section
+    return {}
 
 
 def generate_speaker_context_summaries(
@@ -433,10 +513,12 @@ def generate_speaker_context_summaries(
     transcript_text = _segments_to_transcript(transcript_segments)
     if not transcript_text.strip():
         return []
+    speaker_focused_text = _speaker_focused_transcript(transcript_segments)
 
     prompt = f"""You are a Korean meeting-minutes assistant.
 Create speaker-by-speaker context summaries from the whole meeting context.
 Do not summarize each speaker mechanically from isolated utterances. Interpret each speaker's comments in relation to the overall discussion, other speakers, topics, decisions, and tasks.
+Use the speaker-focused excerpts to review each speaker's comments across the meeting, then use the topic sections and transcript context to avoid losing the overall flow.
 Return strict JSON only. Do not wrap it in Markdown.
 Use existing speaker labels unless a verified participant name is present in the transcript or summary.
 Do not invent speaker identities. Write all JSON values in Korean unless a source term must remain in English.
@@ -462,7 +544,10 @@ Basic summary:
 Topic sections:
 {json.dumps(topic_sections or [], ensure_ascii=False)}
 
-Transcript:
+Speaker-focused excerpts:
+{speaker_focused_text}
+
+Transcript context:
 {_trim_followup_transcript(transcript_text)}
 """
     data = _generate_json_once(model_name_or_path, prompt)
@@ -484,7 +569,10 @@ Basic summary:
 Topic sections:
 {json.dumps(topic_sections or [], ensure_ascii=False)}
 
-Transcript:
+Speaker-focused excerpts:
+{speaker_focused_text}
+
+Transcript context:
 {_trim_followup_transcript(transcript_text, 8000)}
 """
     retry_data = _generate_json_once(model_name_or_path, retry_prompt)

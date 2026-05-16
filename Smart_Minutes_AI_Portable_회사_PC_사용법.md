@@ -1,4 +1,4 @@
-# lmo_audio Portable 회사 PC 사용법
+# LMO 회의 인사이트 Portable 회사 PC 사용법
 
 ## 폴더 구조
 

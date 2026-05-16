@@ -217,7 +217,7 @@ const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTi
 
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '음성 인식 기본 모델';
-    if (model.key === 'diarization') return '화자 구분';
+    if (model.key === 'diarization') return '참석자 구분';
     return model.label;
 };
 
@@ -239,8 +239,8 @@ const translateStatusMessage = (message: string): string => {
         'Preparing audio chunks...': '구간 나누는 중',
         '음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.': '후처리 준비 중',
         'Primary speech recognition failed; using fallback model...': '음성 인식 재시도 중',
-        'Speaker Diarization & Alignment...': '화자 구분 중',
-        '화자 구간 분석 완료. 문장 시간과 맞추는 중': '문장 시간 맞추는 중',
+        'Speaker Diarization & Alignment...': '참석자 구분 중',
+        '화자 구간 분석 완료. 문장 시간과 맞추는 중': '참석자 구간 확인 완료. 문장 시간과 맞추는 중',
         'Summarizing with Local LLM...': '요약 정리 중',
         '대화록 생성이 완료되었습니다. 정리는 회의 기록에서 별도로 실행해 주세요.': '대화록 저장 완료',
         'Saving results...': '저장 중',
@@ -347,11 +347,11 @@ const getCompletionResumeNote = (resume?: AnalyzeResult['resume']): string | und
     if (resume.mode === 'reused_stt_and_diarization') {
         const reusedChunkCount = resume.reused_chunk_count || 0;
         return reusedChunkCount > 0
-            ? `이전 음성 인식 진행분 ${reusedChunkCount}개 구간과 화자 구분 결과를 재사용했습니다.`
-            : '이전 화자 구분 결과를 재사용했습니다.';
+            ? `이전 음성 인식 진행분 ${reusedChunkCount}개 구간과 참석자 구분 결과를 재사용했습니다.`
+            : '이전 참석자 구분 결과를 재사용했습니다.';
     }
     if (resume.mode === 'reused_diarization') {
-        return '이전 화자 구분 결과를 재사용했습니다.';
+        return '이전 참석자 구분 결과를 재사용했습니다.';
     }
     if (resume.mode === 'reused_stt' && (resume.reused_chunk_count || 0) > 0) {
         return `이전 음성 인식 진행분 ${resume.reused_chunk_count}개 구간을 재사용했습니다.`;
@@ -626,7 +626,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         const fields: string[] = [];
         if (!title.trim()) fields.push('회의 제목');
         if (!date) fields.push('일시');
-        if (!meetingPurpose.trim()) fields.push('회의 목적');
+        if (!meetingPurpose.trim()) fields.push('회의 목적/정리 맥락');
         if (!file) fields.push('음성 파일');
         return fields;
     }, [date, file, meetingPurpose, title]);
@@ -1556,8 +1556,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
                     </div>
                     <div className="flex flex-col gap-2">
-                        <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-purpose">회의 목적 *</label>
-                        <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 추진 현황을 점검하고 후속 조치를 정리" disabled={isAnalyzing} />
+                        <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-purpose">회의 목적/정리 맥락 *</label>
+                        <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
                     </div>
                 </div>
 
@@ -1771,7 +1771,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <div className="text-right">
                                 <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                                     <span>예상 시간</span>
-                                    <span title="대화록이 저장될 때까지의 추정 시간입니다. 발화자 구분과 정리, 요약은 포함하지 않습니다." className="inline-flex items-center">
+                                    <span title="대화록이 저장될 때까지의 추정 시간입니다. 참석자 구분과 정리, 요약은 포함하지 않습니다." className="inline-flex items-center">
                                         <CircleHelp size={13} />
                                     </span>
                                 </div>

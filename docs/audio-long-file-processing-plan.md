@@ -10,6 +10,7 @@
 - 이미 끝난 STT 구간은 재사용할 수 있게 만든다.
 - 화자 분리 단계의 메모리/시간 리스크를 분리해서 다룬다.
 - UI는 실제 파이프라인 상태와 복구 가능 상태를 구분해서 보여준다.
+- 2~5시간 회의에서는 전체 대화록을 한 번에 요약 모델에 넣지 않고, 시간대별/주제별 중간 산출물을 만든 뒤 최종 정리로 합친다.
 
 ## 1. 현재 구조 요약
 
@@ -131,6 +132,11 @@ backend/temp/jobs/{job_id}/
   transcript/
     aligned_segments.json
     display_segments.json
+  summaries/
+    time_block_001.json
+    time_block_002.json
+    topic_seed_sections.json
+    final_summary.json
 ```
 
 `job_state.json` 필수 필드 제안:
@@ -148,6 +154,7 @@ backend/temp/jobs/{job_id}/
 - `stt_completed`
 - `diarization_completed`
 - `summary_completed`
+- `partial_summary_completed`
 - `cancelled`
 - `resume_supported`
 - `owner_run_id`
@@ -166,6 +173,13 @@ backend/temp/jobs/{job_id}/
 - `cancelled`는 기본적으로 checkpoint를 유지한다.
 - `completed`는 설정 또는 정리 작업이 돌기 전까지 STT checkpoint를 짧게 유지할 수 있다.
 - 최종 산출물과 checkpoint의 TTL은 분리한다.
+
+긴 회의 요약/정리 checkpoint:
+
+- `summaries/time_block_*.json`은 시간대별 부분 요약, 주요 발언, 후보 주제, 결정/할 일을 담는다.
+- `summaries/topic_seed_sections.json`은 시간대별 부분 요약을 합쳐 만든 주제 후보 구조다.
+- `summaries/final_summary.json`은 최종 전체 요약이며, 가능하면 `topic_seed_sections.json` 또는 최종 `topicSections`와 정합성을 맞춘다.
+- 요약 모델 실패 시에도 `stt/merged_segments.json` 또는 `transcript/display_segments.json`은 먼저 사용할 수 있어야 한다.
 
 ## 6. 단계별 구현 순서
 
@@ -369,6 +383,7 @@ backend/temp/jobs/{job_id}/
 
 1. 5분, 15분, 30분, 60분 순서로 diarization off/on baseline을 측정한다.
 2. 첫 실패 길이와 peak memory를 확인하기 전에는 windowed diarization을 구현하지 않는다.
+
 3. 먼저 pyannote에 파일 경로 입력 등 더 낮은 메모리 경로가 가능한지 확인한다.
 4. 그 방법이 부족할 때만 10~15분 window와 30~60초 overlap prototype을 만든다.
 5. window prototype은 raw speaker label을 저장하고, 짧은 파일에서 whole-file diarization과 비교한 뒤 merge 설계를 진행한다.
@@ -391,3 +406,22 @@ backend/temp/jobs/{job_id}/
 - UI 전면 개편
 
 화자 분리의 첫 실행 게이트는 30분 diarization-on baseline이다. 기록해야 할 값은 peak memory, diarization 시간, speaker count, segment count, 실패 시 STT partial 회수 가능 여부다.
+
+## 13. 긴 회의 AI 정리 대응 계획
+
+2~5시간 회의는 STT/화자 분리 안정성만의 문제가 아니다. 요약 모델 입력도 길어지므로 중간 쟁점이 앞/뒤 요약에 밀려 사라질 수 있다.
+
+기본 방향:
+
+- 시간대별 부분 요약을 먼저 만든다.
+- 부분 요약마다 주요 주제, 근거 발언, 결정 사항, 할 일, 확인 필요 항목을 구조화한다.
+- 부분 요약을 합쳐 주제 후보를 만들고, 그 주제 후보를 기준으로 최종 `topicSections`를 만든다.
+- 전체 요약은 최종 `topicSections`와 어긋나지 않게 생성하거나 검증한다.
+- 참석자별 정리는 참석자 발언만 모으지 않고, 시간대/주제/앞뒤 발언 맥락을 함께 입력한다.
+
+검증 기준:
+
+- 30분, 1시간, 2시간, 5시간 샘플에서 중간 주제가 누락되지 않는지 확인한다.
+- 요약 실패 시에도 대화록과 부분 요약 checkpoint가 남아 다시 실행할 수 있어야 한다.
+- 주제별 정리와 전체 요약이 서로 다른 결론을 내지 않아야 한다.
+- 참석자별 정리는 "누가 어떤 말을 많이 했는지"가 아니라 "어떤 주제에서 어떤 역할을 했는지"를 설명해야 한다.

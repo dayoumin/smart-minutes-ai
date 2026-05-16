@@ -46,8 +46,8 @@ const formatSidebarStatus = (message: string): string => {
         'Converting to WAV...': '음성 추출 중',
         'Preparing audio chunks...': '구간 나누는 중',
         '음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.': '후처리 준비 중',
-        'Speaker Diarization & Alignment...': '화자 구분 중',
-        '화자 구간 분석 완료. 문장 시간과 맞추는 중': '문장 시간 맞추는 중',
+        'Speaker Diarization & Alignment...': '참석자 구분 중',
+        '화자 구간 분석 완료. 문장 시간과 맞추는 중': '참석자 구간 확인 완료. 문장 시간과 맞추는 중',
         'Summarizing with Local LLM...': '요약 정리 중',
         'Saving results...': '저장 중',
     };
@@ -159,9 +159,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
 
     useEffect(() => {
         const closeMenu = (event: PointerEvent) => {
-            if (!sidebarRef.current?.contains(event.target as Node)) {
-                setOpenMenuId(null);
-            }
+            const target = event.target;
+            if (target instanceof Element && target.closest('[data-sidebar-record-menu], [data-sidebar-record-menu-trigger]')) return;
+            setOpenMenuId(null);
         };
         const closeMenuWithKeyboard = (event: KeyboardEvent) => {
             if (event.key === 'Escape') setOpenMenuId(null);
@@ -323,6 +323,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         type="button"
                                         className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-primary"
                                         onClick={() => setOpenMenuId(openMenuId === record.id ? null : record.id)}
+                                        data-sidebar-record-menu-trigger
                                         aria-haspopup="menu"
                                         aria-expanded={openMenuId === record.id}
                                         aria-controls={`sidebar-record-menu-${record.id}`}
@@ -333,7 +334,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                     </button>
                                 </div>
                                 {openMenuId === record.id && (
-                                    <div id={`sidebar-record-menu-${record.id}`} role="menu" className="menu-panel absolute right-2 top-8 z-20 w-32 text-xs">
+                                    <div id={`sidebar-record-menu-${record.id}`} role="menu" className="menu-panel absolute right-2 top-8 z-20 w-32 text-xs" data-sidebar-record-menu>
                                         <button
                                             type="button"
                                             role="menuitem"

@@ -240,6 +240,12 @@ const installRoutes = async (page) => {
           evidence: ['화자1이 시스템 통제권을 언급했습니다.'],
           actions: ['보안 보완 방안 확인'],
         },
+        {
+          topic: '보안 보완 방안',
+          summary: '보안 보완 방안과 후속 확인 항목을 정리했습니다.',
+          evidence: ['보안 보완 방안을 확인하기로 했습니다.'],
+          actions: ['후속 확인 항목 정리'],
+        },
       ],
       generation_status: { topic_sections: 'completed', speaker_context_summaries: 'not_started' },
       outputs: {},
@@ -321,27 +327,25 @@ const run = async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
 
     await page.getByText('요약 AI 미준비 회의록').first().click();
-    await page.getByText('요약 AI 준비 필요').waitFor({ timeout: 10000 });
-    await page.getByText('요약 AI가 준비되면 전체 요약과 추가 정리를 만들 수 있습니다.').waitFor({ timeout: 10000 });
-    assert.equal(await page.getByRole('button', { name: '주제별 정리' }).isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: '참석자별 정리' }).isDisabled(), true);
+    await page.getByText('요약 AI가 없어도 대화록은 확인할 수 있습니다.').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('tab', { name: '기록 정리' }).isDisabled(), true);
 
     await page.getByText('시뮬레이션 회의록').first().click();
+    await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByRole('tab', { name: '주제별 정리' }).click();
 
-    await page.getByText('주제별 정리 후 사용').waitFor({ timeout: 10000 });
     const topicButton = page.getByRole('button', { name: '주제별 정리' });
-    const speakerButton = page.getByRole('button', { name: '참석자별 정리' });
-    assert.equal(await speakerButton.isDisabled(), true);
-
     await topicButton.click();
     await page.getByText('AI 시스템 통제권과 지식 확장 방향을 정리했습니다.').waitFor({ timeout: 10000 });
-    await page.getByText('정리 가능').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '참석자별 정리' }).click();
+    const speakerButton = page.getByRole('button', { name: '참석자별 정리', exact: true });
     assert.equal(await speakerButton.isDisabled(), false);
 
     await speakerButton.click();
     await page.getByText('AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.').waitFor({ timeout: 10000 });
 
-    await page.getByRole('button', { name: '회의록 HWPX 저장' }).click();
+    await page.getByRole('button', { name: '회의록 HWPX 파일을 다운로드 폴더에 저장' }).click();
     await page.getByText('HWPX 파일을 다운로드 폴더에 저장했습니다.').waitFor({ timeout: 10000 });
 
     assert.deepEqual(exportCalls, ['hwpx:save-copy']);

@@ -156,7 +156,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
                 }),
             });
             if (!response.ok) return false;
-            await response.json().catch(() => undefined);
+            await response.json().catch(() => null);
             onNotice?.(`${downloadFormatLabels[downloadKind]} 파일을 다운로드 폴더에 저장했습니다.`);
             return true;
         } catch {
@@ -225,17 +225,13 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({ 
         <div className="flex overflow-hidden rounded-md border border-input bg-background shadow-sm transition-shadow focus-within:ring-2 focus-within:ring-primary/30">
             <button
                 type="button"
-                className="inline-flex h-10 items-center justify-center gap-2 px-3 text-sm font-medium text-foreground transition-colors hover:bg-muted/50 hover:text-primary disabled:cursor-wait disabled:opacity-60"
+                className="inline-flex h-10 w-10 items-center justify-center text-foreground transition-colors hover:bg-muted/50 hover:text-primary disabled:cursor-wait disabled:opacity-60"
                 onClick={handleDownload}
                 disabled={isDownloading || disabled}
-                title={`${downloadFormatLabels[downloadKind]} 저장`}
-                aria-label={`회의록 ${downloadFormatLabels[downloadKind]} 저장`}
+                title={`${downloadFormatLabels[downloadKind]} 파일을 다운로드 폴더에 저장`}
+                aria-label={`회의록 ${downloadFormatLabels[downloadKind]} 파일을 다운로드 폴더에 저장`}
             >
                 <Download size={18} />
-                <span className="whitespace-nowrap">회의록 저장</span>
-                <span className="rounded-sm bg-muted px-1.5 py-0.5 text-[11px] font-semibold text-muted-foreground">
-                    {downloadFormatLabels[downloadKind]}
-                </span>
             </button>
         </div>
     );

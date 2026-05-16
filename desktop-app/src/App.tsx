@@ -50,7 +50,7 @@ const formatSegmentTime = (seconds: number): string => {
 const toMeetingSegments = (segments: Array<Record<string, unknown>> = []): MeetingSegment[] => segments.map(segment => ({
     start: formatSegmentTime(Number(segment.start ?? 0)),
     end: formatSegmentTime(Number(segment.end ?? 0)),
-    speaker: String(segment.speaker_name || segment.speaker || '화자'),
+    speaker: String(segment.speaker_name || segment.speaker || '참석자'),
     text: String(segment.text || ''),
     timingApproximate: Boolean(segment.timing_approximate),
 }));
@@ -72,7 +72,7 @@ const benchmarkSegments = (result: BenchmarkResult): MeetingSegment[] => (
 
 const buildComparisonSummary = (label: string, model: string, seconds: number, hangulRatio?: number, segmentCount?: number, speakerCount?: number): string => (
     `${label} ${model} 테스트 결과입니다. 처리 시간은 ${seconds.toFixed(2)}초, 한글 비율은 ${hangulRatio !== undefined ? `${(hangulRatio * 100).toFixed(1)}%` : '확인 필요'}, ` +
-    `발화 segment는 ${segmentCount ?? 0}개, 화자 수는 ${speakerCount ?? 0}명으로 확인했습니다.`
+    `발화 segment는 ${segmentCount ?? 0}개, 참석자 수는 ${speakerCount ?? 0}명으로 확인했습니다.`
 );
 
 const seedAsrComparisonMeetings = async (): Promise<string | null> => {
@@ -98,7 +98,7 @@ const seedAsrComparisonMeetings = async (): Promise<string | null> => {
                 Number(test4FastAlign.fast_segments ?? 0),
                 Array.isArray(test4FastAlign.speakers) ? test4FastAlign.speakers.length : 0,
             ),
-            topics: ['faster-whisper 전사 품질', '발화 경계', '화자 정렬'],
+            topics: ['faster-whisper 전사 품질', '발화 경계', '참석자 정렬'],
             actions: ['다른 실제 대화 샘플에서 반복 확인'],
             decisions: ['test (4)에서는 faster-whisper가 더 빠르고 발화 경계가 자연스러움'],
             needsCheck: ['긴 파일에서 처리 시간과 반복 문장 여부 확인'],

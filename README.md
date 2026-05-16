@@ -1,4 +1,4 @@
-# Smart Minutes AI
+# LMO 회의 인사이트
 
 음성/영상 회의 자료를 로컬에서 분석해 회의록을 만드는 데스크탑 앱입니다.
 
@@ -88,7 +88,7 @@ lmo_audio*.zip
 
 회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
 
-자세한 내용은 [Smart_Minutes_AI_Portable_회사_PC_사용법.md](Smart_Minutes_AI_Portable_회사_PC_사용법.md)를 봅니다.
+자세한 내용은 [LMO 회의 인사이트 portable 회사 PC 사용법](Smart_Minutes_AI_Portable_회사_PC_사용법.md)을 봅니다.
 
 회사 PC에서 실행 파일을 다시 만들 때는 먼저 빌드 도구와 모델 원본 위치를 확인합니다.
 

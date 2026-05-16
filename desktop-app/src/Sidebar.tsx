@@ -21,6 +21,7 @@ export interface SidebarProps {
         rawMessage?: string;
         startedAt?: number | null;
         stalled?: boolean;
+        transcriptReady?: boolean;
     };
 }
 
@@ -138,10 +139,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const analysisElapsedMs = now - (analysisStatus?.startedAt || now);
     const analysisRawMessage = analysisStatus?.rawMessage || analysisStatus?.message || '';
     const transcriptEstimateLabel = analysisStatus
-        ? formatTranscriptReadyEstimate(analysisElapsedMs, analysisStatus.progress, analysisRawMessage || analysisStatus.message)
+        ? formatTranscriptReadyEstimate(
+            analysisElapsedMs,
+            analysisStatus.progress,
+            analysisRawMessage || analysisStatus.message,
+            analysisStatus.transcriptReady,
+        )
         : '';
     const transcriptProgressPercent = analysisStatus
-        ? getTranscriptReadyProgressPercent(analysisStatus.progress, analysisRawMessage || analysisStatus.message)
+        ? getTranscriptReadyProgressPercent(
+            analysisStatus.progress,
+            analysisRawMessage || analysisStatus.message,
+            analysisStatus.transcriptReady,
+        )
         : 0;
     const sidebarEstimateLabel = transcriptEstimateLabel === '대화록 준비됨' || transcriptEstimateLabel === '측정 중'
         ? transcriptEstimateLabel

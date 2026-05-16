@@ -44,6 +44,8 @@ interface AnalyzeResult {
     status?: string;
     heartbeat?: boolean;
     progress?: number;
+    transcript_ready?: boolean;
+    transcriptReady?: boolean;
     summary?: string;
     segments?: MeetingSegment[];
     display_segments?: MeetingSegment[];
@@ -133,6 +135,8 @@ interface DraftStatusPayload {
             message?: string;
             progress?: number;
             status?: string;
+            transcript_ready?: boolean;
+            transcriptReady?: boolean;
         };
         last_error?: string;
     }>;
@@ -400,6 +404,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle');
     const [statusMessage, setStatusMessage] = useState('');
     const [rawStatusMessage, setRawStatusMessage] = useState('');
+    const [transcriptReady, setTranscriptReady] = useState(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [errorMessage, setErrorMessage] = useState('');
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
@@ -416,6 +421,22 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const analysisJobIdRef = useRef<string | null>(null);
     const analysisResumeDraftIdRef = useRef<string | null>(null);
     const analysisStalled = isAnalyzing && analysisPhase === 'analyzing' && analysisNow - lastRealProgressAt >= ANALYSIS_STALL_WARNING_MS;
+    const hasWriterCloseRisk = isAnalyzing || (!completionNotice && (
+        Boolean(file)
+        || Boolean(title.trim())
+        || Boolean(meetingPurpose.trim())
+    ));
+
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent('close-guard:state', {
+            detail: { source: 'meeting-writer', active: hasWriterCloseRisk },
+        }));
+        return () => {
+            window.dispatchEvent(new CustomEvent('close-guard:state', {
+                detail: { source: 'meeting-writer', active: false },
+            }));
+        };
+    }, [hasWriterCloseRisk]);
 
     useEffect(() => {
         const active = isAnalyzing;
@@ -427,9 +448,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 rawMessage: rawStatusMessage,
                 startedAt: analysisStartedAt,
                 stalled: analysisStalled,
+                transcriptReady,
             },
         }));
-    }, [analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage]);
+    }, [analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
 
     useEffect(() => {
         if (!isAnalyzing) return;
@@ -505,6 +527,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         lastProgress: typeof remote.last_progress?.progress === 'number'
                             ? remote.last_progress.progress
                             : draft.lastProgress,
+                        transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || draft.transcriptReady),
                         errorMessage: remote.last_error || draft.errorMessage,
                         resumeEligible,
                         completedChunkCount: Number(remote.completed_chunk_count || 0),
@@ -522,6 +545,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         || nextDraft.stage !== draft.stage
                         || nextDraft.lastMessage !== draft.lastMessage
                         || nextDraft.lastProgress !== draft.lastProgress
+                        || nextDraft.transcriptReady !== draft.transcriptReady
                         || nextDraft.errorMessage !== draft.errorMessage
                         || nextDraft.resumeEligible !== draft.resumeEligible
                         || nextDraft.completedChunkCount !== draft.completedChunkCount
@@ -803,6 +827,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             stage?: string;
             lastMessage?: string;
             lastProgress?: number;
+            transcriptReady?: boolean;
             errorMessage?: string;
         } = {},
     ) => {
@@ -826,6 +851,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             stage: options.stage,
             lastMessage: options.lastMessage,
             lastProgress: options.lastProgress,
+            transcriptReady: options.transcriptReady ?? existing?.transcriptReady,
             errorMessage: options.errorMessage,
             resumeEligible: existing?.resumeEligible,
             resumeUnavailableReason: existing?.resumeUnavailableReason,
@@ -866,6 +892,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
         setRawStatusMessage(draft.lastMessage || '');
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
+        setTranscriptReady(Boolean(draft.transcriptReady));
     };
 
     const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
@@ -1084,6 +1111,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 lastProgress: 0,
             });
             setAnalysisPhase('analyzing');
+            setTranscriptReady(false);
             setLastRealProgressAt(getNowMs());
             setStatusMessage(current => current || '분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
 
@@ -1152,6 +1180,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     if (typeof parsed.progress === 'number') {
                         setProgress(Math.min(100, Math.max(0, parsed.progress)));
                     }
+                    if (parsed.transcript_ready || parsed.transcriptReady || parsed.status === 'completed') {
+                        setTranscriptReady(true);
+                    }
                     if (parsed.message) {
                         setRawStatusMessage(parsed.message);
                         setStatusMessage(translateStatusMessage(parsed.message));
@@ -1160,6 +1191,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             stage: parsed.status || 'processing',
                             lastMessage: parsed.message,
                             lastProgress: typeof parsed.progress === 'number' ? parsed.progress : progress,
+                            transcriptReady: Boolean(parsed.transcript_ready || parsed.transcriptReady || transcriptReady),
                         });
                     }
                     if (!parsed.heartbeat) {
@@ -1354,8 +1386,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         ].filter(Boolean).join(' · ')
         : '음성 파일을 선택해 주세요.';
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
-    const transcriptEstimateLabel = formatTranscriptReadyEstimate(elapsedMs, progressPercent, rawStatusMessage || currentStatusMessage);
-    const transcriptProgressPercent = getTranscriptReadyProgressPercent(progressPercent, rawStatusMessage || currentStatusMessage);
+    const transcriptEstimateLabel = formatTranscriptReadyEstimate(
+        elapsedMs,
+        progressPercent,
+        rawStatusMessage || currentStatusMessage,
+        transcriptReady,
+    );
+    const transcriptProgressPercent = getTranscriptReadyProgressPercent(
+        progressPercent,
+        rawStatusMessage || currentStatusMessage,
+        transcriptReady,
+    );
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">

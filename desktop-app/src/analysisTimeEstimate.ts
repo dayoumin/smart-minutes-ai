@@ -1,4 +1,4 @@
-const TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT = 85;
+const TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT = 66;
 
 export const formatAnalysisDuration = (milliseconds: number): string => {
     const totalSeconds = Math.max(0, Math.floor(milliseconds / 1000));
@@ -12,9 +12,15 @@ export const formatAnalysisDuration = (milliseconds: number): string => {
     return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 };
 
-const isTranscriptReadyStage = (message: string, progressPercent: number): boolean => {
+const isTranscriptReadyStage = (
+    message: string,
+    progressPercent: number,
+    transcriptReady = false,
+): boolean => {
+    if (transcriptReady) return true;
     const normalized = message.trim();
-    return progressPercent >= TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT
+    return progressPercent >= 100
+        || normalized === '대화록 저장이 완료되었습니다. 후속 정리를 확인하고 있습니다.'
         || normalized === 'Summarizing with Local LLM...'
         || normalized === 'Saving results...'
         || normalized.includes('대화록 생성이 완료')
@@ -25,22 +31,27 @@ const isTranscriptReadyStage = (message: string, progressPercent: number): boole
 export const getTranscriptReadyProgressPercent = (
     progressPercent: number,
     message: string,
+    transcriptReady = false,
 ): number => {
-    if (isTranscriptReadyStage(message, progressPercent)) return 100;
+    if (isTranscriptReadyStage(message, progressPercent, transcriptReady)) return 100;
 
     const boundedProgress = Math.min(Math.max(progressPercent, 0), TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT);
-    return (boundedProgress / TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT) * 100;
+    return Math.min(99, (boundedProgress / TRANSCRIPT_READY_BACKEND_PROGRESS_PERCENT) * 100);
 };
 
 export const formatTranscriptReadyEstimate = (
     elapsedMs: number,
     progressPercent: number,
     message: string,
+    transcriptReady = false,
 ): string => {
-    if (isTranscriptReadyStage(message, progressPercent)) return '대화록 준비됨';
+    if (isTranscriptReadyStage(message, progressPercent, transcriptReady)) return '대화록 준비됨';
     if (elapsedMs < 5_000 || progressPercent < 10) return '측정 중';
 
-    const transcriptProgressPercent = Math.max(1, getTranscriptReadyProgressPercent(progressPercent, message));
+    const transcriptProgressPercent = Math.max(
+        1,
+        getTranscriptReadyProgressPercent(progressPercent, message, transcriptReady),
+    );
     const estimatedTotalMs = elapsedMs / (transcriptProgressPercent / 100);
     return `약 ${formatAnalysisDuration(estimatedTotalMs)}`;
 };

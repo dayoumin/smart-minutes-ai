@@ -31,7 +31,17 @@ export const writeFrontendLog = async (message: string): Promise<void> => {
     }
 };
 
-const isTauriRuntime = (): boolean => {
+export const setTauriCloseGuardActive = async (active: boolean): Promise<void> => {
+    try {
+        const invoke = window.__TAURI__?.core?.invoke;
+        if (!invoke) return;
+        await invoke('set_close_guard_active', { active });
+    } catch {
+        // Close protection is best-effort; failing here must not break editing or analysis.
+    }
+};
+
+export const isTauriRuntime = (): boolean => {
     if (typeof window === 'undefined') return false;
     if (window.__TAURI__?.core?.invoke) return true;
     return window.location.hostname === 'tauri.localhost' || window.location.protocol === 'tauri:';

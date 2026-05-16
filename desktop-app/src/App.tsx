@@ -1,11 +1,11 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Layout } from './Layout';
 import { MeetingWriter } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
 import { Settings } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
-import { getApiBase } from './apiBase';
+import { getApiBase, isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
 
 interface AnalysisStatus {
     active: boolean;
@@ -14,6 +14,7 @@ interface AnalysisStatus {
     rawMessage?: string;
     startedAt?: number | null;
     stalled?: boolean;
+    transcriptReady?: boolean;
 }
 
 interface BenchmarkScore {
@@ -150,6 +151,8 @@ export const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState('minutes');
     const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
     const [resumeDraftSelectionRequest, setResumeDraftSelectionRequest] = useState<{ jobId: string; requestId: number } | null>(null);
+    const [closeGuardActive, setCloseGuardActive] = useState(false);
+    const closeGuardSourcesRef = useRef(new Map<string, boolean>());
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const leaveGuardRef = React.useRef<() => boolean>(() => true);
     const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
@@ -179,6 +182,39 @@ export const App: React.FC = () => {
     };
 
     useEffect(() => {
+        const handleCloseGuardState = (event: Event) => {
+            const detail = (event as CustomEvent<{ source?: string; active?: boolean }>).detail;
+            const source = detail?.source || 'global';
+            closeGuardSourcesRef.current.set(source, Boolean(detail?.active));
+            setCloseGuardActive([...closeGuardSourcesRef.current.values()].some(Boolean));
+        };
+
+        window.addEventListener('close-guard:state', handleCloseGuardState);
+        return () => window.removeEventListener('close-guard:state', handleCloseGuardState);
+    }, []);
+
+    useEffect(() => {
+        if (!isTauriRuntime()) return;
+        void setTauriCloseGuardActive(closeGuardActive);
+        return () => {
+            void setTauriCloseGuardActive(false);
+        };
+    }, [closeGuardActive]);
+
+    useEffect(() => {
+        if (!closeGuardActive) return;
+        if (isTauriRuntime()) return;
+
+        const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+            event.preventDefault();
+            event.returnValue = '';
+        };
+
+        window.addEventListener('beforeunload', handleBeforeUnload);
+        return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+    }, [closeGuardActive]);
+
+    useEffect(() => {
         const handleAnalysisStatus = (event: Event) => {
             const detail = (event as CustomEvent<AnalysisStatus>).detail;
             if (!detail) return;
@@ -189,6 +225,7 @@ export const App: React.FC = () => {
                 rawMessage: detail.rawMessage || detail.message || '',
                 startedAt: detail.startedAt || null,
                 stalled: Boolean(detail.stalled),
+                transcriptReady: Boolean(detail.transcriptReady),
             });
         };
 

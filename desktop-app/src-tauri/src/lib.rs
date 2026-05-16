@@ -2,9 +2,12 @@ use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
-use tauri::{AppHandle, Manager, RunEvent, State};
+use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 
+#[cfg(target_os = "windows")]
+use std::ffi::c_void;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
@@ -13,14 +16,37 @@ const BACKEND_SIDECAR: &str = "meeting-backend-x86_64-pc-windows-msvc.exe";
 const PREFERRED_BACKEND_PORT: u16 = 17863;
 const PREFERRED_BACKEND_PORT_ATTEMPTS: u16 = 100;
 
+#[cfg(target_os = "windows")]
+const MB_YESNO: u32 = 0x00000004;
+#[cfg(target_os = "windows")]
+const MB_ICONQUESTION: u32 = 0x00000020;
+#[cfg(target_os = "windows")]
+const MB_DEFBUTTON2: u32 = 0x00000100;
+#[cfg(target_os = "windows")]
+const IDYES: i32 = 6;
+
+#[cfg(target_os = "windows")]
+extern "system" {
+    fn MessageBoxW(hwnd: *mut c_void, text: *const u16, caption: *const u16, u_type: u32) -> i32;
+}
+
 #[derive(Clone)]
 struct BackendConfig {
     base_url: String,
 }
 
+struct CloseGuardState {
+    active: AtomicBool,
+}
+
 #[tauri::command]
 fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
     config.base_url.clone()
+}
+
+#[tauri::command]
+fn set_close_guard_active(state: State<'_, CloseGuardState>, active: bool) {
+    state.active.store(active, Ordering::SeqCst);
 }
 
 #[tauri::command]
@@ -37,8 +63,36 @@ fn write_frontend_log(app: AppHandle, message: String) -> Result<(), String> {
         .append(true)
         .open(log_dir.join("frontend.log"))
         .map_err(|error| format!("Could not open frontend log: {error}"))?;
-    writeln!(log_file, "{message}").map_err(|error| format!("Could not write frontend log: {error}"))?;
+    writeln!(log_file, "{message}")
+        .map_err(|error| format!("Could not write frontend log: {error}"))?;
     Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn to_wide(value: &str) -> Vec<u16> {
+    value.encode_utf16().chain(std::iter::once(0)).collect()
+}
+
+#[cfg(target_os = "windows")]
+fn confirm_app_close() -> bool {
+    let text = to_wide(
+        "앱을 종료할까요?\n진행 중인 분석은 중단되고, 저장하지 않은 작성/편집 내용은 사라질 수 있습니다.",
+    );
+    let caption = to_wide("lmo_audio 종료 확인");
+    let result = unsafe {
+        MessageBoxW(
+            std::ptr::null_mut(),
+            text.as_ptr(),
+            caption.as_ptr(),
+            MB_YESNO | MB_ICONQUESTION | MB_DEFBUTTON2,
+        )
+    };
+    result == IDYES
+}
+
+#[cfg(not(target_os = "windows"))]
+fn confirm_app_close() -> bool {
+    true
 }
 
 fn find_available_port() -> Result<u16, String> {
@@ -113,9 +167,13 @@ pub fn run() {
         .manage(BackendConfig {
             base_url: backend_base_url,
         })
+        .manage(CloseGuardState {
+            active: AtomicBool::new(false),
+        })
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_backend_base_url,
+            set_close_guard_active,
             write_frontend_log
         ])
         .setup(move |app| {
@@ -135,6 +193,14 @@ pub fn run() {
                 }
             }
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let close_guard = window.state::<CloseGuardState>();
+                if close_guard.active.load(Ordering::SeqCst) && !confirm_app_close() {
+                    api.prevent_close();
+                }
+            }
         })
         .build(tauri::generate_context!())
         .expect("error while building Tauri application")

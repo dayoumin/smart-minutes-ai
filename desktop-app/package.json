@@ -16,6 +16,7 @@
     "test:resume-flow": "node scripts/simulate-resume-flow.mjs",
     "test:resume-draft-flow": "node scripts/simulate-resume-draft-flow.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",
+    "test:close-guard-flow": "node scripts/simulate-close-guard-flow.mjs",
     "test:meeting-detail-flow": "node scripts/simulate-meeting-detail-flow.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",

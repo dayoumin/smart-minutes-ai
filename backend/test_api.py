@@ -447,6 +447,61 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("event: result", body)
         self.assertIn("event: done", body)
 
+    def test_real_analysis_stream_sends_transcript_ready_marker(self) -> None:
+        fake_config = {
+            "paths": {
+                "temp_dir": "./temp",
+                "stt_model": "../models/faster-whisper-large-v3",
+                "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
+            },
+            "stt": {"selected_model": "faster-whisper-large-v3"},
+            "diarization": {"enabled": False},
+            "privacy": {"save_original_audio_copy": False},
+        }
+
+        def fake_process_audio_pipeline(upload_path, job_id, config, progress_callback, cancel_event=None):
+            progress_callback(
+                "대화록 저장이 완료되었습니다. 후속 정리를 확인하고 있습니다.",
+                66,
+                {"transcript_ready": True},
+            )
+            return {
+                "job_id": job_id,
+                "result_data": {
+                    "summary": {"overview": "transcript ready test", "topics": [], "actions": []},
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+                },
+            }
+
+        async def collect_events() -> list[str]:
+            upload = UploadFile(filename="test_audio.wav", file=BytesIO(b"audio"))
+            events = []
+            async for event in stream_real_analysis(
+                "transcript ready test",
+                "2026-05-08T10:00",
+                "tester",
+                upload,
+                "unit_transcript_ready_stream",
+            ):
+                events.append(event)
+                if "event: done" in event:
+                    break
+            return events
+
+        with (
+            patch("main.load_config", return_value=fake_config),
+            patch("main.model_exists", return_value=True),
+            patch("main.resolve_model_path", return_value="mock-model-path"),
+            patch("main.process_audio_pipeline", side_effect=fake_process_audio_pipeline),
+        ):
+            events = asyncio.run(collect_events())
+
+        body = "\n".join(events)
+        self.assertIn("event: progress", body)
+        self.assertIn('"transcript_ready": true', body)
+        self.assertIn("event: result", body)
+        self.assertIn("event: done", body)
+
     def test_analyze_meeting_saves_upload_before_streaming(self) -> None:
         fake_config = {
             "paths": {
@@ -710,7 +765,13 @@ class AnalyzeApiTest(unittest.TestCase):
                 "config_fingerprint": main._analysis_config_fingerprint(fake_config),
                 "completed_chunk_indices": [0, 1],
                 "chunk_count": 4,
-                "last_progress": {"message": "Transcribing chunk 2/4...", "progress": 40, "status": "processing"},
+                "last_progress": {
+                    "message": "대화록 저장이 완료되었습니다. 후속 정리를 확인하고 있습니다.",
+                    "progress": 66,
+                    "status": "processing",
+                    "transcript_ready": True,
+                },
+                "transcript_ready": True,
                 "updated_at": "2026-05-13T09:30:00",
             })
             completed_paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "resume_done")
@@ -742,6 +803,7 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(len(payload["candidates"]), 1)
             self.assertEqual(payload["candidates"][0]["job_id"], "resume_match")
             self.assertEqual(payload["candidates"][0]["completed_chunk_count"], 2)
+            self.assertTrue(payload["candidates"][0]["last_progress"]["transcript_ready"])
 
     def test_analysis_config_fingerprint_ignores_summary_settings(self) -> None:
         base_config = {
@@ -901,7 +963,13 @@ class AnalyzeApiTest(unittest.TestCase):
                 "source_filename": "meeting.mp4",
                 "source_size": 1234,
                 "source_last_modified": 987654321,
-                "last_progress": {"message": "Transcribing chunk 2/4...", "progress": 40, "status": "processing"},
+                "last_progress": {
+                    "message": "대화록 저장이 완료되었습니다. 후속 정리를 확인하고 있습니다.",
+                    "progress": 66,
+                    "status": "processing",
+                    "transcript_ready": True,
+                },
+                "transcript_ready": True,
                 "updated_at": "2026-05-13T09:30:00",
             })
             atomic_write_json(completed_paths.state_path, {
@@ -929,6 +997,7 @@ class AnalyzeApiTest(unittest.TestCase):
             by_job = {item["job_id"]: item for item in payload["drafts"]}
             self.assertEqual(by_job["draft_active"]["status"], "active")
             self.assertTrue(by_job["draft_active"]["active"])
+            self.assertTrue(by_job["draft_active"]["last_progress"]["transcript_ready"])
             self.assertEqual(by_job["draft_done"]["status"], "completed")
             self.assertEqual(by_job["missing_job"]["status"], "missing")
 

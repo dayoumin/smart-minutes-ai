@@ -346,6 +346,7 @@ def _build_resume_candidate_payload(job_id: str, state: dict) -> dict:
             "message": str(progress_payload.get("message") or ""),
             "progress": int(progress_payload.get("progress") or 0),
             "status": str(progress_payload.get("status") or ""),
+            "transcript_ready": bool(progress_payload.get("transcript_ready") or state.get("transcript_ready")),
         },
     }
 
@@ -435,6 +436,7 @@ def _build_analysis_draft_status(job_id: str, state: dict) -> dict:
             "message": str(progress_payload.get("message") or ""),
             "progress": int(progress_payload.get("progress") or 0),
             "status": str(progress_payload.get("status") or ""),
+            "transcript_ready": bool(progress_payload.get("transcript_ready") or state.get("transcript_ready")),
         },
         "last_error": str(state.get("last_error") or ""),
     }
@@ -2335,7 +2337,7 @@ async def stream_real_analysis(
         if cancel_event.is_set():
             raise AnalysisCancelledError("분석이 취소되었습니다.")
 
-    def report_progress(step: str, progress: int) -> None:
+    def report_progress(step: str, progress: int, metadata: dict | None = None) -> None:
         nonlocal last_progress, last_real_progress_at
         raise_if_cancelled()
         last_real_progress_at = time.monotonic()
@@ -2345,6 +2347,7 @@ async def stream_real_analysis(
             "progress": progress,
             "message": step,
             "status": "processing",
+            **(metadata or {}),
         }
         loop.call_soon_threadsafe(
             queue.put_nowait,
@@ -2744,20 +2747,28 @@ def process_audio_pipeline(
             **extra,
         })
 
-    def _report_progress(step: str, prog: int):
+    def _report_progress(step: str, prog: int, **extra):
         _raise_if_cancelled()
         print(f"[{prog}%] {step}")
-        _write_job_state(checkpoint_paths, {
+        last_progress_payload = {
+            "message": step,
+            "progress": prog,
+            "status": "processing",
+            **extra,
+        }
+        state_update = {
             "stage": current_stage,
             "last_heartbeat_at": datetime.now().isoformat(),
-            "last_progress": {
-                "message": step,
-                "progress": prog,
-                "status": "processing",
-            },
-        })
+            "last_progress": last_progress_payload,
+        }
+        if extra.get("transcript_ready"):
+            state_update["transcript_ready"] = True
+        _write_job_state(checkpoint_paths, state_update)
         if progress_callback:
-            progress_callback(step, prog)
+            try:
+                progress_callback(step, prog, dict(extra))
+            except TypeError:
+                progress_callback(step, prog)
 
     if resume_message:
         _report_progress(resume_message, 5)
@@ -3109,6 +3120,11 @@ def process_audio_pipeline(
         "stt_partial_saved": True,
         "resume_supported": True,
     })
+    _report_progress(
+        "대화록 저장이 완료되었습니다. 후속 정리를 확인하고 있습니다.",
+        66,
+        transcript_ready=True,
+    )
 
     if not segments:
         print("[STT] No transcript segments were returned; skipping diarization and summary.")

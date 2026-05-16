@@ -3,7 +3,7 @@ import { CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Edit3, FileAudio, 
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
-import { toApiUrl } from './apiBase';
+import { isTauriRuntime, toApiUrl } from './apiBase';
 import { Input } from './Input';
 import { StatusBanner } from './StatusBanner';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
@@ -1215,6 +1215,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [confirmDiscardUnsavedChanges, onRegisterLeaveGuard]);
 
     useEffect(() => {
+        window.dispatchEvent(new CustomEvent('close-guard:state', {
+            detail: { source: 'meeting-history', active: hasUnsavedDraftChanges },
+        }));
+        return () => {
+            window.dispatchEvent(new CustomEvent('close-guard:state', {
+                detail: { source: 'meeting-history', active: false },
+            }));
+        };
+    }, [hasUnsavedDraftChanges]);
+
+    useEffect(() => {
+        if (isTauriRuntime()) return;
         if (!hasUnsavedDraftChanges) return;
 
         const handleBeforeUnload = (event: BeforeUnloadEvent) => {

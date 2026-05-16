@@ -9,6 +9,7 @@ interface AnalysisStatus {
     rawMessage?: string;
     startedAt?: number | null;
     stalled?: boolean;
+    transcriptReady?: boolean;
 }
 
 export interface LayoutProps {

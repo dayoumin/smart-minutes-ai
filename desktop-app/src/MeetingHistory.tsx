@@ -133,6 +133,12 @@ const getGenerationErrorMessage = async (response: Response, fallback: string): 
         if (parsed.detail === 'speaker_input_changed') {
             return '대화록이나 주제별 정리가 바뀌어 참석자별 정리를 저장하지 않았습니다. 다시 정리해 주세요.';
         }
+        if (parsed.detail === 'topic_generation_empty') {
+            return '주제별 정리 결과가 비어 있습니다. 요약 내용을 확인한 뒤 다시 정리해 주세요.';
+        }
+        if (parsed.detail === 'speaker_context_generation_empty') {
+            return '참석자별 정리 결과가 비어 있습니다. 주제별 정리와 대화록을 확인한 뒤 다시 정리해 주세요.';
+        }
         if (parsed.detail === 'audio_required_for_diarization') {
             return '발화자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.';
         }
@@ -147,6 +153,9 @@ const getGenerationErrorMessage = async (response: Response, fallback: string): 
         }
         if (parsed.detail === 'diarization generation is already running') {
             return '발화자 구분이 이미 진행 중입니다.';
+        }
+        if (parsed.detail === 'diarization_runtime_error') {
+            return '발화자 구분 실행 중 오류가 발생했습니다. 원본 음성과 화자 분리 모델 상태를 확인한 뒤 다시 실행해 주세요.';
         }
         return parsed.detail || fallback;
     } catch {

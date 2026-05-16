@@ -162,7 +162,10 @@ class ExportRecordTest(unittest.TestCase):
             json.dumps(
                 {
                     "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
-                    "summary": {"generation_status": {"topic_sections": "not_started"}},
+                    "summary": {
+                        "generation_status": {"topic_sections": "not_started"},
+                        "generation_error_detail": "topic_generation_empty",
+                    },
                 },
                 ensure_ascii=False,
             ),
@@ -182,6 +185,128 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(data["export_error"], "정리는 완료됐지만 다운로드 파일 갱신은 실패했습니다.")
         result_data = json.loads(output_path.read_text(encoding="utf-8"))
         self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "completed")
+        self.assertNotIn("generation_error_detail", result_data["summary"])
+
+    def test_topic_generation_empty_result_is_not_marked_completed(self):
+        job_id = "unit_topic_generation_empty"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                    "summary": {"generation_status": {"summary": "completed", "topic_sections": "not_started"}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with patch("pipeline.summarize.generate_topic_sections", return_value=[]):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(response.json()["detail"], "topic_generation_empty")
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "failed")
+        self.assertEqual(result_data["summary"]["generation_error_detail"], "topic_generation_empty")
+
+    def test_speaker_context_empty_result_is_not_marked_completed(self):
+        job_id = "unit_speaker_context_empty"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                    "summary": {
+                        "topic_sections": [{"topic": "Budget", "summary": "Budget discussion"}],
+                        "generation_status": {
+                            "summary": "completed",
+                            "topic_sections": "completed",
+                            "speaker_context_summaries": "not_started",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with patch("pipeline.summarize.generate_speaker_context_summaries", return_value=[]):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-speaker-context")
+
+        self.assertEqual(response.status_code, 502, response.text)
+        self.assertEqual(response.json()["detail"], "speaker_context_generation_empty")
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["summary"]["generation_status"]["speaker_context_summaries"], "failed")
+        self.assertEqual(result_data["summary"]["generation_error_detail"], "speaker_context_generation_empty")
+
+    def test_speaker_context_success_clears_previous_generation_error(self):
+        job_id = "unit_speaker_context_clears_error"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                    "summary": {
+                        "topic_sections": [{"topic": "Budget", "summary": "Budget discussion"}],
+                        "generation_error_detail": "speaker_context_generation_empty",
+                        "generation_status": {
+                            "summary": "completed",
+                            "topic_sections": "completed",
+                            "speaker_context_summaries": "not_started",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        speaker_summary = [{"speaker": "SPEAKER_00", "display_name": "Speaker 00", "summary": "Discussed budget."}]
+        with (
+            patch("pipeline.summarize.generate_speaker_context_summaries", return_value=speaker_summary),
+            patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)),
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-speaker-context")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["summary"]["generation_status"]["speaker_context_summaries"], "completed")
+        self.assertNotIn("generation_error_detail", result_data["summary"])
+
+    def test_diarization_runtime_error_is_persisted_with_detail(self):
+        job_id = "unit_diarization_runtime_error"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Hello."}],
+                    "settings": {"diarization": False},
+                    "summary": {"generation_status": {"summary": "completed"}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        wav_path = Path(self.work_dir.name) / "source.wav"
+        wav_path.write_bytes(b"RIFF0000WAVE")
+
+        with (
+            patch.object(main, "_resolve_job_audio_path", return_value=str(wav_path)),
+            patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=10.0),
+            patch.object(main, "model_exists", return_value=True),
+            patch.object(main, "resolve_model_path", return_value=self.work_dir.name),
+            patch("pipeline.diarize.diarize_audio", side_effect=RuntimeError("pyannote failed")),
+            patch.object(main.logging, "exception"),
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-diarization")
+
+        self.assertEqual(response.status_code, 500, response.text)
+        self.assertEqual(response.json()["detail"], "diarization_runtime_error")
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["settings"]["diarization_generation_status"], "failed")
+        self.assertEqual(result_data["settings"]["diarization_error_detail"], "diarization_runtime_error")
+        self.assertIn("pyannote failed", result_data["settings"]["diarization_error_message"])
 
     def test_rejects_duplicate_topic_generation_while_generating(self):
         job_id = "unit_topic_generation_duplicate"

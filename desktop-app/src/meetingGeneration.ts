@@ -49,20 +49,22 @@ export const getSummaryGenerationStatus = (
 export const getTopicGenerationStatus = (
     status?: MeetingGenerationStatusShape,
     topicSections?: TopicSectionShape[],
-): GenerationState => (
-    status?.topicSections
-    ?? status?.topic_sections
-    ?? (topicSections?.length ? 'completed' : 'not_started')
-);
+): GenerationState => {
+    const hasTopicSections = Boolean(topicSections?.some(section => section.topic?.trim()));
+    const explicitStatus = status?.topicSections ?? status?.topic_sections;
+    if (explicitStatus === 'completed' && !hasTopicSections) return 'failed';
+    return explicitStatus ?? (hasTopicSections ? 'completed' : 'not_started');
+};
 
 export const getSpeakerGenerationStatus = (
     status?: MeetingGenerationStatusShape,
     speakerContextSummaries?: unknown[],
-): GenerationState => (
-    status?.speakerContextSummaries
-    ?? status?.speaker_context_summaries
-    ?? (speakerContextSummaries?.length ? 'completed' : 'not_started')
-);
+): GenerationState => {
+    const hasSpeakerContext = Boolean(speakerContextSummaries?.length);
+    const explicitStatus = status?.speakerContextSummaries ?? status?.speaker_context_summaries;
+    if (explicitStatus === 'completed' && !hasSpeakerContext) return 'failed';
+    return explicitStatus ?? (hasSpeakerContext ? 'completed' : 'not_started');
+};
 
 export const canGenerateSpeakerContext = (
     status?: MeetingGenerationStatusShape,

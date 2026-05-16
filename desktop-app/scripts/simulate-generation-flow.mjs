@@ -40,7 +40,7 @@ assert.equal(getTopicGenerationStatus(undefined, [{ topic: '예산' }]), 'comple
 assert.equal(getTopicGenerationStatus({ topic_sections: 'failed' }, [{ topic: '예산' }]), 'failed');
 
 assert.equal(getSpeakerGenerationStatus(undefined, []), 'not_started');
-assert.equal(getSpeakerGenerationStatus({ speaker_context_summaries: 'completed' }, []), 'completed');
+assert.equal(getSpeakerGenerationStatus({ speaker_context_summaries: 'completed' }, []), 'failed');
 
 assert.equal(canGenerateSpeakerContext({ topic_sections: 'not_started' }, []), false);
 assert.equal(canGenerateSpeakerContext({ topic_sections: 'generating' }, [{ topic: '예산' }]), false);

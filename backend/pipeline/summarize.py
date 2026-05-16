@@ -23,7 +23,7 @@ MAX_DIRECT_SUMMARY_CHARS = 8000
 SUMMARY_CHUNK_CHARS = 6000
 
 
-def _parse_llm_json(result_text: str) -> dict:
+def _parse_llm_json(result_text: str) -> dict | list:
     text = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", result_text).strip()
     if text.startswith("```json"):
         text = text[7:].strip()
@@ -39,15 +39,15 @@ def _parse_llm_json(result_text: str) -> dict:
 
     decoder = json.JSONDecoder()
     for index, char in enumerate(text):
-        if char != "{":
+        if char not in "{[":
             continue
         try:
             parsed, _end = decoder.raw_decode(text[index:])
-            if isinstance(parsed, dict):
+            if isinstance(parsed, (dict, list)):
                 return parsed
         except json.JSONDecodeError:
             continue
-    raise json.JSONDecodeError("No JSON object found in LLM response", text, 0)
+    raise json.JSONDecodeError("No JSON object or array found in LLM response", text, 0)
 
 
 def _normalize_summary(data: dict) -> dict:
@@ -191,7 +191,7 @@ def _generate_summary_once(model_name: str, prompt: str) -> dict:
     return _normalize_summary(_parse_llm_json(result_text))
 
 
-def _generate_json_once(model_name_or_path: str, prompt: str) -> dict:
+def _generate_json_once(model_name_or_path: str, prompt: str) -> dict | list:
     if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
         try:
             result_text = _generate_with_ollama_http(model_name_or_path, prompt)
@@ -233,16 +233,76 @@ def _normalize_topic_sections(items) -> list[dict]:
     for item in items:
         if not isinstance(item, dict):
             continue
-        topic = str(item.get("topic", "")).strip()
+        topic = str(item.get("topic") or item.get("title") or item.get("name") or "").strip()
         if not topic:
             continue
+        evidence = item.get("evidence", [])
+        if isinstance(evidence, str):
+            evidence = [evidence]
+        actions = item.get("actions", [])
+        if isinstance(actions, str):
+            actions = [actions]
         sections.append({
             "topic": topic,
-            "summary": str(item.get("summary", "")).strip(),
-            "evidence": item.get("evidence", []) if isinstance(item.get("evidence", []), list) else [],
-            "actions": item.get("actions", []) if isinstance(item.get("actions", []), list) else [],
+            "summary": str(item.get("summary") or item.get("content") or item.get("description") or "").strip(),
+            "evidence": evidence if isinstance(evidence, list) else [],
+            "actions": actions if isinstance(actions, list) else [],
         })
     return sections
+
+
+def _topic_sections_from_response(data) -> list[dict]:
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("topic_sections") or data.get("topicSections") or data.get("sections") or data.get("topics")
+    else:
+        items = []
+    return _normalize_topic_sections(items)
+
+
+def _fallback_topic_sections_from_response(data) -> list[dict]:
+    if not isinstance(data, dict):
+        return []
+
+    summary = str(
+        data.get("summary")
+        or data.get("overview")
+        or data.get("content")
+        or data.get("description")
+        or ""
+    ).strip()
+    raw_topics = (
+        data.get("keywords")
+        or data.get("key_topics")
+        or data.get("keyTopics")
+        or data.get("topics")
+        or []
+    )
+    topic_names = []
+    if isinstance(raw_topics, list):
+        topic_names = [str(item).strip() for item in raw_topics if not isinstance(item, dict) and str(item).strip()]
+    elif isinstance(raw_topics, str) and raw_topics.strip():
+        topic_names = [raw_topics.strip()]
+
+    if summary:
+        topic = " / ".join(topic_names[:3]) if topic_names else "핵심 주제"
+        return [{
+            "topic": topic,
+            "summary": summary,
+            "evidence": topic_names,
+            "actions": [],
+        }]
+
+    return [
+        {
+            "topic": topic,
+            "summary": "",
+            "evidence": [],
+            "actions": [],
+        }
+        for topic in topic_names
+    ]
 
 
 def _normalize_speaker_context_summaries(items) -> list[dict]:
@@ -263,6 +323,45 @@ def _normalize_speaker_context_summaries(items) -> list[dict]:
             "key_points": item.get("key_points", []) if isinstance(item.get("key_points", []), list) else [],
             "actions": item.get("actions", []) if isinstance(item.get("actions", []), list) else [],
             "needs_check": item.get("needs_check", []) if isinstance(item.get("needs_check", []), list) else [],
+        })
+    return summaries
+
+
+def _speaker_context_summaries_from_response(data) -> list[dict]:
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = data.get("speaker_context_summaries") or data.get("speakerContextSummaries") or data.get("speakers")
+    else:
+        items = []
+    return _normalize_speaker_context_summaries(items)
+
+
+def _fallback_speaker_context_from_segments(transcript_segments: list[dict]) -> list[dict]:
+    by_speaker: dict[str, dict] = {}
+    for segment in transcript_segments:
+        speaker = str(segment.get("speaker") or segment.get("speaker_name") or "UNKNOWN").strip() or "UNKNOWN"
+        display_name = str(segment.get("speaker_name") or speaker).strip() or speaker
+        text = str(segment.get("text", "")).strip()
+        if not text:
+            continue
+        entry = by_speaker.setdefault(speaker, {"display_name": display_name, "texts": []})
+        entry["texts"].append(text)
+
+    summaries = []
+    for speaker, entry in by_speaker.items():
+        texts = entry["texts"]
+        combined = " ".join(texts)
+        summary = combined[:700] + ("..." if len(combined) > 700 else "")
+        key_points = [text[:180] + ("..." if len(text) > 180 else "") for text in texts[:3]]
+        summaries.append({
+            "speaker": speaker,
+            "display_name": entry["display_name"],
+            "role_in_meeting": "",
+            "summary": summary,
+            "key_points": key_points,
+            "actions": [],
+            "needs_check": ["자동 발언자별 정리가 충분하지 않아 원문 발언 기준으로 임시 정리했습니다."],
         })
     return summaries
 
@@ -300,7 +399,29 @@ Transcript:
 {_trim_followup_transcript(transcript_text)}
 """
     data = _generate_json_once(model_name_or_path, prompt)
-    return _normalize_topic_sections(data.get("topic_sections") or data.get("topicSections"))
+    sections = _topic_sections_from_response(data)
+    if sections:
+        return sections
+
+    retry_prompt = f"""Return only valid JSON with exactly one top-level key named "topic_sections".
+Do not use top-level keys named "summary" or "keywords".
+Create 3 to 7 Korean topic sections from this transcript.
+Each item must include "topic", "summary", "evidence", and "actions".
+
+Schema:
+{{"topic_sections":[{{"topic":"", "summary":"", "evidence":[], "actions":[]}}]}}
+
+Basic summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text, 8000)}
+"""
+    retry_data = _generate_json_once(model_name_or_path, retry_prompt)
+    sections = _topic_sections_from_response(retry_data)
+    if sections:
+        return sections
+    return _fallback_topic_sections_from_response(retry_data) or _fallback_topic_sections_from_response(data)
 
 
 def generate_speaker_context_summaries(
@@ -345,9 +466,32 @@ Transcript:
 {_trim_followup_transcript(transcript_text)}
 """
     data = _generate_json_once(model_name_or_path, prompt)
-    return _normalize_speaker_context_summaries(
-        data.get("speaker_context_summaries") or data.get("speakerContextSummaries")
-    )
+    summaries = _speaker_context_summaries_from_response(data)
+    if summaries:
+        return summaries
+
+    retry_prompt = f"""Return only valid JSON with exactly one top-level key named "speaker_context_summaries".
+Do not return prose, markdown, or a single general summary.
+Create one item per speaker label found in the transcript.
+Each item must include "speaker", "display_name", "role_in_meeting", "summary", "key_points", "actions", and "needs_check".
+
+Schema:
+{{"speaker_context_summaries":[{{"speaker":"", "display_name":"", "role_in_meeting":"", "summary":"", "key_points":[], "actions":[], "needs_check":[]}}]}}
+
+Basic summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Topic sections:
+{json.dumps(topic_sections or [], ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text, 8000)}
+"""
+    retry_data = _generate_json_once(model_name_or_path, retry_prompt)
+    summaries = _speaker_context_summaries_from_response(retry_data)
+    if summaries:
+        return summaries
+    return _fallback_speaker_context_from_segments(transcript_segments)
 
 
 def _split_text_for_summary(transcript_text: str, max_chars: int = SUMMARY_CHUNK_CHARS) -> list[str]:

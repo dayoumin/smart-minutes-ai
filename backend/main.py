@@ -68,6 +68,9 @@ ANALYSIS_STALL_ERROR_SECONDS_TRANSCRIBE = 600
 DETAIL_SUMMARY_INPUT_CHANGED = "summary_input_changed"
 DETAIL_TOPIC_INPUT_CHANGED = "topic_input_changed"
 DETAIL_SPEAKER_INPUT_CHANGED = "speaker_input_changed"
+DETAIL_TOPIC_EMPTY_RESULT = "topic_generation_empty"
+DETAIL_SPEAKER_EMPTY_RESULT = "speaker_context_generation_empty"
+DETAIL_DIARIZATION_RUNTIME_ERROR = "diarization_runtime_error"
 ANALYSIS_CHECKPOINT_VERSION = 1
 ANALYSIS_PIPELINE_VERSION = "2026-05-13-long-file-v1"
 MAX_EXPORT_STEM_CHARS = 96
@@ -1088,9 +1091,32 @@ def _participant_summaries_from_speaker_context(items: list[dict]) -> list[dict]
     ]
 
 
+def _mark_generation_failed(job_id: str, result_data: dict, summary_key: str, detail: str) -> dict:
+    latest_result = _load_latest_generation_result(job_id, result_data)
+    latest_summary = latest_result.setdefault("summary", {})
+    latest_status = _ensure_generation_status(latest_summary)
+    latest_status[summary_key] = "failed"
+    latest_summary["generation_status"] = latest_status
+    latest_summary["generation_error_detail"] = detail
+    _save_job_result(job_id, latest_result)
+    return latest_result
+
+
+def _mark_diarization_failed(job_id: str, result_data: dict, detail: str, message: str = "") -> None:
+    if not os.path.exists(_get_job_result_path(job_id)):
+        return
+    latest_result = _load_latest_generation_result(job_id, result_data)
+    latest_settings = latest_result.setdefault("settings", {})
+    latest_settings["diarization_generation_status"] = "failed"
+    latest_settings["diarization_error_detail"] = detail
+    latest_settings["diarization_error_message"] = message
+    _save_job_result(job_id, latest_result)
+
+
 @app.post("/api/outputs/{job_id}/generate-diarization")
 async def generate_output_diarization(job_id: str, payload: dict | None = Body(None)) -> dict:
     from pipeline.align_speakers import align_segments_with_speakers
+    from pipeline.chunk_audio import get_wav_duration_seconds
     from pipeline.diarize import diarize_audio
     from pipeline.export_txt import export_txt
     from pipeline.transcript_display import build_display_segments, get_transcript_segments
@@ -1186,6 +1212,8 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
                 "diarization_generation_status": "completed",
                 "diarization_resource_decision": {**decision, "run": True, "skipped": False},
             })
+            latest_settings.pop("diarization_error_detail", None)
+            latest_settings.pop("diarization_error_message", None)
             latest_summary = latest_result.setdefault("summary", {})
             latest_status = _ensure_generation_status(latest_summary)
             if latest_status.get("speaker_context_summaries") == "completed":
@@ -1228,27 +1256,31 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             "outputs": outputs,
             "export_error": export_error,
         }
-    except HTTPException:
+    except HTTPException as exc:
         with GENERATION_STATUS_LOCK:
             try:
-                if os.path.exists(_get_job_result_path(job_id)):
-                    latest_result = _load_latest_generation_result(job_id, result_data if "result_data" in locals() else {})
-                    latest_result.setdefault("settings", {})["diarization_generation_status"] = "failed"
-                    _save_job_result(job_id, latest_result)
+                _mark_diarization_failed(
+                    job_id,
+                    result_data if "result_data" in locals() else {},
+                    str(exc.detail),
+                    str(exc.detail),
+                )
             except Exception:
                 pass
         raise
-    except Exception:
+    except Exception as exc:
         with GENERATION_STATUS_LOCK:
             try:
-                if os.path.exists(_get_job_result_path(job_id)):
-                    latest_result = _load_latest_generation_result(job_id, result_data if "result_data" in locals() else {})
-                    latest_result.setdefault("settings", {})["diarization_generation_status"] = "failed"
-                    _save_job_result(job_id, latest_result)
+                _mark_diarization_failed(
+                    job_id,
+                    result_data if "result_data" in locals() else {},
+                    DETAIL_DIARIZATION_RUNTIME_ERROR,
+                    f"{type(exc).__name__}: {exc}",
+                )
             except Exception:
                 pass
         logging.exception("Failed to generate diarization")
-        raise HTTPException(status_code=500, detail="Failed to generate diarization")
+        raise HTTPException(status_code=500, detail=DETAIL_DIARIZATION_RUNTIME_ERROR)
     finally:
         with GENERATION_STATUS_LOCK:
             _end_generation(generation_key)
@@ -1422,13 +1454,15 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
         except Exception:
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
-                    latest_result = _load_latest_generation_result(job_id, result_data)
-                    latest_summary = latest_result.setdefault("summary", {})
-                    latest_status = _ensure_generation_status(latest_summary)
-                    latest_status["topic_sections"] = "failed"
-                    _save_job_result(job_id, latest_result)
+                    _mark_generation_failed(job_id, result_data, "topic_sections", "topic_generation_error")
             logging.exception("Failed to generate topic sections")
             raise HTTPException(status_code=500, detail="Failed to generate topic sections")
+
+        if not topic_sections:
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _mark_generation_failed(job_id, result_data, "topic_sections", DETAIL_TOPIC_EMPTY_RESULT)
+            raise HTTPException(status_code=502, detail=DETAIL_TOPIC_EMPTY_RESULT)
 
         with GENERATION_STATUS_LOCK:
             latest_result = _load_latest_generation_result(job_id, result_data)
@@ -1450,6 +1484,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             latest_summary["topics"] = list(dict.fromkeys(existing_topics + generated_topics))
             latest_status["topic_sections"] = "completed"
             latest_summary["generation_status"] = latest_status
+            latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
             result_data = latest_result
             summary = latest_summary
@@ -1523,13 +1558,25 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
         except Exception:
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
-                    latest_result = _load_latest_generation_result(job_id, result_data)
-                    latest_summary = latest_result.setdefault("summary", {})
-                    latest_status = _ensure_generation_status(latest_summary)
-                    latest_status["speaker_context_summaries"] = "failed"
-                    _save_job_result(job_id, latest_result)
+                    _mark_generation_failed(
+                        job_id,
+                        result_data,
+                        "speaker_context_summaries",
+                        "speaker_context_generation_error",
+                    )
             logging.exception("Failed to generate speaker context summaries")
             raise HTTPException(status_code=500, detail="Failed to generate speaker context summaries")
+
+        if not speaker_context_summaries:
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _mark_generation_failed(
+                        job_id,
+                        result_data,
+                        "speaker_context_summaries",
+                        DETAIL_SPEAKER_EMPTY_RESULT,
+                    )
+            raise HTTPException(status_code=502, detail=DETAIL_SPEAKER_EMPTY_RESULT)
 
         with GENERATION_STATUS_LOCK:
             latest_result = _load_latest_generation_result(job_id, result_data)
@@ -1549,6 +1596,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             latest_summary["participant_summaries"] = _participant_summaries_from_speaker_context(speaker_context_summaries)
             latest_status["speaker_context_summaries"] = "completed"
             latest_summary["generation_status"] = latest_status
+            latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
             result_data = latest_result
             summary = latest_summary

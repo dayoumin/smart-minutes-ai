@@ -10,7 +10,7 @@ D:\Projects\audio\
   desktop-app\                     # React/Tauri 데스크탑 앱 소스
   docs\                            # 설계/테스트/배포 문서
   scripts\                         # 빌드, 패키징, 검증 스크립트
-  lmo_audio\                       # 실행용 portable 배포 폴더, 커밋 제외
+  releases\lmo_audio\              # 실행용 portable 배포 폴더, 커밋 제외
   video\                           # 성능/품질 평가용 샘플, 커밋 제외
   .hf_modules\                     # 모델 실행 코드 캐시, 커밋 제외
   todo.md
@@ -22,13 +22,13 @@ D:\Projects\audio\
 실행할 때는 루트의 portable 폴더를 사용합니다.
 
 ```text
-D:\Projects\audio\lmo_audio\lmo_audio.exe
+D:\Projects\audio\releases\lmo_audio\lmo_audio.exe
 ```
 
 `lmo_audio.exe`만 따로 옮기면 안 됩니다. 아래 폴더들이 같은 위치에 있어야 합니다.
 
 ```text
-lmo_audio\
+releases\lmo_audio\
   lmo_audio.exe
   backend\
   binaries\
@@ -72,6 +72,7 @@ video\
 .hf_modules\
 .codex-work\
 outputs\
+models\
 backend\models\
 backend\build\
 backend\dist-sidecar\

@@ -1,4 +1,9 @@
 # 0. 다음 우선순위
+- [x] 2026-05-16 모델 경로 혼동 방지 정리
+  - 재빌드용 모델 원본 기준은 프로젝트 루트 `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`이다.
+  - 최종 실행/검증 기준은 `releases\lmo_audio`이며, 루트 `lmo_audio`는 예전 산출물이므로 사용하지 않는다.
+  - 이번 PC에서는 기존 `backend\models\...` 실모델을 복사하지 않기 위해 루트 `models\...`를 junction으로 연결했다. 회사 PC에서는 junction을 필수 절차로 보지 말고, 실제 모델 폴더를 루트 `models` 아래에 두거나 명시적으로 링크한 뒤 `release_portable.ps1`를 실행한다.
+  - Qwen 모델은 회사 전달용 portable과 재빌드용 모델 원본에 넣지 않는다.
 - [ ] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
   - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
   - 집에서 작업을 시작하면 먼저 `README.md`, `docs/tauri-desktop-release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.

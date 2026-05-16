@@ -102,7 +102,19 @@ function Copy-ModelDirectory {
     )
 
     if (-not (Test-Path -LiteralPath $Source)) {
-        throw "$Label model was not found at $Source"
+        $modelName = Split-Path -Leaf $Source
+        throw @"
+$Label model was not found at $Source
+
+Portable builds read model sources from the project-root models folder:
+  models\$modelName
+
+For a rebuild, put or link the model folder there before running release_portable.ps1.
+The final app will copy it to:
+  releases\lmo_audio\models\$modelName
+
+Do not use the old root lmo_audio folder as the release target.
+"@
     }
 
     Test-RequiredMarkers $Source $RequiredMarkers $Label

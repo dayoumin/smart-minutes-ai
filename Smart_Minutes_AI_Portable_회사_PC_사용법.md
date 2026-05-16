@@ -73,11 +73,9 @@ lmo_audio\models\speaker-diarization-community-1\plda\plda.npz
 
 ```text
 lmo_audio\models\faster-whisper-large-v3\
-lmo_audio\models\Qwen3-ASR-1.7B\
-lmo_audio\models\Qwen3-ForcedAligner-0.6B\
 ```
 
-현재 기본 음성 인식 모델은 `faster-whisper-large-v3`입니다. Qwen 계열은 선택/실험 후보입니다.
+현재 회사 전달용 기본 음성 인식 모델은 `faster-whisper-large-v3` 하나입니다. Qwen 계열은 비교/실험 기록으로만 남기고, 이번 portable 실행 폴더와 재빌드용 모델 원본에는 넣지 않습니다.
 
 ## 실행 방법
 
@@ -96,10 +94,10 @@ lmo_audio\models\Qwen3-ForcedAligner-0.6B\
 
 ## 프로젝트 루트 정리 기준
 
-실제로 실행할 폴더는 프로젝트 루트의 `lmo_audio` 하나입니다.
+이 프로젝트에서 새로 만든 실행 기준 폴더는 `releases\lmo_audio` 하나입니다.
 
 ```text
-D:\Projects\audio\lmo_audio\lmo_audio.exe
+D:\Projects\audio\releases\lmo_audio\lmo_audio.exe
 ```
 
 아래 항목은 빌드/테스트 중 생기는 산출물이므로, 새로 빌드하기 전에는 삭제해도 됩니다.

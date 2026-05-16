@@ -140,19 +140,24 @@ LMO Smart Meeting System - Portable Quick Start
    - Run lmo_audio.exe in this folder.
    - Do not move only the exe file. Move the whole lmo_audio folder together.
 
-2. Model folders
+2. What to use
+   - Use this whole lmo_audio folder for company PC testing and delivery.
+   - Ignore Tauri target files such as smart-minutes-ai.exe and installer setup exe files.
+   - The NSIS installer is not the release target because it does not carry the model folders used by this portable package.
+
+3. Model folders
    - Speech recognition model: models\faster-whisper-large-v3
    - Speaker diarization model: models\speaker-diarization-community-1
    - Do not rename model folders or files.
 
-3. Folder guide
+4. Folder guide
    - lmo_audio.exe: app executable
    - models: speech recognition and speaker diarization models
    - backend: local analysis server files
    - binaries: local analysis server executable and dependencies
    - release-manifest.json: release verification manifest
 
-4. If something is wrong
+5. If something is wrong
    - Open app settings and check model status first.
    - After copying models again, refresh model status.
 "@

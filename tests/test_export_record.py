@@ -3,8 +3,10 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from urllib.parse import quote
+from xml.etree import ElementTree
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -104,6 +106,98 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertGreater(len(response.content), 0)
+
+    def test_download_output_regenerates_legacy_minimal_hwpx(self):
+        job_id = "legacy_hwpx"
+        result_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "source_file": "상반기 & 회의.mp4",
+                    "created_at": "2026-05-18 14:44",
+                    "summary": {
+                        "title": "상반기 회의",
+                        "overview": "기존 HWPX를 재생성합니다.",
+                    },
+                    "segments": [
+                        {
+                            "start": 0,
+                            "end": 5,
+                            "speaker_name": "김철수",
+                            "text": "검토 의견입니다.",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        hwpx_path = Path(self.temp_dir.name) / f"{job_id}_report.hwpx"
+        with zipfile.ZipFile(hwpx_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("mimetype", "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+            archive.writestr("META-INF/container.xml", "<container/>")
+            archive.writestr("version.xml", "<version/>")
+            archive.writestr("Contents/content.hpf", "<package/>")
+            archive.writestr("Contents/section0.xml", "<section/>")
+
+        response = self.client.get(f"/api/outputs/{job_id}/hwpx")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        with zipfile.ZipFile(hwpx_path) as archive:
+            names = set(archive.namelist())
+            self.assertTrue(
+                {
+                    "META-INF/manifest.xml",
+                    "Contents/header.xml",
+                    "settings.xml",
+                    "Preview/PrvText.txt",
+                }.issubset(names)
+            )
+            content_root = ElementTree.fromstring(archive.read("Contents/content.hpf"))
+            opf_ns = {"opf": "http://www.idpf.org/2007/opf/"}
+            spine_refs = [
+                item.attrib.get("idref")
+                for item in content_root.findall("./opf:spine/opf:itemref", opf_ns)
+            ]
+            self.assertEqual(spine_refs, ["header", "section0"])
+            preview = archive.read("Preview/PrvText.txt").decode("utf-8")
+            self.assertIn("기존 HWPX를 재생성합니다.", preview)
+
+    def test_download_output_keeps_existing_hwpx_when_refresh_fails(self):
+        job_id = "legacy_hwpx_refresh_failure"
+        result_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "summary": {
+                        "title": "상반기 회의",
+                        "overview": "재생성 실패 시 기존 파일을 유지합니다.",
+                    },
+                    "segments": [],
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        hwpx_path = Path(self.temp_dir.name) / f"{job_id}_report.hwpx"
+        with zipfile.ZipFile(hwpx_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.writestr("mimetype", "application/hwp+zip", compress_type=zipfile.ZIP_STORED)
+            archive.writestr("META-INF/container.xml", "<container/>")
+            archive.writestr("version.xml", "<version/>")
+            archive.writestr("Contents/content.hpf", "<package/>")
+            archive.writestr("Contents/section0.xml", "<section/>")
+        before = hwpx_path.read_bytes()
+
+        with (
+            patch("main.logging.exception") as log_exception,
+            patch("pipeline.export_hwpx.export_hwpx", side_effect=RuntimeError("boom")),
+        ):
+            response = self.client.get(f"/api/outputs/{job_id}/hwpx")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        log_exception.assert_called_once()
+        self.assertEqual(hwpx_path.read_bytes(), before)
+        self.assertFalse(list(Path(self.temp_dir.name).glob(f"{job_id}_report.hwpx.*.tmp")))
 
     def test_export_record_prefers_display_segments_and_speaker_labels(self):
         payload = legacy_meeting_payload(

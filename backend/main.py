@@ -10,9 +10,11 @@ import shutil
 import sys
 import threading
 import time
+import zipfile
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterator
+from xml.etree import ElementTree
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
@@ -78,6 +80,17 @@ GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약"
 ANALYSIS_CHECKPOINT_VERSION = 1
 ANALYSIS_PIPELINE_VERSION = "2026-05-13-long-file-v1"
 MAX_EXPORT_STEM_CHARS = 96
+HWPX_REQUIRED_ENTRIES = {
+    "mimetype",
+    "META-INF/container.xml",
+    "META-INF/manifest.xml",
+    "version.xml",
+    "Contents/content.hpf",
+    "Contents/header.xml",
+    "Contents/section0.xml",
+    "settings.xml",
+    "Preview/PrvText.txt",
+}
 DIARIZATION_WAVEFORM_SAMPLE_RATE = 16000
 DIARIZATION_WAVEFORM_CHANNELS = 1
 DIARIZATION_WAVEFORM_BYTES_PER_SAMPLE = 4
@@ -760,13 +773,8 @@ async def download_output(job_id: str, kind: str, request: Request) -> FileRespo
     output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
     filename, media_type = allowed[kind]
     file_path = os.path.abspath(os.path.join(output_dir, filename))
-    if kind == "hwpx" and file_path.startswith(output_dir + os.sep) and not os.path.exists(file_path):
-        json_path = os.path.abspath(os.path.join(output_dir, allowed["json"][0]))
-        if json_path.startswith(output_dir + os.sep) and os.path.exists(json_path):
-            from pipeline.export_hwpx import export_hwpx
-
-            with open(json_path, "r", encoding="utf-8") as f:
-                export_hwpx(json.load(f), file_path)
+    if kind == "hwpx":
+        _refresh_hwpx_output_if_needed(output_dir, job_id, file_path)
     if not file_path.startswith(output_dir + os.sep) or not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="Output file not found")
 
@@ -809,13 +817,8 @@ async def save_output_copy(job_id: str, kind: str, request: Request) -> dict:
     elif kind in allowed:
         filename, extension = allowed[kind]
         source_path = os.path.abspath(os.path.join(output_dir, filename))
-        if kind == "hwpx" and source_path.startswith(output_dir + os.sep) and not os.path.exists(source_path):
-            json_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_result.json"))
-            if json_path.startswith(output_dir + os.sep) and os.path.exists(json_path):
-                from pipeline.export_hwpx import export_hwpx
-
-                with open(json_path, "r", encoding="utf-8") as f:
-                    export_hwpx(json.load(f), source_path)
+        if kind == "hwpx":
+            _refresh_hwpx_output_if_needed(output_dir, job_id, source_path)
     else:
         raise HTTPException(status_code=404, detail="Unknown output type")
 
@@ -1008,6 +1011,69 @@ def _get_job_result_path(job_id: str) -> str:
     if not result_path.startswith(output_dir + os.sep):
         raise HTTPException(status_code=400, detail="Invalid output path")
     return result_path
+
+
+def _hwpx_needs_regeneration(file_path: str) -> bool:
+    if not os.path.exists(file_path):
+        return True
+
+    try:
+        with zipfile.ZipFile(file_path) as archive:
+            names = set(archive.namelist())
+            if not HWPX_REQUIRED_ENTRIES.issubset(names):
+                return True
+
+            content_root = ElementTree.fromstring(archive.read("Contents/content.hpf"))
+            opf_ns = {"opf": "http://www.idpf.org/2007/opf/"}
+            spine_refs = [
+                item.attrib.get("idref")
+                for item in content_root.findall("./opf:spine/opf:itemref", opf_ns)
+            ]
+            if spine_refs[:2] != ["header", "section0"]:
+                return True
+
+            manifest_root = ElementTree.fromstring(archive.read("META-INF/manifest.xml"))
+            manifest_ns = {"manifest": "urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"}
+            media_types = {
+                entry.attrib.get("{urn:oasis:names:tc:opendocument:xmlns:manifest:1.0}full-path"): entry.attrib.get(
+                    "{urn:oasis:names:tc:opendocument:xmlns:manifest:1.0}media-type"
+                )
+                for entry in manifest_root.findall("./manifest:file-entry", manifest_ns)
+            }
+            return media_types.get("Contents/content.hpf") != "application/hwpml-package+xml"
+    except (ElementTree.ParseError, KeyError, OSError, zipfile.BadZipFile):
+        return True
+
+
+def _refresh_hwpx_output_if_needed(output_dir: str, job_id: str, hwpx_path: str) -> None:
+    if not hwpx_path.startswith(output_dir + os.sep) or not _hwpx_needs_regeneration(hwpx_path):
+        return
+
+    json_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_result.json"))
+    if not json_path.startswith(output_dir + os.sep) or not os.path.exists(json_path):
+        return
+
+    from pipeline.export_hwpx import export_hwpx
+
+    existing_hwpx = os.path.exists(hwpx_path)
+    temp_path = f"{hwpx_path}.{os.getpid()}.{threading.get_ident()}.tmp"
+    try:
+        with open(json_path, "r", encoding="utf-8") as f:
+            export_hwpx(json.load(f), temp_path)
+        if _hwpx_needs_regeneration(temp_path):
+            raise RuntimeError("Regenerated HWPX did not pass package validation")
+        os.replace(temp_path, hwpx_path)
+    except Exception:
+        if existing_hwpx:
+            logging.exception("Failed to refresh existing HWPX output; serving existing file")
+            return
+        raise
+    finally:
+        if os.path.exists(temp_path):
+            try:
+                os.remove(temp_path)
+            except OSError:
+                logging.debug("Failed to remove temporary HWPX file: %s", temp_path, exc_info=True)
 
 
 def _load_job_result(job_id: str) -> dict:

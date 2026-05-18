@@ -21,6 +21,14 @@ EMPTY_SUMMARY = {
 
 MAX_DIRECT_SUMMARY_CHARS = 8000
 SUMMARY_CHUNK_CHARS = 6000
+GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
+
+
+def _reject_generic_single_topic(sections: list[dict]) -> list[dict]:
+    if len(sections) != 1:
+        return sections
+    topic = str(sections[0].get("topic") or "").strip()
+    return [] if topic in GENERIC_SINGLE_TOPIC_TITLES else sections
 
 
 def _parse_llm_json(result_text: str) -> dict | list:
@@ -421,8 +429,8 @@ Transcript:
 {_trim_followup_transcript(transcript_text)}
 """
     data = _generate_json_once(model_name_or_path, prompt)
-    sections = _topic_sections_from_response(data)
-    if len(sections) >= 2:
+    sections = _reject_generic_single_topic(_topic_sections_from_response(data))
+    if sections:
         return sections
 
     retry_prompt = f"""Return only valid JSON with exactly one top-level key named "topic_sections".
@@ -441,11 +449,11 @@ Transcript:
 {_trim_followup_transcript(transcript_text, 8000)}
 """
     retry_data = _generate_json_once(model_name_or_path, retry_prompt)
-    sections = _topic_sections_from_response(retry_data)
-    if len(sections) >= 2:
+    sections = _reject_generic_single_topic(_topic_sections_from_response(retry_data))
+    if sections:
         return sections
     fallback_sections = _fallback_topic_sections_from_response(retry_data) or _fallback_topic_sections_from_response(data)
-    return fallback_sections if len(fallback_sections) >= 2 else []
+    return _reject_generic_single_topic(fallback_sections)
 
 
 def generate_topic_section_for_title(

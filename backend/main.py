@@ -60,23 +60,41 @@ GENERATION_STATUS_LOCK = threading.Lock()
 JOB_STATE_LOCKS_LOCK = threading.Lock()
 JOB_STATE_LOCKS: dict[str, threading.RLock] = {}
 ACTIVE_GENERATIONS: set[tuple[str, str]] = set()
+GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
 ANALYSIS_STALL_ERROR_SECONDS_PREPARE = 300
 ANALYSIS_STALL_ERROR_SECONDS_TRANSCRIBE = 600
+GENERATION_PROGRESS_TTL_SECONDS = 60 * 60
+GENERATION_PROGRESS_MAX_ENTRIES = 128
 DETAIL_SUMMARY_INPUT_CHANGED = "summary_input_changed"
 DETAIL_TOPIC_INPUT_CHANGED = "topic_input_changed"
 DETAIL_SPEAKER_INPUT_CHANGED = "speaker_input_changed"
 DETAIL_TOPIC_EMPTY_RESULT = "topic_generation_empty"
 DETAIL_SPEAKER_EMPTY_RESULT = "speaker_context_generation_empty"
 DETAIL_DIARIZATION_RUNTIME_ERROR = "diarization_runtime_error"
+GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
 ANALYSIS_CHECKPOINT_VERSION = 1
 ANALYSIS_PIPELINE_VERSION = "2026-05-13-long-file-v1"
 MAX_EXPORT_STEM_CHARS = 96
 DIARIZATION_WAVEFORM_SAMPLE_RATE = 16000
 DIARIZATION_WAVEFORM_CHANNELS = 1
 DIARIZATION_WAVEFORM_BYTES_PER_SAMPLE = 4
+RECOVERABLE_SOURCE_EXTENSIONS = {
+    ".aac",
+    ".avi",
+    ".flac",
+    ".m4a",
+    ".mkv",
+    ".mov",
+    ".mp3",
+    ".mp4",
+    ".ogg",
+    ".wav",
+    ".webm",
+    ".wma",
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -253,6 +271,28 @@ def _defer_diarization_decision(decision: dict) -> dict:
         "defer_message": "발화자 구분은 회의 기록에서 별도로 실행할 수 있습니다.",
     })
     return deferred
+
+
+def _source_not_preserved_diarization_decision(decision: dict) -> dict:
+    skipped = {**decision}
+    skipped.update({
+        "run": False,
+        "skipped": True,
+        "deferred": False,
+        "skip_reason": "source_not_preserved",
+        "skip_message": "음성 파일 보존 설정이 꺼져 있어 참석자 구분은 별도로 실행할 수 없습니다. 필요하면 다시 분석해 주세요.",
+        "defer_reason": "",
+        "defer_message": "",
+    })
+    return skipped
+
+
+def _can_defer_diarization_for_later(config: dict) -> bool:
+    privacy_config = config.get("privacy", {})
+    return bool(
+        privacy_config.get("preserve_extracted_audio", True)
+        or privacy_config.get("save_original_audio_copy", False)
+    )
 
 
 def _should_generate_diarization_during_analysis(config: dict) -> bool:
@@ -793,6 +833,29 @@ async def save_output_copy(job_id: str, kind: str, request: Request) -> dict:
     }
 
 
+@app.get("/api/outputs/{job_id}/generation-progress/{kind}")
+async def get_output_generation_progress(job_id: str, kind: str) -> dict:
+    job_id = _validate_job_id(job_id)
+    if kind != "diarization":
+        raise HTTPException(status_code=404, detail="Unknown generation type")
+
+    generation_key = (job_id, kind)
+    with GENERATION_STATUS_LOCK:
+        progress = dict(GENERATION_PROGRESS.get(generation_key) or {})
+
+    if progress:
+        return progress
+
+    return {
+        "job_id": job_id,
+        "kind": kind,
+        "progress": 0,
+        "message": "",
+        "status": "idle",
+        "active": False,
+    }
+
+
 def _validate_job_id(job_id: str) -> str:
     if not job_id or os.path.basename(job_id) != job_id or ".." in job_id:
         raise HTTPException(status_code=400, detail="Invalid job id")
@@ -1100,17 +1163,102 @@ def _result_outputs(job_id: str, include_audio: bool | None = None) -> dict:
     return outputs
 
 
+def _prune_generation_progress_locked(now: float | None = None) -> None:
+    now = now if now is not None else time.time()
+
+    def progress_epoch(progress: dict) -> float:
+        value = progress.get("inactive_at_epoch")
+        if value is None:
+            value = progress.get("updated_at_epoch")
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return now
+
+    expired_keys = [
+        key
+        for key, progress in GENERATION_PROGRESS.items()
+        if not progress.get("active", False)
+        and now - progress_epoch(progress) > GENERATION_PROGRESS_TTL_SECONDS
+    ]
+    for key in expired_keys:
+        GENERATION_PROGRESS.pop(key, None)
+
+    if len(GENERATION_PROGRESS) <= GENERATION_PROGRESS_MAX_ENTRIES:
+        return
+
+    inactive_keys = [
+        key
+        for key, progress in GENERATION_PROGRESS.items()
+        if not progress.get("active", False)
+    ]
+    inactive_keys.sort(key=lambda key: progress_epoch(GENERATION_PROGRESS.get(key, {})))
+    overflow = len(GENERATION_PROGRESS) - GENERATION_PROGRESS_MAX_ENTRIES
+    for key in inactive_keys[:max(0, overflow)]:
+        GENERATION_PROGRESS.pop(key, None)
+
+
 def _begin_generation(job_id: str, kind: str) -> tuple[str, str]:
     generation_key = (job_id, kind)
+    _prune_generation_progress_locked()
     if generation_key in ACTIVE_GENERATIONS:
         raise HTTPException(status_code=409, detail=f"{kind} generation is already running")
     ACTIVE_GENERATIONS.add(generation_key)
+    if kind == "diarization":
+        _set_generation_progress(generation_key, 0, "준비 중")
     return generation_key
 
 
 def _end_generation(generation_key: tuple[str, str] | None) -> None:
     if generation_key:
         ACTIVE_GENERATIONS.discard(generation_key)
+        progress = GENERATION_PROGRESS.get(generation_key)
+        if progress:
+            progress["active"] = False
+            progress["updated_at"] = datetime.now().isoformat()
+            progress["updated_at_epoch"] = time.time()
+            progress["inactive_at_epoch"] = progress["updated_at_epoch"]
+        _prune_generation_progress_locked()
+
+
+def _set_generation_progress(
+    generation_key: tuple[str, str] | None,
+    progress: int,
+    message: str,
+    *,
+    status: str = "processing",
+    active: bool = True,
+) -> None:
+    if not generation_key:
+        return
+    now = datetime.now().isoformat()
+    now_epoch = time.time()
+    current = GENERATION_PROGRESS.get(generation_key) or {}
+    GENERATION_PROGRESS[generation_key] = {
+        **current,
+        "job_id": generation_key[0],
+        "kind": generation_key[1],
+        "progress": max(0, min(100, int(progress))),
+        "message": message,
+        "status": status,
+        "active": active,
+        "started_at": current.get("started_at") or now,
+        "updated_at": now,
+        "updated_at_epoch": now_epoch,
+        "inactive_at_epoch": current.get("inactive_at_epoch") if active else now_epoch,
+    }
+
+
+def _record_generation_progress(
+    generation_key: tuple[str, str] | None,
+    progress: int,
+    message: str,
+    *,
+    status: str = "processing",
+    active: bool = True,
+) -> None:
+    with GENERATION_STATUS_LOCK:
+        _set_generation_progress(generation_key, progress, message, status=status, active=active)
 
 
 def _refresh_summary_exports(job_id: str, result_data: dict) -> dict:
@@ -1144,6 +1292,183 @@ def _participant_summaries_from_speaker_context(items: list[dict]) -> list[dict]
     ]
 
 
+def _speaker_label_for_export(speaker_labels: dict, speaker: str, fallback: str = "") -> str:
+    speaker = str(speaker or "").strip()
+    fallback = str(fallback or "").strip()
+    return str(speaker_labels.get(speaker) or speaker_labels.get(fallback) or fallback or speaker).strip()
+
+
+def _speaker_label_replacements(speaker: str, previous_label: str, next_label: str) -> list[tuple[str, str]]:
+    next_label = str(next_label or "").strip()
+    if not next_label:
+        return []
+
+    replacements = []
+    seen = set()
+    for source in (previous_label, speaker):
+        source = str(source or "").strip()
+        if not source or source == next_label or source in seen:
+            continue
+        seen.add(source)
+        replacements.append((source, next_label))
+    return replacements
+
+
+def _replace_speaker_label_text(value, replacements: list[tuple[str, str]]):
+    if not replacements:
+        return value
+    if isinstance(value, str):
+        next_value = value
+        for source, target in sorted(replacements, key=lambda item: len(item[0]), reverse=True):
+            next_value = next_value.replace(source, target)
+        return next_value
+    if isinstance(value, list):
+        return [_replace_speaker_label_text(item, replacements) for item in value]
+    return value
+
+
+def _replace_speaker_label_fields(item: dict, replacements: list[tuple[str, str]]) -> dict:
+    if not replacements:
+        return item
+    next_item = dict(item)
+    for key in ("role_in_meeting", "summary", "key_points", "actions", "needs_check", "evidence"):
+        if key in next_item:
+            next_item[key] = _replace_speaker_label_text(next_item[key], replacements)
+    return next_item
+
+
+def _apply_speaker_labels_to_result_segments(
+    result_data: dict,
+    speaker_labels: dict,
+    *,
+    speaker_fallback_when_unlabeled: bool = False,
+) -> dict:
+    for key in ("segments", "display_segments"):
+        segments = result_data.get(key)
+        if not isinstance(segments, list):
+            continue
+        for segment in segments:
+            if not isinstance(segment, dict):
+                continue
+            speaker = str(segment.get("speaker") or segment.get("speaker_id") or "").strip()
+            if not speaker:
+                continue
+            fallback = speaker if speaker_fallback_when_unlabeled else str(segment.get("speaker_name") or "").strip()
+            display_name = _speaker_label_for_export(speaker_labels, speaker, fallback)
+            if display_name:
+                segment["speaker_name"] = display_name
+    return result_data
+
+
+def _speaker_context_summaries_for_export(
+    items: list[dict],
+    speaker_labels: dict,
+    *,
+    speaker_fallback_when_unlabeled: bool = False,
+) -> list[dict]:
+    summaries = []
+    for item in items or []:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or item.get("participant") or "").strip()
+        fallback_display_name = str(item.get("display_name") or item.get("displayName") or "").strip()
+        if speaker_fallback_when_unlabeled and speaker:
+            fallback_display_name = speaker
+        display_name = _speaker_label_for_export(
+            speaker_labels,
+            speaker,
+            fallback_display_name,
+        )
+        next_item = dict(item)
+        if display_name:
+            next_item["display_name"] = display_name
+        replacements = _speaker_label_replacements(speaker, str(item.get("display_name") or item.get("displayName") or ""), display_name)
+        next_item = _replace_speaker_label_fields(next_item, replacements)
+        summaries.append(next_item)
+    return summaries
+
+
+def _participant_summaries_for_export(
+    participant_summaries: list[dict],
+    speaker_context_summaries: list[dict],
+    speaker_labels: dict,
+    *,
+    speaker_fallback_when_unlabeled: bool = False,
+) -> list[dict]:
+    if speaker_context_summaries:
+        return _participant_summaries_from_speaker_context(
+            _speaker_context_summaries_for_export(
+                speaker_context_summaries,
+                speaker_labels,
+                speaker_fallback_when_unlabeled=speaker_fallback_when_unlabeled,
+            )
+        )
+
+    summaries = []
+    for item in participant_summaries or []:
+        if not isinstance(item, dict):
+            continue
+        speaker = str(item.get("speaker") or "").strip()
+        participant = str(item.get("participant") or item.get("speaker") or "").strip()
+        next_item = dict(item)
+        if participant:
+            previous_participant = participant
+            fallback_participant = speaker if speaker_fallback_when_unlabeled and speaker else participant
+            next_participant = _speaker_label_for_export(
+                speaker_labels,
+                speaker or participant,
+                fallback_participant,
+            )
+            next_item["participant"] = next_participant
+            replacements = _speaker_label_replacements(speaker, previous_participant, next_participant)
+            next_item = _replace_speaker_label_fields(next_item, replacements)
+        summaries.append(next_item)
+    return summaries
+
+
+def _apply_speaker_labels_to_result_summary(result_data: dict, *, speaker_fallback_when_unlabeled: bool = False) -> dict:
+    summary = result_data.get("summary")
+    if not isinstance(summary, dict):
+        return result_data
+
+    speaker_context_summaries = summary.get("speaker_context_summaries") or []
+    participant_summaries = summary.get("participant_summaries") or []
+    if not speaker_context_summaries and not participant_summaries:
+        return result_data
+
+    speaker_labels = _normalize_speaker_labels(result_data.get("speaker_labels"))
+    next_speaker_context_summaries = _speaker_context_summaries_for_export(
+        speaker_context_summaries,
+        speaker_labels,
+        speaker_fallback_when_unlabeled=speaker_fallback_when_unlabeled,
+    )
+    summary["speaker_context_summaries"] = next_speaker_context_summaries
+    summary["participant_summaries"] = _participant_summaries_for_export(
+        participant_summaries,
+        next_speaker_context_summaries,
+        speaker_labels,
+        speaker_fallback_when_unlabeled=speaker_fallback_when_unlabeled,
+    )
+    return result_data
+
+
+def _clear_speaker_context_after_topic_change(summary: dict, status: dict) -> None:
+    summary["speaker_context_summaries"] = []
+    summary["participant_summaries"] = []
+    status["speaker_context_summaries"] = "not_started"
+
+
+def _valid_generated_topic_sections(topic_sections: list[dict]) -> list[dict]:
+    sections = [
+        section
+        for section in topic_sections or []
+        if isinstance(section, dict) and section.get("topic")
+    ]
+    if len(sections) == 1 and str(sections[0].get("topic") or "").strip() in GENERIC_SINGLE_TOPIC_TITLES:
+        return []
+    return sections
+
+
 def _mark_generation_failed(job_id: str, result_data: dict, summary_key: str, detail: str) -> dict:
     latest_result = _load_latest_generation_result(job_id, result_data)
     latest_summary = latest_result.setdefault("summary", {})
@@ -1170,7 +1495,7 @@ def _restore_topic_section_status_after_custom_failure(
         for section in topic_sections
         if isinstance(section, dict) and section.get("topic")
     ])
-    if valid_topic_section_count >= 2:
+    if valid_topic_section_count >= 1:
         latest_status["topic_sections"] = "completed"
         latest_summary.pop("generation_error_detail", None)
     else:
@@ -1203,6 +1528,10 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
     job_id = _validate_job_id(job_id)
     generation_key = None
+    config = None
+    restored_source_audio = False
+    restored_source_audio_deleted = False
+    source_audio_path = None
     try:
         with GENERATION_STATUS_LOCK:
             result_data, had_saved_result = _load_or_rebuild_job_result(job_id, payload, persist_rebuilt=False)
@@ -1224,16 +1553,27 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
                 _save_job_result(job_id, result_data)
 
         config = load_config()
+        _record_generation_progress(generation_key, 8, "참석자 구분 준비 중")
         source_audio_path = _resolve_job_audio_path(config, job_id)
+        if not source_audio_path:
+            _record_generation_progress(generation_key, 12, "원본 파일에서 참석자 구분용 음성 파일을 준비하는 중")
+            recoverable_source_path = _resolve_recoverable_source_path(config, job_id, payload, result_data)
+            if recoverable_source_path:
+                source_audio_path = await asyncio.to_thread(
+                    lambda: _restore_job_audio_path_for_diarization(config, job_id, recoverable_source_path)
+                )
+                restored_source_audio = bool(source_audio_path)
         if not source_audio_path:
             raise HTTPException(status_code=404, detail="audio_required_for_diarization")
 
+        _record_generation_progress(generation_key, 15, "음성 파일 확인 중")
         decision = _diarization_resource_decision(config, get_wav_duration_seconds(source_audio_path))
         if decision.get("skipped"):
             raise HTTPException(status_code=409, detail="diarization_resource_limit")
         if not decision.get("requested"):
             raise HTTPException(status_code=409, detail="diarization_disabled")
 
+        _record_generation_progress(generation_key, 22, "참석자 구분 모델 확인 중")
         diarization_spec = get_model_spec("diarization")
         if model_exists(BASE_DIR, diarization_spec):
             diarize_model_path = resolve_model_path(BASE_DIR, diarization_spec)
@@ -1246,10 +1586,13 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
         min_spk = config.get("diarization", {}).get("min_speakers")
         max_spk = config.get("diarization", {}).get("max_speakers")
+        _record_generation_progress(generation_key, 30, "참석자 음성 구간 분석 중")
         speaker_segments = await asyncio.to_thread(
             lambda: diarize_audio(source_audio_path, diarize_model_path, min_spk, max_spk)
         )
+        _record_generation_progress(generation_key, 78, "참석자 구간을 대화록 시간과 맞추는 중")
         aligned_segments = align_segments_with_speakers(copy.deepcopy(raw_segments), speaker_segments)
+        _record_generation_progress(generation_key, 86, "참석자 구분을 대화록에 반영 중")
         display_segments = build_display_segments(copy.deepcopy(aligned_segments))
 
         output_dir = _get_output_dir()
@@ -1310,6 +1653,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
         export_txt(get_transcript_segments(result_data), out_txt_path)
         export_error = None
         try:
+            _record_generation_progress(generation_key, 94, "내보내기 파일 갱신 중")
             outputs = _refresh_summary_exports(job_id, result_data)
         except Exception:
             logging.exception("Failed to refresh summary exports after diarization")
@@ -1322,6 +1666,19 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             "diarization_deferred": False,
             "resume_supported": True,
         })
+        _record_generation_progress(generation_key, 100, "참석자 구분 완료", status="completed", active=False)
+        if (
+            restored_source_audio
+            and source_audio_path
+            and config is not None
+            and not config.get("privacy", {}).get("preserve_extracted_audio", True)
+        ):
+            try:
+                restored_source_audio_deleted = _delete_restored_diarization_audio(config, job_id, source_audio_path)
+                if restored_source_audio_deleted:
+                    outputs.pop("audio", None)
+            except Exception:
+                logging.exception("Failed to clean up restored diarization audio")
         return {
             "job_id": job_id,
             "segments": segments_for_ui(result_data.get("segments", [])),
@@ -1339,6 +1696,13 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
     except HTTPException as exc:
         with GENERATION_STATUS_LOCK:
             try:
+                _set_generation_progress(
+                    generation_key,
+                    GENERATION_PROGRESS.get(generation_key, {}).get("progress", 0),
+                    str(exc.detail),
+                    status="failed",
+                    active=False,
+                )
                 _mark_diarization_failed(
                     job_id,
                     result_data if "result_data" in locals() else {},
@@ -1351,6 +1715,13 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
     except Exception as exc:
         with GENERATION_STATUS_LOCK:
             try:
+                _set_generation_progress(
+                    generation_key,
+                    GENERATION_PROGRESS.get(generation_key, {}).get("progress", 0),
+                    "참석자 구분 실행 중 오류가 발생했습니다.",
+                    status="failed",
+                    active=False,
+                )
                 _mark_diarization_failed(
                     job_id,
                     result_data if "result_data" in locals() else {},
@@ -1362,6 +1733,17 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
         logging.exception("Failed to generate diarization")
         raise HTTPException(status_code=500, detail=DETAIL_DIARIZATION_RUNTIME_ERROR)
     finally:
+        if (
+            restored_source_audio
+            and source_audio_path
+            and config is not None
+            and not restored_source_audio_deleted
+            and not config.get("privacy", {}).get("preserve_extracted_audio", True)
+        ):
+            try:
+                _delete_restored_diarization_audio(config, job_id, source_audio_path)
+            except Exception:
+                logging.exception("Failed to clean up restored diarization audio")
         with GENERATION_STATUS_LOCK:
             _end_generation(generation_key)
 
@@ -1538,7 +1920,8 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             logging.exception("Failed to generate topic sections")
             raise HTTPException(status_code=500, detail="Failed to generate topic sections")
 
-        if len(topic_sections) < 2:
+        topic_sections = _valid_generated_topic_sections(topic_sections)
+        if not topic_sections:
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
                     _mark_generation_failed(job_id, result_data, "topic_sections", DETAIL_TOPIC_EMPTY_RESULT)
@@ -1563,6 +1946,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             generated_topics = [section["topic"] for section in topic_sections if section.get("topic")]
             latest_summary["topics"] = list(dict.fromkeys(existing_topics + generated_topics))
             latest_status["topic_sections"] = "completed"
+            _clear_speaker_context_after_topic_change(latest_summary, latest_status)
             latest_summary["generation_status"] = latest_status
             latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
@@ -1583,6 +1967,8 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             "topic_sections": topic_sections,
             "topics": summary.get("topics", []),
             "generation_status": status,
+            "speaker_context_summaries": summary.get("speaker_context_summaries", []),
+            "participant_summaries": summary.get("participant_summaries", []),
             "outputs": outputs,
             "export_error": export_error,
         }
@@ -1706,7 +2092,8 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
             latest_summary["topic_sections"] = next_sections
             existing_topics = [topic for topic in latest_summary.get("topics", []) if isinstance(topic, str) and topic.strip()]
             latest_summary["topics"] = list(dict.fromkeys(existing_topics + [section["topic"] for section in next_sections if section.get("topic")]))
-            latest_status["topic_sections"] = "completed" if len(next_sections) >= 2 else "not_started"
+            latest_status["topic_sections"] = "completed" if len(next_sections) >= 1 else "not_started"
+            _clear_speaker_context_after_topic_change(latest_summary, latest_status)
             latest_summary["generation_status"] = latest_status
             latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
@@ -1728,6 +2115,8 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
             "topic_sections": summary.get("topic_sections", []),
             "topics": summary.get("topics", []),
             "generation_status": status,
+            "speaker_context_summaries": summary.get("speaker_context_summaries", []),
+            "participant_summaries": summary.get("participant_summaries", []),
             "outputs": outputs,
             "export_error": export_error,
         }
@@ -1756,7 +2145,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             status = _ensure_generation_status(summary)
             topic_sections = summary.get("topic_sections") or []
             valid_topic_section_count = len([section for section in topic_sections if isinstance(section, dict) and section.get("topic")])
-            if status.get("topic_sections") != "completed" or valid_topic_section_count < 2:
+            if status.get("topic_sections") != "completed" or valid_topic_section_count < 1:
                 raise HTTPException(
                     status_code=409,
                     detail="Topic sections must be generated before speaker context summaries",
@@ -1920,6 +2309,222 @@ def _resolve_job_audio_path(config: dict, job_id: str) -> str | None:
     return None
 
 
+def _safe_source_filename(value) -> str:
+    if not isinstance(value, str):
+        return ""
+    normalized = value.strip().replace("\\", "/")
+    filename = normalized.rsplit("/", 1)[-1].strip()
+    if not filename or filename in {".", ".."}:
+        return ""
+    return filename
+
+
+def _source_filename_candidates(*payloads: dict | None) -> list[str]:
+    candidates: list[str] = []
+    seen: set[str] = set()
+
+    def add(value) -> None:
+        filename = _safe_source_filename(value)
+        key = filename.casefold()
+        if filename and key not in seen:
+            candidates.append(filename)
+            seen.add(key)
+
+    for payload in payloads:
+        if not isinstance(payload, dict):
+            continue
+        add(payload.get("sourceFile"))
+        add(payload.get("source_file"))
+        add(payload.get("source_filename"))
+        meeting = payload.get("meeting")
+        if isinstance(meeting, dict):
+            add(meeting.get("sourceFile"))
+            add(meeting.get("source_file"))
+            add(meeting.get("source_filename"))
+    return candidates
+
+
+def _source_filename_match_keys(filename: str) -> set[str]:
+    collapsed = re.sub(r"\s+", " ", filename).strip()
+    compact = re.sub(r"[\s_]+", "", filename)
+    return {filename.casefold(), collapsed.casefold(), compact.casefold()}
+
+
+def _is_recoverable_source_filename(filename: str) -> bool:
+    return Path(filename).suffix.casefold() in RECOVERABLE_SOURCE_EXTENSIONS
+
+
+def _known_source_roots() -> list[str]:
+    project_root = os.path.abspath(os.path.dirname(BASE_DIR))
+    roots = [
+        os.path.join(project_root, "releases", "lmo_audio"),
+        os.path.join(project_root, "video"),
+        os.path.join(project_root, "samples"),
+    ]
+    unique_roots: list[str] = []
+    seen: set[str] = set()
+    for root in roots:
+        root = os.path.abspath(root)
+        key = os.path.normcase(root)
+        if key not in seen and os.path.isdir(root):
+            unique_roots.append(root)
+            seen.add(key)
+    return unique_roots
+
+
+def _resolve_job_upload_source_path(config: dict, job_id: str, source_filenames: list[str]) -> str | None:
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+    upload_root = os.path.abspath(checkpoint_paths.upload_dir)
+    candidates: list[str] = []
+
+    for filename in source_filenames:
+        if not _is_recoverable_source_filename(filename):
+            continue
+        suffix = Path(filename).suffix
+        if suffix:
+            candidates.append(os.path.abspath(get_job_upload_path(checkpoint_paths, suffix)))
+
+    seen: set[str] = set()
+    for candidate in candidates:
+        key = os.path.normcase(candidate)
+        if key in seen:
+            continue
+        seen.add(key)
+        if (
+            _path_is_within(candidate, upload_root)
+            and os.path.isfile(candidate)
+            and os.path.getsize(candidate) > 0
+        ):
+            return candidate
+    return None
+
+
+def _resolve_known_source_file_path(source_filenames: list[str]) -> str | None:
+    source_filenames = [
+        filename
+        for filename in source_filenames
+        if _is_recoverable_source_filename(filename)
+    ]
+    if not source_filenames:
+        return None
+
+    roots = _known_source_roots()
+    for filename in source_filenames:
+        for root in roots:
+            candidate = os.path.abspath(os.path.join(root, filename))
+            if _path_is_within(candidate, root) and os.path.isfile(candidate):
+                return candidate
+
+    match_keys: set[str] = set()
+    for filename in source_filenames:
+        match_keys.update(_source_filename_match_keys(filename))
+
+    for root in roots:
+        matches: list[str] = []
+        try:
+            for entry in os.scandir(root):
+                if not entry.is_file():
+                    continue
+                if _source_filename_match_keys(entry.name) & match_keys:
+                    matches.append(os.path.abspath(entry.path))
+        except OSError:
+            continue
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            logging.warning("Ambiguous source file match for diarization restore: %s", matches)
+            return None
+    return None
+
+
+def _resolve_recoverable_source_path(
+    config: dict,
+    job_id: str,
+    payload: dict | None,
+    result_data: dict | None,
+) -> str | None:
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+    state = _load_job_state(checkpoint_paths)
+    source_filenames = _source_filename_candidates(payload, result_data, state)
+
+    upload_source_path = _resolve_job_upload_source_path(config, job_id, source_filenames)
+    if upload_source_path:
+        return upload_source_path
+    return _resolve_known_source_file_path(source_filenames)
+
+
+def _restore_job_audio_path_for_diarization(
+    config: dict,
+    job_id: str,
+    source_path: str,
+) -> str | None:
+    from pipeline.audio_preprocess import convert_to_wav
+
+    source_path = os.path.abspath(source_path)
+    if not os.path.isfile(source_path):
+        return None
+
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+    jobs_root = os.path.abspath(os.path.join(temp_dir, "jobs"))
+    source_wav_path = os.path.abspath(checkpoint_paths.source_wav_path)
+    if not _path_is_within(source_wav_path, jobs_root):
+        return None
+
+    ensure_job_checkpoint_dirs(checkpoint_paths)
+    ffmpeg_path = str(config.get("paths", {}).get("ffmpeg") or "ffmpeg")
+    if ffmpeg_path.lower() != "ffmpeg" and not os.path.isabs(ffmpeg_path):
+        ffmpeg_path = os.path.normpath(os.path.join(BASE_DIR, ffmpeg_path))
+
+    preprocess_result = convert_to_wav(
+        source_path,
+        source_wav_path,
+        ffmpeg_path,
+        preprocessing=config.get("preprocessing", {}),
+    )
+    if not os.path.isfile(source_wav_path) or os.path.getsize(source_wav_path) <= 0:
+        return None
+
+    preprocessing_applied = (
+        preprocess_result.get("preprocessing", {})
+        if isinstance(preprocess_result, dict)
+        else {}
+    )
+    source_filename = os.path.basename(source_path)
+    _write_job_state(checkpoint_paths, {
+        "source_file": source_filename,
+        "source_filename": source_filename,
+        "source_wav_completed": True,
+        "source_wav_deleted": False,
+        "source_wav_path": source_wav_path,
+        "source_wav_size": os.path.getsize(source_wav_path),
+        "source_wav_restored": True,
+        "source_wav_restored_from": source_filename,
+        "preprocessing_applied": preprocessing_applied,
+        "preserve_source_audio": bool(config.get("privacy", {}).get("preserve_extracted_audio", True)),
+        "resume_supported": True,
+    })
+    return source_wav_path
+
+
+def _delete_restored_diarization_audio(config: dict, job_id: str, source_audio_path: str) -> bool:
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+    jobs_root = os.path.abspath(os.path.join(temp_dir, "jobs"))
+    source_audio_path = os.path.abspath(source_audio_path)
+    if not _path_is_within(source_audio_path, jobs_root) or not os.path.exists(source_audio_path):
+        return False
+    os.remove(source_audio_path)
+    _write_job_state(checkpoint_paths, {
+        "source_wav_completed": False,
+        "source_wav_deleted": True,
+        "source_wav_deleted_at": datetime.now().isoformat(),
+    })
+    return True
+
+
 def _copy_file_atomic(source_path: str, target_path: Path) -> None:
     temp_path = target_path.with_name(f".{target_path.name}.{time.time_ns()}.part")
     try:
@@ -2040,6 +2645,14 @@ def _normalize_speaker_labels(value) -> dict[str, str]:
     return labels
 
 
+def _payload_speaker_labels(payload: dict) -> dict[str, str]:
+    if "speakerLabels" in payload:
+        return _normalize_speaker_labels(payload.get("speakerLabels"))
+    if "speaker_labels" in payload:
+        return _normalize_speaker_labels(payload.get("speaker_labels"))
+    return {}
+
+
 def _payload_has_key(payload: dict, *keys: str) -> bool:
     return any(key in payload for key in keys)
 
@@ -2052,7 +2665,12 @@ def _payload_segments(payload: dict, *keys: str) -> list:
     return []
 
 
-def _normalize_payload_segments(items: list, speaker_labels: dict[str, str]) -> list[dict]:
+def _normalize_payload_segments(
+    items: list,
+    speaker_labels: dict[str, str],
+    *,
+    speaker_fallback_when_unlabeled: bool = False,
+) -> list[dict]:
     segments = []
     for segment in items or []:
         speaker = (
@@ -2062,13 +2680,16 @@ def _normalize_payload_segments(items: list, speaker_labels: dict[str, str]) -> 
             or ""
         )
         speaker = str(speaker or "").strip()
-        display_speaker = (
-            speaker_labels.get(speaker)
-            or segment.get("displaySpeaker")
-            or segment.get("display_speaker")
-            or segment.get("speaker_name")
-            or speaker
-        )
+        display_speaker = speaker_labels.get(speaker)
+        if not display_speaker and speaker_fallback_when_unlabeled and speaker:
+            display_speaker = speaker
+        if not display_speaker:
+            display_speaker = (
+                segment.get("displaySpeaker")
+                or segment.get("display_speaker")
+                or segment.get("speaker_name")
+                or speaker
+            )
         display_speaker = str(display_speaker or "").strip()
         segments.append({
             "start": _time_to_seconds(segment.get("start", 0.0)),
@@ -2083,8 +2704,13 @@ def _normalize_payload_segments(items: list, speaker_labels: dict[str, str]) -> 
 
 
 def _meeting_record_to_export_result(payload: dict) -> dict:
-    speaker_labels = _normalize_speaker_labels(payload.get("speakerLabels") or payload.get("speaker_labels"))
-    segments = _normalize_payload_segments(_payload_segments(payload, "segments"), speaker_labels)
+    has_speaker_labels = _payload_has_key(payload, "speakerLabels", "speaker_labels")
+    speaker_labels = _payload_speaker_labels(payload)
+    segments = _normalize_payload_segments(
+        _payload_segments(payload, "segments"),
+        speaker_labels,
+        speaker_fallback_when_unlabeled=has_speaker_labels,
+    )
     edited_payload_segments = _payload_segments(payload, "editedDisplaySegments", "edited_display_segments")
     base_display_segments = _payload_segments(payload, "displaySegments", "display_segments", "sentenceSegments", "sentence_segments")
     if edited_payload_segments:
@@ -2093,14 +2719,23 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
         display_source_segments = base_display_segments
     else:
         display_source_segments = base_display_segments
-    display_segments = _normalize_payload_segments(display_source_segments, speaker_labels)
+    display_segments = _normalize_payload_segments(
+        display_source_segments,
+        speaker_labels,
+        speaker_fallback_when_unlabeled=has_speaker_labels,
+    )
 
     title = str(payload.get("title") or "회의록")
-    speaker_context_summaries = payload.get("speakerContextSummaries") or payload.get("speaker_context_summaries") or []
-    participant_summaries = (
-        payload.get("participantSummaries")
-        or payload.get("participant_summaries")
-        or _participant_summaries_from_speaker_context(speaker_context_summaries)
+    speaker_context_summaries = _speaker_context_summaries_for_export(
+        payload.get("speakerContextSummaries") or payload.get("speaker_context_summaries") or [],
+        speaker_labels,
+        speaker_fallback_when_unlabeled=has_speaker_labels,
+    )
+    participant_summaries = _participant_summaries_for_export(
+        payload.get("participantSummaries") or payload.get("participant_summaries") or [],
+        speaker_context_summaries,
+        speaker_labels,
+        speaker_fallback_when_unlabeled=has_speaker_labels,
     )
     return {
         "job_id": payload.get("jobId") or payload.get("id") or datetime.now().strftime("%Y%m%d_%H%M%S"),
@@ -2154,7 +2789,7 @@ def _apply_payload_transcript_override(result_data: dict, payload: dict | None) 
 
     result_data = _apply_payload_metadata_override(result_data, payload)
     has_speaker_labels = _payload_has_key(payload, "speakerLabels", "speaker_labels")
-    speaker_labels = _normalize_speaker_labels(payload.get("speakerLabels") or payload.get("speaker_labels"))
+    speaker_labels = _payload_speaker_labels(payload)
     edited_payload_segments = _payload_segments(payload, "editedDisplaySegments", "edited_display_segments")
     base_display_segments = _payload_segments(payload, "displaySegments", "display_segments", "sentenceSegments", "sentence_segments")
     has_display_override = _payload_has_key(
@@ -2172,12 +2807,25 @@ def _apply_payload_transcript_override(result_data: dict, payload: dict | None) 
         display_source_segments = base_display_segments
     else:
         display_source_segments = base_display_segments
-    display_segments = _normalize_payload_segments(display_source_segments, speaker_labels)
+    display_segments = _normalize_payload_segments(
+        display_source_segments,
+        speaker_labels,
+        speaker_fallback_when_unlabeled=has_speaker_labels,
+    )
 
     if has_display_override:
         result_data["display_segments"] = display_segments
     if has_speaker_labels:
         result_data["speaker_labels"] = speaker_labels
+        result_data = _apply_speaker_labels_to_result_segments(
+            result_data,
+            speaker_labels,
+            speaker_fallback_when_unlabeled=True,
+        )
+        result_data = _apply_speaker_labels_to_result_summary(
+            result_data,
+            speaker_fallback_when_unlabeled=True,
+        )
     return result_data
 
 
@@ -3044,7 +3692,10 @@ def process_audio_pipeline(
     source_wav_size = os.path.getsize(temp_wav_path) if os.path.exists(temp_wav_path) else 0
     diarization_decision = _diarization_resource_decision(config, source_wav_duration)
     if diarization_decision.get("run") and not _should_generate_diarization_during_analysis(config):
-        diarization_decision = _defer_diarization_decision(diarization_decision)
+        if _can_defer_diarization_for_later(config):
+            diarization_decision = _defer_diarization_decision(diarization_decision)
+        else:
+            diarization_decision = _source_not_preserved_diarization_decision(diarization_decision)
     _write_job_state(checkpoint_paths, {
         "source_wav_completed": True,
         "source_wav_path": temp_wav_path,

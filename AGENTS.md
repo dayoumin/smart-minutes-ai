@@ -50,6 +50,9 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Before enabling or debugging `/api/outputs/{job_id}/...`, verify `MeetingRecord.jobId`, `MeetingRecord.outputFiles.job_id` when present, the active backend `output_dir`, and the existence of `{job_id}_result.json`.
 - If the frontend record exists but backend output JSON does not, use a payload-based fallback path or treat the record as ineligible for output-based generation.
 - Topic/speaker generation buttons should not rely on `jobId` alone; check transcript segments and generation state too.
+- When changing summary, topic, speaker-context, or speaker-label generation, keep backend result JSON, frontend `MeetingRecord`, `/sync-record`, `/export-record`, and generated download files aligned. Regenerating topic sections invalidates speaker-context and participant summaries.
+- Treat explicit empty `speakerLabels` / `speaker_labels` payloads as a user-cleared label set. Do not fall back to stale legacy labels or stale speaker display names in exports or saved result JSON.
+- A single concrete topic section can be a completed topic result; reject only generic one-topic outputs such as broad "핵심 주제" style summaries.
 - Never expose raw backend JSON errors such as `Output result not found` directly in the UI when a user-facing recovery message is possible.
 
 ## Verification Scope Rules

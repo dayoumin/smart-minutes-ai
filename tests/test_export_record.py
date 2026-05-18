@@ -155,6 +155,69 @@ class ExportRecordTest(unittest.TestCase):
         self.assertIn("발언자별 맥락 정리만 있는 기록입니다.", content)
         self.assertIn("화자1", content)
 
+    def test_export_record_applies_speaker_labels_to_speaker_context_summaries(self):
+        payload = legacy_meeting_payload(
+            speakerLabels={"SPEAKER_00": "김철수"},
+            participantSummaries=[
+                {
+                    "participant": "화자1",
+                    "summary": "화자1은 예산을 설명했습니다.",
+                }
+            ],
+            speakerContextSummaries=[
+                {
+                    "speaker": "SPEAKER_00",
+                    "display_name": "화자1",
+                    "summary": "화자1은 발언자별 맥락을 정리했습니다.",
+                    "key_points": ["화자1 핵심 발언"],
+                    "actions": ["화자1 후속 확인"],
+                }
+            ],
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("### 김철수", content)
+        self.assertNotIn("화자1", content)
+
+    def test_export_record_empty_speaker_labels_clear_stale_names(self):
+        payload = legacy_meeting_payload(
+            speakerLabels={},
+            speaker_labels={"SPEAKER_00": "김철수"},
+            segments=[
+                {
+                    "start": "00:00:00",
+                    "end": "00:00:05",
+                    "speaker": "SPEAKER_00",
+                    "text": "발언 내용입니다.",
+                }
+            ],
+            participantSummaries=[
+                {
+                    "participant": "김철수",
+                    "summary": "김철수는 이전 이름으로 저장된 참석자별 정리입니다.",
+                }
+            ],
+            speakerContextSummaries=[
+                {
+                    "speaker": "SPEAKER_00",
+                    "display_name": "김철수",
+                    "summary": "김철수는 발언자별 맥락을 정리했습니다.",
+                    "key_points": ["김철수 핵심 발언"],
+                    "actions": ["김철수 후속 확인"],
+                }
+            ],
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("### SPEAKER_00", content)
+        self.assertNotIn("김철수", content)
+
     def test_topic_generation_stays_completed_when_export_refresh_fails(self):
         job_id = "unit_topic_export_refresh_failure"
         output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
@@ -186,6 +249,50 @@ class ExportRecordTest(unittest.TestCase):
         result_data = json.loads(output_path.read_text(encoding="utf-8"))
         self.assertEqual(result_data["summary"]["generation_status"]["topic_sections"], "completed")
         self.assertNotIn("generation_error_detail", result_data["summary"])
+
+    def test_topic_generation_clears_stale_speaker_context(self):
+        job_id = "unit_topic_generation_clears_speaker_context"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                    "summary": {
+                        "topic_sections": [{"topic": "Old", "summary": "Old topic"}],
+                        "speaker_context_summaries": [
+                            {"speaker": "SPEAKER_00", "display_name": "Speaker 00", "summary": "Old speaker context"}
+                        ],
+                        "participant_summaries": [
+                            {"participant": "Speaker 00", "summary": "Old participant summary"}
+                        ],
+                        "generation_status": {
+                            "summary": "completed",
+                            "topic_sections": "completed",
+                            "speaker_context_summaries": "completed",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        with (
+            patch("pipeline.summarize.generate_topic_sections", return_value=[{"topic": "Budget", "summary": "Budget discussion"}]),
+            patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)),
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-topic-sections")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        response_data = response.json()
+        self.assertEqual(response_data["speaker_context_summaries"], [])
+        self.assertEqual(response_data["participant_summaries"], [])
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        summary = result_data["summary"]
+        self.assertEqual(summary["generation_status"]["topic_sections"], "completed")
+        self.assertEqual(summary["generation_status"]["speaker_context_summaries"], "not_started")
+        self.assertEqual(summary["speaker_context_summaries"], [])
+        self.assertEqual(summary["participant_summaries"], [])
 
     def test_topic_generation_empty_result_is_not_marked_completed(self):
         job_id = "unit_topic_generation_empty"

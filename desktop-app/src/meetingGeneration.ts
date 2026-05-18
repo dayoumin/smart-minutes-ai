@@ -71,5 +71,5 @@ export const canGenerateSpeakerContext = (
     topicSections?: TopicSectionShape[],
 ): boolean => {
     const sectionCount = topicSections?.filter(section => section.topic?.trim()).length ?? 0;
-    return getTopicGenerationStatus(status, topicSections) === 'completed' && sectionCount >= 2;
+    return getTopicGenerationStatus(status, topicSections) === 'completed' && sectionCount >= 1;
 };

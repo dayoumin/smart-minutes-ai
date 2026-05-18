@@ -7,6 +7,8 @@ import { isTauriRuntime, openSavedFileLocation, toApiUrl } from './apiBase';
 import { Input } from './Input';
 import { StatusBanner } from './StatusBanner';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
+import { ProgressBar } from './ProgressBar';
+import { formatAnalysisDuration } from './analysisTimeEstimate';
 import {
     canGenerateSpeakerContext as canGenerateSpeakerContextFromState,
     getSpeakerGenerationStatus,
@@ -62,6 +64,10 @@ interface GenerateTopicSectionsResponse {
     topicSection?: MeetingTopicSection;
     topic_sections?: MeetingTopicSection[];
     topicSections?: MeetingTopicSection[];
+    speaker_context_summaries?: MeetingSpeakerContextSummary[];
+    speakerContextSummaries?: MeetingSpeakerContextSummary[];
+    participant_summaries?: MeetingRecord['participantSummaries'];
+    participantSummaries?: MeetingRecord['participantSummaries'];
     generation_status?: MeetingRecord['generationStatus'];
     generationStatus?: MeetingRecord['generationStatus'];
     outputs?: MeetingRecord['outputFiles'];
@@ -101,6 +107,15 @@ interface GenerateDiarizationResponse {
     export_error?: string | null;
 }
 
+interface GenerationProgressResponse {
+    active?: boolean;
+    progress?: number;
+    message?: string;
+    status?: 'idle' | 'processing' | 'completed' | 'failed' | string;
+    started_at?: string;
+    updated_at?: string;
+}
+
 interface SyncOutputRecordResponse {
     outputs?: MeetingRecord['outputFiles'];
     export_error?: string | null;
@@ -123,6 +138,31 @@ const toParticipantCopy = (value: string): string => value
     .replaceAll('화자 구분', '참석자 구분')
     .replaceAll('발화자', '참석자')
     .replaceAll('회의 기록에서', '기록 정리에서');
+
+const getFallbackDiarizationProgressPercent = (elapsedMs: number): number => {
+    if (elapsedMs <= 0) return 3;
+    const elapsedMinutes = elapsedMs / 60_000;
+    const easedProgress = 1 - Math.exp(-elapsedMinutes / 3);
+    return Math.min(92, Math.max(3, Math.round(8 + easedProgress * 84)));
+};
+
+const formatDiarizationProgressMessage = (message: string): string => {
+    const normalized = toParticipantCopy(message.trim());
+    const statusMap: Record<string, string> = {
+        '준비 중': '참석자 구분 준비 중',
+        diarization_resource_limit: '음성 파일이 너무 길거나 커서 참석자 구분을 실행하지 않았습니다.',
+        diarization_model_not_ready: '참석자 구분 모델이 준비되지 않았습니다.',
+        audio_required_for_diarization: '참석자 구분에 필요한 원본 음성을 찾지 못했습니다.',
+        diarization_runtime_error: '참석자 구분 실행 중 오류가 발생했습니다.',
+    };
+    return statusMap[normalized] || normalized || '참석자 구분 중';
+};
+
+const parseGenerationStartedAt = (value?: string): number | null => {
+    if (!value) return null;
+    const parsed = Date.parse(value);
+    return Number.isNaN(parsed) ? null : parsed;
+};
 
 const speakerToneCount = 6;
 
@@ -376,6 +416,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [audioSourceUrl, setAudioSourceUrl] = useState('');
     const [audioAvailability, setAudioAvailability] = useState<AudioAvailability>('idle');
     const [generatingKind, setGeneratingKind] = useState<GenerationKind | null>(null);
+    const [diarizationStartedAt, setDiarizationStartedAt] = useState<number | null>(null);
+    const [diarizationNow, setDiarizationNow] = useState(() => Date.now());
+    const [diarizationProgress, setDiarizationProgress] = useState<GenerationProgressResponse | null>(null);
+    const [diarizationProgressJobId, setDiarizationProgressJobId] = useState<string | null>(null);
     const [customTopicTitle, setCustomTopicTitle] = useState('');
     const [selectedTopicKey, setSelectedTopicKey] = useState<string | null>(null);
     const [selectedSpeakerSummaryKey, setSelectedSpeakerSummaryKey] = useState<string>('all');
@@ -389,6 +433,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const meetingUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
     const hydratedMeetingIdRef = useRef<string | null>(null);
     const canLeaveMeetingRef = useRef<(nextMeetingId: string | null) => boolean>(() => true);
+    const diarizationProgressJobIdRef = useRef<string | null>(null);
     const topicSectionRefs = useRef<Record<string, HTMLElement | null>>({});
     const topicSectionsSectionRef = useRef<HTMLDivElement | null>(null);
     const speakerSummarySectionRef = useRef<HTMLDivElement | null>(null);
@@ -491,15 +536,109 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 setSummaryModelMessage('');
             }
         };
-        void loadSummaryModelStatus();
+        const syncSummaryModelStatus = () => {
+            void loadSummaryModelStatus();
+        };
+
+        syncSummaryModelStatus();
+        window.addEventListener('focus', syncSummaryModelStatus);
+        window.addEventListener('analysis:settings-updated', syncSummaryModelStatus);
         return () => {
             cancelled = true;
+            window.removeEventListener('focus', syncSummaryModelStatus);
+            window.removeEventListener('analysis:settings-updated', syncSummaryModelStatus);
         };
     }, []);
 
     useEffect(() => {
         selectedMeetingRef.current = selectedMeeting;
     }, [selectedMeeting]);
+
+    useEffect(() => {
+        diarizationProgressJobIdRef.current = diarizationProgressJobId;
+    }, [diarizationProgressJobId]);
+
+    useEffect(() => {
+        if (generatingKind !== 'diarization' && !diarizationProgress?.active) return undefined;
+        setDiarizationNow(Date.now());
+        const timerId = window.setInterval(() => setDiarizationNow(Date.now()), 1000);
+        return () => window.clearInterval(timerId);
+    }, [diarizationProgress?.active, generatingKind]);
+
+    useEffect(() => {
+        if (!selectedMeeting?.jobId || selectedMeeting.diarizationApplied) return undefined;
+
+        let cancelled = false;
+        const jobId = selectedMeeting.jobId;
+        const loadDiarizationProgress = async () => {
+            try {
+                const progressUrl = await toApiUrl(`/api/outputs/${encodeURIComponent(jobId)}/generation-progress/diarization`);
+                const response = await fetch(progressUrl);
+                if (!response.ok) return;
+                const payload = await response.json() as GenerationProgressResponse;
+                if (!cancelled && payload.active) {
+                    setDiarizationProgressJobId(jobId);
+                    setDiarizationProgress(payload);
+                    setDiarizationStartedAt(parseGenerationStartedAt(payload.started_at) ?? Date.now());
+                }
+            } catch {
+                // Older backends will simply keep the local elapsed-time fallback visible.
+            }
+        };
+
+        void loadDiarizationProgress();
+        return () => {
+            cancelled = true;
+        };
+    }, [selectedMeeting?.diarizationApplied, selectedMeeting?.jobId]);
+
+    useEffect(() => {
+        const jobId = diarizationProgressJobId;
+        const shouldPoll = Boolean(jobId && (generatingKind === 'diarization' || diarizationProgress?.active));
+        if (!jobId || !shouldPoll) return undefined;
+
+        let cancelled = false;
+        let inFlight = false;
+        const loadDiarizationProgress = async () => {
+            if (inFlight) return;
+            inFlight = true;
+            try {
+                const progressUrl = await toApiUrl(`/api/outputs/${encodeURIComponent(jobId)}/generation-progress/diarization`);
+                const response = await fetch(progressUrl);
+                if (!response.ok) return;
+                const payload = await response.json() as GenerationProgressResponse;
+                if (cancelled) return;
+                const startedAt = parseGenerationStartedAt(payload.started_at);
+                if (startedAt) {
+                    setDiarizationStartedAt(current => current ?? startedAt);
+                }
+                setDiarizationProgress(current => {
+                    const currentProgress = typeof current?.progress === 'number' ? current.progress : 0;
+                    const nextProgress = typeof payload.progress === 'number' ? payload.progress : currentProgress;
+                    if (payload.active && nextProgress < currentProgress) {
+                        return current;
+                    }
+                    return {
+                        ...payload,
+                        progress: nextProgress,
+                    };
+                });
+            } catch {
+                // Older backends will simply keep the local elapsed-time fallback visible.
+            } finally {
+                inFlight = false;
+            }
+        };
+
+        void loadDiarizationProgress();
+        const timerId = window.setInterval(() => {
+            void loadDiarizationProgress();
+        }, 1500);
+        return () => {
+            cancelled = true;
+            window.clearInterval(timerId);
+        };
+    }, [diarizationProgress?.active, diarizationProgressJobId, generatingKind]);
 
     useEffect(() => {
         if (noticeMessage === '참석자 이름을 저장했습니다.') {
@@ -746,6 +885,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         try {
             setErrorMessage('');
             setNoticeMessage('');
+            const startedAt = Date.now();
+            setDiarizationStartedAt(startedAt);
+            setDiarizationNow(startedAt);
+            diarizationProgressJobIdRef.current = targetJobId;
+            setDiarizationProgressJobId(targetJobId);
+            setDiarizationProgress({
+                active: true,
+                progress: 0,
+                message: '참석자 구분 준비 중',
+                status: 'processing',
+            });
             setGeneratingKind('diarization');
             const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-diarization`), {
                 method: 'POST',
@@ -755,6 +905,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '참석자 구분을 실행하지 못했습니다.'));
 
             const data = await response.json() as GenerateDiarizationResponse;
+            if (diarizationProgressJobIdRef.current === targetJobId) {
+                setDiarizationNow(Date.now());
+                setDiarizationProgress({
+                    active: false,
+                    progress: 100,
+                    message: '참석자 구분 완료',
+                    status: 'completed',
+                });
+            }
             await updateSelectedMeeting(currentMeeting => ({
                 segments: data.segments ?? currentMeeting.segments,
                 displaySegments: data.displaySegments ?? data.display_segments ?? currentMeeting.displaySegments,
@@ -774,11 +933,24 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 },
                 outputFiles: data.outputs ?? currentMeeting.outputFiles,
             }), targetMeeting.id);
-            setDetailTab('script');
-            setNoticeMessage(data.export_error || '참석자 구분을 완료했습니다.');
+            if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setDetailTab('script');
+                setNoticeMessage(data.export_error || '참석자 구분을 완료했습니다.');
+            }
         } catch (error) {
-            setNoticeMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '참석자 구분을 실행하지 못했습니다.');
+            if (diarizationProgressJobIdRef.current === targetJobId) {
+                setDiarizationNow(Date.now());
+                setDiarizationProgress(current => ({
+                    ...(current ?? {}),
+                    active: false,
+                    message: error instanceof Error ? error.message : '참석자 구분 실행 중 오류가 발생했습니다.',
+                    status: 'failed',
+                }));
+            }
+            if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setNoticeMessage('');
+                setErrorMessage(error instanceof Error ? error.message : '참석자 구분을 실행하지 못했습니다.');
+            }
         } finally {
             setGeneratingKind(null);
         }
@@ -891,9 +1063,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     );
     const summarySkippedForDeferredAnalysis = summaryGenerationStatus === 'skipped'
         && Boolean(selectedMeeting?.summary?.includes('정리는 회의 기록에서 별도로 실행'));
+    const diarizationProgressMatchesSelected = Boolean(
+        selectedMeeting?.jobId
+        && diarizationProgressJobId === selectedMeeting.jobId,
+    );
+    const diarizationIsRunning = Boolean(
+        diarizationProgressMatchesSelected
+        && (generatingKind === 'diarization' || diarizationProgress?.active),
+    );
     const diarizationApplied = selectedMeeting?.diarizationApplied;
     const diarizationStatus = (() => {
         if (!hasTranscriptData) return { label: '대기', tone: 'neutral' };
+        if (diarizationIsRunning) return { label: '진행 중', tone: 'info' };
         if (selectedMeeting?.diarizationSkipped) return { label: '제외', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
         if (selectedMeeting?.diarizationDeferred) return { label: '별도 실행', tone: 'neutral' };
@@ -914,7 +1095,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         && selectedMeeting?.diarizationRequested !== false,
     );
     const diarizationActionMeta = canGenerateDiarization
-        ? (generatingKind === 'diarization' ? '구분 중' : '별도 실행')
+        ? (diarizationIsRunning ? '구분 중' : '별도 실행')
         : selectedMeeting?.diarizationApplied
             ? '완료'
             : selectedMeeting?.diarizationSkipped
@@ -991,11 +1172,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 return {
                     topics: data.topics ?? currentMeeting.topics ?? [],
                     topicSections: data.topicSections ?? data.topic_sections ?? [],
+                    speakerContextSummaries: data.speakerContextSummaries ?? data.speaker_context_summaries ?? [],
+                    participantSummaries: data.participantSummaries ?? data.participant_summaries ?? [],
                     generationStatus: data.generationStatus ?? data.generation_status ?? { topicSections: 'completed' },
                     transcriptEditMeta: {
                         ...(currentMeeting.transcriptEditMeta ?? {}),
                         topicSectionsOutdated: false,
-                        speakerContextOutdated: Boolean(currentMeeting.speakerContextSummaries?.length || currentMeeting.participantSummaries?.length),
+                        speakerContextOutdated: false,
                     },
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
@@ -1053,7 +1236,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const targetJobId = selectedMeeting.jobId;
         const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
         const hadCompletedTopicSectionsBeforeRequest = getTopicGenerationStatus(targetMeeting.generationStatus, targetMeeting.topicSections) === 'completed'
-            && (targetMeeting.topicSections?.filter(section => section.topic?.trim()).length ?? 0) >= 2;
+            && (targetMeeting.topicSections?.filter(section => section.topic?.trim()).length ?? 0) >= 1;
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -1083,11 +1266,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 return {
                     topics: data.topics ?? currentMeeting.topics ?? [],
                     topicSections: data.topicSections ?? data.topic_sections ?? currentMeeting.topicSections ?? [],
+                    speakerContextSummaries: data.speakerContextSummaries ?? data.speaker_context_summaries ?? [],
+                    participantSummaries: data.participantSummaries ?? data.participant_summaries ?? [],
                     generationStatus: data.generationStatus ?? data.generation_status ?? { topicSections: 'completed' },
                     transcriptEditMeta: {
                         ...(currentMeeting.transcriptEditMeta ?? {}),
                         topicSectionsOutdated: false,
-                        speakerContextOutdated: Boolean(currentMeeting.speakerContextSummaries?.length || currentMeeting.participantSummaries?.length),
+                        speakerContextOutdated: false,
                     },
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
@@ -1621,6 +1806,53 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             : <Play size={14} aria-hidden="true" />
     );
 
+    const showDiarizationProgress = diarizationIsRunning;
+    const diarizationElapsedMs = showDiarizationProgress && diarizationStartedAt
+        ? Math.max(0, diarizationNow - diarizationStartedAt)
+        : 0;
+    const reportedDiarizationProgress = typeof diarizationProgress?.progress === 'number'
+        ? diarizationProgress.progress
+        : null;
+    const diarizationProgressPercent = showDiarizationProgress
+        ? Math.min(100, Math.max(
+            0,
+            reportedDiarizationProgress && reportedDiarizationProgress > 0
+                ? reportedDiarizationProgress
+                : getFallbackDiarizationProgressPercent(diarizationElapsedMs),
+        ))
+        : 0;
+    const diarizationProgressMessage = formatDiarizationProgressMessage(diarizationProgress?.message || '참석자 구분 중');
+    const diarizationProgressPanel = showDiarizationProgress ? (
+        <div className="mt-3 border-t border-border/70 pt-3">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div className="flex min-w-0 flex-1 gap-3">
+                    <div className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                        <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                        <div className="flex items-center justify-between gap-3 text-sm font-semibold text-foreground" role="status" aria-live="polite">
+                            <span className="min-w-0 truncate">{diarizationProgressMessage}</span>
+                            <span className="shrink-0 text-primary">{Math.round(diarizationProgressPercent)}%</span>
+                        </div>
+                        <ProgressBar
+                            value={diarizationProgressPercent}
+                            size="sm"
+                            tone={diarizationProgress?.status === 'failed' ? 'error' : 'primary'}
+                            className="mt-3"
+                            label="참석자 구분 진행률"
+                        />
+                    </div>
+                </div>
+                <div className="shrink-0 text-left sm:text-right">
+                    <div className="text-xs text-muted-foreground">경과 시간</div>
+                    <div className="mt-1 text-sm font-semibold text-primary">
+                        {formatAnalysisDuration(diarizationElapsedMs)}
+                    </div>
+                </div>
+            </div>
+        </div>
+    ) : null;
+
     if (isLoading) {
         return (
             <div className="mx-auto max-w-5xl">
@@ -1792,17 +2024,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <span className={`status-pill status-${diarizationStatus.tone}`}>
                                                 {diarizationStatus.label}
                                             </span>
-                                            {(canGenerateDiarization || generatingKind === 'diarization') && (
+                                            {(canGenerateDiarization || diarizationIsRunning) && (
                                                 <Button
                                                     variant="outline"
                                                     className="meeting-status-run-button"
                                                     aria-label="참석자 구분 실행"
                                                     title="참석자 구분 실행"
-                                                    disabled={generatingKind !== null}
+                                                    disabled={generatingKind !== null || diarizationIsRunning}
                                                     onClick={handleGenerateDiarization}
                                                 >
-                                                    {renderRunIcon('diarization', generatingKind === 'diarization' ? 'generating' : 'not_started')}
-                                                    {generatingKind === 'diarization' ? '진행 중' : '실행'}
+                                                    {renderRunIcon('diarization', diarizationIsRunning ? 'generating' : 'not_started')}
+                                                    {diarizationIsRunning ? '진행 중' : '실행'}
                                                 </Button>
                                             )}
                                         </span>
@@ -1887,14 +2119,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             className="detail-action-button"
                                             aria-label="참석자 구분 실행"
                                             title="참석자 구분 실행"
-                                            disabled={!canGenerateDiarization || generatingKind !== null}
+                                            disabled={!canGenerateDiarization || generatingKind !== null || diarizationIsRunning}
                                             onClick={handleGenerateDiarization}
                                         >
-                                            {renderRunIcon('diarization', generatingKind === 'diarization' ? 'generating' : 'not_started')}
-                                            {generatingKind === 'diarization' ? '진행 중' : '실행'}
+                                            {renderRunIcon('diarization', diarizationIsRunning ? 'generating' : 'not_started')}
+                                            {diarizationIsRunning ? '진행 중' : '실행'}
                                         </Button>
                                     </div>
                                 )}
+                                {diarizationProgressPanel}
                             </section>
 
                             <section className="detail-action-row">
@@ -2077,6 +2310,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                             className={`topic-chip ${selectedTopicKey === null ? 'topic-chip-active' : ''}`}
                                                             onClick={() => setSelectedTopicKey(null)}
                                                             title="전체 주제 보기"
+                                                            aria-pressed={selectedTopicKey === null}
                                                         >
                                                             {renderSearchText('전체')}
                                                         </button>
@@ -2087,6 +2321,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                                 className={`topic-chip ${selectedTopicKey === normalizeTopicKey(topic) ? 'topic-chip-active' : ''}`}
                                                                 onClick={() => handleSelectTopic(topic)}
                                                                 title="해당 주제 위치로 이동"
+                                                                aria-pressed={selectedTopicKey === normalizeTopicKey(topic)}
                                                             >
                                                                 {renderSearchText(topic)}
                                                             </button>
@@ -2162,6 +2397,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                             type="button"
                                                             className={`topic-chip ${selectedSpeakerSummaryKey === 'all' ? 'topic-chip-active' : ''}`}
                                                             onClick={() => setSelectedSpeakerSummaryKey('all')}
+                                                            aria-pressed={selectedSpeakerSummaryKey === 'all'}
                                                         >
                                                             {renderSearchText('전체')}
                                                         </button>
@@ -2171,6 +2407,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                                 type="button"
                                                                 className={`topic-chip ${selectedSpeakerSummaryKey === item.key ? 'topic-chip-active' : ''}`}
                                                                 onClick={() => setSelectedSpeakerSummaryKey(item.key)}
+                                                                aria-pressed={selectedSpeakerSummaryKey === item.key}
                                                             >
                                                                 {renderSearchText(item.name)}
                                                             </button>

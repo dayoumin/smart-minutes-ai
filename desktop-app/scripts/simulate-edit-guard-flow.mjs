@@ -205,13 +205,14 @@ const run = async () => {
 
     await page.getByRole('tab', { name: '대화록' }).click();
     await page.getByRole('button', { name: '대화록 편집' }).click();
-    await page.getByLabel('화자1 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
+    await page.getByLabel('참석자01 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
 
-    await page.getByRole('tab', { name: '회의 요약' }).click();
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByRole('tab', { name: '주제별 정리' }).click();
     await page.getByRole('button', { name: '주제별 정리' }).click();
     await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 
-    await page.getByRole('button', { name: '회의록 HWPX 저장' }).click();
+    await page.getByRole('button', { name: '회의록 HWPX 파일을 다운로드 폴더에 저장' }).click();
     await page.getByText(downloadGuardMessage).waitFor({ timeout: 10000 });
     assert.equal(
       apiCalls.some(call => call.includes('/api/export-record/')),
@@ -220,13 +221,13 @@ const run = async () => {
     );
 
     await page.getByRole('tab', { name: '대화록' }).click();
-    await page.getByRole('button', { name: '수정본 저장' }).click();
+    await page.getByRole('button', { name: '저장', exact: true }).click();
     await page.getByText('대화록 수정본을 저장했습니다.').waitFor({ timeout: 10000 });
 
-    await page.getByRole('tab', { name: '회의 요약' }).click();
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByRole('tab', { name: '전체 요약' }).click();
     await page.getByRole('button', { name: '전체 요약 정리' }).click();
     await page.getByText(staleSummaryMessage).waitFor({ timeout: 10000 });
-    await page.getByText('정리 전', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '전체 요약 정리' }).waitFor({ timeout: 10000 });
 
     console.log('ok - edit guard and stale summary flow simulation');

@@ -397,6 +397,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [statusMessage, setStatusMessage] = useState('');
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
+    const transcriptReadyRef = useRef(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [errorMessage, setErrorMessage] = useState('');
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
@@ -413,11 +414,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const analysisJobIdRef = useRef<string | null>(null);
     const analysisResumeDraftIdRef = useRef<string | null>(null);
     const analysisStalled = isAnalyzing && analysisPhase === 'analyzing' && analysisNow - lastRealProgressAt >= ANALYSIS_STALL_WARNING_MS;
-    const hasWriterCloseRisk = isAnalyzing || (!completionNotice && (
-        Boolean(file)
-        || Boolean(title.trim())
+    const hasDraftableInput = useMemo(() => (
+        Boolean(title.trim())
         || Boolean(meetingPurpose.trim())
-    ));
+        || Boolean(file)
+        || Boolean(selectedResumeDraftId)
+        || date !== initialDateValue
+    ), [date, file, initialDateValue, meetingPurpose, selectedResumeDraftId, title]);
+    const hasWriterCloseRisk = isAnalyzing || hasDraftableInput;
 
     useEffect(() => {
         window.dispatchEvent(new CustomEvent('close-guard:state', {
@@ -622,14 +626,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         if (!file) fields.push('음성 파일');
         return fields;
     }, [date, file, meetingPurpose, title]);
-
-    const hasDraftableInput = useMemo(() => (
-        Boolean(title.trim())
-        || Boolean(meetingPurpose.trim())
-        || Boolean(file)
-        || Boolean(selectedResumeDraftId)
-        || date !== initialDateValue
-    ), [date, file, initialDateValue, meetingPurpose, selectedResumeDraftId, title]);
 
     useEffect(() => {
         if (!onRegisterLeaveGuard) return;
@@ -843,7 +839,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             stage: options.stage,
             lastMessage: options.lastMessage,
             lastProgress: options.lastProgress,
-            transcriptReady: options.transcriptReady ?? existing?.transcriptReady,
+            transcriptReady: Boolean(options.transcriptReady || existing?.transcriptReady),
             errorMessage: options.errorMessage,
             resumeEligible: existing?.resumeEligible,
             resumeUnavailableReason: existing?.resumeUnavailableReason,
@@ -884,6 +880,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
         setRawStatusMessage(draft.lastMessage || '');
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
+        transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
     };
 
@@ -1127,6 +1124,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 lastProgress: 0,
             });
             setAnalysisPhase('analyzing');
+            transcriptReadyRef.current = false;
             setTranscriptReady(false);
             setLastRealProgressAt(getNowMs());
             setStatusMessage(current => current || '분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
@@ -1196,7 +1194,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     if (typeof parsed.progress === 'number') {
                         setProgress(Math.min(100, Math.max(0, parsed.progress)));
                     }
-                    if (parsed.transcript_ready || parsed.transcriptReady || parsed.status === 'completed') {
+                    const nextTranscriptReady = transcriptReadyRef.current
+                        || Boolean(parsed.transcript_ready || parsed.transcriptReady || parsed.status === 'completed');
+                    if (nextTranscriptReady) {
+                        transcriptReadyRef.current = true;
                         setTranscriptReady(true);
                     }
                     if (parsed.message) {
@@ -1207,7 +1208,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             stage: parsed.status || 'processing',
                             lastMessage: parsed.message,
                             lastProgress: typeof parsed.progress === 'number' ? parsed.progress : progress,
-                            transcriptReady: Boolean(parsed.transcript_ready || parsed.transcriptReady || transcriptReady),
+                            transcriptReady: nextTranscriptReady,
                         });
                     }
                     if (!parsed.heartbeat) {

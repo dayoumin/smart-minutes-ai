@@ -40,6 +40,250 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("backend_dir", response.json())
         self.assertIn("python_executable", response.json())
 
+    def test_generation_progress_reports_active_generation(self) -> None:
+        generation_key = ("unit_progress_job", "diarization")
+        with main.GENERATION_STATUS_LOCK:
+            main.ACTIVE_GENERATIONS.discard(generation_key)
+            main.GENERATION_PROGRESS.pop(generation_key, None)
+            key = main._begin_generation(*generation_key)
+            main._set_generation_progress(key, 42, "참석자 음성 구간 분석 중")
+
+        try:
+            response = self.client.get("/api/outputs/unit_progress_job/generation-progress/diarization")
+            self.assertEqual(response.status_code, 200)
+            payload = response.json()
+            self.assertTrue(payload["active"])
+            self.assertEqual(payload["progress"], 42)
+            self.assertEqual(payload["message"], "참석자 음성 구간 분석 중")
+        finally:
+            with main.GENERATION_STATUS_LOCK:
+                main._end_generation(generation_key)
+                main.GENERATION_PROGRESS.pop(generation_key, None)
+
+    def test_generation_progress_is_limited_to_diarization(self) -> None:
+        response = self.client.get("/api/outputs/unit_progress_job/generation-progress/summary")
+
+        self.assertEqual(response.status_code, 404)
+
+    def test_diarization_restore_uses_preserved_upload_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_id = "unit_restore_upload"
+            config = {
+                "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                "preprocessing": {"enabled": True},
+                "privacy": {"preserve_extracted_audio": True},
+            }
+            paths = build_job_checkpoint_paths(tmpdir, job_id)
+            Path(paths.upload_dir).mkdir(parents=True, exist_ok=True)
+            upload_path = Path(paths.upload_dir) / "source.mp4"
+            upload_path.write_bytes(b"video")
+
+            resolved = main._resolve_recoverable_source_path(
+                config,
+                job_id,
+                {"sourceFile": "meeting.mp4"},
+                {},
+            )
+
+        self.assertEqual(resolved, str(upload_path))
+
+    def test_diarization_restore_requires_upload_source_filename(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_id = "unit_restore_upload_without_filename"
+            config = {
+                "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                "preprocessing": {"enabled": True},
+                "privacy": {"preserve_extracted_audio": True},
+            }
+            paths = build_job_checkpoint_paths(tmpdir, job_id)
+            Path(paths.upload_dir).mkdir(parents=True, exist_ok=True)
+            (Path(paths.upload_dir) / "source.mp4").write_bytes(b"video")
+
+            resolved = main._resolve_recoverable_source_path(config, job_id, {}, {})
+
+        self.assertIsNone(resolved)
+
+    def test_diarization_restore_ignores_upload_with_mismatched_extension(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_id = "unit_restore_upload_mismatch"
+            config = {
+                "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                "preprocessing": {"enabled": True},
+                "privacy": {"preserve_extracted_audio": True},
+            }
+            paths = build_job_checkpoint_paths(tmpdir, job_id)
+            Path(paths.upload_dir).mkdir(parents=True, exist_ok=True)
+            (Path(paths.upload_dir) / "source.mp4").write_bytes(b"video")
+
+            resolved = main._resolve_recoverable_source_path(
+                config,
+                job_id,
+                {"sourceFile": "meeting.wav"},
+                {},
+            )
+
+        self.assertIsNone(resolved)
+
+    def test_diarization_restore_converts_known_sample_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            known_root = Path(tmpdir) / "samples"
+            known_root.mkdir()
+            source_path = known_root / "unit sample source.mp4"
+            source_path.write_bytes(b"video")
+            with patch.object(main, "_known_source_roots", return_value=[str(known_root)]):
+                job_id = "unit_restore_known_source"
+                config = {
+                    "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                    "preprocessing": {"enabled": True},
+                    "privacy": {"preserve_extracted_audio": True},
+                }
+                paths = build_job_checkpoint_paths(tmpdir, job_id)
+
+                def fake_convert(input_path, output_path, ffmpeg_path, preprocessing):
+                    self.assertEqual(input_path, str(source_path))
+                    self.assertEqual(ffmpeg_path, os.path.join(BACKEND_DIR, "ffmpeg.exe"))
+                    self.assertTrue(preprocessing["enabled"])
+                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                    Path(output_path).write_bytes(b"wav")
+                    return {"preprocessing": {"enabled": True}}
+
+                recoverable_source = main._resolve_recoverable_source_path(
+                    config,
+                    job_id,
+                    {"sourceFile": "unit_sample_source.mp4"},
+                    {},
+                )
+                self.assertEqual(recoverable_source, str(source_path))
+
+                with patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert):
+                    restored_path = main._restore_job_audio_path_for_diarization(
+                        config,
+                        job_id,
+                        recoverable_source,
+                    )
+
+                self.assertEqual(restored_path, paths.source_wav_path)
+                self.assertEqual(Path(restored_path).read_bytes(), b"wav")
+                state = load_json_checkpoint(paths.state_path)
+                self.assertTrue(state["source_wav_restored"])
+                self.assertEqual(state["source_filename"], source_path.name)
+
+    def test_known_source_roots_do_not_include_project_root(self) -> None:
+        project_root = os.path.abspath(os.path.dirname(BACKEND_DIR))
+
+        self.assertNotIn(project_root, main._known_source_roots())
+
+    def test_diarization_restore_ignores_non_media_sources(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            known_root = Path(tmpdir) / "samples"
+            known_root.mkdir()
+            (known_root / "meeting.txt").write_text("not media", encoding="utf-8")
+            config = {
+                "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                "preprocessing": {"enabled": True},
+                "privacy": {"preserve_extracted_audio": True},
+            }
+
+            with patch.object(main, "_known_source_roots", return_value=[str(known_root)]):
+                resolved = main._resolve_recoverable_source_path(
+                    config,
+                    "unit_restore_non_media",
+                    {"sourceFile": "meeting.txt"},
+                    {},
+                )
+
+        self.assertIsNone(resolved)
+
+    def test_diarization_generation_omits_audio_output_when_restored_wav_is_deleted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_id = "unit_diarization_restore_delete"
+            output_dir = os.path.join(tmpdir, "outputs")
+            temp_dir = os.path.join(tmpdir, "temp")
+            os.makedirs(output_dir, exist_ok=True)
+            config = {
+                "paths": {
+                    "temp_dir": temp_dir,
+                    "output_dir": output_dir,
+                    "ffmpeg": "ffmpeg.exe",
+                    "diarization_model": "model",
+                },
+                "preprocessing": {"enabled": True},
+                "privacy": {
+                    "preserve_extracted_audio": False,
+                    "save_original_audio_copy": True,
+                },
+                "diarization": {"enabled": True},
+            }
+            paths = build_job_checkpoint_paths(temp_dir, job_id)
+            Path(paths.upload_dir).mkdir(parents=True, exist_ok=True)
+            (Path(paths.upload_dir) / "source.mp4").write_bytes(b"video")
+            result_path = Path(output_dir) / f"{job_id}_result.json"
+            result_path.write_text(json.dumps({
+                "job_id": job_id,
+                "source_file": "meeting.mp4",
+                "raw_stt_segments": [{"start": 0.0, "end": 5.0, "text": "hello", "speaker": "Speaker"}],
+                "segments": [{"start": 0.0, "end": 5.0, "text": "hello", "speaker": "Speaker"}],
+                "summary": {"generation_status": {}},
+                "settings": {"diarization": False},
+            }, ensure_ascii=False), encoding="utf-8")
+
+            def fake_convert(_input_path, output_path, _ffmpeg_path, preprocessing=None):
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_bytes(b"wav")
+                return {"preprocessing": {}}
+
+            with (
+                patch.object(main, "load_config", return_value=config),
+                patch.object(main, "model_exists", return_value=True),
+                patch.object(main, "resolve_model_path", return_value=TEST_AUDIO_PATH),
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.diarize.diarize_audio", return_value=[{"start": 0.0, "end": 5.0, "speaker": "화자000"}]),
+                patch("pipeline.align_speakers.align_segments_with_speakers", return_value=[
+                    {"start": 0.0, "end": 5.0, "text": "hello", "speaker": "화자000"},
+                ]),
+                patch("pipeline.export_txt.export_txt"),
+                patch.object(main, "_refresh_summary_exports", side_effect=lambda _job_id, _result_data: main._result_outputs(_job_id)),
+            ):
+                response = self.client.post(
+                    f"/api/outputs/{job_id}/generate-diarization",
+                    json={"sourceFile": "meeting.mp4"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertNotIn("audio", payload["outputs"])
+            self.assertFalse(Path(paths.source_wav_path).exists())
+            state = load_json_checkpoint(paths.state_path)
+            self.assertTrue(state["source_wav_deleted"])
+
+    def test_generation_progress_prunes_inactive_entries(self) -> None:
+        with main.GENERATION_STATUS_LOCK:
+            original_progress = dict(main.GENERATION_PROGRESS)
+            original_active = set(main.ACTIVE_GENERATIONS)
+            main.GENERATION_PROGRESS.clear()
+            main.ACTIVE_GENERATIONS.clear()
+            try:
+                for index in range(main.GENERATION_PROGRESS_MAX_ENTRIES + 5):
+                    main.GENERATION_PROGRESS[(f"old_{index}", "diarization")] = {
+                        "active": False,
+                        "inactive_at_epoch": 0.0,
+                        "updated_at_epoch": 0.0,
+                    }
+                main.GENERATION_PROGRESS[("active_job", "diarization")] = {
+                    "active": True,
+                    "updated_at_epoch": 0.0,
+                }
+
+                main._prune_generation_progress_locked(now=main.GENERATION_PROGRESS_TTL_SECONDS + 1.0)
+
+                self.assertEqual(set(main.GENERATION_PROGRESS), {("active_job", "diarization")})
+            finally:
+                main.GENERATION_PROGRESS.clear()
+                main.GENERATION_PROGRESS.update(original_progress)
+                main.ACTIVE_GENERATIONS.clear()
+                main.ACTIVE_GENERATIONS.update(original_active)
+
     def test_settings_and_model_status(self) -> None:
         settings_response = self.client.get("/api/settings")
         models_response = self.client.get("/api/models/status")
@@ -1733,6 +1977,60 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertIn("별도로 실행", settings["diarization_defer_message"])
             diarize_mock.assert_not_called()
 
+    def test_pipeline_does_not_defer_diarization_when_source_audio_is_not_preserved(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": True},
+                "summary": {"enabled": False},
+                "privacy": {
+                    "auto_delete_temp_audio": True,
+                    "preserve_extracted_audio": False,
+                    "save_original_audio_copy": False,
+                },
+            }
+            job_id = "unit_diarization_not_deferred_without_source"
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 5.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 5.0, "text": "hello"}]),
+                patch("pipeline.diarize.diarize_audio") as diarize_mock,
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+
+            settings = result["result_data"]["settings"]
+            self.assertTrue(settings["diarization_requested"])
+            self.assertFalse(settings["diarization_deferred"])
+            self.assertTrue(settings["diarization_skipped"])
+            self.assertEqual(settings["diarization_skip_reason"], "source_not_preserved")
+            self.assertIn("음성 파일 보존 설정", settings["diarization_skip_message"])
+            diarize_mock.assert_not_called()
+
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            state = load_json_checkpoint(checkpoint_paths.state_path)
+            self.assertTrue(state["source_wav_deleted"])
+            self.assertFalse(state["resume_supported"])
+
     def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
         progress_events = []
         config = {
@@ -2364,7 +2662,20 @@ class AnalyzeApiTest(unittest.TestCase):
                         "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "김철수", "text": "원본 조각"}],
                         "display_segments": [{"start": 0.0, "end": 8.0, "speaker": "화자000", "speaker_name": "김철수", "text": "이전 수정본"}],
                         "speaker_labels": {"화자000": "김철수"},
-                        "summary": {"overview": "기존 요약", "generation_status": {}},
+                        "summary": {
+                            "overview": "기존 요약",
+                            "speaker_context_summaries": [
+                                {
+                                    "speaker": "화자000",
+                                    "display_name": "김철수",
+                                    "summary": "이전 참석자 정리",
+                                    "key_points": ["이전 발언"],
+                                    "actions": [],
+                                }
+                            ],
+                            "participant_summaries": [{"participant": "김철수", "summary": "이전 참석자 정리"}],
+                            "generation_status": {},
+                        },
                     },
                     f,
                     ensure_ascii=False,
@@ -2380,6 +2691,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "displaySegments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "기본 표시본"}],
                 "editedDisplaySegments": [],
                 "speakerLabels": {},
+                "speaker_labels": {"화자000": "김철수"},
             }
 
             with patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)):
@@ -2390,10 +2702,74 @@ class AnalyzeApiTest(unittest.TestCase):
                 result_data = json.load(f)
 
             self.assertEqual(result_data["speaker_labels"], {})
+            self.assertEqual(result_data["segments"][0]["speaker_name"], "화자000")
+            self.assertEqual(result_data["display_segments"][0]["speaker_name"], "화자000")
             self.assertEqual(result_data["display_segments"][0]["text"], "기본 표시본")
             self.assertEqual(result_data["summary"]["title"], "새 회의 제목")
             self.assertEqual(result_data["participants"], "새 참석자")
             self.assertEqual(result_data["created_at"], "2026-05-13 10:00")
+            self.assertEqual(result_data["summary"]["speaker_context_summaries"][0]["display_name"], "화자000")
+            self.assertEqual(result_data["summary"]["participant_summaries"][0]["participant"], "화자000")
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_sync_record_updates_speaker_summary_labels(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_sync_record_summary_labels"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "이전 이름", "text": "원본 조각"}],
+                        "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "이전 이름", "text": "원본 조각"}],
+                        "speaker_labels": {"화자000": "이전 이름"},
+                        "summary": {
+                            "overview": "기존 요약",
+                            "speaker_context_summaries": [
+                                {
+                                    "speaker": "화자000",
+                                    "display_name": "이전 이름",
+                                    "summary": "참석자 발언 정리",
+                                    "key_points": ["예산을 언급함"],
+                                    "actions": [],
+                                }
+                            ],
+                            "participant_summaries": [{"participant": "이전 이름", "summary": "참석자 발언 정리"}],
+                            "generation_status": {"speaker_context_summaries": "completed"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            payload = {
+                "id": job_id,
+                "jobId": job_id,
+                "title": "새 회의 제목",
+                "date": "2026-05-13 10:00",
+                "participants": "새 참석자",
+                "segments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "원본 조각"}],
+                "displaySegments": [{"start": "00:00:00", "end": "00:00:05", "speaker": "화자000", "text": "원본 조각"}],
+                "editedDisplaySegments": [],
+                "speakerLabels": {"화자000": "김철수"},
+            }
+
+            with patch.object(main, "_refresh_summary_exports", return_value=main._result_outputs(job_id)):
+                response = self.client.post(f"/api/outputs/{job_id}/sync-record", json=payload)
+
+            self.assertEqual(response.status_code, 200, response.text)
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+
+            self.assertEqual(result_data["speaker_labels"], {"화자000": "김철수"})
+            self.assertEqual(result_data["segments"][0]["speaker_name"], "김철수")
+            self.assertEqual(result_data["display_segments"][0]["speaker_name"], "김철수")
+            self.assertEqual(result_data["summary"]["speaker_context_summaries"][0]["display_name"], "김철수")
+            self.assertEqual(result_data["summary"]["participant_summaries"][0]["participant"], "김철수")
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)
@@ -2619,7 +2995,7 @@ class AnalyzeApiTest(unittest.TestCase):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
-    def test_generate_single_topic_section_does_not_complete_topic_sections(self) -> None:
+    def test_generate_single_topic_section_completes_topic_sections(self) -> None:
         output_dir = os.path.join(BACKEND_DIR, "outputs")
         os.makedirs(output_dir, exist_ok=True)
         job_id = "unit_generate_single_topic_section"
@@ -2655,7 +3031,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             self.assertEqual(response.status_code, 200, response.text)
             payload = response.json()
-            self.assertEqual(payload["generation_status"]["topic_sections"], "not_started")
+            self.assertEqual(payload["generation_status"]["topic_sections"], "completed")
             self.assertEqual(len(payload["topic_sections"]), 1)
         finally:
             if os.path.exists(output_path):

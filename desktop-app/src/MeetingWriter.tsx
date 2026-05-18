@@ -13,7 +13,6 @@ import {
     listSuppressedResumeCandidateKeys,
     markAnalysisResumeDraftUnavailable,
     markAnalysisResumeDraftsForKeyUnavailable,
-    removeAnalysisResumeDraft,
     unsuppressResumeCandidateKey,
     upsertAnalysisResumeDraft,
 } from './analysisResumeDrafts';
@@ -904,13 +903,37 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         handleResumeDraftPrepare(draft);
     }, [resumeDraftSelectionJobId, resumeDraftSelectionRequestId]);
 
-    const handleDeleteResumeDraft = (draft: AnalysisResumeDraft) => {
+    const handleDeleteResumeDraft = async (draft: AnalysisResumeDraft) => {
         if (draft.status === 'active') {
-            removeAnalysisResumeDraft(draft.jobId);
-        } else {
-            dismissAnalysisResumeDraft(draft);
+            setErrorMessage('진행 중인 분석 기록은 중단된 뒤 삭제할 수 있습니다.');
+            return;
         }
-        if (selectedResumeDraftId === draft.jobId) {
+        if (typeof window.confirm === 'function' && !window.confirm('이전 분석 진행 기록을 삭제할까요? 저장된 회의 기록은 삭제하지 않습니다.')) {
+            return;
+        }
+        let deleted = false;
+        try {
+            if (ANALYSIS_MODE === 'real') {
+                const apiBase = await getApiBase();
+                const response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(draft.jobId)}`, {
+                    method: 'DELETE',
+                });
+                if (!response.ok && response.status !== 404) {
+                    const detail = await response.json().catch(() => null) as { detail?: string } | null;
+                    if (response.status === 409 && detail?.detail === 'analysis_job_active') {
+                        throw new Error('아직 진행 중인 분석입니다. 중단된 뒤 다시 삭제해 주세요.');
+                    }
+                    throw new Error('분석 임시 파일을 정리하지 못했습니다.');
+                }
+            }
+            dismissAnalysisResumeDraft(draft);
+            deleted = true;
+            setErrorMessage('');
+            setStatusMessage('이전 분석 기록을 삭제했습니다.');
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : '분석 기록을 삭제하지 못했습니다.');
+        }
+        if (deleted && selectedResumeDraftId === draft.jobId) {
             clearResumeDraftSelection();
         }
     };
@@ -1515,8 +1538,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                                         variant="outline"
                                                         icon={<X size={16} />}
                                                         onClick={() => handleDeleteResumeDraft(draft)}
-                                                        aria-label="목록에서 숨기기"
-                                                        title="목록에서 숨기기"
+                                                        aria-label="분석 기록 삭제"
+                                                        title="분석 기록 삭제"
                                                     />
                                                 </div>
                                             </div>

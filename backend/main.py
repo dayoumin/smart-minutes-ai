@@ -874,10 +874,61 @@ def _delete_job_artifacts(job_id: str) -> list[str]:
     return deleted
 
 
+def _delete_resume_artifacts(job_id: str) -> list[str]:
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    deleted: list[str] = []
+
+    partial_output_names = {
+        f"{job_id}_partial_result.json",
+        f"{job_id}_partial_transcript.txt",
+    }
+    if os.path.isdir(output_dir):
+        for name in partial_output_names:
+            file_path = os.path.abspath(os.path.join(output_dir, name))
+            if file_path.startswith(output_dir + os.sep) and os.path.isfile(file_path):
+                os.remove(file_path)
+                deleted.append(os.path.basename(file_path))
+
+    if os.path.isdir(temp_dir):
+        for name in os.listdir(temp_dir):
+            if not _artifact_belongs_to_job(name, job_id):
+                continue
+            path = os.path.abspath(os.path.join(temp_dir, name))
+            if not path.startswith(temp_dir + os.sep):
+                continue
+            if os.path.isdir(path):
+                shutil.rmtree(path)
+            elif os.path.exists(path):
+                os.remove(path)
+            deleted.append(os.path.basename(path))
+
+    checkpoint_root = os.path.join(temp_dir, "jobs", job_id)
+    if os.path.isdir(checkpoint_root):
+        shutil.rmtree(checkpoint_root, ignore_errors=True)
+        deleted.append(os.path.join("jobs", job_id))
+
+    return deleted
+
+
+def _raise_if_active_analysis_job(job_id: str) -> None:
+    if ANALYSIS_JOBS.has(job_id):
+        raise HTTPException(status_code=409, detail="analysis_job_active")
+
+
 @app.delete("/api/outputs/{job_id}")
 async def delete_outputs(job_id: str) -> dict:
     job_id = _validate_job_id(job_id)
+    _raise_if_active_analysis_job(job_id)
     return {"job_id": job_id, "deleted": _delete_job_artifacts(job_id)}
+
+
+@app.delete("/api/analyze/drafts/{job_id}")
+async def delete_analysis_draft(job_id: str) -> dict:
+    job_id = _validate_job_id(job_id)
+    _raise_if_active_analysis_job(job_id)
+    return {"job_id": job_id, "deleted": _delete_resume_artifacts(job_id)}
 
 
 def _get_output_dir() -> str:

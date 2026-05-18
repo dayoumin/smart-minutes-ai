@@ -2102,6 +2102,68 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_delete_outputs_rejects_active_analysis_job(self) -> None:
+        with patch.object(main.ANALYSIS_JOBS, "has", return_value=True):
+            response = self.client.delete("/api/outputs/unit_active_delete")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "analysis_job_active")
+
+    def test_delete_analysis_draft_removes_resume_artifacts_without_outputs(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        temp_dir = os.path.join(BACKEND_DIR, "temp")
+        os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(temp_dir, exist_ok=True)
+        job_id = "unit_delete_resume_artifacts"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+        partial_result_path = os.path.join(output_dir, f"{job_id}_partial_result.json")
+        partial_transcript_path = os.path.join(output_dir, f"{job_id}_partial_transcript.txt")
+        temp_path = os.path.join(temp_dir, f"{job_id}.wav")
+        chunk_dir = os.path.join(temp_dir, f"{job_id}_chunks")
+        checkpoint_root = os.path.join(temp_dir, "jobs", job_id)
+        os.makedirs(chunk_dir, exist_ok=True)
+        os.makedirs(checkpoint_root, exist_ok=True)
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump({"keep": True}, f)
+            with open(partial_result_path, "w", encoding="utf-8") as f:
+                json.dump({"partial": True}, f)
+            with open(partial_transcript_path, "w", encoding="utf-8") as f:
+                f.write("partial")
+            with open(temp_path, "w", encoding="utf-8") as f:
+                f.write("temp")
+            with open(os.path.join(chunk_dir, "chunk.wav"), "w", encoding="utf-8") as f:
+                f.write("chunk")
+            with open(os.path.join(checkpoint_root, "job_state.json"), "w", encoding="utf-8") as f:
+                json.dump({"job_id": job_id}, f)
+
+            response = self.client.delete(f"/api/analyze/drafts/{job_id}")
+
+            self.assertEqual(response.status_code, 200)
+            self.assertTrue(os.path.exists(output_path))
+            self.assertFalse(os.path.exists(partial_result_path))
+            self.assertFalse(os.path.exists(partial_transcript_path))
+            self.assertFalse(os.path.exists(temp_path))
+            self.assertFalse(os.path.exists(chunk_dir))
+            self.assertFalse(os.path.exists(checkpoint_root))
+        finally:
+            for path in [output_path, partial_result_path, partial_transcript_path, temp_path]:
+                if os.path.exists(path):
+                    os.remove(path)
+            for path in [chunk_dir, checkpoint_root]:
+                if os.path.isdir(path):
+                    import shutil
+
+                    shutil.rmtree(path, ignore_errors=True)
+
+    def test_delete_analysis_draft_rejects_active_analysis_job(self) -> None:
+        with patch.object(main.ANALYSIS_JOBS, "has", return_value=True):
+            response = self.client.delete("/api/analyze/drafts/unit_active_draft_delete")
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["detail"], "analysis_job_active")
+
     def test_speaker_context_requires_topic_sections_first(self) -> None:
         output_dir = os.path.join(BACKEND_DIR, "outputs")
         os.makedirs(output_dir, exist_ok=True)

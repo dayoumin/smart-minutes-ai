@@ -197,12 +197,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const handleDeleteRecord = async (record: MeetingRecord) => {
         setOpenMenuId(null);
         if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?\n\n앱 안의 회의 기록과 분석 산출물은 삭제되지만, 다운로드 폴더에 저장한 HWPX/음성 파일은 직접 삭제해야 합니다.`)) return;
-        await deleteMeeting(record.id);
         if (record.jobId) {
-            await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(record.jobId)}`), {
+            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(record.jobId)}`), {
                 method: 'DELETE',
             }).catch(() => null);
+            if (response && !response.ok && response.status !== 404) {
+                const detail = await response.json().catch(() => null) as { detail?: string } | null;
+                const message = response.status === 409 && detail?.detail === 'analysis_job_active'
+                    ? '아직 분석이 진행 중인 회의록입니다. 분석을 중단한 뒤 삭제해 주세요.'
+                    : '분석 산출물을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.';
+                window.alert(message);
+                return;
+            }
         }
+        await deleteMeeting(record.id);
         window.dispatchEvent(new Event('meetings:updated'));
         onDeleteMeeting?.(record.id);
     };

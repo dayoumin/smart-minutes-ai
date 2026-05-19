@@ -509,6 +509,33 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(result_data["settings"]["diarization_error_detail"], "diarization_runtime_error")
         self.assertIn("pyannote failed", result_data["settings"]["diarization_error_message"])
 
+    def test_completed_diarization_conflict_does_not_persist_failure(self):
+        job_id = "unit_diarization_already_completed"
+        output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        output_path.write_text(
+            json.dumps(
+                {
+                    "segments": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00", "text": "Hello."}],
+                    "settings": {
+                        "diarization": True,
+                        "diarization_generation_status": "completed",
+                    },
+                    "summary": {"generation_status": {"summary": "completed"}},
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+
+        response = self.client.post(f"/api/outputs/{job_id}/generate-diarization")
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(response.json()["detail"], "diarization_already_completed")
+        result_data = json.loads(output_path.read_text(encoding="utf-8"))
+        self.assertEqual(result_data["settings"]["diarization_generation_status"], "completed")
+        self.assertNotIn("diarization_error_detail", result_data["settings"])
+        self.assertNotIn("diarization_error_message", result_data["settings"])
+
     def test_rejects_duplicate_topic_generation_while_generating(self):
         job_id = "unit_topic_generation_duplicate"
         output_path = Path(self.temp_dir.name) / f"{job_id}_result.json"

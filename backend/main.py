@@ -1634,6 +1634,16 @@ def _mark_diarization_failed(job_id: str, result_data: dict, detail: str, messag
     _save_job_result(job_id, latest_result)
 
 
+def _should_mark_diarization_failed(exc: HTTPException) -> bool:
+    detail = str(exc.detail)
+    if exc.status_code == 409 and detail in {
+        "diarization_already_completed",
+        "diarization generation is already running",
+    }:
+        return False
+    return True
+
+
 @app.post("/api/outputs/{job_id}/generate-diarization")
 async def generate_output_diarization(job_id: str, payload: dict | None = Body(None)) -> dict:
     from pipeline.align_speakers import align_segments_with_speakers
@@ -1819,12 +1829,13 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
                     status="failed",
                     active=False,
                 )
-                _mark_diarization_failed(
-                    job_id,
-                    result_data if "result_data" in locals() else {},
-                    str(exc.detail),
-                    str(exc.detail),
-                )
+                if _should_mark_diarization_failed(exc):
+                    _mark_diarization_failed(
+                        job_id,
+                        result_data if "result_data" in locals() else {},
+                        str(exc.detail),
+                        str(exc.detail),
+                    )
             except Exception:
                 pass
         raise
@@ -2622,6 +2633,7 @@ def _restore_job_audio_path_for_diarization(
 
     temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
+    state = _load_job_state(checkpoint_paths)
     jobs_root = os.path.abspath(os.path.join(temp_dir, "jobs"))
     source_wav_path = os.path.abspath(checkpoint_paths.source_wav_path)
     if not _path_is_within(source_wav_path, jobs_root):
@@ -2632,11 +2644,15 @@ def _restore_job_audio_path_for_diarization(
     if ffmpeg_path.lower() != "ffmpeg" and not os.path.isabs(ffmpeg_path):
         ffmpeg_path = os.path.normpath(os.path.join(BASE_DIR, ffmpeg_path))
 
+    restore_preprocessing = state.get("preprocessing_config")
+    if not isinstance(restore_preprocessing, dict):
+        restore_preprocessing = config.get("preprocessing", {})
+
     preprocess_result = convert_to_wav(
         source_path,
         source_wav_path,
         ffmpeg_path,
-        preprocessing=config.get("preprocessing", {}),
+        preprocessing=restore_preprocessing,
     )
     if not os.path.isfile(source_wav_path) or os.path.getsize(source_wav_path) <= 0:
         return None
@@ -2656,6 +2672,7 @@ def _restore_job_audio_path_for_diarization(
         "source_wav_size": os.path.getsize(source_wav_path),
         "source_wav_restored": True,
         "source_wav_restored_from": source_filename,
+        "preprocessing_config": restore_preprocessing,
         "preprocessing_applied": preprocessing_applied,
         "preserve_source_audio": bool(config.get("privacy", {}).get("preserve_extracted_audio", False)),
         "resume_supported": True,
@@ -3855,6 +3872,7 @@ def process_audio_pipeline(
         "source_wav_path": temp_wav_path,
         "source_wav_size": source_wav_size,
         "source_wav_duration": source_wav_duration,
+        "preprocessing_config": copy.deepcopy(config.get("preprocessing", {})),
         "preprocessing_applied": preprocessing_applied,
         "diarization_decision": diarization_decision,
         "resume_supported": True,

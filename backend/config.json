@@ -58,7 +58,7 @@
     "auto_delete_temp_audio": true,
     "save_logs": true,
     "save_original_audio_copy": false,
-    "preserve_extracted_audio": false,
+    "preserve_extracted_audio": true,
     "auto_save_hwpx_copy": false,
     "auto_save_audio_copy": false
   }

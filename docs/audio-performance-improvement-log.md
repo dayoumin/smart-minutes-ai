@@ -835,3 +835,9 @@ python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --d
 - 보존 정책: `preserve_extracted_audio=false`이고 `save_original_audio_copy=false`이면 실제 사용자가 나중에 실행할 원본이 남지 않는다. 이 경우는 "별도 실행 가능"으로 저장하지 않고, 원본 보존 설정 때문에 별도 참석자 구분을 실행할 수 없다는 제외 상태로 저장한다.
 - 정합성: 복구한 `source.wav`를 privacy 정책 때문에 다시 삭제하면 응답의 `outputs.audio`도 제거한다. 별도 실행 진행률은 장기 실행 desktop 프로세스에서 무한 누적되지 않도록 inactive TTL/최대 개수 정리를 둔다.
 - 한계: 브라우저 업로드 기록은 일반적으로 전체 로컬 경로를 보관하지 않는다. 체크포인트 WAV, 보존된 업로드 원본, 허용된 샘플 원본이 모두 없으면 임의의 사용자 파일은 복구할 수 없으므로 다시 분석 안내가 맞다.
+
+## 2026-05-19 별도 발화자 구분 전처리 정합성
+
+- 확인한 문제: 별도 발화자 구분에서 `source.wav`를 복구할 때 현재 설정의 전처리를 적용하면, 처음 STT 대화록을 만들 때의 전처리와 달라질 수 있다. 이 경우 시간축은 비슷해 보여도 화자 구간 정렬 품질이 흔들릴 수 있다.
+- 조치: 분석 당시의 `preprocessing` 설정을 `job_state.json`에 `preprocessing_config`로 저장하고, 나중에 원본 파일에서 `source.wav`를 복구할 때는 현재 설정이 아니라 저장된 설정을 사용한다.
+- 검증: `test_diarization_restore_uses_original_preprocessing_config`를 추가해 현재 설정과 원래 설정이 다를 때 원래 설정으로 복구하는지 확인한다.

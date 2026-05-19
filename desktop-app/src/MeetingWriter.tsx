@@ -469,7 +469,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         || Boolean(selectedResumeDraftId)
         || date !== initialDateValue
     ), [date, file, initialDateValue, meetingPurpose, selectedResumeDraftId, title]);
-    const hasWriterCloseRisk = isAnalyzing || hasDraftableInput;
+    const hasWriterCloseRisk = isAnalyzing || isExtractingAudio || hasDraftableInput;
 
     useEffect(() => {
         window.dispatchEvent(new CustomEvent('close-guard:state', {
@@ -688,13 +688,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             if (isAnalyzing) {
                 return window.confirm('분석이 진행 중입니다. 화면을 이동하면 진행 상태 확인이 어려울 수 있습니다. 이동할까요?');
             }
+            if (isExtractingAudio) {
+                return window.confirm('음성 추출이 진행 중입니다. 다른 화면으로 이동할까요?');
+            }
             if (!hasDraftableInput) return true;
             return window.confirm('작성 중인 내용이 있습니다. 다른 기록으로 이동할까요?');
         });
         return () => {
             onRegisterLeaveGuard(null);
         };
-    }, [hasDraftableInput, isAnalyzing, onRegisterLeaveGuard]);
+    }, [hasDraftableInput, isAnalyzing, isExtractingAudio, onRegisterLeaveGuard]);
 
     const selectedResumeDraft = useMemo(
         () => resumeDrafts.find(draft => draft.jobId === selectedResumeDraftId) ?? null,

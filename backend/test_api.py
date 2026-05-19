@@ -168,6 +168,39 @@ class AnalyzeApiTest(unittest.TestCase):
                 self.assertTrue(state["source_wav_restored"])
                 self.assertEqual(state["source_filename"], source_path.name)
 
+    def test_diarization_restore_uses_original_preprocessing_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            source_path = Path(tmpdir) / "meeting.mp4"
+            source_path.write_bytes(b"video")
+            job_id = "unit_restore_original_preprocessing"
+            config = {
+                "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                "preprocessing": {"enabled": True, "normalize_audio": True},
+                "privacy": {"preserve_extracted_audio": True},
+            }
+            paths = build_job_checkpoint_paths(tmpdir, job_id)
+            atomic_write_json(paths.state_path, {
+                "preprocessing_config": {"enabled": False, "normalize_audio": False},
+            })
+
+            def fake_convert(_input_path, output_path, _ffmpeg_path, preprocessing):
+                self.assertEqual(preprocessing, {"enabled": False, "normalize_audio": False})
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_bytes(b"wav")
+                return {"preprocessing": preprocessing}
+
+            with patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert):
+                restored_path = main._restore_job_audio_path_for_diarization(
+                    config,
+                    job_id,
+                    str(source_path),
+                )
+
+            self.assertEqual(restored_path, paths.source_wav_path)
+            state = load_json_checkpoint(paths.state_path)
+            self.assertEqual(state["preprocessing_config"], {"enabled": False, "normalize_audio": False})
+            self.assertEqual(state["preprocessing_applied"], {"enabled": False, "normalize_audio": False})
+
     def test_known_source_roots_do_not_include_project_root(self) -> None:
         project_root = os.path.abspath(os.path.dirname(BACKEND_DIR))
 

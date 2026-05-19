@@ -118,7 +118,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
     const [normalizeAudio, setNormalizeAudio] = useState(true);
     const [normalizationMode, setNormalizationMode] = useState<'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm'>('auto');
-    const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(false);
+    const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(true);
     const [autoSaveHwpxCopy, setAutoSaveHwpxCopy] = useState(false);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState(false);
 
@@ -137,7 +137,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setNormalizeAudio(nextSettings.preprocessing?.normalize_audio ?? true);
         setNormalizationMode(nextSettings.preprocessing?.normalization_mode ?? 'auto');
-        setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? false);
+        setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
         setAutoSaveHwpxCopy(nextSettings.privacy?.auto_save_hwpx_copy ?? false);
         setAutoSaveAudioCopy(nextSettings.privacy?.auto_save_audio_copy ?? false);
     }, []);

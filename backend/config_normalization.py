@@ -76,7 +76,7 @@ def normalize_app_config(config: dict) -> dict:
     )
     diarization.setdefault("min_speakers", None)
     diarization.setdefault("max_speakers", None)
-    privacy["preserve_extracted_audio"] = bool(privacy.get("preserve_extracted_audio", True))
+    privacy["preserve_extracted_audio"] = bool(privacy.get("preserve_extracted_audio", False))
     privacy["auto_save_hwpx_copy"] = bool(privacy.get("auto_save_hwpx_copy", False))
     privacy["auto_save_audio_copy"] = bool(privacy.get("auto_save_audio_copy", False))
     processing.setdefault("enable_long_audio_chunking", True)

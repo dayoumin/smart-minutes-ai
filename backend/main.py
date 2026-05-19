@@ -8,6 +8,7 @@ import logging
 import re
 import shutil
 import sys
+import tempfile
 import threading
 import time
 import zipfile
@@ -108,6 +109,7 @@ RECOVERABLE_SOURCE_EXTENSIONS = {
     ".webm",
     ".wma",
 }
+AUDIO_EXTRACT_SOURCE_EXTENSIONS = RECOVERABLE_SOURCE_EXTENSIONS
 
 app.add_middleware(
     CORSMiddleware,
@@ -303,7 +305,7 @@ def _source_not_preserved_diarization_decision(decision: dict) -> dict:
 def _can_defer_diarization_for_later(config: dict) -> bool:
     privacy_config = config.get("privacy", {})
     return bool(
-        privacy_config.get("preserve_extracted_audio", True)
+        privacy_config.get("preserve_extracted_audio", False)
         or privacy_config.get("save_original_audio_copy", False)
     )
 
@@ -834,6 +836,54 @@ async def save_output_copy(job_id: str, kind: str, request: Request) -> dict:
         "saved_path": str(target_path),
         "size_bytes": target_path.stat().st_size,
     }
+
+
+@app.post("/api/tools/extract-audio/save-copy")
+async def extract_audio_copy(request: Request, file: UploadFile = File(...)) -> dict:
+    _require_save_copy_origin(request)
+    suffix = _validate_audio_extract_filename(file.filename)
+    config = load_config()
+    temp_root = Path(resolve_config_path(config["paths"]["temp_dir"])) / "audio_extract"
+    temp_root.mkdir(parents=True, exist_ok=True)
+    work_dir = Path(tempfile.mkdtemp(prefix="extract_", dir=temp_root))
+    source_path = work_dir / f"source{suffix}"
+    output_path = work_dir / "audio.wav"
+    source_stem = Path(file.filename or "audio").stem or "audio"
+
+    try:
+        await _save_upload_to_path(file, source_path)
+        if not source_path.exists() or source_path.stat().st_size <= 0:
+            raise HTTPException(status_code=400, detail="파일을 읽지 못했습니다.")
+
+        from pipeline.audio_preprocess import convert_to_wav
+
+        try:
+            await asyncio.to_thread(
+                convert_to_wav,
+                str(source_path),
+                str(output_path),
+                _resolve_config_ffmpeg_path(config),
+                {"enabled": False},
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=_audio_extract_error_message(exc)) from exc
+
+        if not output_path.exists() or output_path.stat().st_size <= 0:
+            raise HTTPException(status_code=400, detail="선택한 파일에서 음성 트랙을 찾지 못했습니다.")
+
+        target_path = _unique_download_path(_safe_export_name(source_stem, "wav"))
+        await asyncio.to_thread(_copy_file_atomic, str(output_path), target_path)
+        return {
+            "kind": "audio",
+            "source_filename": file.filename or "",
+            "saved_path": str(target_path),
+            "size_bytes": target_path.stat().st_size,
+        }
+    finally:
+        try:
+            shutil.rmtree(work_dir, ignore_errors=True)
+        finally:
+            await file.close()
 
 
 @app.get("/api/outputs/{job_id}/generation-progress/{kind}")
@@ -1737,7 +1787,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             restored_source_audio
             and source_audio_path
             and config is not None
-            and not config.get("privacy", {}).get("preserve_extracted_audio", True)
+            and not config.get("privacy", {}).get("preserve_extracted_audio", False)
         ):
             try:
                 restored_source_audio_deleted = _delete_restored_diarization_audio(config, job_id, source_audio_path)
@@ -1804,7 +1854,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             and source_audio_path
             and config is not None
             and not restored_source_audio_deleted
-            and not config.get("privacy", {}).get("preserve_extracted_audio", True)
+            and not config.get("privacy", {}).get("preserve_extracted_audio", False)
         ):
             try:
                 _delete_restored_diarization_audio(config, job_id, source_audio_path)
@@ -2354,6 +2404,44 @@ def _require_save_copy_origin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Save-copy is only available from the desktop app")
 
 
+def _resolve_config_ffmpeg_path(config: dict) -> str:
+    ffmpeg_path = str(config.get("paths", {}).get("ffmpeg") or "ffmpeg")
+    if ffmpeg_path.lower() != "ffmpeg" and not os.path.isabs(ffmpeg_path):
+        ffmpeg_path = os.path.normpath(os.path.join(BASE_DIR, ffmpeg_path))
+    return ffmpeg_path
+
+
+def _validate_audio_extract_filename(filename: str | None) -> str:
+    suffix = Path(filename or "").suffix.lower()
+    if not suffix or suffix not in AUDIO_EXTRACT_SOURCE_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="지원하지 않는 파일 형식입니다.")
+    return suffix
+
+
+def _audio_extract_error_message(error: Exception) -> str:
+    raw_message = str(error)
+    normalized = raw_message.lower()
+    no_audio_markers = (
+        "does not contain any stream",
+        "matches no streams",
+        "stream map",
+        "output file does not contain any stream",
+        "audio:0kib",
+    )
+    if any(marker in normalized for marker in no_audio_markers):
+        return "선택한 파일에서 음성 트랙을 찾지 못했습니다."
+    if "ffmpeg를 찾을 수 없습니다" in raw_message:
+        return "음성 추출 도구를 찾지 못했습니다."
+    return "음성 파일로 저장하지 못했습니다."
+
+
+async def _save_upload_to_path(file: UploadFile, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("wb") as buffer:
+        while chunk := await file.read(1024 * 1024):
+            buffer.write(chunk)
+
+
 def _path_is_within(path: str, root: str) -> bool:
     try:
         return os.path.commonpath([os.path.abspath(path), os.path.abspath(root)]) == os.path.abspath(root)
@@ -2569,7 +2657,7 @@ def _restore_job_audio_path_for_diarization(
         "source_wav_restored": True,
         "source_wav_restored_from": source_filename,
         "preprocessing_applied": preprocessing_applied,
-        "preserve_source_audio": bool(config.get("privacy", {}).get("preserve_extracted_audio", True)),
+        "preserve_source_audio": bool(config.get("privacy", {}).get("preserve_extracted_audio", False)),
         "resume_supported": True,
     })
     return source_wav_path
@@ -3720,7 +3808,7 @@ def process_audio_pipeline(
     out_docx_path = os.path.join(output_dir, f"{job_id}_report.docx")
     out_hwpx_path = os.path.join(output_dir, f"{job_id}_report.hwpx")
     privacy_config = config.get("privacy", {})
-    preserve_source_audio = bool(privacy_config.get("preserve_extracted_audio", True))
+    preserve_source_audio = bool(privacy_config.get("preserve_extracted_audio", False))
 
     print(f"--- Local Meeting AI Pipeline ---")
     print(f"Input: {input_file}")
@@ -4224,12 +4312,15 @@ def process_audio_pipeline(
         export_docx(result_data, out_docx_path)
         export_hwpx(result_data, out_hwpx_path)
 
+    auto_save_privacy_config = dict(privacy_config)
+    if not preserve_source_audio:
+        auto_save_privacy_config["auto_save_audio_copy"] = False
     auto_saved_files, auto_save_errors = _auto_save_completed_outputs(
         result_data=result_data,
         title=str(meeting_context.get("title") or result_data.get("summary", {}).get("title") or "회의록"),
         hwpx_path=out_hwpx_path if summary_data else None,
         audio_path=temp_wav_path if os.path.exists(temp_wav_path) else None,
-        privacy_config=privacy_config,
+        privacy_config=auto_save_privacy_config,
     )
     
     if reused_diarization:

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, Loader2, Play, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Play, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -28,7 +28,7 @@ import {
     MeetingSpeakerContextSummary,
     MeetingTopicSection,
 } from './meetingRepository';
-import { getApiBase, writeFrontendLog } from './apiBase';
+import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
@@ -160,6 +160,7 @@ interface ModelsPayload {
 
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
 type AnalysisPhase = 'idle' | 'checking-server' | 'checking-models' | 'analyzing' | 'error';
+type AudioExtractNotice = { tone: 'success' | 'error'; message: string; savedPath?: string | null; elapsedMs?: number };
 
 interface CompletionNotice {
     meetingId: string;
@@ -206,10 +207,40 @@ const formatFileSize = (bytes: number): string => {
     return `${(bytes / 1024).toFixed(1)} KB`;
 };
 
+const AUDIO_FILE_EXTENSIONS = new Set(['.mp3', '.wav', '.m4a', '.aac', '.flac', '.ogg', '.wma']);
+const VIDEO_FILE_EXTENSIONS = new Set(['.mp4', '.mov', '.mkv', '.avi', '.webm']);
+const ACCEPTED_MEETING_MEDIA = [
+    'audio/*',
+    'video/*',
+    ...AUDIO_FILE_EXTENSIONS,
+    ...VIDEO_FILE_EXTENSIONS,
+].join(',');
+
+const getFileExtension = (filename: string): string => {
+    const match = filename.toLowerCase().match(/\.[^.]+$/);
+    return match ? match[0] : '';
+};
+
 const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
     if (selectedFile.type.startsWith('audio/')) return 'audio';
     if (selectedFile.type.startsWith('video/')) return 'video';
+    const extension = getFileExtension(selectedFile.name);
+    if (AUDIO_FILE_EXTENSIONS.has(extension)) return 'audio';
+    if (VIDEO_FILE_EXTENSIONS.has(extension)) return 'video';
     return 'unknown';
+};
+
+const readResponseError = async (response: Response, fallback: string): Promise<string> => {
+    const detailText = await response.text().catch(() => '');
+    if (detailText.startsWith('{')) {
+        try {
+            const parsedDetail = JSON.parse(detailText) as { detail?: string };
+            return parsedDetail.detail || fallback;
+        } catch {
+            return fallback;
+        }
+    }
+    return detailText || fallback;
 };
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
@@ -359,12 +390,22 @@ const getCompletionResumeNote = (resume?: AnalyzeResult['resume']): string | und
 };
 
 const getAutoSaveCompletionNote = (result: AnalyzeResult): string | undefined => {
+    const savedKinds = [
+        result.auto_saved_files?.hwpx ? '회의록 HWPX' : '',
+        result.auto_saved_files?.audio ? '음성 파일' : '',
+    ].filter(Boolean);
     const failedKinds = [
         result.auto_save_errors?.hwpx ? `HWPX(${result.auto_save_errors.hwpx})` : '',
         result.auto_save_errors?.audio ? `음성 파일(${result.auto_save_errors.audio})` : '',
     ].filter(Boolean);
 
     const notes: string[] = [];
+    if (savedKinds.length) {
+        notes.push(`${savedKinds.join(', ')}을 다운로드 폴더에 자동 저장했습니다.`);
+    }
+    if (!result.auto_saved_files?.audio && result.outputs?.audio && !result.auto_save_errors?.audio) {
+        notes.push('음성 파일은 앱 안에 보관됩니다. 결과 화면에서 필요할 때 저장할 수 있습니다.');
+    }
     if (failedKinds.length) {
         notes.push(`${failedKinds.join(', ')} 자동 저장은 실패했습니다.`);
     }
@@ -405,9 +446,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [readinessMessage, setReadinessMessage] = useState('');
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
     const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
+    const [audioExtractFile, setAudioExtractFile] = useState<File | null>(null);
+    const [isExtractingAudio, setIsExtractingAudio] = useState(false);
+    const [audioExtractNotice, setAudioExtractNotice] = useState<AudioExtractNotice | null>(null);
+    const [audioExtractStartedAt, setAudioExtractStartedAt] = useState<number | null>(null);
+    const [audioExtractNow, setAudioExtractNow] = useState(() => Date.now());
+    const audioExtractRequestRef = useRef(0);
     const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
     const [selectedResumeDraftId, setSelectedResumeDraftId] = useState<string | null>(null);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const videoFileInputRef = useRef<HTMLInputElement | null>(null);
     const analysisInFlightRef = useRef(false);
     const analysisAbortControllerRef = useRef<AbortController | null>(null);
     const analysisCancelledRef = useRef(false);
@@ -455,6 +503,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         const timer = window.setInterval(() => setAnalysisNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
     }, [isAnalyzing]);
+
+    useEffect(() => {
+        if (!isExtractingAudio) return;
+        setAudioExtractNow(Date.now());
+        const timer = window.setInterval(() => setAudioExtractNow(Date.now()), 1000);
+        return () => window.clearInterval(timer);
+    }, [isExtractingAudio]);
 
     useEffect(() => {
         const syncDrafts = async () => {
@@ -680,6 +735,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
     const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
     const startButtonDisabled = isAnalyzing
+        || isExtractingAudio
         || Boolean(matchingActiveDraft)
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
@@ -936,6 +992,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     };
 
     const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (isExtractingAudio) return;
         const selectedFile = e.target.files?.[0] ?? null;
         setErrorMessage('');
         setStatusMessage('');
@@ -944,9 +1001,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setCompletionNotice(null);
         setFile(selectedFile);
 
-        if (!selectedFile || getFileKind(selectedFile) === 'unknown') return;
+        const selectedKind = selectedFile ? getFileKind(selectedFile) : 'unknown';
+        if (!selectedFile || selectedKind === 'unknown') return;
 
-        const media = document.createElement(selectedFile.type.startsWith('video/') ? 'video' : 'audio');
+        const media = document.createElement(selectedKind === 'video' ? 'video' : 'audio');
         const objectUrl = URL.createObjectURL(selectedFile);
         media.preload = 'metadata';
         media.onloadedmetadata = () => {
@@ -960,6 +1018,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     };
 
     const clearFile = () => {
+        if (isExtractingAudio) return;
         setFile(null);
         setFileDurationSeconds(null);
         setErrorMessage('');
@@ -968,6 +1027,103 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setCompletionNotice(null);
         if (fileInputRef.current) {
             fileInputRef.current.value = '';
+        }
+    };
+
+    const handleAudioExtractFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        if (isExtractingAudio) return;
+        const selectedFile = e.target.files?.[0] ?? null;
+        audioExtractRequestRef.current += 1;
+        setAudioExtractNotice(null);
+
+        if (!selectedFile) {
+            setAudioExtractFile(null);
+            return;
+        }
+        if (getFileKind(selectedFile) !== 'video') {
+            setAudioExtractFile(null);
+            setAudioExtractNotice({
+                tone: 'error',
+                message: '영상 파일을 선택해 주세요.',
+            });
+            return;
+        }
+        setAudioExtractFile(selectedFile);
+        if (videoFileInputRef.current) {
+            videoFileInputRef.current.value = '';
+        }
+    };
+
+    const handleExtractAudioCopy = async () => {
+        if (!audioExtractFile || isExtractingAudio || audioExtractNotice?.tone === 'success') return;
+        const startedAt = Date.now();
+        const requestId = audioExtractRequestRef.current + 1;
+        audioExtractRequestRef.current = requestId;
+        const sourceFile = audioExtractFile;
+        const isCurrentRequest = () => audioExtractRequestRef.current === requestId;
+
+        try {
+            setIsExtractingAudio(true);
+            setAudioExtractStartedAt(startedAt);
+            setAudioExtractNow(startedAt);
+            setAudioExtractNotice(null);
+            setErrorMessage('');
+
+            const apiBase = await getApiBase();
+            const formData = new FormData();
+            formData.append('file', sourceFile);
+            const response = await fetch(`${apiBase}/api/tools/extract-audio/save-copy`, {
+                method: 'POST',
+                body: formData,
+            });
+            if (!isCurrentRequest()) return;
+            if (!response.ok) {
+                if (response.status === 403) {
+                    throw new Error('앱 화면에서만 음성 파일을 저장할 수 있습니다.');
+                }
+                throw new Error(await readResponseError(response, '음성 파일로 저장하지 못했습니다.'));
+            }
+
+            const data = await response.json().catch(() => null) as { saved_path?: string | null } | null;
+            if (!isCurrentRequest()) return;
+            setAudioExtractNotice({
+                tone: 'success',
+                message: '다운로드 폴더에 저장했습니다.',
+                savedPath: data?.saved_path ?? null,
+                elapsedMs: Date.now() - startedAt,
+            });
+        } catch (error) {
+            if (!isCurrentRequest()) return;
+            setAudioExtractNotice({
+                tone: 'error',
+                message: error instanceof Error ? error.message : '음성 파일로 저장하지 못했습니다.',
+                elapsedMs: Date.now() - startedAt,
+            });
+        } finally {
+            if (isCurrentRequest()) {
+                setIsExtractingAudio(false);
+                setAudioExtractStartedAt(null);
+            }
+        }
+    };
+
+    const handleOpenExtractedAudioLocation = async () => {
+        if (!audioExtractNotice?.savedPath) return;
+        try {
+            await openSavedFileLocation(audioExtractNotice.savedPath);
+        } catch (error) {
+            setAudioExtractNotice({
+                tone: 'error',
+                message: error instanceof Error ? error.message : '저장 폴더를 열지 못했습니다.',
+                savedPath: audioExtractNotice.savedPath,
+                elapsedMs: audioExtractNotice.elapsedMs,
+            });
+        }
+    };
+
+    const handleSelectVideoForAudioExtract = () => {
+        if (!isAnalyzing && !isExtractingAudio) {
+            videoFileInputRef.current?.click();
         }
     };
 
@@ -997,6 +1153,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
         setCompletionNotice(null);
+        setAudioExtractFile(null);
+        setAudioExtractNotice(null);
+        if (videoFileInputRef.current) {
+            videoFileInputRef.current.value = '';
+        }
 
         try {
             const modelsReady = await ensureModelsReady();
@@ -1391,17 +1552,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
     const showProgressBar = isAnalyzing;
     const fileKind = file ? getFileKind(file) : null;
+    const hasAudioExtractFile = Boolean(audioExtractFile);
+    const audioExtractSaved = audioExtractNotice?.tone === 'success';
+    const audioExtractFailed = audioExtractNotice?.tone === 'error';
     const showAnalysisPanel = isAnalyzing;
     const progressPercent = Math.min(100, Math.max(0, progress));
     const elapsedMs = analysisStartedAt ? analysisNow - analysisStartedAt : 0;
     const elapsedLabel = formatAnalysisDuration(elapsedMs);
+    const audioExtractElapsedMs = isExtractingAudio && audioExtractStartedAt
+        ? audioExtractNow - audioExtractStartedAt
+        : audioExtractNotice?.elapsedMs ?? 0;
+    const audioExtractElapsedLabel = formatAnalysisDuration(audioExtractElapsedMs);
+    const audioExtractMessage = isExtractingAudio
+        ? '영상에서 음성만 WAV로 저장하고 있습니다.'
+        : audioExtractNotice?.message ?? '영상에서 음성만 WAV로 저장합니다.';
+    const audioExtractButtonTitle = (isExtractingAudio || audioExtractNotice?.elapsedMs !== undefined)
+        ? `${audioExtractMessage} 소요 시간 ${audioExtractElapsedLabel}`
+        : audioExtractMessage;
     const selectedFileMeta = file
         ? [
             fileKind === 'video' ? '영상' : fileKind === 'audio' ? '음성' : '파일',
             formatFileSize(file.size),
             fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
         ].filter(Boolean).join(' · ')
-        : '음성 파일을 선택해 주세요.';
+        : '음성/영상 파일을 선택해 주세요.';
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
     const transcriptEstimateLabel = formatTranscriptReadyEstimate(
         elapsedMs,
@@ -1580,28 +1754,38 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
                 <div className="flex flex-col gap-2 mt-2">
                     <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-file-input">
-                        {resumeSelectionActive ? '같은 음성 파일 선택 *' : '음성 파일 *'}
+                        {resumeSelectionActive ? '같은 음성/영상 파일 선택 *' : '음성/영상 파일 *'}
                     </label>
                     <input
                         type="file"
                         ref={fileInputRef}
-                        accept="audio/*,video/*,.mp3,.wav,.m4a,.aac,.flac,.mp4,.mov,.mkv,.avi,.webm"
+                        accept={ACCEPTED_MEETING_MEDIA}
                         onChange={handleFileChange}
-                        disabled={isAnalyzing}
+                        disabled={isAnalyzing || isExtractingAudio}
                         className="sr-only"
                         id="meeting-file-input"
                     />
+                    <input
+                        type="file"
+                        ref={videoFileInputRef}
+                        accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
+                        onChange={handleAudioExtractFileChange}
+                        disabled={isAnalyzing || isExtractingAudio}
+                        className="sr-only"
+                        aria-hidden="true"
+                        tabIndex={-1}
+                    />
                     <div
                         role="button"
-                        tabIndex={isAnalyzing ? -1 : 0}
+                        tabIndex={isAnalyzing || isExtractingAudio ? -1 : 0}
                         aria-controls="meeting-file-input"
-                        aria-disabled={isAnalyzing}
+                        aria-disabled={isAnalyzing || isExtractingAudio}
                         className={`file-drop-zone ${file ? 'file-drop-zone-selected' : ''}`}
                         onClick={() => {
-                            if (!isAnalyzing) fileInputRef.current?.click();
+                            if (!isAnalyzing && !isExtractingAudio) fileInputRef.current?.click();
                         }}
                         onKeyDown={(event) => {
-                            if (isAnalyzing) return;
+                            if (isAnalyzing || isExtractingAudio) return;
                             if (event.key === 'Enter' || event.key === ' ') {
                                 event.preventDefault();
                                 fileInputRef.current?.click();
@@ -1635,7 +1819,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                         onKeyDown={(event) => {
                                             event.stopPropagation();
                                         }}
-                                        disabled={isAnalyzing}
+                                        disabled={isAnalyzing || isExtractingAudio}
                                         aria-label="음성 파일 제거"
                                         title="음성 파일 제거"
                                     />
@@ -1662,7 +1846,55 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 </div>
 
                 {!isAnalyzing && (
-                    <div className="flex justify-end border-t border-border/70 pt-5">
+                    <div className="flex flex-col gap-3 border-t border-border/70 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                        {!resumeSelectionActive ? (
+                            <div className="flex shrink-0 items-center gap-2">
+                                <Button
+                                    variant="outline"
+                                    className="detail-action-button"
+                                    onClick={handleSelectVideoForAudioExtract}
+                                    disabled={isExtractingAudio}
+                                    title="영상 파일을 선택합니다."
+                                >
+                                    <UploadCloud size={15} />
+                                    {hasAudioExtractFile && !audioExtractSaved ? '영상 변경' : '영상 선택'}
+                                </Button>
+                                {hasAudioExtractFile ? (
+                                    <Button
+                                        variant="outline"
+                                        className="detail-action-button"
+                                        onClick={handleExtractAudioCopy}
+                                        disabled={isExtractingAudio || audioExtractSaved}
+                                        title={audioExtractButtonTitle}
+                                    >
+                                        {isExtractingAudio ? (
+                                            <Loader2 size={15} className="animate-spin" />
+                                        ) : audioExtractSaved ? (
+                                            <CheckCircle2 size={15} />
+                                        ) : (
+                                            <FileAudio size={15} />
+                                        )}
+                                        {isExtractingAudio ? '추출 중' : audioExtractSaved ? '저장됨' : audioExtractFailed ? '다시 추출' : '음성 추출'}
+                                    </Button>
+                                ) : null}
+                                <span
+                                    title="영상 파일을 고른 뒤 음성 추출을 누르면 회의록 없이 WAV 파일만 저장합니다."
+                                    aria-label="영상 음성 추출 도움말"
+                                    className="inline-flex items-center text-muted-foreground"
+                                    tabIndex={0}
+                                >
+                                    <CircleHelp size={14} />
+                                </span>
+                                {audioExtractNotice?.savedPath && isTauriRuntime() && (
+                                    <Button variant="outline" className="detail-action-button" onClick={handleOpenExtractedAudioLocation}>
+                                        <FolderOpen size={15} />
+                                        열기
+                                    </Button>
+                                )}
+                            </div>
+                        ) : (
+                            <div />
+                        )}
                         <Button onClick={handleStartAnalysis} disabled={startButtonDisabled}>
                             {buttonLabel}
                         </Button>

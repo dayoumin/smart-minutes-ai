@@ -2057,7 +2057,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 )}
                                 {selectedMeeting.jobId && audioAvailability === 'missing' && (
                                     <div className="mt-2 text-xs text-muted-foreground">
-                                        저장된 음성 파일이 없습니다. 설정에서 음성 재생 파일 보관을 켜고 다시 분석하면 결과 화면에서 재생하거나 저장할 수 있습니다.
+                                        저장된 음성 파일이 없습니다. 영상에서 음성만 필요하면 작성 화면에서 음성 추출을 사용하세요.
                                     </div>
                                 )}
                             </>

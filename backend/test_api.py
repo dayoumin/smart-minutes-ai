@@ -396,6 +396,55 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
 
+    def test_extract_audio_copy_rejects_missing_origin(self) -> None:
+        response = self.client.post(
+            "/api/tools/extract-audio/save-copy",
+            files={"file": ("meeting.mp4", b"video", "video/mp4")},
+        )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_extract_audio_copy_saves_converted_wav(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_path = Path(tmpdir) / "meeting.wav"
+            fake_config = {
+                "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
+                "preprocessing": {},
+            }
+
+            def fake_convert(input_path, output_path, ffmpeg_path, preprocessing):
+                self.assertTrue(input_path.endswith("source.mp4"))
+                self.assertEqual(ffmpeg_path, os.path.join(BACKEND_DIR, "ffmpeg.exe"))
+                self.assertEqual(preprocessing, {"enabled": False})
+                Path(output_path).write_bytes(b"wav")
+                return {"path": output_path, "preprocessing": {}}
+
+            with (
+                patch.object(main, "load_config", return_value=fake_config),
+                patch.object(main, "_unique_download_path", return_value=target_path),
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert),
+            ):
+                response = self.client.post(
+                    "/api/tools/extract-audio/save-copy",
+                    files={"file": ("meeting.mp4", b"video", "video/mp4")},
+                    headers={"Origin": "http://localhost:5173"},
+                )
+
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["kind"], "audio")
+            self.assertEqual(response.json()["saved_path"], str(target_path))
+            self.assertEqual(target_path.read_bytes(), b"wav")
+
+    def test_extract_audio_copy_rejects_unsupported_extension(self) -> None:
+        response = self.client.post(
+            "/api/tools/extract-audio/save-copy",
+            files={"file": ("meeting.txt", b"text", "text/plain")},
+            headers={"Origin": "http://localhost:5173"},
+        )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "지원하지 않는 파일 형식입니다.")
+
     def test_audio_output_rejects_missing_origin(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             paths = build_job_checkpoint_paths(tmpdir, "unit_audio_origin")
@@ -1933,7 +1982,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 state = json.load(handle)
             self.assertTrue(state["summary_skipped"])
 
-    def test_pipeline_defers_diarization_by_default_after_transcript(self) -> None:
+    def test_pipeline_defers_diarization_when_source_audio_is_preserved_after_transcript(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:
             config = {
                 "paths": {
@@ -1949,7 +1998,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "preprocessing": {"enabled": False},
                 "diarization": {"enabled": True},
                 "summary": {"enabled": False},
-                "privacy": {"auto_delete_temp_audio": True},
+                "privacy": {"auto_delete_temp_audio": True, "preserve_extracted_audio": True},
             }
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):

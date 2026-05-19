@@ -138,7 +138,7 @@ def convert_to_wav(
     try:
         # ffmpeg 명령어: -y (덮어쓰기), -ac 1 (mono), -ar 16000 (16kHz)
         stream = ffmpeg.input(input_path)
-        output_kwargs = {"ac": 1, "ar": 16000}
+        output_kwargs = {"ac": 1, "ar": 16000, "vn": None}
         audio_filters, preprocessing_plan = _build_audio_filters(input_path, ffmpeg_path, preprocessing)
         if audio_filters:
             output_kwargs["af"] = audio_filters

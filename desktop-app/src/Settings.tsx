@@ -118,7 +118,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
     const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
     const [normalizeAudio, setNormalizeAudio] = useState(true);
     const [normalizationMode, setNormalizationMode] = useState<'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm'>('auto');
-    const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(true);
+    const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(false);
     const [autoSaveHwpxCopy, setAutoSaveHwpxCopy] = useState(false);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState(false);
 
@@ -137,10 +137,16 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setNormalizeAudio(nextSettings.preprocessing?.normalize_audio ?? true);
         setNormalizationMode(nextSettings.preprocessing?.normalization_mode ?? 'auto');
-        setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
+        setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? false);
         setAutoSaveHwpxCopy(nextSettings.privacy?.auto_save_hwpx_copy ?? false);
         setAutoSaveAudioCopy(nextSettings.privacy?.auto_save_audio_copy ?? false);
     }, []);
+
+    useEffect(() => {
+        if (!preserveExtractedAudio) {
+            setAutoSaveAudioCopy(false);
+        }
+    }, [preserveExtractedAudio]);
 
     const loadModelsStatus = useCallback(async (base: string, options: { surfaceErrors?: boolean } = {}): Promise<ModelsPayload | null> => {
         try {
@@ -392,7 +398,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                 />
                                 <span>
                                     <span className="block font-medium text-foreground">음성 재생 파일 보관</span>
-                                    <span className="text-sm text-muted-foreground">결과 화면에서 재생하거나 나중에 저장할 수 있도록 내부 음성 파일을 남깁니다.</span>
+                                    <span className="text-sm text-muted-foreground">결과 화면에서 다시 듣거나 참석자 구분을 나중에 실행해야 할 때만 내부 음성 파일을 남깁니다.</span>
                                 </span>
                             </label>
 
@@ -413,10 +419,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     type="checkbox"
                                     checked={autoSaveAudioCopy}
                                     onChange={event => setAutoSaveAudioCopy(event.target.checked)}
+                                    disabled={!preserveExtractedAudio}
                                 />
                                 <span>
                                     <span className="block font-medium text-foreground">음성 파일 자동 저장</span>
-                                    <span className="text-sm text-muted-foreground">분석이 끝나면 음성 파일을 다운로드 폴더에 저장합니다. 내부 보관을 끄면 저장 후 앱 안의 음성 파일은 삭제됩니다.</span>
+                                    <span className="text-sm text-muted-foreground">음성 재생 파일을 보관할 때만 다운로드 폴더에도 저장합니다. 영상만 음성으로 바꿀 때는 작성 화면의 음성 추출을 사용하세요.</span>
                                 </span>
                             </label>
                         </section>

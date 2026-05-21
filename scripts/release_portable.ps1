@@ -1,10 +1,11 @@
 param(
     [string]$DeployDir = "releases\lmo_audio",
     [string]$Configuration = "release",
-    [string]$Python = "python",
+    [string]$Python = "backend\.venv-desktop\Scripts\python.exe",
     [switch]$SkipSidecarBuild,
     [switch]$SkipTauriBuild,
-    [switch]$ClearWebViewCache
+    [switch]$ClearWebViewCache,
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
@@ -149,14 +150,26 @@ function Stop-AppProcesses([string]$PortableRoot) {
         $PortableRoot
     }
 
-    Get-CimInstance Win32_Process |
+    try {
+        Get-CimInstance Win32_Process -ErrorAction Stop |
+            Where-Object {
+                ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)) -or
+                ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
+            } |
+            ForEach-Object {
+                Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
+            }
+        return
+    }
+    catch {
+        Write-Warning "Could not inspect Win32_Process command lines. Falling back to executable-path process cleanup only. $($_.Exception.Message)"
+    }
+
+    Get-Process -ErrorAction SilentlyContinue |
         Where-Object {
-            ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)) -or
-            ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
+            $_.Path -and $_.Path.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)
         } |
-        ForEach-Object {
-            Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
-        }
+        Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
 function Clear-WebViewRenderCache {
@@ -184,16 +197,39 @@ function Get-FileHashValue([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         return $null
     }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+
+    try {
+        $hashCommand = Get-Command Get-FileHash -ErrorAction Stop
+        return (& $hashCommand -LiteralPath $Path -Algorithm SHA256).Hash
+    }
+    catch {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToUpperInvariant()
+            }
+            finally {
+                $sha.Dispose()
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
 }
 
 function Get-GitValue([string]$Command) {
     try {
-        $args = @("-C", $RepoRoot.Path) + ($Command -split " ")
-        return (& git @args 2>$null)
+        $args = @("-c", "core.excludesFile=", "-C", $RepoRoot.Path) + ($Command -split " ")
+        $output = & git @args 2>$null
+        if ($LASTEXITCODE -ne 0) {
+            throw "git $Command failed with exit code $LASTEXITCODE"
+        }
+        return $output
     }
     catch {
-        return $null
+        throw "Unable to read git metadata for release manifest. $($_.Exception.Message)"
     }
 }
 
@@ -219,6 +255,7 @@ function Write-ReleaseManifest([string]$PortableDir) {
     $sidecarExe = Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
     $backendMain = Join-Path $PortableDir "backend\main.py"
     $configJson = Join-Path $PortableDir "backend\config.json"
+    $startHere = Join-Path $PortableDir "START_HERE.txt"
     $modelMarkers = @(
         foreach ($model in @($ModelLayout.models)) {
             foreach ($marker in @($model.requiredMarkers)) {
@@ -226,14 +263,17 @@ function Write-ReleaseManifest([string]$PortableDir) {
             }
         }
     )
+    $commit = Get-GitValue "rev-parse HEAD"
+    $branch = Get-GitValue "branch --show-current"
+    $status = Get-GitValue "status --short --untracked-files=all"
 
     $manifest = [ordered]@{
         app = "lmo_audio"
         generatedAt = (Get-Date).ToString("o")
         repoRoot = $RepoRoot.Path
-        commit = Get-GitValue "rev-parse HEAD"
-        branch = Get-GitValue "branch --show-current"
-        dirty = [bool]((Get-GitValue "status --short") -join "")
+        commit = $commit
+        branch = $branch
+        dirty = [bool]($status -join "")
         portableDir = (Resolve-Path -LiteralPath $PortableDir).Path
         files = [ordered]@{
             appExe = [ordered]@{
@@ -251,6 +291,10 @@ function Write-ReleaseManifest([string]$PortableDir) {
             backendConfig = [ordered]@{
                 path = "backend\config.json"
                 sha256 = Get-FileHashValue $configJson
+            }
+            startHere = [ordered]@{
+                path = "START_HERE.txt"
+                sha256 = Get-FileHashValue $startHere
             }
         }
         frontendAssets = Get-FrontendAssets
@@ -333,7 +377,7 @@ Sync-PortableToDeploy $TargetPortableDir $DeployPath
 $deployManifest = Write-ReleaseManifest $DeployPath
 Write-Host "Wrote deploy manifest: $deployManifest"
 
-& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath
+& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -AllowDirty:$AllowDirty
 
 Write-Host "Portable release is ready:" -ForegroundColor Green
 Write-Host $DeployPath

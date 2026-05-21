@@ -28,6 +28,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 ## Portable Release Debugging Rules
 
 - Before building, packaging, or verifying the portable desktop app, read `docs/tauri-desktop-release-checklist.md`; it is the single detailed source for release commands, build venv recovery, pip cache workarounds, and deploy-folder verification.
+- When the user says "build" without explicitly asking for a frontend/Vite/web build, treat it as a user-ready portable release build and run from the repo root: `corepack pnpm build`. Do not substitute `corepack pnpm --dir desktop-app build`, because that only updates web assets.
 - Use `backend\.venv-desktop\Scripts\python.exe` as the normal portable release build Python. Temporary venvs are emergency fallbacks only and must be called out in the work summary.
 - First classify the failing layer: sidecar packaging, desktop/Tauri build, portable packaging, or deploy-folder runtime.
 - Use the actual `lmo_audio` deploy folder as the runtime source of truth. Treat `dist`, `dist-sidecar`, `target`, and `target/release/portable` as intermediate artifacts unless the task explicitly asks about them.
@@ -35,6 +36,16 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Prefer `scripts/verify_portable.ps1` before rerunning a full portable build.
 - If intermediate portable packaging is locked, verify `lmo_audio` directly and rebuild only the missing layer.
 - When a new portable build lesson is learned, update `docs/tauri-desktop-release-checklist.md` instead of duplicating the detailed procedure here.
+
+## Windows Runtime Pitfalls
+
+- PowerShell 5.1 defaults to a legacy code page, so Korean/UTF-8 text can break when rewritten through shell output. Prefer `apply_patch` for edits and explicit UTF-8 .NET writes inside scripts.
+- `Get-CimInstance Win32_Process` may fail with `Access denied` under Codex sandboxing even when ordinary file and process commands work. Use `Get-Process` when executable path is enough; request escalation only when command-line inspection is required.
+- `Get-FileHash` may be unavailable in some PowerShell hosts launched through Node/npm. Release scripts should use a .NET SHA256 fallback instead of relying only on the cmdlet.
+- Git may fail or misreport dirty state when the user's global ignore file is inaccessible. For release manifest checks, use `git -c core.excludesFile= status --short --untracked-files=all`.
+- `ProcessStartInfo.EnvironmentVariables[...]` can fail under Python-driven Windows PowerShell subprocesses. For sidecar smoke tests, fall back to temporarily setting process-level environment variables and let the child inherit them.
+- After an interrupted build, check for leftover `corepack pnpm build`, `scripts\build_user_release.ps1`, Tauri, PyInstaller, or sidecar processes before retrying. Stop only processes whose command line or executable path clearly belongs to this project.
+- Keep release scripts resilient to process-inspection failures. They should warn and fall back when possible instead of failing before the actual build starts.
 
 ## Analysis Hang Debugging Rules
 

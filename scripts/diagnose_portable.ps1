@@ -27,7 +27,26 @@ function Get-HashIfExists([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         return ""
     }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+
+    try {
+        $hashCommand = Get-Command Get-FileHash -ErrorAction Stop
+        return (& $hashCommand -LiteralPath $Path -Algorithm SHA256).Hash
+    }
+    catch {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToUpperInvariant()
+            }
+            finally {
+                $sha.Dispose()
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
 }
 
 function Test-ManifestDrift([string]$PortableRoot, [string]$ManifestPath) {
@@ -118,15 +137,29 @@ else {
 }
 
 Write-Section "Processes"
-$processes = Get-CimInstance Win32_Process |
-    Where-Object {
-        $_.Name -like "lmo_audio*" -or
-        $_.Name -like "Smart Minutes AI*" -or
-        $_.Name -like "smart-minutes-ai*" -or
-        $_.Name -like "meeting-backend*" -or
-        ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
-    } |
-    Select-Object ProcessId, Name, ExecutablePath, CommandLine
+try {
+    $processes = Get-CimInstance Win32_Process -ErrorAction Stop |
+        Where-Object {
+            $_.Name -like "lmo_audio*" -or
+            $_.Name -like "Smart Minutes AI*" -or
+            $_.Name -like "smart-minutes-ai*" -or
+            $_.Name -like "meeting-backend*" -or
+            ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
+        } |
+        Select-Object ProcessId, Name, ExecutablePath, CommandLine
+}
+catch {
+    Write-Warning "Could not inspect Win32_Process command lines. Falling back to executable-path process listing only. $($_.Exception.Message)"
+    $processes = Get-Process -ErrorAction SilentlyContinue |
+        Where-Object {
+            $_.Path -and (
+                $_.Path.StartsWith($portablePath, [System.StringComparison]::OrdinalIgnoreCase) -or
+                $_.ProcessName -like "lmo_audio*" -or
+                $_.ProcessName -like "meeting-backend*"
+            )
+        } |
+        Select-Object @{ Name = "ProcessId"; Expression = { $_.Id } }, ProcessName, Path
+}
 
 if ($processes) {
     $processes | Format-Table -AutoSize

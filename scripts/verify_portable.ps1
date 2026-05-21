@@ -1,6 +1,7 @@
 param(
     [string]$PortableDir = "releases\lmo_audio",
-    [int]$TimeoutSeconds = 240
+    [int]$TimeoutSeconds = 240,
+    [switch]$AllowDirty
 )
 
 $ErrorActionPreference = "Stop"
@@ -80,7 +81,26 @@ function Get-FileHashValue([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         return $null
     }
-    return (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+
+    try {
+        $hashCommand = Get-Command Get-FileHash -ErrorAction Stop
+        return (& $hashCommand -LiteralPath $Path -Algorithm SHA256).Hash
+    }
+    catch {
+        $stream = [System.IO.File]::OpenRead($Path)
+        try {
+            $sha = [System.Security.Cryptography.SHA256]::Create()
+            try {
+                return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToUpperInvariant()
+            }
+            finally {
+                $sha.Dispose()
+            }
+        }
+        finally {
+            $stream.Dispose()
+        }
+    }
 }
 
 function Get-ZipMissingEntries([string]$Path, [string[]]$RequiredEntries) {
@@ -113,7 +133,7 @@ function Get-ZipMissingEntries([string]$Path, [string[]]$RequiredEntries) {
     }
 }
 
-function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath) {
+function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [bool]$AllowDirtyManifest) {
     if (-not (Test-Path -LiteralPath $ManifestPath)) {
         Add-Result "manifest hash check" $false "manifest missing"
         return
@@ -125,6 +145,10 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath) {
     catch {
         Add-Result "manifest hash check" $false "manifest parse failed: $($_.Exception.Message)"
         return
+    }
+
+    if ($manifest.PSObject.Properties.Name -contains "dirty") {
+        Add-Result "manifest clean" ((-not [bool]$manifest.dirty) -or $AllowDirtyManifest) "dirty=$($manifest.dirty)"
     }
 
     $mismatches = @()
@@ -196,16 +220,34 @@ function Get-AvailableBackendPort([int]$StartPort = 17863, [int]$Attempts = 100)
     throw "No available backend port found from $StartPort to $($StartPort + $Attempts - 1)."
 }
 
-function Start-BackendSidecar([string]$ExePath, [string]$BackendRoot, [int]$Port) {
+function Start-BackendSidecar([string]$ExePath, [string]$BackendRoot, [int]$Port, [string]$Arguments = "") {
     $startInfo = [System.Diagnostics.ProcessStartInfo]::new()
     $startInfo.FileName = $ExePath
+    $startInfo.Arguments = $Arguments
     $startInfo.WorkingDirectory = $BackendRoot
     $startInfo.UseShellExecute = $false
     $startInfo.CreateNoWindow = $true
-    $startInfo.EnvironmentVariables["MEETING_AI_BACKEND_DIR"] = $BackendRoot
-    $startInfo.EnvironmentVariables["ANALYSIS_MODE"] = "real"
-    $startInfo.EnvironmentVariables["PORT"] = [string]$Port
-    return [System.Diagnostics.Process]::Start($startInfo)
+
+    $envValues = @{
+        MEETING_AI_BACKEND_DIR = $BackendRoot
+        ANALYSIS_MODE = "real"
+        PORT = [string]$Port
+    }
+
+    $previousEnv = @{}
+    foreach ($key in $envValues.Keys) {
+        $previousEnv[$key] = [System.Environment]::GetEnvironmentVariable($key, "Process")
+        [System.Environment]::SetEnvironmentVariable($key, $envValues[$key], "Process")
+    }
+
+    try {
+        return [System.Diagnostics.Process]::Start($startInfo)
+    }
+    finally {
+        foreach ($key in $envValues.Keys) {
+            [System.Environment]::SetEnvironmentVariable($key, $previousEnv[$key], "Process")
+        }
+    }
 }
 
 function Test-BackendHealth([string]$BaseUrl) {
@@ -243,7 +285,7 @@ Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backend
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
-Test-ReleaseManifest $portablePath $manifestFile
+Test-ReleaseManifest $portablePath $manifestFile ([bool]$AllowDirty)
 foreach ($model in @($ModelLayout.models)) {
     $modelDir = Join-Path $modelsDir ([string]$model.portableDir)
     $missingMarkers = @(
@@ -411,7 +453,7 @@ try {
     }
 }
 catch {
-    Add-Result "runtime smoke test" $false $_.Exception.Message
+    Add-Result "runtime smoke test" $false "$($_.Exception.Message) $($_.ScriptStackTrace)"
 }
 finally {
     if ($backendProcess -and -not $backendProcess.HasExited) {

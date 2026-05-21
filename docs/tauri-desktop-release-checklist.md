@@ -75,14 +75,24 @@
 정식 배포 갱신:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -ClearWebViewCache
+corepack pnpm build
+```
+
+위 명령은 루트 `package.json`의 `build` 스크립트이며, 내부적으로 `scripts\build_user_release.ps1`를 실행한다. 이 프로젝트에서 사용자가 단순히 "빌드"라고 하면 Vite 웹 자산 빌드가 아니라 이 포터블 배포 빌드를 기본값으로 해석한다.
+
+동일한 작업을 PowerShell로 직접 실행할 때:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1
 ```
 
 이미 exe와 sidecar를 새로 만든 뒤 복사/검증만 다시 할 때:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
+
+`desktop-app` 안의 `pnpm build`는 `desktop-app\dist`의 Vite 웹 자산만 만든다. 사용자에게 전달할 실행 폴더를 갱신했다는 의미로 사용하지 않는다.
 
 배포 스크립트가 하는 일:
 
@@ -104,6 +114,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps
 - 사용자가 앱 안에서 모델을 개별 다운로드하지 않는다.
 - 기본 STT 모델은 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
+- 일반 사용자에게 전달할 배포본은 manifest의 `dirty`가 `false`여야 한다. dirty 배포본은 로컬 테스트용이며, 필요한 경우에만 `-AllowDirty`로 명시한다.
 - 분석 결과와 임시 파일은 portable 실행 폴더 하위 `backend\outputs`, `backend\temp`에 생성된다.
 - 회사 PC에서는 portable 폴더를 쓰기 가능한 위치에 둔다.
 - 회사 PC에서 Ollama 설치/모델 준비가 확실하지 않으면 요약 AI를 필수 조건으로 보지 않는다.
@@ -132,7 +143,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
   - 안내 파일 내용은 `[System.IO.File]::WriteAllText(..., [System.Text.UTF8Encoding]::new($false))`로 저장한다.
 - 안내 파일만 실패한 경우에는 sidecar/Tauri를 다시 빌드할 필요가 없다.
   - 이미 `Created sidecar`와 `Built application at`이 끝난 뒤라면 `release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild`로 패키징/검증만 다시 한다.
-  - 더 빠르게는 수정된 `START_HERE.txt`만 `desktop-app\src-tauri\target\release\portable\lmo_audio`와 `releases\lmo_audio`에 복사한 뒤 `verify_portable.ps1`를 실행해도 된다.
+  - `START_HERE.txt`는 manifest 해시 대상이다. 손으로 복사하지 말고 `build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild`로 manifest와 검증을 함께 갱신한다.
 - `verify_portable.ps1`의 `/api/models/status` 호출은 첫 실행에서 모델/라이브러리 초기화 때문에 5초를 넘을 수 있다.
   - health/settings가 PASS인데 runtime smoke가 timeout이면 모델 상태 요청 timeout을 먼저 의심한다.
   - 현재 검증 스크립트는 모델 상태 요청에 최소 60초 timeout을 사용한다.
@@ -171,3 +182,36 @@ backend\.venv-desktop\Scripts\python.exe -c "import importlib.util; required=['P
   - 예: `$env:TMP=(Resolve-Path .codex-work\tmp).Path`, `$env:TEMP=$env:TMP`, `$env:PIP_NO_CACHE_DIR='1'`.
   - `C:\Users\...\pip\cache`나 권한이 불확실한 `C:\tmp`에 의존하지 않는다.
 - `-SkipSidecarBuild`는 backend 변경을 이번 배포에 반영할 필요가 없고, 기존 sidecar가 의도한 버전임을 확인한 경우에만 사용한다.
+
+## 10. 2026-05-21 빌드 명령 혼동 방지
+
+- 루트 `package.json`를 추가해 `corepack pnpm build`가 항상 사용자 배포용 포터블 릴리스 흐름을 실행하게 했다.
+  - 실행 스크립트: `scripts\build_user_release.ps1`
+  - 내부 기준: `scripts\release_portable.ps1 -Python backend\.venv-desktop\Scripts\python.exe -ClearWebViewCache`
+  - 최종 검증: `scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`
+- `scripts\release_portable.ps1`의 기본 Python도 `backend\.venv-desktop\Scripts\python.exe`로 바꿨다. 전역 `python`이나 설치 상태가 다른 PC의 PATH에 의존하지 않는다.
+- `desktop-app\package.json`에는 `build:web`와 `build:portable`를 분리해 두었다.
+  - `desktop-app`의 `build`와 `build:web`는 웹 자산만 만든다.
+  - 사용자에게 전달할 실행 폴더를 만들 때는 루트에서 `corepack pnpm build`를 사용한다.
+- Codex가 "빌드" 요청을 받으면 명시적으로 웹/Vite 빌드를 요청한 경우가 아닌 한 `corepack pnpm build`를 선택해야 한다.
+- `verify_portable.ps1`는 manifest `dirty=true`를 기본 실패로 처리한다.
+  - 로컬 점검 중 dirty 배포본을 확인해야 할 때만 `build_user_release.ps1 -AllowDirty` 또는 `verify_portable.ps1 -AllowDirty`를 사용한다.
+  - 사용자에게 전달할 최종 배포본은 변경 사항을 커밋한 뒤 다시 빌드해 `manifest clean`이 PASS여야 한다.
+
+## 11. 2026-05-21 Windows/Codex 프로세스 조회 문제
+
+- Codex 샌드박스에서는 `Get-CimInstance Win32_Process`가 `Access denied`로 실패할 수 있다.
+  - 명령줄 확인이 꼭 필요하면 권한 상승으로 다시 실행한다.
+  - 실행 파일 경로만 필요하면 `Get-Process` 기반 fallback을 먼저 사용한다.
+- `release_portable.ps1`는 앱/WebView 프로세스 조회가 CIM 권한 문제로 실패해도 즉시 중단하지 않고, portable 폴더 아래 실행 파일만 `Get-Process`로 정리하도록 fallback한다.
+- `diagnose_portable.ps1`도 CIM 실패 시 실행 파일 경로 기반 목록으로 fallback한다.
+- Node/npm을 통해 실행된 Windows PowerShell에서는 `Get-FileHash` cmdlet이 로드되지 않는 경우가 있었다.
+  - release/verify/diagnose 스크립트는 `Get-FileHash`가 없으면 .NET `SHA256`으로 해시를 계산한다.
+- Git 전역 ignore 파일 권한 문제로 `git status --short`가 실패해 manifest의 `dirty` 값이 틀릴 수 있었다.
+  - release 스크립트는 manifest용 git 명령에 `-c core.excludesFile=`를 붙여 전역 ignore 파일 권한 문제를 우회한다.
+  - `dirty` 계산은 `status --short --untracked-files=all` 기준으로 한다.
+  - manifest용 git 명령이 실패하면 clean으로 간주하지 않고 release를 실패시킨다.
+- Python unittest의 `subprocess.run(..., capture_output=True)`에서 Windows PowerShell로 `verify_portable.ps1`를 실행할 때 `ProcessStartInfo.EnvironmentVariables[...]`가 `Cannot index into a null array`로 실패했다.
+  - verify 스크립트는 현재 PowerShell 프로세스 환경변수를 임시 설정하고 sidecar 자식 프로세스가 상속하게 한다. `ProcessStartInfo.EnvironmentVariables[...]` 직접 인덱싱에 의존하지 않는다.
+- 사용자가 빌드를 중단하면 재시도 전에 남은 `corepack pnpm build`, `scripts\build_user_release.ps1`, Tauri, PyInstaller, sidecar 프로세스를 확인한다. 다른 Codex 세션이나 다른 프로젝트 프로세스를 종료하지 않도록 명령줄 또는 실행 경로를 먼저 확인한다.
+- 프로젝트 전용 Codex 스킬은 전역 `C:\Users\User\.codex\skills`가 아니라 저장소의 `.agents\skills` 아래에 둔다.

@@ -5,7 +5,7 @@
 ## 폴더 구조
 
 ```text
-D:\Projects\audio\
+D:\Projects\smart-minutes-ai\
   backend\                         # FastAPI 분석 서버 소스
   desktop-app\                     # React/Tauri 데스크탑 앱 소스
   docs\                            # 설계/테스트/배포 문서
@@ -22,7 +22,7 @@ D:\Projects\audio\
 실행할 때는 루트의 portable 폴더를 사용합니다.
 
 ```text
-D:\Projects\audio\releases\lmo_audio\lmo_audio.exe
+D:\Projects\smart-minutes-ai\releases\lmo_audio\lmo_audio.exe
 ```
 
 `lmo_audio.exe`만 따로 옮기면 안 됩니다. 아래 폴더들이 같은 위치에 있어야 합니다.
@@ -102,16 +102,24 @@ Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기
 
 ## 배포 정리 기준
 
-헷갈리지 않도록 새 배포본은 한 명령으로 만들고 검증합니다.
+헷갈리지 않도록 새 배포본은 루트에서 한 명령으로 만들고 검증합니다. 이 프로젝트에서 `빌드`라고 하면 일반 사용자 PC에 옮겨 실행할 수 있는 `releases\lmo_audio` 포터블 배포본을 뜻합니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -ClearWebViewCache
+corepack pnpm build
 ```
+
+동일한 작업을 스크립트로 직접 실행할 수도 있습니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1
+```
+
+`desktop-app` 안의 `pnpm build`는 Tauri가 사용하는 Vite 웹 자산만 생성합니다. 사용자에게 전달할 실행본을 만들 때는 루트의 `corepack pnpm build` 또는 `scripts\build_user_release.ps1`를 사용합니다.
 
 이미 Tauri exe와 sidecar를 새로 빌드한 직후라면 빠른 동기화/검증만 할 수 있습니다.
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1 -SkipSidecarBuild -SkipTauriBuild
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
 
 프로젝트 안의 배포 기준 실행 폴더는 항상 `releases\lmo_audio`입니다. `desktop-app\src-tauri\target\release\portable\lmo_audio`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.

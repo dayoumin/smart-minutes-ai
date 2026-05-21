@@ -1,0 +1,10 @@
+{
+  "name": "smart-minutes-ai-release",
+  "private": true,
+  "scripts": {
+    "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
+    "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
+    "verify:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio",
+    "diagnose:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\diagnose_portable.ps1"
+  }
+}

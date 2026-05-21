@@ -21,6 +21,8 @@ def _run_powershell(command: str, timeout: int = 60) -> subprocess.CompletedProc
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
     finally:
@@ -32,6 +34,39 @@ def _sha256(path: Path) -> str:
 
 
 class PortableReleaseScriptTest(unittest.TestCase):
+    def test_root_build_script_targets_user_ready_portable_release(self):
+        root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        desktop_package = json.loads((ROOT / "desktop-app" / "package.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(
+            root_package["scripts"]["build"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
+        )
+        self.assertEqual(
+            root_package["scripts"]["verify:portable"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio",
+        )
+        self.assertEqual(desktop_package["scripts"]["build"], "vite build")
+        self.assertEqual(desktop_package["scripts"]["build:web"], "vite build")
+        self.assertIn("..\\scripts\\build_user_release.ps1", desktop_package["scripts"]["build:portable"])
+
+    def test_project_local_release_build_skill_is_not_global(self):
+        skill_path = ROOT / ".agents" / "skills" / "lmo-audio-release-build" / "SKILL.md"
+        self.assertTrue(skill_path.exists())
+        skill = skill_path.read_text(encoding="utf-8")
+        self.assertIn("Use this skill only inside", skill)
+        self.assertIn("corepack pnpm build", skill)
+        self.assertIn("git -c core.excludesFile= status --short --branch --untracked-files=all", skill)
+        self.assertNotIn("C:\\Users\\User\\.codex\\skills", skill)
+
+    def test_release_wrapper_passes_named_switches(self):
+        wrapper = (ROOT / "scripts" / "build_user_release.ps1").read_text(encoding="utf-8")
+        self.assertIn('-Python $Python', wrapper)
+        self.assertIn('-ClearWebViewCache:(!$NoClearWebViewCache)', wrapper)
+        self.assertIn('-SkipSidecarBuild:$SkipSidecarBuild', wrapper)
+        self.assertIn('-SkipTauriBuild:$SkipTauriBuild', wrapper)
+        self.assertNotIn('@releaseArgs', wrapper)
+
     def test_packager_rejects_missing_required_model_markers(self):
         script = (ROOT / "scripts" / "package_desktop_portable.ps1").read_text(encoding="utf-8")
         match = re.search(
@@ -136,6 +171,114 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "lmo_audio"), (Join-P
         completed = _run_powershell(command)
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
+    def test_release_manifest_helpers_do_not_depend_on_global_git_or_get_file_hash(self):
+        script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        self.assertIn('"backend\\.venv-desktop\\Scripts\\python.exe"', script)
+        self.assertIn('"-c", "core.excludesFile="', script)
+        self.assertIn("status --short --untracked-files=all", script)
+        self.assertIn("Unable to read git metadata for release manifest", script)
+        self.assertIn("START_HERE.txt", script)
+        self.assertIn("startHere", script)
+        self.assertIn("[System.Security.Cryptography.SHA256]::Create()", script)
+
+        match = re.search(
+            r"function Get-FileHashValue[\s\S]+?(?=\r?\nfunction Get-GitValue)",
+            script,
+        )
+        self.assertIsNotNone(match, "Could not find release hash helper")
+        hash_helper = match.group(0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            sample = Path(temp_dir) / "sample.txt"
+            sample.write_text("hash me", encoding="utf-8")
+            expected = hashlib.sha256(sample.read_bytes()).hexdigest().upper()
+            command = f"""
+$ErrorActionPreference = "Stop"
+function Get-Command {{
+    param([string]$Name)
+    if ($Name -eq "Get-FileHash") {{
+        throw "simulate missing Get-FileHash"
+    }}
+    Microsoft.PowerShell.Core\\Get-Command @PSBoundParameters
+}}
+{hash_helper}
+$actual = Get-FileHashValue "{sample}"
+if ($actual -ne "{expected}") {{
+    throw "Expected {expected}, got $actual"
+}}
+"""
+            completed = _run_powershell(command)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_release_manifest_git_failures_are_not_treated_as_clean(self):
+        script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        match = re.search(
+            r"function Get-GitValue[\s\S]+?(?=\r?\nfunction Get-FrontendAssets)",
+            script,
+        )
+        self.assertIsNotNone(match, "Could not find release git helper")
+        git_helper = match.group(0)
+
+        command = f"""
+$ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path "{ROOT}"
+function git {{
+    $global:LASTEXITCODE = 128
+    return $null
+}}
+{git_helper}
+try {{
+    Get-GitValue "status --short --untracked-files=all" | Out-Null
+    throw "Expected git metadata failure"
+}} catch {{
+    if ($_.Exception.Message -notlike "*Unable to read git metadata for release manifest*") {{
+        throw
+    }}
+}}
+"""
+        completed = _run_powershell(command)
+        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_start_backend_sidecar_fallback_environment_is_inherited(self):
+        script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
+        match = re.search(
+            r"function Start-BackendSidecar[\s\S]+?(?=\r?\nfunction Test-BackendHealth)",
+            script,
+        )
+        self.assertIsNotNone(match, "Could not find sidecar start helper")
+        start_helper = match.group(0)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            output = temp_path / "env.txt"
+            command = f"""
+$ErrorActionPreference = "Stop"
+{start_helper}
+$exe = "$env:SystemRoot\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+$out = "{output}"
+$args = "-NoProfile -Command `"Set-Content -Path '$out' -Value (([Environment]::GetEnvironmentVariable('PORT','Process')) + '|' + ([Environment]::GetEnvironmentVariable('MEETING_AI_BACKEND_DIR','Process')) + '|' + ([Environment]::GetEnvironmentVariable('ANALYSIS_MODE','Process'))) -Encoding UTF8`""
+$process = Start-BackendSidecar $exe "{temp_path}" 18777 $args
+$process.WaitForExit(15000) | Out-Null
+if (-not (Test-Path -LiteralPath $out)) {{
+    throw "Expected child process to write inherited environment"
+}}
+$actual = Get-Content -LiteralPath $out -Raw
+if ($actual -notlike "18777|{temp_path}|real*") {{
+    throw "Unexpected inherited env: $actual"
+}}
+"""
+            completed = _run_powershell(command)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_release_and_diagnose_scripts_fallback_when_cim_is_unavailable(self):
+        release_script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        diagnose_script = (ROOT / "scripts" / "diagnose_portable.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("Could not inspect Win32_Process command lines", release_script)
+        self.assertIn("Get-Process -ErrorAction SilentlyContinue", release_script)
+        self.assertIn("Could not inspect Win32_Process command lines", diagnose_script)
+        self.assertIn("Get-Process -ErrorAction SilentlyContinue", diagnose_script)
+
     def test_verify_script_resolves_default_from_repo_root_and_rejects_broad_paths(self):
         script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
         match = re.search(
@@ -192,14 +335,17 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
                 str(ROOT / "scripts" / "verify_portable.ps1"),
                 "-PortableDir",
                 str(portable_dir),
+                "-AllowDirty",
             ],
             cwd=ROOT,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=300,
         )
 
-        self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertEqual(completed.returncode, 0, (completed.stdout or "") + (completed.stderr or ""))
         self.assertIn("Qwen optional model omitted", completed.stdout)
         self.assertIn("Portable verification passed", completed.stdout)
         self.assertEqual(before_config, _sha256(config_path))
@@ -208,6 +354,10 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
     def test_verify_portable_checks_export_zip_structure(self):
         script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
         self.assertIn("Get-ZipMissingEntries", script)
+        self.assertIn("[System.Security.Cryptography.SHA256]::Create()", script)
+        self.assertIn("[System.Environment]::SetEnvironmentVariable", script)
+        self.assertIn("[switch]$AllowDirty", script)
+        self.assertIn("manifest clean", script)
         for required in (
             "[Content_Types].xml",
             "_rels/.rels",
@@ -217,6 +367,47 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
             "Contents/section0.xml",
         ):
             self.assertIn(required, script)
+
+    def test_verify_manifest_dirty_requires_allow_dirty(self):
+        script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
+        add_result = re.search(
+            r"function Add-Result[\s\S]+?(?=\r?\nfunction Get-PeSubsystem)",
+            script,
+        )
+        manifest_check = re.search(
+            r"function Test-ReleaseManifest[\s\S]+?(?=\r?\nfunction Stop-PortableProcesses)",
+            script,
+        )
+        self.assertIsNotNone(add_result, "Could not find Add-Result helper")
+        self.assertIsNotNone(manifest_check, "Could not find manifest helper")
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            manifest_path = temp_path / "release-manifest.json"
+            manifest_path.write_text(
+                json.dumps({"dirty": True, "files": {}, "modelMarkers": []}),
+                encoding="utf-8",
+            )
+            command = f"""
+$ErrorActionPreference = "Stop"
+$script:Results = @()
+$script:Failed = $false
+{add_result.group(0)}
+{manifest_check.group(0)}
+function Get-FileHashValue([string]$Path) {{ return $null }}
+Test-ReleaseManifest "{temp_path}" "{manifest_path}" $false
+if (-not $script:Failed) {{
+    throw "Expected dirty manifest to fail without AllowDirty"
+}}
+$script:Results = @()
+$script:Failed = $false
+Test-ReleaseManifest "{temp_path}" "{manifest_path}" $true
+if ($script:Failed) {{
+    throw "Expected dirty manifest to pass with AllowDirty"
+}}
+"""
+            completed = _run_powershell(command)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
 
 if __name__ == "__main__":

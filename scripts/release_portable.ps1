@@ -315,8 +315,44 @@ function Write-ReleaseManifest([string]$PortableDir) {
     return $manifestPath
 }
 
+function Clear-DeployResidue([string]$DestinationDir) {
+    $destinationFullPath = Normalize-FullPath $DestinationDir
+    $allowedRootNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models")) {
+        $null = $allowedRootNames.Add($name)
+    }
+
+    foreach ($entry in Get-ChildItem -LiteralPath $DestinationDir -Force) {
+        if ($allowedRootNames.Contains($entry.Name)) {
+            continue
+        }
+
+        $entryFullPath = Normalize-FullPath $entry.FullName
+        if (-not $entryFullPath.StartsWith($destinationFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clear unsafe deploy residue path: $entryFullPath"
+        }
+
+        Remove-Item -LiteralPath $entry.FullName -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    foreach ($relativePath in @("backend\outputs", "backend\temp", "backend\logs", "backend\__pycache__")) {
+        $path = Join-Path $DestinationDir $relativePath
+        if (-not (Test-Path -LiteralPath $path)) {
+            continue
+        }
+
+        $pathFullPath = Normalize-FullPath $path
+        if (-not $pathFullPath.StartsWith($destinationFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clear unsafe deploy runtime path: $pathFullPath"
+        }
+
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
     New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
+    Clear-DeployResidue $DestinationDir
 
     Copy-Item -Force (Join-Path $SourceDir $PortableAppExeName) (Join-Path $DestinationDir $PortableAppExeName)
     Copy-Item -Force (Join-Path $SourceDir "release-manifest.json") (Join-Path $DestinationDir "release-manifest.json")
@@ -327,7 +363,7 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
         throw "robocopy failed while syncing binaries with exit code $LASTEXITCODE"
     }
 
-    robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /MIR /XD outputs temp __pycache__ /XF *.pyc /NFL /NDL /NP | Out-Host
+    robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /MIR /XD outputs temp logs __pycache__ /XF *.pyc /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing backend with exit code $LASTEXITCODE"
     }

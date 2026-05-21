@@ -122,6 +122,22 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.p
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild
 ```
 
+이미 사용자 PC에 `lmo_audio\models`가 준비되어 있으면 모델을 제외한 업데이트 패키지만 만들 수 있습니다.
+
+```powershell
+corepack pnpm package:update
+```
+
+업데이트 패키지는 커밋 후 깨끗한 portable 빌드가 끝난 상태에서 만듭니다. 기존 빌드가 현재 `HEAD`와 다르면 기본적으로 실패합니다.
+
+기본 산출물은 `releases\updates\lmo_audio_update_<commit>`입니다. 이 절차는 자동 업데이트가 아니라 관리자/운영자가 앱을 닫은 유지보수 시간에 실행하는 수동 업데이트입니다. 사용자 PC에서는 그 폴더 안에서 기존 `lmo_audio` 폴더를 대상으로 적용합니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File update_lmo_audio.ps1 -TargetDir D:\Apps\lmo_audio
+```
+
+이 업데이트는 기존 `models`, `backend\config.json`, `backend\outputs`, `backend\temp`를 보존합니다. 새 PC나 모델이 없는 PC에는 업데이트 패키지가 아니라 전체 `releases\lmo_audio` 폴더를 전달합니다.
+
 프로젝트 안의 배포 기준 실행 폴더는 항상 `releases\lmo_audio`입니다. `desktop-app\src-tauri\target\release\portable\lmo_audio`는 빌드 중간 산출물로 보고 직접 실행 기준으로 삼지 않습니다.
 
 `release-manifest.json`은 배포본의 신분증입니다. 어떤 커밋에서 만들었는지, 앱 exe/분석 실행 파일/backend 설정 파일의 해시가 무엇인지 기록합니다. `verify_portable.ps1`과 `diagnose_portable.ps1`은 이 값을 다시 계산해 구버전 파일이나 손으로 바뀐 파일이 섞였는지 확인합니다.

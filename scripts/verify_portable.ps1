@@ -185,6 +185,36 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
     Add-Result "manifest hash check" ($mismatches.Count -eq 0) ($mismatches -join "; ")
 }
 
+function Test-CleanPortableSurface([string]$PortableRoot) {
+    $allowedRootNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
+    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models")) {
+        $null = $allowedRootNames.Add($name)
+    }
+
+    $unexpectedRootEntries = @()
+    foreach ($entry in Get-ChildItem -LiteralPath $PortableRoot -Force) {
+        if (-not $allowedRootNames.Contains($entry.Name)) {
+            $unexpectedRootEntries += $entry.Name
+        }
+    }
+    Add-Result "portable root clean" ($unexpectedRootEntries.Count -eq 0) ($unexpectedRootEntries -join ", ")
+
+    $runtimePaths = @(
+        "backend\outputs",
+        "backend\temp",
+        "backend\logs",
+        "backend\__pycache__"
+    )
+    $presentRuntimePaths = @(
+        foreach ($relativePath in $runtimePaths) {
+            if (Test-Path -LiteralPath (Join-Path $PortableRoot $relativePath)) {
+                $relativePath
+            }
+        }
+    )
+    Add-Result "runtime folders excluded" ($presentRuntimePaths.Count -eq 0) ($presentRuntimePaths -join ", ")
+}
+
 function Stop-PortableProcesses([string]$PortableRoot) {
     Get-Process -ErrorAction SilentlyContinue |
         Where-Object {
@@ -285,6 +315,7 @@ Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backend
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
+Test-CleanPortableSurface $portablePath
 Test-ReleaseManifest $portablePath $manifestFile ([bool]$AllowDirty)
 foreach ($model in @($ModelLayout.models)) {
     $modelDir = Join-Path $modelsDir ([string]$model.portableDir)

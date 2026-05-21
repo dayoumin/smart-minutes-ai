@@ -1,6 +1,6 @@
 ---
 name: lmo-audio-release-build
-description: Build and verify this repository's Windows portable desktop release. Use in smart-minutes-ai when the user asks to build, package, release, make an executable, prepare a general-user build, verify a portable build, or check whether ordinary users can run the app.
+description: Build, package, and verify this repository's Windows portable desktop release. Use in smart-minutes-ai when the user asks to build, package, release, make an executable, prepare a general-user build, create a model-excluded update package, verify a portable build, or check whether ordinary users can run the app.
 ---
 
 # LMO Audio Release Build
@@ -41,6 +41,24 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 
    - `dirty`
    - frontend asset names
    - whether the manifest commit matches `git rev-parse HEAD`
+
+## Manual Update Package
+
+If the user asks for an update package for PCs that already have models, first complete a clean portable build, then run from the repository root:
+
+```powershell
+corepack pnpm package:update
+```
+
+The package output is `releases\updates\lmo_audio_update_<commit>`. It must preserve the target PC's existing `models`, `backend\config.json`, `backend\outputs`, and `backend\temp`. Verify that the package does not contain `payload\models` or `payload\backend\config.json`.
+
+`create_update_package.ps1` rejects stale portable builds by default: `release-manifest.json` must match current `HEAD`. Use `-AllowStale` only for local script tests.
+
+For a local target-folder smoke test, apply the package with:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File releases\updates\lmo_audio_update_<commit>\update_lmo_audio.ps1 -TargetDir <existing-lmo_audio-folder>
+```
 
 ## Failure Handling
 

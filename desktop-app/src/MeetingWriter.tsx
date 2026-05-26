@@ -1,18 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Play, RefreshCw, Settings, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Play, RefreshCw, Settings, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
     AnalysisResumeDraftFileKey,
     AnalysisResumeDraftStatus,
     AnalysisResumeDraftUnavailableReason,
-    dismissAnalysisResumeDraft,
     getAnalysisResumeDraft,
     getResumeDraftKey,
     listAnalysisResumeDrafts,
+    listPendingAnalysisDraftCleanups,
     listSuppressedResumeCandidateKeys,
     markAnalysisResumeDraftUnavailable,
     markAnalysisResumeDraftsForKeyUnavailable,
+    queuePendingAnalysisDraftCleanup,
+    removeAnalysisResumeDraft,
+    removePendingAnalysisDraftCleanup,
+    suppressResumeCandidateKey,
     unsuppressResumeCandidateKey,
     upsertAnalysisResumeDraft,
 } from './analysisResumeDrafts';
@@ -369,6 +373,27 @@ const getResumePromptMessage = (candidate: ResumeCandidate): string => {
     ].filter(Boolean).join('\n');
 };
 
+const sortResumeCandidates = (
+    candidates: ResumeCandidate[] = [],
+    recommendedJobId?: string | null,
+): ResumeCandidate[] => (
+    [...candidates].sort((a, b) => {
+        if (a.job_id === recommendedJobId) return -1;
+        if (b.job_id === recommendedJobId) return 1;
+        return 0;
+    })
+);
+
+const filterPromptableResumeCandidates = (
+    candidates: ResumeCandidate[],
+    options: {
+        suppressed: boolean;
+        selectedJobId?: string | null;
+    },
+): ResumeCandidate[] => (
+    candidates.filter(candidate => !options.suppressed || candidate.job_id === options.selectedJobId)
+);
+
 const getCompletionResumeNote = (resume?: AnalyzeResult['resume']): string | undefined => {
     if (!resume?.requested) return undefined;
     if (resume.mode === 'fallback_fresh_start') {
@@ -454,6 +479,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const audioExtractRequestRef = useRef(0);
     const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
     const [selectedResumeDraftId, setSelectedResumeDraftId] = useState<string | null>(null);
+    const [deletingResumeDraftIds, setDeletingResumeDraftIds] = useState<Set<string>>(() => new Set());
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const videoFileInputRef = useRef<HTMLInputElement | null>(null);
     const analysisInFlightRef = useRef(false);
@@ -461,6 +487,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const analysisCancelledRef = useRef(false);
     const analysisJobIdRef = useRef<string | null>(null);
     const analysisResumeDraftIdRef = useRef<string | null>(null);
+    const selectedResumeDraftIdRef = useRef<string | null>(null);
+    const cleanupRetryInFlightRef = useRef(false);
     const analysisStalled = isAnalyzing && analysisPhase === 'analyzing' && analysisNow - lastRealProgressAt >= ANALYSIS_STALL_WARNING_MS;
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
@@ -505,6 +533,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     }, [isAnalyzing]);
 
     useEffect(() => {
+        selectedResumeDraftIdRef.current = selectedResumeDraftId;
+    }, [selectedResumeDraftId]);
+
+    useEffect(() => {
         if (!isExtractingAudio) return;
         setAudioExtractNow(Date.now());
         const timer = window.setInterval(() => setAudioExtractNow(Date.now()), 1000);
@@ -517,10 +549,39 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setResumeDrafts(localDrafts);
 
             if (ANALYSIS_MODE !== 'real') return;
+            const retryPendingCleanups = async (apiBase: string) => {
+                if (cleanupRetryInFlightRef.current) return;
+                const pendingJobIds = listPendingAnalysisDraftCleanups();
+                if (pendingJobIds.length === 0) return;
+                cleanupRetryInFlightRef.current = true;
+                try {
+                    for (const jobId of pendingJobIds) {
+                        try {
+                            const response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(jobId)}`, {
+                                method: 'DELETE',
+                            });
+                            if (response.ok || response.status === 404) {
+                                removePendingAnalysisDraftCleanup(jobId);
+                            }
+                        } catch {
+                            // Keep the cleanup queued until the backend is available again.
+                        }
+                    }
+                } finally {
+                    cleanupRetryInFlightRef.current = false;
+                }
+            };
+
+            let apiBase: string;
+            try {
+                apiBase = await getApiBase();
+            } catch {
+                return;
+            }
+            await retryPendingCleanups(apiBase);
             if (localDrafts.length === 0) return;
 
             try {
-                const apiBase = await getApiBase();
                 const response = await fetch(`${apiBase}/api/analyze/draft-statuses`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -561,7 +622,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         continue;
                     }
 
-                    const nextStatus: AnalysisResumeDraftStatus = remote.status === 'cancelled'
+                    const keepLocalCancellation = remote.status === 'active'
+                        && (draft.status === 'cancelled' || draft.status === 'stopped');
+                    const nextStatus: AnalysisResumeDraftStatus = keepLocalCancellation
+                        ? draft.status
+                        : remote.status === 'cancelled'
                         ? 'cancelled'
                         : remote.status === 'active'
                             ? 'active'
@@ -579,8 +644,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             ? remote.last_progress.progress
                             : draft.lastProgress,
                         transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || draft.transcriptReady),
-                        errorMessage: remote.last_error || draft.errorMessage,
+                        errorMessage: remote.last_error || (resumeEligible ? undefined : draft.errorMessage),
                         resumeEligible,
+                        resumeUnavailableReason: resumeEligible ? undefined : draft.resumeUnavailableReason,
                         completedChunkCount: Number(remote.completed_chunk_count || 0),
                     };
                     const currentDraft = getAnalysisResumeDraft(draft.jobId);
@@ -926,6 +992,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         }
     };
 
+    const handleStartFreshFromResume = () => {
+        if (selectedResumeDraft) {
+            suppressResumeCandidateKey(getResumeDraftKey(selectedResumeDraft));
+        }
+        clearResumeSelectionOnly();
+        setStatusMessage('새 분석을 처음부터 시작합니다.');
+    };
+
     const handleResumeDraftPrepare = (draft: AnalysisResumeDraft) => {
         setTitle(draft.title);
         setDate(draft.date);
@@ -960,37 +1034,68 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     }, [resumeDraftSelectionJobId, resumeDraftSelectionRequestId]);
 
     const handleDeleteResumeDraft = async (draft: AnalysisResumeDraft) => {
-        if (draft.status === 'active') {
-            setErrorMessage('진행 중인 분석 기록은 중단된 뒤 삭제할 수 있습니다.');
-            return;
-        }
-        if (typeof window.confirm === 'function' && !window.confirm('이전 분석 진행 기록을 삭제할까요? 저장된 회의 기록은 삭제하지 않습니다.')) {
+        if (deletingResumeDraftIds.has(draft.jobId)) return;
+        const confirmMessage = draft.status === 'active'
+            ? '진행 중이던 분석 기록을 삭제할까요? 실제로 분석이 계속 진행 중이면 삭제되지 않습니다.'
+            : '이전 분석 진행 기록을 삭제할까요? 저장된 회의 기록은 삭제하지 않습니다.';
+        if (typeof window.confirm === 'function' && !window.confirm(confirmMessage)) {
             return;
         }
         let deleted = false;
+        let deletedLocalOnly = false;
+        let deleteNotice = '';
+        setDeletingResumeDraftIds(current => new Set(current).add(draft.jobId));
         try {
             if (ANALYSIS_MODE === 'real') {
                 const apiBase = await getApiBase();
-                const response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(draft.jobId)}`, {
-                    method: 'DELETE',
-                });
-                if (!response.ok && response.status !== 404) {
+                let response: Response | null = null;
+                try {
+                    response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(draft.jobId)}`, {
+                        method: 'DELETE',
+                    });
+                } catch {
+                    if (draft.status === 'active') {
+                        throw new Error('분석 상태를 확인하지 못했습니다. 중단된 뒤 다시 삭제해 주세요.');
+                    }
+                    deletedLocalOnly = true;
+                }
+                if (response && !response.ok && response.status !== 404) {
                     const detail = await response.json().catch(() => null) as { detail?: string } | null;
                     if (response.status === 409 && detail?.detail === 'analysis_job_active') {
-                        throw new Error('아직 진행 중인 분석입니다. 중단된 뒤 다시 삭제해 주세요.');
+                        if (draft.status === 'active') {
+                            throw new Error('아직 진행 중인 분석입니다. 중단된 뒤 다시 삭제해 주세요.');
+                        }
+                        deletedLocalOnly = true;
+                    } else {
+                        throw new Error('분석 임시 파일을 정리하지 못했습니다.');
                     }
-                    throw new Error('분석 임시 파일을 정리하지 못했습니다.');
                 }
             }
-            dismissAnalysisResumeDraft(draft);
+            if (deletedLocalOnly) {
+                queuePendingAnalysisDraftCleanup(draft.jobId);
+            } else {
+                removePendingAnalysisDraftCleanup(draft.jobId);
+            }
+            removeAnalysisResumeDraft(draft.jobId);
             deleted = true;
             setErrorMessage('');
-            setStatusMessage('이전 분석 기록을 삭제했습니다.');
+            deleteNotice = deletedLocalOnly
+                ? '이전 분석 기록을 목록에서 삭제했습니다. 임시 파일은 분석 기능이 준비된 뒤 다시 정리할 수 있습니다.'
+                : '이전 분석 기록을 삭제했습니다.';
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '분석 기록을 삭제하지 못했습니다.');
+        } finally {
+            setDeletingResumeDraftIds(current => {
+                const next = new Set(current);
+                next.delete(draft.jobId);
+                return next;
+            });
         }
-        if (deleted && selectedResumeDraftId === draft.jobId) {
+        if (deleted && selectedResumeDraftIdRef.current === draft.jobId) {
             clearResumeDraftSelection();
+        }
+        if (deleted) {
+            setStatusMessage(deleteNotice);
         }
     };
 
@@ -1218,12 +1323,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     setProgress(0);
                     return;
                 }
-                const orderedCandidates = [...(resumePayload?.candidates || [])].sort((a, b) => {
-                    if (a.job_id === resumePayload?.recommended_job_id) return -1;
-                    if (b.job_id === resumePayload?.recommended_job_id) return 1;
-                    return 0;
-                }).filter(candidate => !suppressedResumeKeys.has(currentFileResumeKey) || candidate.job_id === selectedResumeDraft.jobId);
-                const activeCandidate = orderedCandidates.find(candidate => candidate.active) || null;
+                const allCandidates = sortResumeCandidates(resumePayload?.candidates, resumePayload?.recommended_job_id);
+                const activeCandidate = allCandidates.find(candidate => candidate.active) || null;
                 if (activeCandidate) {
                     setAnalysisPhase('error');
                     setErrorMessage('같은 파일의 분석이 이미 진행 중입니다. 완료되거나 취소된 뒤 다시 시도해 주세요.');
@@ -1231,6 +1332,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     setProgress(0);
                     return;
                 }
+                const orderedCandidates = filterPromptableResumeCandidates(allCandidates, {
+                    suppressed: suppressedResumeKeys.has(currentFileResumeKey),
+                    selectedJobId: selectedResumeDraft.jobId,
+                });
                 const matchingCandidate = orderedCandidates.find(candidate => candidate.job_id === selectedResumeDraft.jobId) || null;
                 if (!matchingCandidate) {
                     const unavailableReason: AnalysisResumeDraftUnavailableReason = selectedResumeDraft.resumeEligible === false || selectedResumeDraft.completedChunkCount === 0
@@ -1254,12 +1359,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 resumeRequested = true;
                 setStatusMessage('이전 음성 인식 진행분 재사용을 시도합니다.');
             } else if (resumePayload) {
-                const orderedCandidates = [...(resumePayload.candidates || [])].sort((a, b) => {
-                    if (a.job_id === resumePayload.recommended_job_id) return -1;
-                    if (b.job_id === resumePayload.recommended_job_id) return 1;
-                    return 0;
-                }).filter(() => !suppressedResumeKeys.has(currentFileResumeKey));
-                const activeCandidate = orderedCandidates.find(candidate => candidate.active) || null;
+                const allCandidates = sortResumeCandidates(resumePayload.candidates, resumePayload.recommended_job_id);
+                const activeCandidate = allCandidates.find(candidate => candidate.active) || null;
                 if (activeCandidate) {
                     setAnalysisPhase('error');
                     setErrorMessage('같은 파일의 분석이 이미 진행 중입니다. 완료되거나 취소된 뒤 다시 시도해 주세요.');
@@ -1267,6 +1368,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     setProgress(0);
                     return;
                 }
+                const orderedCandidates = filterPromptableResumeCandidates(allCandidates, {
+                    suppressed: suppressedResumeKeys.has(currentFileResumeKey),
+                });
                 const availableCandidate = orderedCandidates[0] || null;
                 if (availableCandidate) {
                     const shouldResume = window.confirm(getResumePromptMessage(availableCandidate));
@@ -1470,6 +1574,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             }
         } catch (error) {
             if (analysisCancelledRef.current || (error instanceof DOMException && error.name === 'AbortError')) {
+                const existingDraft = analysisResumeDraftIdRef.current
+                    ? getAnalysisResumeDraft(analysisResumeDraftIdRef.current)
+                    : undefined;
+                if (existingDraft?.status !== 'cancelled' && existingDraft?.status !== 'stopped') {
+                    saveResumeDraft('cancelled', {
+                        stage: 'cancelled',
+                        lastMessage: existingDraft?.lastMessage || rawStatusMessage || statusMessage,
+                        lastProgress: typeof existingDraft?.lastProgress === 'number'
+                            ? existingDraft.lastProgress
+                            : progress,
+                    });
+                }
+                setResumeDrafts(listAnalysisResumeDrafts());
                 setProgress(0);
                 setRawStatusMessage('');
                 setStatusMessage('분석을 중단했습니다.');
@@ -1527,6 +1644,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             lastMessage: rawStatusMessage || statusMessage,
             lastProgress: progress,
         });
+        setResumeDrafts(listAnalysisResumeDrafts());
         analysisCancelledRef.current = true;
         analysisAbortControllerRef.current?.abort();
         analysisInFlightRef.current = false;
@@ -1536,6 +1654,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setErrorMessage('');
         setRawStatusMessage('');
         setStatusMessage('분석을 중단했습니다.');
+        window.setTimeout(() => {
+            window.dispatchEvent(new CustomEvent(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT));
+        }, 1_500);
+        window.setTimeout(() => {
+            window.dispatchEvent(new CustomEvent(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT));
+        }, 5_000);
     };
 
     const buttonLabel = (() => {
@@ -1612,20 +1736,23 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 </span>
                             </div>
                             <div className="mt-1 text-xs text-muted-foreground">
-                                완료되거나 중단될 때까지 목록에 유지됩니다.
+                                실제로 진행 중이면 삭제되지 않고, 오래된 기록은 정리할 수 있습니다.
                             </div>
                             <div className="mt-3 grid gap-2">
                                 {activeResumeDrafts.map(draft => {
                                     const isSelected = selectedResumeDraftId === draft.jobId;
+                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
                                     return (
-                                    <button
+                                    <div
                                         key={draft.jobId}
-                                        type="button"
-                                        className={`resume-draft-card w-full text-left status-info ${isSelected ? 'resume-draft-card-selected' : ''}`}
-                                        onClick={() => handleResumeDraftPrepare(draft)}
+                                        className={`resume-draft-card status-info ${isSelected ? 'resume-draft-card-selected' : ''}`}
                                     >
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                            <div className="min-w-0">
+                                            <button
+                                                type="button"
+                                                className="min-w-0 flex-1 text-left"
+                                                onClick={() => handleResumeDraftPrepare(draft)}
+                                            >
                                                 <div className="flex items-center gap-2">
                                                     <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
                                                     {isSelected && <span className="status-pill status-info">선택됨</span>}
@@ -1637,9 +1764,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                                 <div className="mt-1 text-xs text-muted-foreground">
                                                     {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
                                                 </div>
-                                            </div>
+                                            </button>
+                                            <IconButton
+                                                variant="outline"
+                                                icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                                onClick={() => handleDeleteResumeDraft(draft)}
+                                                disabled={isDeleting}
+                                                aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
+                                                title="분석 기록 삭제"
+                                            />
                                         </div>
-                                    </button>
+                                    </div>
                                 );
                                 })}
                             </div>
@@ -1665,6 +1800,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                     const draftCanResume = canResumeDraft(draft);
                                     const unavailableReason = getResumeUnavailableReasonLabel(draft);
                                     const showUnavailableBadge = !draftCanResume && draft.status !== 'completed';
+                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
                                     const detailTextClass = draft.status === 'completed'
                                         ? 'text-muted-foreground'
                                         : 'text-destructive';
@@ -1708,15 +1844,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                                             variant={isSelected ? 'secondary' : 'outline'}
                                                             icon={<Play size={16} />}
                                                             onClick={() => handleResumeDraftPrepare(draft)}
+                                                            disabled={isDeleting}
                                                             aria-label={isSelected ? '이어하기 선택됨' : '이어하기'}
                                                             title={isSelected ? '이어하기 선택됨' : '이어하기'}
                                                         />
                                                     )}
                                                     <IconButton
                                                         variant="outline"
-                                                        icon={<X size={16} />}
+                                                        icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
                                                         onClick={() => handleDeleteResumeDraft(draft)}
-                                                        aria-label="분석 기록 삭제"
+                                                        disabled={isDeleting}
+                                                        aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
                                                         title="분석 기록 삭제"
                                                     />
                                                 </div>
@@ -1734,9 +1872,24 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <span>이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.</span>
-                        <Button variant="outline" onClick={clearResumeSelectionOnly} disabled={isAnalyzing}>
-                            새 분석
-                        </Button>
+                        <div className="flex shrink-0 gap-2">
+                            <Button variant="outline" onClick={handleStartFreshFromResume} disabled={isAnalyzing}>
+                                새 분석
+                            </Button>
+                            {selectedResumeDraft && (
+                                <Button
+                                    variant="outline"
+                                    onClick={() => void handleDeleteResumeDraft(selectedResumeDraft)}
+                                    disabled={isAnalyzing || deletingResumeDraftIds.has(selectedResumeDraft.jobId)}
+                                    aria-label={`${selectedResumeDraft.title || selectedResumeDraft.sourceFilename} 분석 기록 삭제`}
+                                >
+                                    {deletingResumeDraftIds.has(selectedResumeDraft.jobId)
+                                        ? <Loader2 size={15} className="animate-spin" />
+                                        : <Trash2 size={15} />}
+                                    {deletingResumeDraftIds.has(selectedResumeDraft.jobId) ? '삭제 중' : '삭제'}
+                                </Button>
+                            )}
+                        </div>
                     </div>
                 )}
                 <div className="flex flex-col gap-2">

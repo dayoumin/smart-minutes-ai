@@ -1485,7 +1485,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "source_filename": "meeting.mp4",
                 "source_size": 1234,
                 "source_last_modified": 987654321,
-                "completed_chunk_indices": [0],
+                "completed_chunk_indices": [],
                 "resume_supported": True,
             })
             atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
@@ -1519,6 +1519,86 @@ class AnalyzeApiTest(unittest.TestCase):
 
             self.assertEqual(result["resume"]["mode"], "reused_stt")
             self.assertEqual(result["resume"]["reused_chunk_count"], 1)
+
+    def test_pipeline_preserves_reused_chunk_progress_when_resume_is_cancelled(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "primary-model",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False},
+                "summary": {"enabled": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            job_id = "unit_resume_cancel_after_reuse"
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], job_id)
+            os.makedirs(checkpoint_paths.stt_dir, exist_ok=True)
+            input_fingerprint = main.hash_file_contents(TEST_AUDIO_PATH)
+            config_fingerprint = main._analysis_config_fingerprint(main.normalize_app_config(config))
+            execution_fingerprint = main._stt_execution_fingerprint(
+                config["paths"]["stt_model"],
+                config["stt"]["device"],
+                config["stt"]["chunk_seconds"],
+            )
+            chunk_path = os.path.abspath(TEST_AUDIO_PATH)
+            chunk_size = os.path.getsize(chunk_path)
+            atomic_write_json(checkpoint_paths.state_path, {
+                "job_id": job_id,
+                "resume_requested": True,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "pipeline_version": main.ANALYSIS_PIPELINE_VERSION,
+                "checkpoint_version": main.ANALYSIS_CHECKPOINT_VERSION,
+                "source_filename": "meeting.mp4",
+                "source_size": 1234,
+                "source_last_modified": 987654321,
+                "completed_chunk_indices": [],
+                "resume_supported": True,
+            })
+            atomic_write_json(os.path.join(checkpoint_paths.stt_dir, "chunk_001.json"), {
+                "chunk_index": 0,
+                "input_fingerprint": input_fingerprint,
+                "config_fingerprint": config_fingerprint,
+                "source_wav_size": 3,
+                "source_wav_duration": 0.0,
+                "chunk_path": chunk_path,
+                "chunk_size_bytes": chunk_size,
+                "offset": 0.0,
+                "duration": 1.0,
+                "stt_execution_fingerprint": execution_fingerprint,
+                "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+            })
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                    {"path": TEST_AUDIO_PATH, "offset": 1.0, "duration": 1.0, "index": 1},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", side_effect=AnalysisCancelledError("stop")),
+                patch("pipeline.export_txt.export_txt"),
+                patch("main.model_exists", return_value=True),
+                patch("main.resolve_model_path", return_value=os.path.join(work_dir, "fallback-model")),
+            ):
+                with self.assertRaises(AnalysisCancelledError):
+                    process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+
+            state = load_json_checkpoint(checkpoint_paths.state_path)
+            self.assertEqual(state["completed_chunk_indices"], [0])
+            self.assertTrue(state["resume_supported"])
 
     def test_pipeline_reuses_diarization_checkpoints_when_available(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:

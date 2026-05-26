@@ -4020,6 +4020,15 @@ def process_audio_pipeline(
         total = len(chunks_to_process)
         execution_fingerprint = _stt_execution_fingerprint(model_path, stt_device, stt_chunk_seconds)
         _set_stage("transcribing")
+
+        def _mark_chunk_completed(idx: int) -> None:
+            state = _load_job_state(checkpoint_paths)
+            completed_indices = sorted(set(int(item) for item in state.get("completed_chunk_indices", []) + [idx]))
+            _write_job_state(checkpoint_paths, {
+                "completed_chunk_indices": completed_indices,
+                "resume_supported": True,
+            })
+
         for idx, chunk in enumerate(chunks_to_process):
             _raise_if_cancelled()
             progress = 30 + int((idx / max(total, 1)) * 35)
@@ -4032,6 +4041,7 @@ def process_audio_pipeline(
                 and _stt_chunk_checkpoint_matches(checkpoint_payload, chunk, idx, execution_fingerprint)
             ):
                 reused_chunk_count += 1
+                _mark_chunk_completed(idx)
                 collected_segments.extend(apply_time_offset(checkpoint_payload["segments"], float(chunk.get("offset", 0.0))))
                 continue
             try:
@@ -4048,12 +4058,7 @@ def process_audio_pipeline(
                     **_stt_chunk_checkpoint_metadata(chunk, idx, execution_fingerprint),
                     "segments": chunk_segments,
                 })
-                state = _load_job_state(checkpoint_paths)
-                completed_indices = sorted(set(int(item) for item in state.get("completed_chunk_indices", []) + [idx]))
-                _write_job_state(checkpoint_paths, {
-                    "completed_chunk_indices": completed_indices,
-                    "resume_supported": True,
-                })
+                _mark_chunk_completed(idx)
                 collected_segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
             except Exception as chunk_exc:
                 print(f"[STT] Exception while transcribing chunk {idx + 1}: {chunk_exc}")
@@ -4068,6 +4073,8 @@ def process_audio_pipeline(
             stt_model_path,
             allow_internal_fallback=True,
         )
+    except AnalysisCancelledError:
+        raise
     except Exception:
         if not fallback_stt_model_path:
             raise

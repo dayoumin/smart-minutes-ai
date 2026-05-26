@@ -31,6 +31,7 @@ export interface AnalysisResumeDraftFileKey {
 
 const STORAGE_KEY = 'analysisResumeDrafts';
 const SUPPRESSED_STORAGE_KEY = 'suppressedResumeCandidateKeys';
+const PENDING_CLEANUP_STORAGE_KEY = 'pendingAnalysisDraftCleanups';
 const UPDATED_EVENT = 'analysis-resume-drafts:updated';
 
 const canUseStorage = (): boolean => typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
@@ -95,6 +96,37 @@ export const unsuppressResumeCandidateKey = (key: string): void => {
     const current = listSuppressedResumeCandidateKeys();
     if (!current.includes(key)) return;
     writeSuppressedResumeCandidateKeys(current.filter(item => item !== key));
+};
+
+export const listPendingAnalysisDraftCleanups = (): string[] => {
+    if (!canUseStorage()) return [];
+    try {
+        const raw = window.localStorage.getItem(PENDING_CLEANUP_STORAGE_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed.filter(item => typeof item === 'string') : [];
+    } catch {
+        return [];
+    }
+};
+
+const writePendingAnalysisDraftCleanups = (jobIds: string[]): void => {
+    if (!canUseStorage()) return;
+    const uniqueJobIds = [...new Set(jobIds)].filter(Boolean);
+    window.localStorage.setItem(PENDING_CLEANUP_STORAGE_KEY, JSON.stringify(uniqueJobIds));
+    window.dispatchEvent(new CustomEvent(UPDATED_EVENT));
+};
+
+export const queuePendingAnalysisDraftCleanup = (jobId: string): void => {
+    const current = listPendingAnalysisDraftCleanups();
+    if (current.includes(jobId)) return;
+    writePendingAnalysisDraftCleanups([...current, jobId]);
+};
+
+export const removePendingAnalysisDraftCleanup = (jobId: string): void => {
+    const current = listPendingAnalysisDraftCleanups();
+    if (!current.includes(jobId)) return;
+    writePendingAnalysisDraftCleanups(current.filter(item => item !== jobId));
 };
 
 export const upsertAnalysisResumeDraft = (draft: AnalysisResumeDraft): void => {

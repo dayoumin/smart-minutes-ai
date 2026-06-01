@@ -72,6 +72,26 @@
 
 혼돈을 줄이기 위해 실제 배포 기준은 `releases\lmo_audio` 폴더 하나로 고정한다. Tauri target 폴더는 중간 산출물이며 사용자가 직접 실행할 기준 폴더가 아니다.
 
+### 고정 작업 순서
+
+배포가 필요한 변경은 아래 순서를 기본으로 한다. 순서를 바꾸는 경우에는 final summary에 이유를 남긴다.
+
+1. 변경 범위를 분류한다: 웹 UI, 데스크탑/Tauri, 백엔드, 배포 스크립트, 모델/성능.
+2. 변경 범위에 맞는 좁은 검증을 먼저 실행한다.
+   - 프론트엔드: `corepack pnpm --dir desktop-app run typecheck`, `corepack pnpm --dir desktop-app run lint`, 필요한 `desktop-app/scripts/simulate-*.mjs`.
+   - Tauri/Rust: `cargo check` in `desktop-app\src-tauri`.
+   - 백엔드: 관련 Python unittest 또는 `py_compile`.
+3. 서버 재시작, 취소/삭제, 이어하기, 저장/내보내기, 배포, 긴 파일 처리처럼 사용자 작업 손실이나 운영 위험이 있으면 큰 관점/작은 관점 리뷰를 실행한다.
+4. 리뷰 지적을 반영하고 다시 좁은 검증을 통과시킨다.
+5. 배포 빌드 전에 변경 사항을 커밋한다. 최종 사용자용 manifest는 커밋된 HEAD를 가리켜야 한다.
+6. 루트에서 `corepack pnpm build`를 실행한다.
+7. 실패하면 레이어를 나눠 확인한다: sidecar packaging, Tauri exe build, portable packaging, deploy-folder verify.
+8. `scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`가 통과하는지 확인한다.
+9. `releases\lmo_audio\release-manifest.json`의 `commit`이 `git rev-parse HEAD`와 같고 `dirty=false`인지 확인한다.
+10. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다.
+
+단순 문구/아이콘 변경처럼 배포가 필요 없는 경우에는 5~10번을 생략할 수 있다. 사용자가 "빌드" 또는 "전달"을 요청한 경우에는 5~10번을 생략하지 않는다.
+
 정식 배포 갱신:
 
 ```powershell

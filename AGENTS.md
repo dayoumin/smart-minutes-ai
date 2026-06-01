@@ -28,6 +28,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 ## Portable Release Debugging Rules
 
 - Before building, packaging, or verifying the portable desktop app, read `docs/tauri-desktop-release-checklist.md`; it is the single detailed source for release commands, build venv recovery, pip cache workarounds, and deploy-folder verification.
+- For user-ready release work, follow the fixed sequence in `docs/tauri-desktop-release-checklist.md`: classify scope, run narrow checks, review risky changes, commit, build, verify manifest, then push.
 - When the user says "build" without explicitly asking for a frontend/Vite/web build, treat it as a user-ready portable release build and run from the repo root: `corepack pnpm build`. Do not substitute `corepack pnpm --dir desktop-app build`, because that only updates web assets.
 - Use `backend\.venv-desktop\Scripts\python.exe` as the normal portable release build Python. Temporary venvs are emergency fallbacks only and must be called out in the work summary.
 - First classify the failing layer: sidecar packaging, desktop/Tauri build, portable packaging, or deploy-folder runtime.

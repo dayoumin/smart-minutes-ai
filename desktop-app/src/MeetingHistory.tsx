@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, CircleHelp, Edit3, FileAudio, Loader2, Pause, Play, PlusCircle, Save, Search, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleHelp, Edit3, FileAudio, Loader2, Pause, Play, Save, Search, Square, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -1928,6 +1928,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [hasUnsavedDraftChanges]);
 
     useEffect(() => {
+        const active = Boolean(generatingKind || diarizationProgress?.active);
+        window.dispatchEvent(new CustomEvent('backend-task:state', {
+            detail: { source: 'meeting-history-generation', active },
+        }));
+        return () => {
+            window.dispatchEvent(new CustomEvent('backend-task:state', {
+                detail: { source: 'meeting-history-generation', active: false },
+            }));
+        };
+    }, [diarizationProgress?.active, generatingKind]);
+
+    useEffect(() => {
         if (isTauriRuntime()) return;
         if (!hasUnsavedDraftChanges) return;
 
@@ -2256,7 +2268,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     <p className="text-sm text-muted-foreground">왼쪽 회의 기록에서 회의록을 선택하거나 새 회의록을 작성하세요.</p>
                     {onCreateMeeting && (
                         <Button onClick={onCreateMeeting}>
-                            <PlusCircle size={16} />
                             새 회의록 작성
                         </Button>
                     )}

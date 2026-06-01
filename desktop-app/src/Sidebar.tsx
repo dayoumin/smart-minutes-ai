@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ChevronDown, ChevronUp, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, PlusCircle, Trash2 } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronUp, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
 import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, AnalysisResumeDraft, listAnalysisResumeDrafts } from './analysisResumeDrafts';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
@@ -229,7 +229,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         onCreateMeeting?.();
                     }}
                 >
-                    <PlusCircle size={15} />
                     새 회의록 작성
                 </button>
                 {resumeDrafts.length > 0 && !analysisStatus?.active && (

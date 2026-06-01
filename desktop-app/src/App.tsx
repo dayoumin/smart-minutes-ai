@@ -161,6 +161,8 @@ export const App: React.FC = () => {
         progress: 0,
         message: '',
     });
+    const [backendTaskActive, setBackendTaskActive] = useState(false);
+    const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
     const canLeaveCurrentMeeting = () => (
         activeTab === 'minutes' ? writerLeaveGuardRef.current() : leaveGuardRef.current()
@@ -231,6 +233,18 @@ export const App: React.FC = () => {
 
         window.addEventListener('analysis:status', handleAnalysisStatus);
         return () => window.removeEventListener('analysis:status', handleAnalysisStatus);
+    }, []);
+
+    useEffect(() => {
+        const handleBackendTaskState = (event: Event) => {
+            const detail = (event as CustomEvent<{ source?: string; active?: boolean }>).detail;
+            const source = detail?.source || 'global';
+            backendTaskSourcesRef.current.set(source, Boolean(detail?.active));
+            setBackendTaskActive([...backendTaskSourcesRef.current.values()].some(Boolean));
+        };
+
+        window.addEventListener('backend-task:state', handleBackendTaskState);
+        return () => window.removeEventListener('backend-task:state', handleBackendTaskState);
     }, []);
 
     useEffect(() => {
@@ -323,7 +337,12 @@ export const App: React.FC = () => {
                     </div>
                 )}
             </Layout>
-            {isSettingsOpen && <Settings onClose={() => setIsSettingsOpen(false)} />}
+            {isSettingsOpen && (
+                <Settings
+                    onClose={() => setIsSettingsOpen(false)}
+                    analysisActive={analysisStatus.active || backendTaskActive}
+                />
+            )}
         </>
     );
 };

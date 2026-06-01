@@ -44,6 +44,13 @@
 - [ ] 2026-05-13 clean manifest 재생성
   - 현재 `releases\lmo_audio`는 빌드와 검증은 통과했지만, 작업 중 빌드라 `release-manifest.json`의 dirty 기록이 남았다.
   - 외부 전달 직전에는 커밋 후 깨끗한 워크트리에서 `scripts\release_portable.ps1 -Python backend\.venv-desktop\Scripts\python.exe`를 다시 실행해 manifest dirty 상태를 정리한다.
+- [ ] 2026-06-01 속도 개선 후보 체계 검토
+  - 1차 후보는 `/api/models/status` TTL 캐싱이다. 앱 시작/설정 진입 시 모델 폴더, Ollama, GPU 상태 확인 비용을 줄일 수 있는지 먼저 측정한다.
+  - 측정 기준: cold start 후 `/api/health`, `/api/models/status` 5회 응답 시간, 캐시 TTL 3~10초 적용 전후 비교, 설정 저장/모델 상태 새로고침 시 캐시 무효화 확인.
+  - 긴 영상 분석 속도는 청크 길이부터 추론으로 바꾸지 않는다. `LMO_temp` 실제 샘플로 `30/60/90초`를 비교하고, 처리 시간, STT 글자수, 한글 비율, 청취 품질, 이어하기 체크포인트 영향을 함께 본다.
+  - 초기 분석 완료 시간이 길면 DOCX/HWPX 선생성 비용을 단계별 로깅으로 분리한다. JSON/TXT 즉시 저장, DOCX/HWPX 다운로드 시 생성은 측정 후 판단한다.
+  - CPU thread 수는 기본값 변경이 아니라 벤치 후보로만 본다. `4/6/8 threads` 비교에서 속도, CPU 점유, 오류 여부를 같이 본다.
+  - 자동 음량 보정은 2-pass 비용보다 품질 회귀 위험이 더 크므로 후순위다. `off/auto/loudnorm`은 STT 품질과 같이 비교한다.
 - [x] 2026-05-12 웹/데스크탑 테스트 차이 기록
   - React 화면은 같지만 웹 테스트는 백엔드를 별도로 띄운다. 따라서 일반 Python이 아니라 `backend\.venv-desktop\Scripts\python.exe` 또는 packaged sidecar와 같은 런타임으로 실행해야 데스크탑앱과 조건이 맞는다.
   - 일반 Python으로 웹 백엔드를 띄우면 `faster_whisper` 등 데스크탑 런타임 의존성이 빠져 데스크탑앱에서는 안 나던 실패가 생길 수 있다.

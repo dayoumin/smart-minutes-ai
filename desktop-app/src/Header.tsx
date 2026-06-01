@@ -8,7 +8,7 @@ interface HeaderProps {
 export const Header: React.FC<HeaderProps> = ({ onOpenSettings }) => {
     return (
         <header className="h-16 border-b border-border flex items-center justify-between gap-4 px-4 bg-surface shadow-sm z-10 relative sm:px-6">
-            <h1 className="min-w-0 truncate text-lg font-semibold text-foreground">LMO 회의 인사이트</h1>
+            <h1 className="min-w-0 truncate text-lg font-semibold text-foreground">AI 회의록 도우미</h1>
 
             <div className="flex shrink-0 items-center gap-3">
                 <button

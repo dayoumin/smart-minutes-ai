@@ -888,7 +888,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             return { state: 'error', message: '분석 요청을 중단했습니다.' };
         }
 
-        const message = '분석 기능이 아직 준비되지 않았습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
+        const message = isTauriRuntime()
+            ? '분석 기능이 아직 준비되지 않았습니다. 앱을 종료한 뒤 다시 실행해 주세요.'
+            : '분석 서버가 아직 준비되지 않았습니다. 백엔드 서버를 실행한 뒤 다시 시도해 주세요.';
         setAnalysisPhase('error');
         setErrorMessage(message);
         setStatusMessage('');
@@ -2004,16 +2006,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 {!isAnalyzing && (
                     <div className="flex flex-col gap-3 border-t border-border/70 pt-5 sm:flex-row sm:items-center sm:justify-between">
                         {!resumeSelectionActive ? (
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="flex shrink-0 flex-wrap items-center gap-2">
                                 <Button
                                     variant="outline"
                                     className="detail-action-button"
                                     onClick={handleSelectVideoForAudioExtract}
                                     disabled={isExtractingAudio}
-                                    title="영상 파일을 선택합니다."
+                                    title="오디오를 추출할 영상 파일을 선택합니다."
                                 >
                                     <UploadCloud size={15} />
-                                    {hasAudioExtractFile && !audioExtractSaved ? '영상 변경' : '영상 선택'}
+                                    {hasAudioExtractFile && !audioExtractSaved ? '영상 변경' : '오디오 추출'}
                                 </Button>
                                 {hasAudioExtractFile ? (
                                     <Button
@@ -2030,12 +2032,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                         ) : (
                                             <FileAudio size={15} />
                                         )}
-                                        {isExtractingAudio ? '추출 중' : audioExtractSaved ? '저장됨' : audioExtractFailed ? '다시 추출' : '음성 추출'}
+                                        {isExtractingAudio ? '추출 중' : audioExtractSaved ? '저장됨' : audioExtractFailed ? '다시 추출' : '추출'}
                                     </Button>
                                 ) : null}
                                 <span
-                                    title="영상 파일을 고른 뒤 음성 추출을 누르면 회의록 없이 WAV 파일만 저장합니다."
-                                    aria-label="영상 음성 추출 도움말"
+                                    title="영상 파일을 고른 뒤 추출을 누르면 회의록 없이 WAV 파일만 저장합니다."
+                                    aria-label="오디오 추출 도움말"
                                     className="inline-flex items-center text-muted-foreground"
                                     tabIndex={0}
                                 >

@@ -90,6 +90,14 @@ const discoverLocalApiBase = async (): Promise<string | null> => {
     return null;
 };
 
+const waitForHealthyApiBase = async (baseUrl: string, attempts = 30): Promise<boolean> => {
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+        if (await isHealthyApiBase(baseUrl)) return true;
+        await sleep(500);
+    }
+    return false;
+};
+
 export const getApiBase = async (): Promise<string> => {
     const runningInTauri = isTauriRuntime();
 
@@ -122,6 +130,19 @@ export const getApiBase = async (): Promise<string> => {
     }
 
     return apiBase;
+};
+
+export const restartDesktopBackend = async (): Promise<string> => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) throw new Error('데스크탑 앱에서만 분석 서버를 다시 시작할 수 있습니다.');
+
+    const baseUrl = await invoke<string>('restart_backend');
+    if (!await waitForHealthyApiBase(baseUrl)) {
+        throw new Error('분석 서버를 다시 시작했지만 아직 응답하지 않습니다. 잠시 후 상태 새로고침을 눌러 주세요.');
+    }
+    cachedApiBase = Promise.resolve(baseUrl);
+    await writeFrontendLog(`apiBase restarted=${baseUrl}`);
+    return baseUrl;
 };
 
 export const toApiUrl = async (url: string): Promise<string> => {

@@ -19,6 +19,7 @@
     "test:resume-draft-flow": "node scripts/simulate-resume-draft-flow.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",
     "test:close-guard-flow": "node scripts/simulate-close-guard-flow.mjs",
+    "test:settings-backend-restart": "node scripts/simulate-settings-backend-restart.mjs",
     "test:meeting-detail-flow": "node scripts/simulate-meeting-detail-flow.mjs",
     "test:topic-generation-ui": "node scripts/simulate-topic-generation-ui.mjs",
     "lint": "eslint .",

@@ -3,7 +3,7 @@ use std::io::Write;
 use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 
 #[cfg(target_os = "windows")]
@@ -35,6 +35,11 @@ struct BackendConfig {
     base_url: String,
 }
 
+struct BackendProcess {
+    child: Mutex<Option<Child>>,
+    port: u16,
+}
+
 struct CloseGuardState {
     active: AtomicBool,
 }
@@ -42,6 +47,37 @@ struct CloseGuardState {
 #[tauri::command]
 fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
     config.base_url.clone()
+}
+
+fn write_backend_error_log(app: &AppHandle, filename: &str, message: &str) {
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let log_dir = resource_dir.join("logs");
+        let _ = fs::create_dir_all(&log_dir);
+        let _ = fs::write(log_dir.join(filename), message);
+    }
+}
+
+#[tauri::command]
+fn restart_backend(app: AppHandle, backend: State<'_, BackendProcess>) -> Result<String, String> {
+    let mut slot = backend
+        .child
+        .lock()
+        .map_err(|_| "Could not access backend process state.".to_string())?;
+
+    if let Some(mut child) = slot.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+
+    let child = match spawn_backend(&app, backend.port) {
+        Ok(child) => child,
+        Err(error) => {
+            write_backend_error_log(&app, "restart-error.log", &error);
+            return Err(format!("분석 서버를 다시 시작하지 못했습니다. {error}"));
+        }
+    };
+    *slot = Some(child);
+    Ok(format!("http://127.0.0.1:{}", backend.port))
 }
 
 #[tauri::command]
@@ -161,7 +197,7 @@ fn find_available_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, String> {
+fn spawn_backend(app: &AppHandle, port: u16) -> Result<Child, String> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -207,13 +243,14 @@ fn spawn_backend(app: &tauri::App, port: u16) -> Result<Child, String> {
 pub fn run() {
     let backend_port = find_available_port().unwrap_or(PREFERRED_BACKEND_PORT);
     let backend_base_url = format!("http://127.0.0.1:{backend_port}");
-    let backend_child: Arc<Mutex<Option<Child>>> = Arc::new(Mutex::new(None));
-    let setup_backend_child = Arc::clone(&backend_child);
-    let shutdown_backend_child = Arc::clone(&backend_child);
 
     tauri::Builder::default()
         .manage(BackendConfig {
             base_url: backend_base_url,
+        })
+        .manage(BackendProcess {
+            child: Mutex::new(None),
+            port: backend_port,
         })
         .manage(CloseGuardState {
             active: AtomicBool::new(false),
@@ -221,23 +258,22 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_backend_base_url,
+            restart_backend,
             set_close_guard_active,
             open_saved_file_location,
             write_frontend_log
         ])
         .setup(move |app| {
-            match spawn_backend(app, backend_port) {
+            let app_handle = app.handle().clone();
+            match spawn_backend(&app_handle, backend_port) {
                 Ok(child) => {
-                    if let Ok(mut slot) = setup_backend_child.lock() {
+                    let backend = app.state::<BackendProcess>();
+                    if let Ok(mut slot) = backend.child.lock() {
                         *slot = Some(child);
-                    }
+                    };
                 }
                 Err(error) => {
-                    if let Ok(resource_dir) = app.path().resource_dir() {
-                        let log_dir = resource_dir.join("logs");
-                        let _ = fs::create_dir_all(&log_dir);
-                        let _ = fs::write(log_dir.join("startup-error.log"), &error);
-                    }
+                    write_backend_error_log(&app_handle, "startup-error.log", &error);
                     eprintln!("{error}");
                 }
             }
@@ -253,13 +289,14 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building Tauri application")
-        .run(move |_app_handle, event| {
+        .run(move |app_handle, event| {
             if let RunEvent::ExitRequested { .. } = event {
-                if let Ok(mut slot) = shutdown_backend_child.lock() {
+                let backend = app_handle.state::<BackendProcess>();
+                if let Ok(mut slot) = backend.child.lock() {
                     if let Some(mut child) = slot.take() {
                         let _ = child.kill();
                     }
-                }
+                };
             }
         });
 }

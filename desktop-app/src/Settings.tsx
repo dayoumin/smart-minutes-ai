@@ -8,7 +8,7 @@ import {
     getDownloadFormatPreference,
     setDownloadFormatPreference,
 } from './downloadPreferences';
-import { getApiBase } from './apiBase';
+import { getApiBase, isTauriRuntime, restartDesktopBackend } from './apiBase';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 
@@ -80,6 +80,7 @@ interface ModelsPayload {
 
 interface SettingsProps {
     onClose: () => void;
+    analysisActive?: boolean;
 }
 
 type SettingsTab = 'general' | 'models' | 'advanced';
@@ -101,13 +102,14 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
     }
 };
 
-export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
+export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>('general');
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
     const [apiBase, setApiBase] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
+    const [isRestartingBackend, setIsRestartingBackend] = useState(false);
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [chunkSeconds, setChunkSeconds] = useState(30);
@@ -171,7 +173,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         }
     }, []);
 
-    const loadSettings = useCallback(async () => {
+    const loadSettings = useCallback(async (): Promise<boolean> => {
         setIsLoading(true);
         setErrorMessage('');
         setMessage('');
@@ -187,7 +189,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
             const nextSettings = await settingsResponse.json() as SettingsPayload;
             setSettings(nextSettings);
             applySettingsToForm(nextSettings);
-            await loadModelsStatus(base);
+            const nextModels = await loadModelsStatus(base);
+            return Boolean(nextModels);
         } catch (error) {
             setSettings(null);
             setModels(null);
@@ -197,6 +200,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                     ? '분석 기능 응답이 지연되고 있습니다. 앱을 켠 직후라면 잠시 후 상태 새로고침을 눌러 주세요.'
                     : '분석 기능에 연결할 수 없습니다. 앱을 다시 실행한 뒤 상태 새로고침을 눌러 주세요.',
             );
+            return false;
         } finally {
             setIsLoading(false);
         }
@@ -279,12 +283,36 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
         }
     };
 
+    const handleRestartBackend = async () => {
+        if (analysisActive) {
+            setErrorMessage('분석 중에는 분석 서버를 다시 시작할 수 없습니다. 진행 중인 분석을 중단하거나 완료한 뒤 다시 시도해 주세요.');
+            return;
+        }
+
+        setIsRestartingBackend(true);
+        setErrorMessage('');
+        setMessage('');
+        try {
+            const base = await restartDesktopBackend();
+            setApiBase(base);
+            const ready = await loadSettings();
+            if (ready) {
+                setMessage('분석 서버를 다시 시작하고 상태를 확인했습니다.');
+            }
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : '분석 서버를 다시 시작하지 못했습니다.');
+        } finally {
+            setIsRestartingBackend(false);
+        }
+    };
+
     const tabs: Array<{ key: SettingsTab; label: string }> = [
         { key: 'general', label: '일반' },
         { key: 'models', label: '분석 준비' },
         { key: 'advanced', label: '고급' },
     ];
-    const canSaveSettings = !isLoading && !isSaving && settings !== null;
+    const canSaveSettings = !isLoading && !isSaving && !isRestartingBackend && settings !== null;
+    const canRestartBackend = isTauriRuntime() && !analysisActive && !isLoading && !isSaving && !isRestartingBackend;
     const gpuUsable = Boolean(models?.stt_device_status?.gpu_usable);
     const gpuDetected = Boolean(models?.stt_device_status?.gpu_detected);
     const gpuReason = models?.stt_device_status?.gpu_reason || 'GPU 가속은 조건을 확인한 뒤에만 사용하세요.';
@@ -450,6 +478,36 @@ export const Settings: React.FC<SettingsProps> = ({ onClose }) => {
                                     필요한 파일을 앱 폴더의 `models` 폴더에 넣은 뒤 상태 새로고침을 누르세요.
                                 </p>
                             </div>
+
+                            {isTauriRuntime() && (
+                                <div className="flex flex-col gap-3 rounded-md border border-border bg-muted/20 p-4 sm:flex-row sm:items-center sm:justify-between">
+                                    <div>
+                                        <div className="font-medium text-foreground">분석 서버</div>
+                                        <p className="mt-1 text-sm text-muted-foreground">
+                                            분석 기능이 응답하지 않거나 파이썬 오류가 의심될 때만 다시 시작하세요.
+                                        </p>
+                                        {analysisActive && (
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                                진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.
+                                            </p>
+                                        )}
+                                        {apiBase && (
+                                            <p className="mt-2 text-xs text-muted-foreground">
+                                                연결 주소: {apiBase}
+                                            </p>
+                                        )}
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        onClick={() => void handleRestartBackend()}
+                                        disabled={!canRestartBackend}
+                                        title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 서버를 다시 시작합니다.'}
+                                    >
+                                        <RefreshCw size={16} className={isRestartingBackend ? 'animate-spin' : ''} />
+                                        {isRestartingBackend ? '재시작 중...' : '서버 재시작'}
+                                    </Button>
+                                </div>
+                            )}
 
                             <div className="grid grid-cols-1 gap-3">
                                 {userVisibleModels.map(model => (

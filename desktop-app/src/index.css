@@ -696,10 +696,12 @@
     @apply mt-0.5 text-xs text-muted-foreground;
   }
 
+  .analysis-stop-panel,
   .diarization-stop-panel {
     @apply mt-3 flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between;
   }
 
+  .analysis-stop-actions,
   .diarization-stop-actions {
     @apply flex shrink-0 flex-wrap items-center gap-2;
   }
@@ -731,6 +733,13 @@
     @apply fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-[var(--radius-card)] border border-border bg-background px-4 py-3 text-sm shadow-lg;
   }
 
+  .operation-toast {
+    @apply fixed right-6 top-6 z-50 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-[var(--radius-card)] border px-4 py-3 text-sm shadow-lg;
+    background-color: var(--status-current-bg);
+    border-color: var(--status-current-border);
+    color: var(--status-current-fg);
+  }
+
   .save-toast-action {
     @apply rounded-md px-2 py-1 text-xs font-semibold text-primary transition-colors;
   }
@@ -743,9 +752,19 @@
     @apply inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors;
   }
 
+  .operation-toast-close {
+    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-colors;
+    color: color-mix(in srgb, var(--status-current-fg) 72%, transparent);
+  }
+
   .save-toast-close:hover {
     background-color: var(--surface-action-hover-bg);
     color: var(--text-default);
+  }
+
+  .operation-toast-close:hover {
+    background-color: color-mix(in srgb, var(--status-current-border) 24%, transparent);
+    color: var(--status-current-fg);
   }
 
   .detail-micro-card {

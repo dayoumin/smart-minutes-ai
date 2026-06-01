@@ -469,7 +469,7 @@ def _build_analysis_draft_status(job_id: str, state: dict) -> dict:
     stage = str(state.get("stage") or "unknown")
     completed_chunk_count = len(state.get("completed_chunk_indices") or [])
     if state.get("cancelled"):
-        status = "cancelled"
+        status = "stopped" if state.get("cancel_action") == "stop" else "cancelled"
     elif state.get("failed"):
         status = "failed"
     elif stage == "completed":
@@ -927,7 +927,7 @@ async def stop_output_generation(job_id: str, kind: str, payload: dict | None = 
     final_message = (
         "참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다."
         if action == "defer"
-        else "참석자 구분을 취소하고 있습니다."
+        else "참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다."
     )
     stop_state_saved = False
     with GENERATION_STATUS_LOCK:
@@ -1479,7 +1479,7 @@ def _apply_diarization_stop_to_result(job_id: str, result_data: dict, action: st
     is_deferred = action == "defer"
     latest_settings.update({
         "diarization": False,
-        "diarization_requested": is_deferred,
+        "diarization_requested": True,
         "diarization_skipped": False,
         "diarization_deferred": is_deferred,
         "diarization_skip_reason": "",
@@ -3540,9 +3540,16 @@ async def analyze_draft_statuses(payload: dict = Body(...)) -> dict:
 
 
 @app.post("/api/analyze/{job_id}/cancel")
-async def cancel_analysis(job_id: str) -> dict:
+async def cancel_analysis(job_id: str, payload: dict | None = Body(None)) -> dict:
     job_id = _validate_job_id(job_id)
-    return {"job_id": job_id, "cancel_requested": ANALYSIS_JOBS.cancel(job_id)}
+    action = str((payload or {}).get("action") or "stop").strip().lower()
+    if action not in {"stop", "cancel"}:
+        raise HTTPException(status_code=400, detail="invalid_cancel_action")
+    return {
+        "job_id": job_id,
+        "action": action,
+        "cancel_requested": ANALYSIS_JOBS.cancel(job_id, action),
+    }
 
 
 async def save_analysis_upload(file: UploadFile, job_id: str) -> str:
@@ -3741,17 +3748,26 @@ async def stream_real_analysis(
             await queue.put(final_data)
             await queue.put("[DONE]")
         except AnalysisCancelledError as exc:
+            cancel_action = ANALYSIS_JOBS.get_action(job_id) or "stop"
             _write_job_state(checkpoint_paths, {
                 "stage": "cancelled",
                 "cancelled": True,
-                "resume_supported": True,
+                "cancel_action": cancel_action,
+                "resume_supported": cancel_action == "stop",
+                "cleanup_policy": "delete_resume_artifacts" if cancel_action == "cancel" else "preserve_checkpoints",
                 "last_heartbeat_at": datetime.now().isoformat(),
             })
+            if cancel_action == "cancel":
+                try:
+                    _delete_resume_artifacts(job_id)
+                except Exception:
+                    logging.exception("Failed to delete cancelled analysis draft artifacts")
             await queue.put({
                 "type": "cancelled",
                 "mode": "real",
                 "progress": 0,
                 "status": "cancelled",
+                "action": cancel_action,
                 "message": str(exc),
             })
             await queue.put("[DONE]")

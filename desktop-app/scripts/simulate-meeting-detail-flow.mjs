@@ -515,7 +515,7 @@ const installRoutes = async (page) => {
         accepted: true,
         message: action === 'defer'
           ? '참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.'
-          : '참석자 구분을 취소하고 있습니다.',
+          : '참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다.',
       }),
     });
   });
@@ -567,7 +567,7 @@ const installRoutes = async (page) => {
         active: true,
         running: true,
         accepted: true,
-        message: '참석자 구분을 취소하고 있습니다.',
+        message: '참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다.',
       }),
     });
   });
@@ -582,7 +582,7 @@ const installRoutes = async (page) => {
         kind: 'diarization',
         progress: active ? 30 : 30,
         message: active
-          ? '참석자 구분을 취소하고 있습니다.'
+          ? '참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다.'
           : '참석자 구분을 취소했습니다.',
         status: active ? 'stopping' : 'cancelled',
         active,
@@ -685,14 +685,14 @@ const run = async () => {
     await page.getByRole('tab', { name: '기록 정리' }).click();
     await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).click();
     await cancelDiarizationRequested;
-    const cancelRunningButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 취소' });
+    const cancelRunningButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지/취소' });
     await cancelRunningButton.waitFor({ timeout: 10000 });
     assert.equal(await cancelRunningButton.isDisabled(), false);
     await cancelRunningButton.click();
     const cancelPanel = page.locator('.diarization-stop-panel');
-    await cancelPanel.getByText('중지하면 원본 음성이 남아 있을 때 다시 실행할 수 있고, 취소하면 이 회의록에서는 참석자 구분을 사용하지 않습니다.').waitFor({ timeout: 10000 });
+    await cancelPanel.getByText('중지하면 원본 음성이 남아 있을 때 다시 실행할 수 있고, 취소하면 이번 실행만 멈춥니다.').waitFor({ timeout: 10000 });
     await cancelPanel.getByRole('button', { name: '취소' }).click();
-    await page.getByText('참석자 구분을 취소하고 있습니다.').first().waitFor({ timeout: 10000 });
+    await page.getByText('참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
     releaseCancelDiarizationResponse();
     assert.deepEqual(cancelDiarizationStopBodies, [{ action: 'cancel' }]);
     const cancelledRecord = await page.evaluate(async ({ cancelMeetingId }) => {
@@ -710,11 +710,11 @@ const run = async () => {
       db.close();
       return record;
     }, { cancelMeetingId });
-    assert.equal(cancelledRecord.diarizationRequested, false);
+    assert.equal(cancelledRecord.diarizationRequested, true);
     assert.equal(cancelledRecord.diarizationDeferred, false);
     assert.equal(cancelledRecord.diarizationApplied, false);
-    await page.getByText('이 회의록에서는 참석자 구분을 사용하지 않습니다.').waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).count(), 0);
+    await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
 
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
@@ -723,13 +723,13 @@ const run = async () => {
     const diarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
     await diarizationButton.click();
     await diarizationRequested;
-    const stopDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 취소' });
+    const stopDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지/취소' });
     await stopDiarizationButton.waitFor({ timeout: 10000 });
     assert.equal(await stopDiarizationButton.isDisabled(), false);
     await stopDiarizationButton.click();
     await page.getByText('참석자 구분을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
     await page.getByText('예상 남은 시간').waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '중지' }).click();
+    await page.locator('.diarization-stop-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByText('참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
     const stoppingDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지 중' });
     await stoppingDiarizationButton.waitFor({ timeout: 10000 });

@@ -175,7 +175,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
                 saved = json.loads(result_path.read_text(encoding="utf-8"))
                 self.assertFalse(saved["settings"]["diarization"])
-                self.assertFalse(saved["settings"]["diarization_requested"])
+                self.assertTrue(saved["settings"]["diarization_requested"])
                 self.assertFalse(saved["settings"]["diarization_deferred"])
                 self.assertEqual(saved["settings"]["diarization_defer_message"], "")
                 self.assertEqual(saved["settings"]["diarization_generation_status"], "cancelled")
@@ -882,8 +882,18 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertFalse(cancel_event.is_set())
         self.assertTrue(registry.cancel("unit_job"))
         self.assertTrue(cancel_event.is_set())
+        self.assertEqual(registry.get_action("unit_job"), "stop")
         registry.remove("unit_job")
         self.assertFalse(registry.cancel("unit_job"))
+
+    def test_analysis_job_registry_records_cancel_action(self) -> None:
+        registry = AnalysisJobRegistry()
+        cancel_event = registry.create("unit_job")
+
+        self.assertTrue(registry.cancel("unit_job", "cancel"))
+        self.assertTrue(cancel_event.is_set())
+        self.assertEqual(registry.get_action("unit_job"), "cancel")
+        registry.remove("unit_job")
 
     def test_analysis_job_registry_rejects_duplicate_job_id(self) -> None:
         registry = AnalysisJobRegistry()
@@ -1268,7 +1278,55 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertIn("event: cancelled", body)
             self.assertEqual(state["stage"], "cancelled")
             self.assertTrue(state["cancelled"])
+            self.assertEqual(state["cancel_action"], "stop")
             self.assertTrue(state["resume_supported"])
+
+    def test_real_analysis_cancel_action_deletes_resume_artifacts(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            fake_config = {
+                "paths": {
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "stt_model": "../models/faster-whisper-large-v3",
+                    "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
+                },
+                "stt": {"selected_model": "faster-whisper-large-v3"},
+                "diarization": {"enabled": False},
+                "privacy": {"save_original_audio_copy": False},
+            }
+
+            def fake_process_audio_pipeline(upload_path, job_id, config, progress_callback, cancel_event):
+                main.ANALYSIS_JOBS.cancel(job_id, "cancel")
+                raise AnalysisCancelledError("분석이 취소되었습니다.")
+
+            async def collect_events() -> list[str]:
+                upload = UploadFile(filename="test_audio.wav", file=BytesIO(b"audio"))
+                events = []
+                async for event in stream_real_analysis(
+                    "테스트 회의",
+                    "2026-05-08T10:00",
+                    "홍길동",
+                    upload,
+                    "unit_cancel_delete",
+                ):
+                    events.append(event)
+                    if "event: done" in event:
+                        break
+                return events
+
+            with (
+                patch("main.load_config", return_value=fake_config),
+                patch("main.model_exists", return_value=True),
+                patch("main.resolve_model_path", return_value="mock-model-path"),
+                patch("main.process_audio_pipeline", side_effect=fake_process_audio_pipeline),
+            ):
+                events = asyncio.run(collect_events())
+
+            body = "\n".join(events)
+            paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "unit_cancel_delete")
+
+            self.assertIn('"action": "cancel"', body)
+            self.assertFalse(os.path.exists(paths.state_path))
 
     def test_resume_candidates_returns_matching_unfinished_job(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:

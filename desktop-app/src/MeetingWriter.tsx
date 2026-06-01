@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Play, RefreshCw, Settings, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, Play, RefreshCw, Settings, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -96,6 +96,7 @@ interface AnalyzeResult {
     };
     auto_saved_files?: Partial<Record<'hwpx' | 'audio', string>>;
     auto_save_errors?: Partial<Record<'hwpx' | 'audio', string>>;
+    action?: string;
     resume?: {
         requested?: boolean;
         mode?: string;
@@ -164,6 +165,7 @@ interface ModelsPayload {
 
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
 type AnalysisPhase = 'idle' | 'checking-server' | 'checking-models' | 'analyzing' | 'error';
+type AnalysisStopAction = 'stop' | 'cancel';
 type AudioExtractNotice = { tone: 'success' | 'error'; message: string; savedPath?: string | null; elapsedMs?: number };
 
 interface CompletionNotice {
@@ -171,6 +173,12 @@ interface CompletionNotice {
     elapsedMs: number;
     note?: string;
     autoSaveNote?: string;
+}
+
+interface OperationToast {
+    id: number;
+    message: string;
+    tone: 'warning' | 'neutral' | 'error';
 }
 
 interface ReadinessCheck {
@@ -460,7 +468,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
     const [analysisNow, setAnalysisNow] = useState(() => Date.now());
     const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle');
+    const [isAnalysisStopConfirmOpen, setIsAnalysisStopConfirmOpen] = useState(false);
+    const [isRequestingAnalysisStop, setIsRequestingAnalysisStop] = useState(false);
+    const [analysisStopRequestedAction, setAnalysisStopRequestedAction] = useState<AnalysisStopAction | null>(null);
     const [statusMessage, setStatusMessage] = useState('');
+    const [operationToast, setOperationToast] = useState<OperationToast | null>(null);
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
     const transcriptReadyRef = useRef(false);
@@ -487,9 +499,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const analysisCancelledRef = useRef(false);
     const analysisJobIdRef = useRef<string | null>(null);
     const analysisResumeDraftIdRef = useRef<string | null>(null);
+    const analysisStopActionRef = useRef<AnalysisStopAction | null>(null);
     const selectedResumeDraftIdRef = useRef<string | null>(null);
     const cleanupRetryInFlightRef = useRef(false);
     const analysisStalled = isAnalyzing && analysisPhase === 'analyzing' && analysisNow - lastRealProgressAt >= ANALYSIS_STALL_WARNING_MS;
+    const showOperationToast = React.useCallback((message: string, tone: OperationToast['tone'] = 'neutral') => {
+        setOperationToast({
+            id: Date.now(),
+            message,
+            tone,
+        });
+    }, []);
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
         || Boolean(meetingPurpose.trim())
@@ -509,6 +529,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             }));
         };
     }, [hasWriterCloseRisk]);
+
+    useEffect(() => {
+        if (!operationToast) return undefined;
+        const timerId = window.setTimeout(() => {
+            setOperationToast(current => (current?.id === operationToast.id ? null : current));
+        }, 5000);
+        return () => window.clearTimeout(timerId);
+    }, [operationToast]);
 
     useEffect(() => {
         const active = isAnalyzing;
@@ -593,7 +621,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 const now = new Date().toISOString();
 
                 for (const draft of localDrafts) {
-                    if (draft.status === 'completed' || draft.status === 'unavailable') {
+                    const currentDraft = getAnalysisResumeDraft(draft.jobId);
+                    if (!currentDraft) {
+                        continue;
+                    }
+                    if (currentDraft.status === 'completed' || currentDraft.status === 'unavailable') {
                         continue;
                     }
                     const remote = remoteDrafts.find(item => item.job_id === draft.jobId);
@@ -622,10 +654,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         continue;
                     }
 
-                    const keepLocalCancellation = remote.status === 'active'
-                        && (draft.status === 'cancelled' || draft.status === 'stopped');
+                    const keepLocalCancellation = (remote.status === 'active' || remote.status === 'cancelled')
+                        && (currentDraft.status === 'cancelled' || currentDraft.status === 'stopped');
                     const nextStatus: AnalysisResumeDraftStatus = keepLocalCancellation
-                        ? draft.status
+                        ? currentDraft.status
                         : remote.status === 'cancelled'
                         ? 'cancelled'
                         : remote.status === 'active'
@@ -635,37 +667,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 : 'failed';
                     const resumeEligible = Boolean(remote.resume_supported) && Number(remote.completed_chunk_count || 0) > 0;
                     const nextDraft: AnalysisResumeDraft = {
-                        ...draft,
+                        ...currentDraft,
                         status: nextStatus,
                         updatedAt: remote.updated_at || now,
-                        stage: remote.stage || draft.stage,
-                        lastMessage: remote.last_progress?.message || draft.lastMessage,
+                        stage: remote.stage || currentDraft.stage,
+                        lastMessage: remote.last_progress?.message || currentDraft.lastMessage,
                         lastProgress: typeof remote.last_progress?.progress === 'number'
                             ? remote.last_progress.progress
-                            : draft.lastProgress,
-                        transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || draft.transcriptReady),
-                        errorMessage: remote.last_error || (resumeEligible ? undefined : draft.errorMessage),
+                            : currentDraft.lastProgress,
+                        transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || currentDraft.transcriptReady),
+                        errorMessage: remote.last_error || (resumeEligible ? undefined : currentDraft.errorMessage),
                         resumeEligible,
-                        resumeUnavailableReason: resumeEligible ? undefined : draft.resumeUnavailableReason,
+                        resumeUnavailableReason: resumeEligible ? undefined : currentDraft.resumeUnavailableReason,
                         completedChunkCount: Number(remote.completed_chunk_count || 0),
                     };
-                    const currentDraft = getAnalysisResumeDraft(draft.jobId);
-                    if (!currentDraft) {
-                        continue;
-                    }
-                    if (currentDraft.status === 'completed' || currentDraft.status === 'unavailable') {
-                        continue;
-                    }
                     if (
-                        nextDraft.status !== draft.status
-                        || nextDraft.updatedAt !== draft.updatedAt
-                        || nextDraft.stage !== draft.stage
-                        || nextDraft.lastMessage !== draft.lastMessage
-                        || nextDraft.lastProgress !== draft.lastProgress
-                        || nextDraft.transcriptReady !== draft.transcriptReady
-                        || nextDraft.errorMessage !== draft.errorMessage
-                        || nextDraft.resumeEligible !== draft.resumeEligible
-                        || nextDraft.completedChunkCount !== draft.completedChunkCount
+                        nextDraft.status !== currentDraft.status
+                        || nextDraft.updatedAt !== currentDraft.updatedAt
+                        || nextDraft.stage !== currentDraft.stage
+                        || nextDraft.lastMessage !== currentDraft.lastMessage
+                        || nextDraft.lastProgress !== currentDraft.lastProgress
+                        || nextDraft.transcriptReady !== currentDraft.transcriptReady
+                        || nextDraft.errorMessage !== currentDraft.errorMessage
+                        || nextDraft.resumeEligible !== currentDraft.resumeEligible
+                        || nextDraft.completedChunkCount !== currentDraft.completedChunkCount
                     ) {
                         upsertAnalysisResumeDraft(nextDraft);
                     }
@@ -1260,6 +1285,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setProgress(0);
         setRawStatusMessage('');
         setLastRealProgressAt(getNowMs());
+        setIsAnalysisStopConfirmOpen(false);
+        setAnalysisStopRequestedAction(null);
+        setIsRequestingAnalysisStop(false);
+        analysisStopActionRef.current = null;
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
         setCompletionNotice(null);
@@ -1470,7 +1499,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         transcriptReadyRef.current = true;
                         setTranscriptReady(true);
                     }
-                    if (parsed.message) {
+                    if (parsed.message && !analysisStopActionRef.current) {
                         setRawStatusMessage(parsed.message);
                         setStatusMessage(translateStatusMessage(parsed.message));
                         saveResumeDraft('active', {
@@ -1488,6 +1517,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         throw new Error(parsed.message || '분석 중 오류가 발생했습니다.');
                     }
                     if (parsed.status === 'cancelled') {
+                        if (!analysisStopActionRef.current && (parsed.action === 'cancel' || parsed.action === 'stop')) {
+                            analysisStopActionRef.current = parsed.action;
+                        }
                         analysisCancelledRef.current = true;
                         throw new DOMException(parsed.message || '분석 요청을 중단했습니다.', 'AbortError');
                     }
@@ -1576,12 +1608,22 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             }
         } catch (error) {
             if (analysisCancelledRef.current || (error instanceof DOMException && error.name === 'AbortError')) {
+                const requestedStopAction = analysisStopActionRef.current;
                 const existingDraft = analysisResumeDraftIdRef.current
                     ? getAnalysisResumeDraft(analysisResumeDraftIdRef.current)
                     : undefined;
-                if (existingDraft?.status !== 'cancelled' && existingDraft?.status !== 'stopped') {
-                    saveResumeDraft('cancelled', {
-                        stage: 'cancelled',
+                if (requestedStopAction === 'cancel') {
+                    const cancelledJobId = analysisResumeDraftIdRef.current;
+                    if (file) {
+                        suppressResumeCandidateKey(getResumeDraftKey(toResumeDraftFileKey(file)));
+                    }
+                    if (cancelledJobId) {
+                        removeAnalysisResumeDraft(cancelledJobId);
+                        queuePendingAnalysisDraftCleanup(cancelledJobId);
+                    }
+                } else if (existingDraft?.status !== 'cancelled' && existingDraft?.status !== 'stopped') {
+                    saveResumeDraft('stopped', {
+                        stage: 'stopped',
                         lastMessage: existingDraft?.lastMessage || rawStatusMessage || statusMessage,
                         lastProgress: typeof existingDraft?.lastProgress === 'number'
                             ? existingDraft.lastProgress
@@ -1591,7 +1633,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 setResumeDrafts(listAnalysisResumeDrafts());
                 setProgress(0);
                 setRawStatusMessage('');
-                setStatusMessage('분석을 중단했습니다.');
+                setStatusMessage(requestedStopAction === 'cancel'
+                    ? '분석을 취소했습니다.'
+                    : '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.');
+                showOperationToast(requestedStopAction === 'cancel'
+                    ? '분석을 취소했습니다.'
+                    : '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.', 'warning');
                 setErrorMessage('');
                 return;
             }
@@ -1612,50 +1659,95 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             analysisAbortControllerRef.current = null;
             analysisJobIdRef.current = null;
             analysisResumeDraftIdRef.current = null;
+            analysisStopActionRef.current = null;
             setIsAnalyzing(false);
+            setIsAnalysisStopConfirmOpen(false);
+            setAnalysisStopRequestedAction(null);
+            setIsRequestingAnalysisStop(false);
             setAnalysisStartedAt(null);
             setAnalysisPhase(current => (current === 'error' ? 'error' : 'idle'));
         }
     };
 
-    const handleCancelAnalysis = async () => {
+    const handleOpenAnalysisStopConfirm = () => {
         if (!isAnalyzing) return;
-        if (!window.confirm('진행 중인 분석을 취소할까요?')) return;
+        setIsAnalysisStopConfirmOpen(true);
+        setErrorMessage('');
+    };
+
+    const handleStopAnalysis = async (action: AnalysisStopAction) => {
+        if (!isAnalyzing || analysisStopRequestedAction) return;
 
         const jobId = analysisJobIdRef.current;
-        let cancelAccepted = false;
-        if (jobId) {
-            try {
-                const apiBase = await getApiBase();
-                const response = await fetch(`${apiBase}/api/analyze/${encodeURIComponent(jobId)}/cancel`, { method: 'POST' });
-                const payload = await response.json().catch(() => null) as { cancel_requested?: boolean } | null;
-                cancelAccepted = response.ok && Boolean(payload?.cancel_requested);
-            } catch {
-                cancelAccepted = false;
-            }
-        }
+        setIsRequestingAnalysisStop(true);
+        setAnalysisStopRequestedAction(action);
+        analysisStopActionRef.current = action;
+        const pendingMessage = action === 'stop'
+            ? '분석을 중지하고 있습니다. 현재 처리 중인 구간이 끝나면 이어하기 기록으로 남깁니다.'
+            : '분석을 취소하고 있습니다. 현재 처리 중인 구간이 끝나면 이어하기 기록을 제거합니다.';
+        setStatusMessage(pendingMessage);
 
-        if (jobId && !cancelAccepted) {
-            setStatusMessage('취소할 분석을 찾지 못했습니다.');
+        if (!jobId) {
+            analysisCancelledRef.current = true;
+            analysisAbortControllerRef.current?.abort();
+            analysisInFlightRef.current = false;
+            setIsAnalyzing(false);
+            setAnalysisPhase('idle');
+            setProgress(0);
+            setErrorMessage('');
+            setRawStatusMessage('');
+            setIsAnalysisStopConfirmOpen(false);
+            setAnalysisStopRequestedAction(null);
+            setIsRequestingAnalysisStop(false);
+            analysisStopActionRef.current = null;
+            setStatusMessage(action === 'cancel' ? '분석을 취소했습니다.' : '분석을 중지했습니다.');
+            showOperationToast(action === 'cancel' ? '분석을 취소했습니다.' : '분석을 중지했습니다.', 'warning');
             return;
         }
 
-        saveResumeDraft('cancelled', {
-            jobId,
-            stage: 'cancelled',
-            lastMessage: rawStatusMessage || statusMessage,
-            lastProgress: progress,
-        });
+        let cancelAccepted = false;
+        try {
+            const apiBase = await getApiBase();
+            const response = await fetch(`${apiBase}/api/analyze/${encodeURIComponent(jobId)}/cancel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action }),
+            });
+            const payload = await response.json().catch(() => null) as { cancel_requested?: boolean } | null;
+            cancelAccepted = response.ok && Boolean(payload?.cancel_requested);
+        } catch {
+            // Keep cancelAccepted false.
+        } finally {
+            setIsRequestingAnalysisStop(false);
+        }
+
+        if (!cancelAccepted) {
+            setAnalysisStopRequestedAction(null);
+            analysisStopActionRef.current = null;
+            setIsAnalysisStopConfirmOpen(false);
+            setStatusMessage('중지할 분석을 찾지 못했습니다.');
+            showOperationToast('중지할 분석을 찾지 못했습니다.', 'neutral');
+            return;
+        }
+
+        if (action === 'stop') {
+            saveResumeDraft('stopped', {
+                jobId,
+                stage: 'stopped',
+                lastMessage: rawStatusMessage || statusMessage,
+                lastProgress: progress,
+            });
+        } else {
+            if (file) {
+                suppressResumeCandidateKey(getResumeDraftKey(toResumeDraftFileKey(file)));
+            }
+            removeAnalysisResumeDraft(jobId);
+            queuePendingAnalysisDraftCleanup(jobId);
+        }
         setResumeDrafts(listAnalysisResumeDrafts());
         analysisCancelledRef.current = true;
-        analysisAbortControllerRef.current?.abort();
-        analysisInFlightRef.current = false;
-        setIsAnalyzing(false);
-        setAnalysisPhase('idle');
-        setProgress(0);
         setErrorMessage('');
-        setRawStatusMessage('');
-        setStatusMessage('분석을 중단했습니다.');
+        setIsAnalysisStopConfirmOpen(false);
         window.setTimeout(() => {
             window.dispatchEvent(new CustomEvent(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT));
         }, 1_500);
@@ -1720,6 +1812,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
+            {operationToast && (
+                <div className={`operation-toast status-${operationToast.tone}`} role="status" aria-live="polite">
+                    <span className="font-semibold">{operationToast.message}</span>
+                    <button
+                        type="button"
+                        className="operation-toast-close"
+                        aria-label="알림 닫기"
+                        onClick={() => setOperationToast(null)}
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
             <div>
                 <h2 className="text-lg font-semibold text-foreground">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
             </div>
@@ -2114,7 +2219,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 </StatusBanner>
             )}
 
-            {statusMessage && !showAnalysisPanel && !completionNotice && (
+            {statusMessage && !showAnalysisPanel && !completionNotice && !operationToast && (
                 <StatusBanner tone="neutral">
                     {statusMessage}
                 </StatusBanner>
@@ -2165,35 +2270,89 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 />
                             </div>
                         </div>
-                        <div className="flex shrink-0 items-start gap-3">
-                            <div className="text-right">
-                                <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                    <span>경과 시간</span>
-                                    <span title="분석을 시작한 뒤 지난 시간입니다." className="inline-flex items-center">
-                                        <CircleHelp size={13} />
-                                    </span>
+                        <div className="flex shrink-0 flex-col gap-3 text-left sm:text-right">
+                            <div className="flex flex-wrap gap-5 sm:justify-end">
+                                <div>
+                                    <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                        <span>경과 시간</span>
+                                        <span title="분석을 시작한 뒤 지난 시간입니다." className="inline-flex items-center">
+                                            <CircleHelp size={13} />
+                                        </span>
+                                    </div>
+                                    <div className="mt-1 text-sm font-semibold text-primary">{elapsedLabel}</div>
                                 </div>
-                                <div className="mt-1 text-sm font-semibold text-primary">{elapsedLabel}</div>
-                            </div>
-                            <div className="text-right">
-                                <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                    <span>예상 시간</span>
-                                    <span title="대화록이 저장될 때까지의 추정 시간입니다. 참석자 구분과 정리, 요약은 포함하지 않습니다." className="inline-flex items-center">
-                                        <CircleHelp size={13} />
-                                    </span>
+                                <div>
+                                    <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                        <span>예상 시간</span>
+                                        <span title="대화록이 저장될 때까지의 추정 시간입니다. 참석자 구분과 정리, 요약은 포함하지 않습니다." className="inline-flex items-center">
+                                            <CircleHelp size={13} />
+                                        </span>
+                                    </div>
+                                    <div className="mt-1 text-sm font-semibold text-foreground">{transcriptEstimateLabel}</div>
                                 </div>
-                                <div className="mt-1 text-sm font-semibold text-foreground">{transcriptEstimateLabel}</div>
                             </div>
-                            <IconButton
-                                variant="outline"
-                                className="h-9 w-9 border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
-                                icon={<X size={16} />}
-                                onClick={handleCancelAnalysis}
-                                aria-label="분석 취소"
-                                title="분석 취소"
-                            />
+                            {!isAnalysisStopConfirmOpen && !analysisStopRequestedAction && (
+                                <Button
+                                    variant="outline"
+                                    className="h-8 px-3 text-xs sm:self-end"
+                                    onClick={handleOpenAnalysisStopConfirm}
+                                    disabled={isRequestingAnalysisStop}
+                                    title="분석을 중지하거나 취소합니다."
+                                >
+                                    <Square size={13} aria-hidden="true" />
+                                    중지/취소
+                                </Button>
+                            )}
+                            {analysisStopRequestedAction && (
+                                <div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground sm:self-end">
+                                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                                    {analysisStopRequestedAction === 'stop' ? '중지 중' : '취소 중'}
+                                </div>
+                            )}
                         </div>
                     </div>
+                    {isAnalysisStopConfirmOpen && (
+                        <div className="analysis-stop-panel" role="group" aria-label="분석 중지 또는 취소 방식 선택">
+                            <div className="min-w-0 flex-1">
+                                <div className="text-sm font-semibold text-foreground">분석을 어떻게 처리할까요?</div>
+                                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                    중지하면 같은 파일로 이어서 진행할 수 있고, 취소하면 이어하기 기록을 남기지 않습니다.
+                                </div>
+                            </div>
+                            <div className="analysis-stop-actions">
+                                <Button
+                                    variant="outline"
+                                    className="h-8 px-3 text-xs"
+                                    onClick={() => handleStopAnalysis('stop')}
+                                    disabled={isRequestingAnalysisStop}
+                                    aria-label="이어하기 기록을 남기고 분석 중지"
+                                    title="이어서 진행할 수 있게 중지"
+                                >
+                                    {isRequestingAnalysisStop && analysisStopRequestedAction === 'stop' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
+                                    중지
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    className="h-8 px-3 text-xs"
+                                    onClick={() => handleStopAnalysis('cancel')}
+                                    disabled={isRequestingAnalysisStop}
+                                    aria-label="이어하기 기록을 남기지 않고 분석 취소"
+                                    title="이어하기 기록을 남기지 않음"
+                                >
+                                    {isRequestingAnalysisStop && analysisStopRequestedAction === 'cancel' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                    취소
+                                </Button>
+                                <Button
+                                    variant="secondary"
+                                    className="h-8 px-3 text-xs"
+                                    onClick={() => setIsAnalysisStopConfirmOpen(false)}
+                                    disabled={isRequestingAnalysisStop}
+                                >
+                                    계속
+                                </Button>
+                            </div>
+                        </div>
+                    )}
                 </div>
             )}
 

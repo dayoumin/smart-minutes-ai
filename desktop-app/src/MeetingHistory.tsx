@@ -31,6 +31,8 @@ type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerCont
 type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
 type DiarizationStopAction = 'cancel' | 'defer';
 
+const getCurrentTimeMs = (): number => Date.now();
+
 interface SpeakerContributionStats {
     turnCount: number;
     charCount: number;
@@ -45,6 +47,12 @@ interface TopicGenerationRequestIntent {
 interface SavedFileToast {
     id: number;
     path: string | null;
+}
+
+interface OperationToast {
+    id: number;
+    message: string;
+    tone: 'warning' | 'neutral' | 'error';
 }
 
 interface ModelsStatusResponse {
@@ -455,6 +463,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [errorMessage, setErrorMessage] = useState('');
     const [noticeMessage, setNoticeMessage] = useState('');
     const [savedFileToast, setSavedFileToast] = useState<SavedFileToast | null>(null);
+    const [operationToast, setOperationToast] = useState<OperationToast | null>(null);
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
     const [detailTab, setDetailTab] = useState<DetailTab>('script');
     const [organizeTab, setOrganizeTab] = useState<OrganizeTab>('summary');
@@ -472,7 +481,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [generatingKind, setGeneratingKind] = useState<GenerationKind | null>(null);
     const [topicGenerationIntent, setTopicGenerationIntent] = useState<TopicGenerationRequestIntent | null>(null);
     const [diarizationStartedAt, setDiarizationStartedAt] = useState<number | null>(null);
-    const [diarizationNow, setDiarizationNow] = useState(() => Date.now());
+    const [diarizationNow, setDiarizationNow] = useState(getCurrentTimeMs);
     const [diarizationProgress, setDiarizationProgress] = useState<GenerationProgressResponse | null>(null);
     const [diarizationProgressJobId, setDiarizationProgressJobId] = useState<string | null>(null);
     const [isDiarizationStopConfirmOpen, setIsDiarizationStopConfirmOpen] = useState(false);
@@ -494,6 +503,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const diarizationProgressJobIdRef = useRef<string | null>(null);
     const diarizationAbortControllerRef = useRef<AbortController | null>(null);
     const diarizationStopActionRef = useRef<DiarizationStopAction | null>(null);
+    const diarizationFailureToastKeyRef = useRef<string | null>(null);
     const topicSectionRefs = useRef<Record<string, HTMLElement | null>>({});
     const topicSectionsSectionRef = useRef<HTMLDivElement | null>(null);
     const speakerSummarySectionRef = useRef<HTMLDivElement | null>(null);
@@ -503,8 +513,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
     const showSavedFileToast = React.useCallback((path: string | null) => {
         setSavedFileToast({
-            id: Date.now(),
+            id: getCurrentTimeMs(),
             path,
+        });
+    }, []);
+
+    const showOperationToast = React.useCallback((message: string, tone: OperationToast['tone'] = 'neutral') => {
+        setOperationToast({
+            id: getCurrentTimeMs(),
+            message,
+            tone,
         });
     }, []);
 
@@ -621,8 +639,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
     useEffect(() => {
         if (generatingKind !== 'diarization' && !diarizationProgress?.active) return undefined;
-        setDiarizationNow(Date.now());
-        const timerId = window.setInterval(() => setDiarizationNow(Date.now()), 1000);
+        setDiarizationNow(getCurrentTimeMs());
+        const timerId = window.setInterval(() => setDiarizationNow(getCurrentTimeMs()), 1000);
         return () => window.clearInterval(timerId);
     }, [diarizationProgress?.active, generatingKind]);
 
@@ -640,7 +658,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 if (!cancelled && payload.active) {
                     setDiarizationProgressJobId(jobId);
                     setDiarizationProgress(payload);
-                    setDiarizationStartedAt(parseGenerationStartedAt(payload.started_at) ?? Date.now());
+                    setDiarizationStartedAt(parseGenerationStartedAt(payload.started_at) ?? getCurrentTimeMs());
                 }
             } catch {
                 // Older backends will simply keep the local elapsed-time fallback visible.
@@ -684,6 +702,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                         progress: nextProgress,
                     };
                 });
+                if (payload.status === 'failed') {
+                    const failureKey = `${jobId}:${payload.updated_at ?? payload.message ?? 'failed'}`;
+                    if (diarizationFailureToastKeyRef.current !== failureKey) {
+                        diarizationFailureToastKeyRef.current = failureKey;
+                        const message = payload.message || '참석자 구분 중 오류가 발생했습니다. 다시 실행해 주세요.';
+                        showOperationToast(message, 'error');
+                        setErrorMessage(message);
+                    }
+                }
             } catch {
                 // Older backends will simply keep the local elapsed-time fallback visible.
             } finally {
@@ -699,13 +726,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             cancelled = true;
             window.clearInterval(timerId);
         };
-    }, [diarizationProgress?.active, diarizationProgressJobId, generatingKind]);
+    }, [diarizationProgress?.active, diarizationProgressJobId, generatingKind, showOperationToast]);
 
     useEffect(() => {
         if (noticeMessage === '참석자 이름을 저장했습니다.') {
             setNoticeMessage('');
         }
     }, [noticeMessage]);
+
+    useEffect(() => {
+        if (!operationToast) return undefined;
+        const timerId = window.setTimeout(() => {
+            setOperationToast(current => (current?.id === operationToast.id ? null : current));
+        }, 5000);
+        return () => window.clearTimeout(timerId);
+    }, [operationToast]);
 
     useEffect(() => {
         let cancelled = false;
@@ -947,10 +982,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         try {
             setErrorMessage('');
             setNoticeMessage('');
+            setOperationToast(null);
             setIsDiarizationStopConfirmOpen(false);
             diarizationStopActionRef.current = null;
+            diarizationFailureToastKeyRef.current = null;
             diarizationAbortControllerRef.current = abortController;
-            const startedAt = Date.now();
+            const startedAt = getCurrentTimeMs();
             setDiarizationStartedAt(startedAt);
             setDiarizationNow(startedAt);
             diarizationProgressJobIdRef.current = targetJobId;
@@ -972,7 +1009,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
             const data = await response.json() as GenerateDiarizationResponse;
             if (diarizationProgressJobIdRef.current === targetJobId) {
-                setDiarizationNow(Date.now());
+                setDiarizationNow(getCurrentTimeMs());
                 setDiarizationProgress({
                     active: false,
                     progress: 100,
@@ -1011,13 +1048,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 return;
             }
             if (diarizationProgressJobIdRef.current === targetJobId) {
-                setDiarizationNow(Date.now());
+                setDiarizationNow(getCurrentTimeMs());
+                const message = error instanceof Error ? error.message : '참석자 구분 실행 중 오류가 발생했습니다.';
                 setDiarizationProgress(current => ({
                     ...(current ?? {}),
                     active: false,
-                    message: error instanceof Error ? error.message : '참석자 구분 실행 중 오류가 발생했습니다.',
+                    message,
                     status: 'failed',
                 }));
+                showOperationToast(message, 'error');
             }
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
@@ -1045,7 +1084,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
         const finalMessage = action === 'defer'
             ? '참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.'
-            : '참석자 구분을 취소하고 있습니다.';
+            : '참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다.';
 
         try {
             setIsStoppingDiarization(true);
@@ -1062,7 +1101,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
             if (data.accepted === false) {
                 setIsDiarizationStopConfirmOpen(false);
-                setDiarizationNow(Date.now());
+                setDiarizationNow(getCurrentTimeMs());
                 setDiarizationProgress(current => ({
                     ...(current ?? {}),
                     active: false,
@@ -1078,7 +1117,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
             diarizationAbortControllerRef.current?.abort();
             setIsDiarizationStopConfirmOpen(false);
-            setDiarizationNow(Date.now());
+            setDiarizationNow(getCurrentTimeMs());
             setDiarizationProgress(current => ({
                 ...(current ?? {}),
                 active: data.active ?? true,
@@ -1088,7 +1127,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             }));
             await updateSelectedMeeting(currentMeeting => ({
                 diarizationApplied: false,
-                diarizationRequested: action === 'defer',
+                diarizationRequested: true,
                 diarizationSkipped: false,
                 diarizationDeferred: action === 'defer',
                 diarizationSkipMessage: '',
@@ -1099,13 +1138,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { speakerContextSummaries: 'not_started' }),
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
-                setNoticeMessage(data.message || finalMessage);
+                showOperationToast(data.message || finalMessage, 'warning');
             }
         } catch (error) {
             diarizationStopActionRef.current = null;
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '참석자 구분을 중지하지 못했습니다.');
+                const message = error instanceof Error ? error.message : '참석자 구분을 중지하지 못했습니다.';
+                setErrorMessage(message);
+                showOperationToast(message, 'error');
             }
         } finally {
             setIsStoppingDiarization(false);
@@ -1238,7 +1279,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (selectedMeeting?.diarizationSkipped) return { label: '제외', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
         if (selectedMeeting?.diarizationDeferred) return { label: '별도 실행', tone: 'neutral' };
-        if (selectedMeeting?.diarizationRequested === false || diarizationApplied === false) return { label: '미사용', tone: 'neutral' };
+        if (diarizationApplied === false) return { label: '별도 실행', tone: 'neutral' };
         return { label: '별도 실행', tone: 'neutral' };
     })();
     const diarizationStatusTitle = selectedMeeting?.diarizationSkipped
@@ -1252,7 +1293,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         && hasTranscriptData
         && !selectedMeeting?.diarizationApplied
         && !selectedMeeting?.diarizationSkipped
-        && selectedMeeting?.diarizationRequested !== false,
     );
     const diarizationActionMeta = canGenerateDiarization
         ? (diarizationIsRunning ? '구분 중' : '별도 실행')
@@ -2197,13 +2237,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             className="mt-3 h-8 px-3 text-xs"
                             onClick={handleOpenDiarizationStopConfirm}
                             disabled={isStoppingDiarization}
+                            title="참석자 구분을 중지하거나 취소합니다."
                         >
                             <Square size={13} aria-hidden="true" />
-                            취소
+                            중지/취소
                         </Button>
                     )}
                     {diarizationStopRequested && (
-                        <div className="mt-3 text-xs font-medium text-muted-foreground">중지 중</div>
+                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
+                            <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                            중지 중
+                        </div>
                     )}
                 </div>
             </div>
@@ -2212,7 +2256,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     <div className="min-w-0 flex-1">
                         <div className="text-sm font-semibold text-foreground">참석자 구분을 어떻게 처리할까요?</div>
                         <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                            중지하면 원본 음성이 남아 있을 때 다시 실행할 수 있고, 취소하면 이 회의록에서는 참석자 구분을 사용하지 않습니다.
+                            중지하면 원본 음성이 남아 있을 때 다시 실행할 수 있고, 취소하면 이번 실행만 멈춥니다.
                         </div>
                     </div>
                     <div className="diarization-stop-actions">
@@ -2305,6 +2349,19 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                         className="save-toast-close"
                         aria-label="저장 알림 닫기"
                         onClick={() => setSavedFileToast(null)}
+                    >
+                        <X size={14} />
+                    </button>
+                </div>
+            )}
+            {operationToast && (
+                <div className={`operation-toast status-${operationToast.tone}`} role="status" aria-live="polite">
+                    <span className="font-semibold">{operationToast.message}</span>
+                    <button
+                        type="button"
+                        className="operation-toast-close"
+                        aria-label="알림 닫기"
+                        onClick={() => setOperationToast(null)}
                     >
                         <X size={14} />
                     </button>
@@ -2424,13 +2481,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 <Button
                                                     variant="outline"
                                                     className="meeting-status-run-button"
-                                                    aria-label={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 취소' : '참석자 구분 실행'}
-                                                    title={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 취소' : '참석자 구분 실행'}
+                                                    aria-label={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                    title={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
                                                     disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : generatingKind !== null}
                                                     onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
                                                 >
-                                                    {diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                                    {diarizationStopRequested ? '중지 중' : diarizationIsRunning ? '취소' : '실행'}
+                                                    {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
+                                                    {diarizationStopRequested ? '중지 중' : diarizationIsRunning ? '중지/취소' : '실행'}
                                                 </Button>
                                             )}
                                         </span>
@@ -2504,8 +2561,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 <h3 className="section-title mb-3">대화록</h3>
                                 {selectedMeeting.diarizationApplied ? (
                                     <div className="detail-inline-note">참석자 구분이 반영된 대화록입니다.</div>
-                                ) : selectedMeeting.diarizationRequested === false && !diarizationIsRunning ? (
-                                    <div className="detail-inline-note">이 회의록에서는 참석자 구분을 사용하지 않습니다.</div>
                                 ) : (
                                     <div className="ai-action-item">
                                         <div className="min-w-0">
@@ -2515,13 +2570,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         <Button
                                             variant="outline"
                                             className="detail-action-button"
-                                            aria-label={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 취소' : '참석자 구분 실행'}
-                                            title={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 취소' : '참석자 구분 실행'}
+                                            aria-label={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                            title={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
                                             disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : (!canGenerateDiarization || generatingKind !== null)}
                                             onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
                                         >
-                                            {diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                            {diarizationStopRequested ? '중지 중' : diarizationIsRunning ? '취소' : '실행'}
+                                            {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
+                                            {diarizationStopRequested ? '중지 중' : diarizationIsRunning ? '중지/취소' : '실행'}
                                         </Button>
                                     </div>
                                 )}

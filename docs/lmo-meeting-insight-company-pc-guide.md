@@ -54,9 +54,9 @@ models\
 
 Cohere는 과거 벤치마크/비교 후보로만 남기고, 새 배포 기준은 `models\faster-whisper-large-v3`입니다.
 
-## 화자 분리 모델
+## 참석자 구분 모델
 
-화자 분리 모델은 `models\speaker-diarization-community-1` 아래에 둡니다. portable 패키지를 만들 때 현재 PC에 모델이 있으면 자동으로 아래 구조로 복사됩니다.
+참석자 구분 모델은 `models\speaker-diarization-community-1` 아래에 둡니다. portable 패키지를 만들 때 현재 PC에 모델이 있으면 자동으로 아래 구조로 복사됩니다.
 
 ```text
 lmo_audio\models\speaker-diarization-community-1\config.yaml
@@ -65,7 +65,7 @@ lmo_audio\models\speaker-diarization-community-1\segmentation\pytorch_model.bin
 lmo_audio\models\speaker-diarization-community-1\plda\plda.npz
 ```
 
-기존처럼 `models` 바로 아래에 화자 분리 파일을 두는 방식도 당분간 함께 인식하지만, 새 배포 기준은 모델별 폴더입니다.
+기존처럼 `models` 바로 아래에 참석자 구분 파일을 두는 방식도 당분간 함께 인식하지만, 새 배포 기준은 모델별 폴더입니다.
 
 ## 다른 STT 모델
 

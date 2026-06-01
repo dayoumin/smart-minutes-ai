@@ -98,7 +98,7 @@ backend\.venv-asr-qwen3\Scripts\python.exe scripts\run_asr_benchmark.py --engine
 현재 판단:
 
 - Qwen3-ASR는 STT 후보 모델로 계속 비교한다.
-- ForcedAligner는 timestamp 보조 모델로 분리한다. 발화 기록과 화자별 정리에 쓰려면 단어 단위 결과를 문장 단위로 병합해야 한다.
+- ForcedAligner는 timestamp 보조 모델로 분리한다. 발화 기록과 참석자별 정리에 쓰려면 단어 단위 결과를 문장 단위로 병합해야 한다.
 - 현재 PC는 CUDA가 없어 `dtype=float32`, `device_map=cpu`, `max_inference_batch_size=1`로 테스트한다. GPU 장비에서는 공식 예시처럼 `bfloat16`/vLLM을 별도 비교한다.
 
 ## 판정 기준
@@ -113,5 +113,5 @@ backend\.venv-asr-qwen3\Scripts\python.exe scripts\run_asr_benchmark.py --engine
 - GPU/CPU 메모리 부담
 - 앱 포터블 배포 난이도
 
-Qwen3-ASR가 Cohere보다 원문 품질이 좋더라도, ForcedAligner timestamp 품질이 낮으면 화자별 정리 품질이 흔들릴 수 있다.
+Qwen3-ASR가 Cohere보다 원문 품질이 좋더라도, ForcedAligner timestamp 품질이 낮으면 참석자별 정리 품질이 흔들릴 수 있다.
 따라서 최종 채택 전에는 `STT 원문만 비교`와 `STT + alignment 비교`를 분리해서 본다.

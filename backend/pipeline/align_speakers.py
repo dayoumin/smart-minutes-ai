@@ -2,6 +2,13 @@ import re
 from typing import List, Dict
 
 
+def _display_speaker_name(speaker: str) -> str:
+    match = re.match(r"^SPEAKER[_\s-]?(\d+)$", str(speaker or ""), re.IGNORECASE)
+    if match:
+        return f"참석자{int(match.group(1)) + 1:02d}"
+    return str(speaker or "참석자").strip() or "참석자"
+
+
 def _split_text_by_weights(text: str, weights: List[float]) -> List[str]:
     if not text.strip() or not weights:
         return [text]
@@ -44,8 +51,8 @@ def align_segments_with_speakers(
     speaker_segments: List[Dict]
 ) -> List[Dict]:
     """
-    STT 문장 구간과 화자 구간의 overlap을 계산하여
-    각 STT 문장에 화자 정보를 매칭한다.
+    STT 문장 구간과 참석자 구간의 overlap을 계산하여
+    각 STT 문장에 참석자 정보를 매칭한다.
     """
     aligned_segments = []
     
@@ -89,14 +96,14 @@ def align_segments_with_speakers(
                 aligned_seg["end"] = end
                 aligned_seg["text"] = text_chunk
                 aligned_seg["speaker"] = speaker
-                aligned_seg["speaker_name"] = speaker.replace("SPEAKER_", "화자")
+                aligned_seg["speaker_name"] = _display_speaker_name(speaker)
                 aligned_segments.append(aligned_seg)
             continue
 
         _overlap, _start, _end, best_speaker = max(overlaps, key=lambda item: item[0])
         aligned_seg = t_seg.copy()
         aligned_seg["speaker"] = best_speaker
-        aligned_seg["speaker_name"] = best_speaker.replace("SPEAKER_", "화자")
+        aligned_seg["speaker_name"] = _display_speaker_name(best_speaker)
         aligned_segments.append(aligned_seg)
         
     return aligned_segments

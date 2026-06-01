@@ -215,6 +215,43 @@ function Test-CleanPortableSurface([string]$PortableRoot) {
     Add-Result "runtime folders excluded" ($presentRuntimePaths.Count -eq 0) ($presentRuntimePaths -join ", ")
 }
 
+function Test-ManagedReleasePortablePath([string]$PortableRoot) {
+    $portableFullPath = Normalize-FullPath $PortableRoot
+    $releaseRoot = Normalize-FullPath (Join-Path $RepoRoot "releases")
+    return $portableFullPath.StartsWith($releaseRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Remove-PortableRuntimeArtifacts([string]$PortableRoot) {
+    $portableFullPath = Normalize-FullPath $PortableRoot
+    if (-not (Test-ManagedReleasePortablePath $portableFullPath)) {
+        return @("skipped: external portable dir")
+    }
+
+    $runtimePaths = @(
+        "logs",
+        "backend\outputs",
+        "backend\temp",
+        "backend\logs",
+        "backend\__pycache__"
+    )
+    $removedPaths = @()
+
+    foreach ($relativePath in $runtimePaths) {
+        $targetPath = Join-Path $PortableRoot $relativePath
+        $targetFullPath = Normalize-FullPath $targetPath
+        if (-not $targetFullPath.StartsWith($portableFullPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+            throw "Runtime cleanup target escaped portable root: $targetFullPath"
+        }
+
+        if (Test-Path -LiteralPath $targetFullPath) {
+            Remove-Item -LiteralPath $targetFullPath -Recurse -Force -ErrorAction Stop
+            $removedPaths += $relativePath
+        }
+    }
+
+    return $removedPaths
+}
+
 function Stop-PortableProcesses([string]$PortableRoot) {
     Get-Process -ErrorAction SilentlyContinue |
         Where-Object {
@@ -491,6 +528,13 @@ finally {
         Stop-Process -Id $backendProcess.Id -Force -ErrorAction SilentlyContinue
     }
     Stop-PortableProcesses $portablePath
+    try {
+        $removedRuntimeArtifacts = @(Remove-PortableRuntimeArtifacts $portablePath)
+        Add-Result "runtime artifact cleanup" $true $(if ($removedRuntimeArtifacts.Count -gt 0) { $removedRuntimeArtifacts -join ", " } else { "none" })
+    }
+    catch {
+        Add-Result "runtime artifact cleanup" $false $_.Exception.Message
+    }
 }
 
 $Results | Format-Table -AutoSize

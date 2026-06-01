@@ -104,13 +104,13 @@ def _topic_section_text_items(sections: list[dict]) -> list[str]:
 
 
 def _participant_summary_text_items(items: list[dict]) -> list[str]:
-    lines = ["4. 발언자별 요약 AI 초안"]
+    lines = ["4. 참석자별 요약 AI 초안"]
     if not items:
         lines.append("- 없음")
         return lines
 
     for item in items:
-        lines.append(f"- {item.get('participant') or '발언자'}")
+        lines.append(f"- {item.get('participant') or '참석자'}")
         if item.get("summary"):
             lines.append(f"  {item.get('summary')}")
         for point in item.get("key_points", []) or []:

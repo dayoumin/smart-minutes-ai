@@ -390,7 +390,7 @@ def _fallback_speaker_context_from_segments(transcript_segments: list[dict]) -> 
             "summary": summary,
             "key_points": key_points,
             "actions": [],
-            "needs_check": ["자동 발언자별 정리가 충분하지 않아 원문 발언 기준으로 임시 정리했습니다."],
+            "needs_check": ["자동 참석자별 정리가 충분하지 않아 원문 발언 기준으로 임시 정리했습니다."],
         })
     return summaries
 
@@ -524,23 +524,23 @@ def generate_speaker_context_summaries(
     speaker_focused_text = _speaker_focused_transcript(transcript_segments)
 
     prompt = f"""You are a Korean meeting-minutes assistant.
-Create speaker-by-speaker context summaries from the whole meeting context.
-Do not summarize each speaker mechanically from isolated utterances. Interpret each speaker's comments in relation to the overall discussion, other speakers, topics, decisions, and tasks.
-Use the speaker-focused excerpts to review each speaker's comments across the meeting, then use the topic sections and transcript context to avoid losing the overall flow.
+Create participant-by-participant context summaries from the whole meeting context.
+Do not summarize each participant mechanically from isolated utterances. Interpret each participant's comments in relation to the overall discussion, other participants, topics, decisions, and tasks.
+Use the participant-focused excerpts to review each participant's comments across the meeting, then use the topic sections and transcript context to avoid losing the overall flow.
 Return strict JSON only. Do not wrap it in Markdown.
-Use existing speaker labels unless a verified participant name is present in the transcript or summary.
-Do not invent speaker identities. Write all JSON values in Korean unless a source term must remain in English.
+Use existing participant labels unless a verified participant name is present in the transcript or summary.
+Do not invent participant identities. Write all JSON values in Korean unless a source term must remain in English.
 
 Required JSON schema:
 {{
   "speaker_context_summaries": [
     {{
-      "speaker": "Speaker 1",
-      "display_name": "Speaker 1 or verified participant name",
+      "speaker": "참석자01",
+      "display_name": "참석자01 or verified participant name",
       "role_in_meeting": "observed role in this meeting",
-      "summary": "context-aware summary of this speaker's contribution",
+      "summary": "context-aware summary of this participant's contribution",
       "key_points": ["important point in context"],
-      "actions": ["speaker-related task"],
+      "actions": ["participant-related task"],
       "needs_check": ["identity or context item that needs confirmation"]
     }}
   ]
@@ -552,7 +552,7 @@ Basic summary:
 Topic sections:
 {json.dumps(topic_sections or [], ensure_ascii=False)}
 
-Speaker-focused excerpts:
+Participant-focused excerpts:
 {speaker_focused_text}
 
 Transcript context:
@@ -565,7 +565,7 @@ Transcript context:
 
     retry_prompt = f"""Return only valid JSON with exactly one top-level key named "speaker_context_summaries".
 Do not return prose, markdown, or a single general summary.
-Create one item per speaker label found in the transcript.
+Create one item per participant label found in the transcript.
 Each item must include "speaker", "display_name", "role_in_meeting", "summary", "key_points", "actions", and "needs_check".
 
 Schema:
@@ -577,7 +577,7 @@ Basic summary:
 Topic sections:
 {json.dumps(topic_sections or [], ensure_ascii=False)}
 
-Speaker-focused excerpts:
+Participant-focused excerpts:
 {speaker_focused_text}
 
 Transcript context:

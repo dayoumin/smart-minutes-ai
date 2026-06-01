@@ -696,6 +696,14 @@
     @apply mt-0.5 text-xs text-muted-foreground;
   }
 
+  .diarization-stop-panel {
+    @apply mt-3 flex flex-col gap-3 rounded-[var(--radius-card)] border border-border bg-surface px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between;
+  }
+
+  .diarization-stop-actions {
+    @apply flex shrink-0 flex-wrap items-center gap-2;
+  }
+
   .detail-section-panel {
     @apply rounded-[var(--radius-card)] border border-border bg-background p-4 break-words;
   }
@@ -704,8 +712,12 @@
     @apply rounded-[var(--radius-card)] border border-border bg-background p-4 break-words;
   }
 
+  .detail-list {
+    @apply text-sm leading-relaxed text-foreground;
+  }
+
   .detail-inline-note {
-    @apply rounded-[var(--radius-card)] border border-border bg-background p-4 text-sm leading-relaxed text-muted-foreground break-words;
+    @apply rounded-[var(--radius-card)] border border-border/70 bg-surface px-3 py-2 text-sm leading-relaxed text-muted-foreground break-words;
   }
 
   .search-highlight {

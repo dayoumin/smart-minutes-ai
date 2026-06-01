@@ -18,14 +18,14 @@
   - STT 품질 보조에는 긴 개요보다 고유명사, 기관명, 제품명, 참석자명 같은 짧은 힌트를 우선 검토한다.
 - [x] 0-0-0-2순위: 회사 PC Ollama 미준비 상태 분리
   - 회사 PC에서는 Ollama 설치/모델 준비 여부가 불확실하므로 요약 AI를 필수 분석 조건으로 보지 않는다.
-  - 요약 AI가 준비되지 않았으면 STT, 화자 구분, 대화록 TXT/JSON은 완료하고 `generation_status.summary=skipped`로 남긴다.
+  - 요약 AI가 준비되지 않았으면 STT, 참석자 구분, 대화록 TXT/JSON은 완료하고 `generation_status.summary=skipped`로 남긴다.
   - UI에서는 `요약 AI 준비 필요`로 표시하고, Ollama가 준비된 PC에서 다시 전체 요약을 실행할 수 있게 둔다.
   - 주제별/참석자별 정리는 요약 AI 준비 후 실행하는 선택 정리로 본다.
 - [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
   - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization on` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
   - 2026-05-11 확인: 기존 `diarization off` 회귀 기준에서 ASR 벤치 15초 샘플은 `cpu_threads=4`, `num_workers=1` 조건으로 9.88초, 로컬 `/api/analyze` real SSE는 17.73초, portable sidecar real SSE는 35.41초에 완료됐다.
-  - 2026-05-11 추가 확인: `diarization on` 기준 portable 90초 샘플은 133.66초에 완료됐고, 화자 3명, 주제별 정리 3개, 발언자별 정리 3개가 생성됐다.
+  - 2026-05-11 추가 확인: `diarization on` 기준 portable 90초 샘플은 참석자 3명, 주제별 정리 3개, 참석자별 정리 3개가 생성됐고 133.66초에 완료됐다.
   - 결론: 600초대 지연의 현재 차단점은 해소됐다. 남은 검증은 회사 PC 이동 테스트와 긴 파일 실전 테스트로 분리한다.
   - 우선 확인 범위:
     - 현재 `backend\.venv`와 `backend\.venv-asr-faster-whisper`가 삭제된 로컬 Python 경로를 가리키는 문제 복구
@@ -69,20 +69,21 @@
   - `releases\lmo_audio` 폴더 전체를 옮긴 뒤 실행한다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
   - 기본 음성 인식 모델은 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
   - 복사 후 `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`가 보여야 한다.
-  - 화자 분리 모델은 `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
+  - 참석자 구분 모델은 `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
   - 2026-05-11 프로젝트 내부 company-smoke 복사본(`.codex-work\company-smoke\lmo_audio`) 기준으로 verify/export smoke와 15초 실제 분석은 통과했다. 실제 회사 PC 또는 회사 PC와 같은 별도 드라이브 이동 검증은 아직 남아 있다.
 - [ ] 2순위: 긴 파일 실전 테스트
   - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
   - 결과는 `releases\lmo_audio\backend\outputs`, 임시 파일은 `releases\lmo_audio\backend\temp`에 생성된다.
   - 실패 시 `releases\lmo_audio\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
   - 2026-05-11 프로젝트 내부 company-smoke 복사본 기준 104초 파일은 55.32초, 365초 파일은 139.25초에 완료됐다. 30분 이상 파일은 아직 미검증이다.
-  - 2026-05-12 점검: 현재 병목/리스크는 STT 청크보다 `pyannote` 화자 분리 단계다. diarization이 전체 WAV를 한 번에 메모리로 읽으므로 1시간/2시간 파일은 여기서 중단될 가능성을 우선 본다.
+  - 2026-05-12 점검: 현재 병목/리스크는 STT 청크보다 `pyannote` 참석자 구분 단계다. diarization이 전체 WAV를 한 번에 메모리로 읽으므로 1시간/2시간 파일은 여기서 중단될 가능성을 우선 본다.
   - 대응 방향: 긴 파일은 내부적으로 나눠서 처리하고, STT/중간 산출물을 저장한 뒤 다시 불러와 이어서 쓰는 구조를 우선 검토한다.
-  - 2026-05-14 실전 확인: 87분 MP4(`제142차 LMO 심사위원회  2026-04-24 14-19-07.mp4`)는 174개 chunk STT, 화자 분리, Ollama 요약, TXT/MD/DOCX/HWPX 저장까지 완료됐다. 전체 재개 실행은 약 5103초였고, 화자 분리 구간이 약 4658초로 가장 길었다.
-  - 후속 개선: 긴 파일 화자 분리 처리 시간을 줄일 수 있는지 별도 검토한다. 후보는 pyannote 입력 분할/병합, 장시간 WAV 처리 최적화, 중간 화자분리 결과 저장, 요약과 화자분리의 단계별 완료 UI 분리다.
-  - 후속 확인: Ollama 요약은 이번 실행에서 성공했지만 장시간 대화록 입력 시 실패/타임아웃/부분 요약 fallback 경로를 별도 검증한다. 요약 실패 시에도 화자분리 대화록 TXT/JSON은 먼저 제공되도록 유지한다.
-  - 2026-05-15 조정: 기본 분석 완료 기준은 대화록 저장으로 두고, 정리/요약은 회의 기록에서 별도 실행한다. 결과 화면은 대화록/발화자 구분/정리 상태를 분리해서 보여준다.
-  - 후속 개선: 발화자 구분을 별도 재실행할 수 있는 백그라운드 작업/SSE 진행률을 설계한다. 긴 파일에서는 pyannote window 분할과 화자 라벨 병합이 같이 필요하다.
+  - 2026-05-14 실전 확인: 87분 MP4(`제142차 LMO 심사위원회  2026-04-24 14-19-07.mp4`)는 174개 chunk STT, 참석자 구분, Ollama 요약, TXT/MD/DOCX/HWPX 저장까지 완료됐다. 전체 재개 실행은 약 5103초였고, 참석자 구분 구간이 약 4658초로 가장 길었다.
+  - 후속 개선: 긴 파일 참석자 구분 처리 시간을 줄일 수 있는지 별도 검토한다. 후보는 pyannote 입력 분할/병합, 장시간 WAV 처리 최적화, 중간 참석자 구분 결과 저장, 요약과 참석자 구분의 단계별 완료 UI 분리다.
+  - 후속 확인: Ollama 요약은 이번 실행에서 성공했지만 장시간 대화록 입력 시 실패/타임아웃/부분 요약 fallback 경로를 별도 검증한다. 요약 실패 시에도 참석자 구분 대화록 TXT/JSON은 먼저 제공되도록 유지한다.
+  - 2026-05-15 조정: 기본 분석 완료 기준은 대화록 저장으로 두고, 정리/요약은 회의 기록에서 별도 실행한다. 결과 화면은 대화록/참석자 구분/정리 상태를 분리해서 보여준다.
+  - 후속 개선: 참석자 구분을 별도 재실행할 수 있는 백그라운드 작업/SSE 진행률을 설계한다. 긴 파일에서는 pyannote window 분할과 참석자 라벨 병합이 같이 필요하다.
+  - 2026-05-27 조정: 별도 참석자 구분 실행 중 `취소`/`멈추기` UI와 백엔드 중단 요청은 추가했다. 다만 pyannote 호출 자체는 한 번에 실행되므로, 긴 파일에서 중간 지점부터 이어받는 진짜 체크포인트 재개는 window 분할/중간 결과 저장 설계에서 별도로 처리한다.
 - [ ] 2-1순위: 2~5시간 회의용 chunk/checkpoint 저장 구조 검증
   - 긴 회의 안정성은 AI 정리 품질 기능과 분리된 시스템 과제로 본다.
   - 시간대별 STT checkpoint, partial transcript, merged display segments, 부분 요약 결과를 재사용 가능한 산출물로 남긴다.
@@ -91,11 +92,11 @@
   - 관련 설계 문서: `docs/audio-long-file-processing-plan.md`
 - [ ] 3순위: 품질 기준 샘플셋 만들기
   - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
-  - STT 정확도, 화자 분리 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.
+  - STT 정확도, 참석자 구분 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.
 - [ ] 3-0순위: 인식 후 정리 품질 개선
   - 우선 모델 변경보다 `faster-whisper-large-v3 + pyannote` 결과를 회의록답게 정리하는 후처리를 개선한다.
   - 백엔드에서 `sentence_segments` 또는 `display_segments`를 만들어 화면, TXT, MD, DOCX, HWPX 내보내기까지 같은 문장 단위 대화록을 사용한다.
-  - 같은 화자 발화는 너무 잘게 쪼개지 않되, 조사/연결어로 끝난 조각은 다음 조각과 합치고 종결어미/문장 완료 지점에서 나눈다.
+  - 같은 참석자 발화는 너무 잘게 쪼개지 않되, 조사/연결어로 끝난 조각은 다음 조각과 합치고 종결어미/문장 완료 지점에서 나눈다.
   - STT 후처리용 사용자 사전/도메인 사전 후보를 검토한다: 기관명, 위원회명, 법령명, `해양수산LMO`, `위해성 심사`, `가이드라인` 같은 전문용어.
   - 반복/말더듬/중복 문장 정리와 문장부호 보정을 검토한다. 단, 원문 왜곡 위험이 있으므로 원문 세그먼트와 표시용 세그먼트를 분리한다.
   - 실제 구현 전에는 큰 관점(회의록 품질/사용자 흐름)과 작은 관점(세그먼트 병합 로직/내보내기 회귀)으로 agent review를 진행한다.
@@ -115,9 +116,11 @@
   - `summary`, `topicSections`, `speakerContextSummaries`의 입력 fingerprint와 무효화 기준을 프론트/백엔드에서 동일하게 유지한다.
   - 설계 문서: `docs/history-right-pane-ux-plan.md`
 - [ ] 3-0-4순위: 참석자별 맥락 정리 품질 기준
+  - 2026-05-26 현재는 참석자별 카드의 역할/발언량 표시만 먼저 개선했다. 생성 입력, 프롬프트, 스키마의 맥락 기반 개선은 별도 후속 작업으로 진행한다.
   - 참석자별 정리는 특정 참석자 발언만 모아 요약하지 않는다.
   - 참석자 발언, 직전/직후 발언, 관련 주제, 결정/할 일을 묶어 전체 흐름 안에서 역할과 입장을 정리한다.
-  - 이름 매핑 전에는 확정 참석자별 기록이 아니라 `화자 라벨 기준 AI 초안`으로 보고, 검토 필요 성격을 유지한다.
+  - 후속 구현 때는 참석자별 입력에 직전/직후 발언, 관련 주제, 결정, 할 일을 포함하고 동의/반박/결정 흐름이 반영되는지 테스트 대화록으로 검증한다.
+  - 이름 매핑 전에는 확정 참석자별 기록이 아니라 `자동 참석자 라벨 기준 AI 초안`으로 보고, 검토 필요 성격을 유지한다.
   - 설계 문서: `docs/history-right-pane-ux-plan.md`
 - [ ] 3-1순위: 내보내기 파일 실사용 검증
   - HWPX는 zip/XML 생성 smoke test뿐 아니라 한글 또는 HWPX 뷰어에서 실제 열기 검증을 한다.
@@ -137,7 +140,7 @@
   - denoise는 한국어 자음/말끝 손실 위험이 있어 마지막에 별도 검증한다.
 - [ ] 5순위: 실패/취소 UX 개선
   - 분석 중 취소, 실패한 청크만 재시도, partial result 저장, 임시 파일 정리를 추가한다.
-  - 화자 구분 모델 내부 진행률은 pyannote 호출 중 자세히 받을 수 없어 현재는 단계 전환 기준으로만 표시한다. 긴 파일에서 멈춘 것처럼 보이면 pyannote 세부 진행 이벤트 또는 별도 상태 heartbeat 설계를 후속 검토한다.
+  - 참석자 구분 모델 내부 진행률은 pyannote 호출 중 자세히 받을 수 없어 현재는 단계 전환 기준으로만 표시한다. 긴 파일에서 멈춘 것처럼 보이면 pyannote 세부 진행 이벤트 또는 별도 상태 heartbeat 설계를 후속 검토한다.
   - 큰 파일 업로드 저장은 현재 SSE 스트림 시작 전 처리된다. FastAPI 업로드 파일 수명 문제 때문에 먼저 저장하지만, 긴 파일에서 초기 진행률/취소가 비어 보일 수 있어 job 등록과 업로드 진행 상태를 분리하는 후속 개선이 필요하다.
 - [ ] 6순위: 최종 배포 zip 재생성
   - 모델 미포함/포함 기준을 명확히 하고, 회사 PC용 설명 md와 함께 다시 묶는다.
@@ -150,12 +153,12 @@
 - [ ] 최종 배포본은 프로젝트 안에서는 `releases\lmo_audio`에 만든다. 회사 PC에는 이 `lmo_audio` 폴더 자체를 그대로 가져간다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
 - [ ] 기본 음성 인식 모델은 별도로 받아서 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
-- [ ] 화자 분리 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
-- [x] 회사 전달용 portable 기본 묶음에서는 Qwen ASR와 Qwen ForcedAligner 모델을 제외한다. Qwen 비교/벤치 기록은 남기되 회사 PC 이동 패키지에는 `faster-whisper-large-v3`와 화자 분리 모델만 포함한다.
+- [ ] 참석자 구분 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
+- [x] 회사 전달용 portable 기본 묶음에서는 Qwen ASR와 Qwen ForcedAligner 모델을 제외한다. Qwen 비교/벤치 기록은 남기되 회사 PC 이동 패키지에는 `faster-whisper-large-v3`와 참석자 구분 모델만 포함한다.
 - [x] 2026-05-12 결정: 앱 기본 흐름과 설정 UI에서는 `faster-whisper-large-v3`만 사용한다. Qwen/Cohere는 기록과 벤치마크 코드만 보존하고 사용자 설정 후보로 다루지 않는다.
 - [ ] 회사에서 실행파일을 다시 만들 경우 모델은 빌드 전 원본 위치에 먼저 둔다.
   - Whisper 원본 위치: `models\faster-whisper-large-v3`
-  - 화자 분리 원본 위치: `models\speaker-diarization-community-1`
+  - 참석자 구분 원본 위치: `models\speaker-diarization-community-1`
   - 빌드 도구 확인: Python/venv/PyInstaller, `corepack`, `pnpm`, Rust/Cargo, Tauri 빌드 도구가 준비되어 있어야 한다.
   - Python이 여러 개면 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 사용할 Python을 명시한다.
   - 이후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1`를 실행하면 최종 실행 폴더 `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`로 복사된다.
@@ -238,7 +241,7 @@
 - [x] 2026-05-12 결정: 회사 PC/사용자 실행 흐름에서는 대체 STT 후보를 더 진행하지 않는다. 비교 기록과 benchmark 코드는 보존한다.
 - [x] 포터블 앱 모델 폴더 구조 정리
   - 사용자 실행 폴더 기준: `releases\lmo_audio\models\faster-whisper-large-v3`
-  - 화자 분리 모델: `releases\lmo_audio\models\speaker-diarization-community-1`
+  - 참석자 구분 모델: `releases\lmo_audio\models\speaker-diarization-community-1`
   - Qwen/Cohere 모델 폴더는 사용자 실행 경로에서 안내하지 않는다.
 - [x] Qwen3-ASR vs faster-whisper 최종 후보 테스트 종료
   - 테스트 계획: `docs/qwen-vs-faster-whisper-test-plan.md`
@@ -249,7 +252,7 @@
   - 2026-05-07 원문 복원 병합 확인: Qwen timestamp 그룹에 전체 전사 원문을 분배해 `마쳤 습니다` 같은 형태소 분리 표시는 해소. 90초 결과는 19개 segment, 한글 비율 99.6%, 처리 시간 209.38초.
   - 남은 확인: Qwen 내부 정렬용 segment와 사용자 표시용 문장 segment를 분리할지 검토한다.
   - 2026-05-07 표시용 segment 준비: Qwen 벤치마크 결과에 `display_segments` 추가. 90초 결과는 내부 19개, 표시 15개 segment. 표시용 시간은 근사값이므로 화자 정렬에는 쓰지 않는다.
-  - 2026-05-07 화자 정렬 확인: Qwen 내부 19개 segment를 pyannote 22개 speaker segment와 정렬. 진행자/발언자 구간은 대체로 분리됐지만 짧은 끼어들기 구간에서는 한 segment 안에 화자가 섞일 수 있음.
+  - 2026-05-07 참석자 정렬 확인: Qwen 내부 19개 segment를 pyannote 22개 speaker segment와 정렬. 진행자/참석자 구간은 대체로 분리됐지만 짧은 끼어들기 구간에서는 한 segment 안에 참석자가 섞일 수 있음.
   - 2026-05-07 speaker overlap 재분할 플래그 추가. 이번 90초 샘플은 내부 segment가 이미 짧아 추가 분할은 거의 없었고, 남은 문제는 원문 텍스트를 시간 그룹에 배분할 때 speaker boundary를 고려해야 하는 쪽으로 확인됨.
   - 2026-05-07 `test (4).mp4` 90초 비교: Qwen은 224.76초/한글 100%/내부 17개/표시 36개, faster-whisper는 62.56초/한글 99.2%/segment 38개. 이 샘플에서는 faster-whisper가 더 빠르고 발화 경계가 자연스러움.
   - 2026-05-07 `test (1).mp4` 90초 비교: Qwen은 약 276초/내부 23개/표시 47개, faster-whisper는 약 71초/segment 41개. 두 번째 실제 대화 샘플에서도 faster-whisper가 더 실용적.
@@ -281,10 +284,10 @@
 - [x] Cohere Transcribe, Pyannote Community-1, Ollama Gemma 준비 상태 확인 및 Cohere 데모 음성 STT 검증
 - [x] Ollama 실행 파일을 PATH 없이도 찾도록 백엔드 자동 탐색 추가
 - [x] 모델 폴더가 일부만 다운로드된 상태를 설치 완료로 오판하지 않도록 모델 payload 검사 강화
-- [x] 1순위: Cohere STT 결과를 화자 분리와 맞게 더 작은 시간 조각으로 만들기
+- [x] 1순위: Cohere STT 결과를 참석자 구분과 맞게 더 작은 시간 조각으로 만들기
   - 공식 `model.transcribe()` long-form 경로로 장문 한국어 품질을 개선
   - Cohere가 정확한 단어 타임스탬프를 제공하지 않으므로 텍스트 길이 기반 추정 세그먼트를 생성
-  - 추정 세그먼트가 여러 화자 구간과 겹치면 overlap 비중에 따라 텍스트를 나눠 화자 정렬
+  - 추정 세그먼트가 여러 참석자 구간과 겹치면 overlap 비중에 따라 텍스트를 나눠 참석자 정렬
   - API/UI에 `timingApproximate`를 전달해 시간표가 추정값임을 표시
 - [ ] Cohere 장문 STT 품질 후속 개선
   - 현재 일부 구간에서 로마자/영어식 오인식이 남는다.
@@ -317,7 +320,7 @@
   - 입력 파일 저장
   - ffmpeg WAV 변환
   - Cohere STT 30초 청크 분석
-  - Pyannote 화자 분리
+  - Pyannote 참석자 구분
   - Ollama Gemma 요약
   - JSON/TXT/MD/DOCX 결과 파일 생성 확인
 - [x] E2E 실패 지점이 있으면 원인을 `환경/모델/파이프라인/UI` 중 하나로 분류해서 다음 수정 항목으로 올리기

@@ -44,7 +44,7 @@ MODEL_SPECS = [
     ),
     ModelSpec(
         key="diarization",
-        label="화자 분리 모델",
+        label="참석자 구분 모델",
         repo_id="pyannote/speaker-diarization-community-1",
         local_dir="../models",
         aliases=("../models/speaker-diarization-community-1", "./models/diarization/speaker-diarization-community-1"),
@@ -58,7 +58,7 @@ MODEL_SPECS = [
         license_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
         manual_note=(
-            "화자 분리 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
+            "참석자 구분 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
             "기존 models\\speaker-diarization-community-1 폴더 방식도 함께 인식합니다."
         ),
     ),

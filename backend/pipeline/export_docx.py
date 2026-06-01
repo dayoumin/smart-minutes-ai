@@ -73,10 +73,10 @@ def export_docx(
 
     participant_summaries = summary.get("participant_summaries", []) or []
     if participant_summaries:
-        doc.add_heading(f"{section_no}. 발언자별 요약 AI 초안", level=1)
+        doc.add_heading(f"{section_no}. 참석자별 요약 AI 초안", level=1)
         section_no += 1
         for participant in participant_summaries:
-            doc.add_heading(participant.get("participant", "발언자"), level=2)
+            doc.add_heading(participant.get("participant", "참석자"), level=2)
             if participant.get("summary"):
                 doc.add_paragraph(participant.get("summary"))
             for point in participant.get("key_points", []) or []:

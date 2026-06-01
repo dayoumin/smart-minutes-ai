@@ -10,7 +10,49 @@ const meetingId = 'codex-detail-flow-simulation';
 const jobId = 'codex-detail-flow-job';
 const skippedMeetingId = 'codex-detail-flow-summary-skipped';
 const skippedJobId = 'codex-detail-flow-summary-skipped-job';
+const otherMeetingId = 'codex-detail-flow-other-meeting';
+const otherJobId = 'codex-detail-flow-other-job';
+const cancelMeetingId = 'codex-detail-flow-diarization-cancel';
+const cancelJobId = 'codex-detail-flow-diarization-cancel-job';
+const legacyParticipantMeetingId = 'codex-detail-flow-legacy-participant';
+const legacyParticipantJobId = 'codex-detail-flow-legacy-participant-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
+let releaseTopicSectionsResponse = () => {};
+const topicSectionsResponseDelay = new Promise(resolve => {
+  releaseTopicSectionsResponse = resolve;
+});
+let markTopicSectionsRequested = () => {};
+const topicSectionsRequested = new Promise(resolve => {
+  markTopicSectionsRequested = resolve;
+});
+let releaseDiarizationResponse = () => {};
+let diarizationStopRequested = false;
+let diarizationFinished = false;
+const diarizationResponseDelay = new Promise(resolve => {
+  releaseDiarizationResponse = () => {
+    diarizationFinished = true;
+    resolve();
+  };
+});
+let markDiarizationRequested = () => {};
+const diarizationRequested = new Promise(resolve => {
+  markDiarizationRequested = resolve;
+});
+const diarizationStopBodies = [];
+let releaseCancelDiarizationResponse = () => {};
+let cancelDiarizationStopRequested = false;
+let cancelDiarizationFinished = false;
+const cancelDiarizationResponseDelay = new Promise(resolve => {
+  releaseCancelDiarizationResponse = () => {
+    cancelDiarizationFinished = true;
+    resolve();
+  };
+});
+let markCancelDiarizationRequested = () => {};
+const cancelDiarizationRequested = new Promise(resolve => {
+  markCancelDiarizationRequested = resolve;
+});
+const cancelDiarizationStopBodies = [];
 
 const contentTypeByFormat = {
   hwpx: 'application/hwp+zip',
@@ -136,6 +178,12 @@ const seedMeeting = async (page) => {
           speaker: '화자1',
           text: 'AI 시스템 통제권과 지식 확장을 논의했습니다.',
         },
+        {
+          start: '00:00:09',
+          end: '00:00:14',
+          speaker: '화자2',
+          text: '후속 검토 일정이 필요합니다.',
+        },
       ],
       editedDisplaySegments: [
         {
@@ -143,7 +191,21 @@ const seedMeeting = async (page) => {
           end: '00:00:08',
           speaker: '화자1',
           displaySpeaker: '김검토',
-          text: '사용자가 다듬은 대화록입니다.',
+          text: '사용자가 다듬은 대화록입니다. 통제권과 지식 확장 기준을 길게 설명했습니다.',
+        },
+        {
+          start: '00:00:09',
+          end: '00:00:14',
+          speaker: '화자2',
+          displaySpeaker: '참석자02',
+          text: '후속 일정을 확인했습니다.',
+        },
+        {
+          start: '00:00:15',
+          end: '00:00:22',
+          speaker: '화자1',
+          displaySpeaker: '김검토',
+          text: '보안 보완 방안을 다시 검토하자고 제안했습니다.',
         },
       ],
       actions: [],
@@ -213,6 +275,171 @@ const seedSkippedSummaryMeeting = async (page) => {
   }, { skippedMeetingId, skippedJobId });
 };
 
+const seedOtherMeeting = async (page) => {
+  await page.evaluate(async ({ otherMeetingId, otherJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: otherMeetingId,
+      jobId: otherJobId,
+      date: '2026-05-08 00:01',
+      title: '다른 회의록',
+      summary: '다른 회의 요약입니다.',
+      participants: '화자1',
+      meetingPurpose: '진행 중 상태 분리 확인',
+      sourceFile: 'other.mp4',
+      topics: [],
+      topicSections: [],
+      speakerContextSummaries: [],
+      generationStatus: { summary: 'completed', topicSections: 'not_started', speakerContextSummaries: 'not_started' },
+      speakerLabels: {},
+      segments: [
+        {
+          start: '00:00:01',
+          end: '00:00:04',
+          speaker: '화자1',
+          text: '다른 회의 내용입니다.',
+        },
+      ],
+      editedDisplaySegments: [],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { otherMeetingId, otherJobId });
+};
+
+const seedDiarizationCancelMeeting = async (page) => {
+  await page.evaluate(async ({ cancelMeetingId, cancelJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: cancelMeetingId,
+      jobId: cancelJobId,
+      date: '2026-05-08 00:03',
+      title: '참석자 구분 취소 회의록',
+      summary: '참석자 구분 취소 흐름 확인용 회의록입니다.',
+      participants: '화자1',
+      meetingPurpose: '참석자 구분 취소 상태 확인',
+      sourceFile: 'cancel-diarization.mp4',
+      topics: [],
+      topicSections: [],
+      speakerContextSummaries: [],
+      generationStatus: { summary: 'completed', topicSections: 'not_started', speakerContextSummaries: 'not_started' },
+      speakerLabels: {},
+      segments: [
+        {
+          start: '00:00:01',
+          end: '00:00:04',
+          speaker: '화자1',
+          text: '참석자 구분 취소 상태를 확인합니다.',
+        },
+      ],
+      editedDisplaySegments: [],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { cancelMeetingId, cancelJobId });
+};
+
+const seedLegacyParticipantMeeting = async (page) => {
+  await page.evaluate(async ({ legacyParticipantMeetingId, legacyParticipantJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: legacyParticipantMeetingId,
+      jobId: legacyParticipantJobId,
+      date: '2026-05-08 00:02',
+      title: '기본 별칭 참석자 회의록',
+      summary: '기본 별칭 참석자 요약입니다.',
+      participants: '화자1',
+      meetingPurpose: '기본 별칭 fallback 확인',
+      sourceFile: 'legacy-participant.mp4',
+      topics: ['기본 별칭'],
+      topicSections: [],
+      speakerContextSummaries: [],
+      participantSummaries: [
+        {
+          participant: '참석자01',
+          summary: '기본 별칭 참석자 요약입니다.',
+          key_points: ['기본 별칭으로 저장된 참석자 요약'],
+          actions: [],
+        },
+      ],
+      generationStatus: { summary: 'completed', topicSections: 'completed', speakerContextSummaries: 'completed' },
+      speakerLabels: { '화자1': '김검토' },
+      segments: [],
+      editedDisplaySegments: [
+        {
+          start: '00:00:01',
+          end: '00:00:08',
+          speaker: '화자1',
+          displaySpeaker: '김검토',
+          text: '기본 별칭 fallback을 확인하는 대화록입니다.',
+        },
+      ],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { legacyParticipantMeetingId, legacyParticipantJobId });
+};
+
 const installRoutes = async (page) => {
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
@@ -228,29 +455,140 @@ const installRoutes = async (page) => {
     });
   });
 
-  await page.route(`**/api/outputs/${jobId}/generate-topic-sections`, route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
-      topics: ['AI 시스템 통제권'],
-      topic_sections: [
-        {
-          topic: 'AI 시스템 통제권',
-          summary: 'AI 시스템 통제권과 지식 확장 방향을 정리했습니다.',
-          evidence: ['화자1이 시스템 통제권을 언급했습니다.'],
-          actions: ['보안 보완 방안 확인'],
-        },
-        {
-          topic: '보안 보완 방안',
-          summary: '보안 보완 방안과 후속 확인 항목을 정리했습니다.',
-          evidence: ['보안 보완 방안을 확인하기로 했습니다.'],
-          actions: ['후속 확인 항목 정리'],
-        },
-      ],
-      generation_status: { topic_sections: 'completed', speaker_context_summaries: 'not_started' },
-      outputs: {},
-    }),
-  }));
+  await page.route(`**/api/outputs/${jobId}/generate-topic-sections`, async route => {
+    markTopicSectionsRequested();
+    await topicSectionsResponseDelay;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        topics: ['AI 시스템 통제권'],
+        topic_sections: [
+          {
+            topic: 'AI 시스템 통제권',
+            summary: 'AI 시스템 통제권과 지식 확장 방향을 정리했습니다.',
+            evidence: ['화자1이 시스템 통제권을 언급했습니다.'],
+            actions: ['보안 보완 방안 확인'],
+          },
+          {
+            topic: '보안 보완 방안',
+            summary: '보안 보완 방안과 후속 확인 항목을 정리했습니다.',
+            evidence: ['보안 보완 방안을 확인하기로 했습니다.'],
+            actions: ['후속 확인 항목 정리'],
+          },
+        ],
+        generation_status: { topic_sections: 'completed', speaker_context_summaries: 'not_started' },
+        outputs: {},
+      }),
+    });
+  });
+
+  await page.route(`**/api/outputs/${jobId}/generate-diarization`, async route => {
+    markDiarizationRequested();
+    await diarizationResponseDelay;
+    try {
+      return await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'diarization_deferred' }),
+      });
+    } catch {
+      return undefined;
+    }
+  });
+
+  await page.route(`**/api/outputs/${jobId}/generation-stop/diarization`, route => {
+    const stopBody = JSON.parse(route.request().postData() ?? '{}');
+    diarizationStopBodies.push(stopBody);
+    diarizationStopRequested = true;
+    const action = stopBody.action ?? 'defer';
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        job_id: jobId,
+        kind: 'diarization',
+        action,
+        status: 'stopping',
+        active: true,
+        running: true,
+        accepted: true,
+        message: action === 'defer'
+          ? '참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.'
+          : '참석자 구분을 취소하고 있습니다.',
+      }),
+    });
+  });
+
+  await page.route(`**/api/outputs/${jobId}/generation-progress/diarization`, route => {
+    const active = diarizationStopRequested && !diarizationFinished;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        job_id: jobId,
+        kind: 'diarization',
+        progress: active ? 30 : 30,
+        message: active
+          ? '참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.'
+          : '참석자 구분을 멈췄습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.',
+        status: active ? 'stopping' : 'deferred',
+        active,
+      }),
+    });
+  });
+
+  await page.route(`**/api/outputs/${cancelJobId}/generate-diarization`, async route => {
+    markCancelDiarizationRequested();
+    await cancelDiarizationResponseDelay;
+    try {
+      return await route.fulfill({
+        status: 409,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'diarization_cancelled' }),
+      });
+    } catch {
+      return undefined;
+    }
+  });
+
+  await page.route(`**/api/outputs/${cancelJobId}/generation-stop/diarization`, route => {
+    const stopBody = JSON.parse(route.request().postData() ?? '{}');
+    cancelDiarizationStopBodies.push(stopBody);
+    cancelDiarizationStopRequested = true;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        job_id: cancelJobId,
+        kind: 'diarization',
+        action: stopBody.action ?? 'cancel',
+        status: 'stopping',
+        active: true,
+        running: true,
+        accepted: true,
+        message: '참석자 구분을 취소하고 있습니다.',
+      }),
+    });
+  });
+
+  await page.route(`**/api/outputs/${cancelJobId}/generation-progress/diarization`, route => {
+    const active = cancelDiarizationStopRequested && !cancelDiarizationFinished;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        job_id: cancelJobId,
+        kind: 'diarization',
+        progress: active ? 30 : 30,
+        message: active
+          ? '참석자 구분을 취소하고 있습니다.'
+          : '참석자 구분을 취소했습니다.',
+        status: active ? 'stopping' : 'cancelled',
+        active,
+      }),
+    });
+  });
 
   await page.route(`**/api/outputs/${jobId}/generate-speaker-context`, route => route.fulfill({
     status: 200,
@@ -258,13 +596,22 @@ const installRoutes = async (page) => {
     body: JSON.stringify({
       speaker_context_summaries: [
         {
-          speaker: 'SPEAKER_00',
+          speaker: '화자1',
           display_name: '화자1',
           role_in_meeting: '주요 의견 제안자',
           summary: 'AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.',
           key_points: ['통제권 이동 방식 검토'],
           actions: ['보안 보완 방안 확인'],
           needs_check: ['실제 담당자 이름 확인'],
+        },
+        {
+          speaker: '화자2',
+          display_name: '화자2',
+          role_in_meeting: '일정 확인자',
+          summary: '후속 검토 일정 확인을 요청했습니다.',
+          key_points: ['후속 일정 확인'],
+          actions: ['검토 일정 공유'],
+          needs_check: [],
         },
       ],
       participant_summaries: [
@@ -324,19 +671,118 @@ const run = async () => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await seedMeeting(page);
     await seedSkippedSummaryMeeting(page);
+    await seedOtherMeeting(page);
+    await seedDiarizationCancelMeeting(page);
+    await seedLegacyParticipantMeeting(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
 
     await page.getByText('요약 AI 미준비 회의록').first().click();
     await page.getByText('요약 AI가 없어도 대화록은 확인할 수 있습니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('tab', { name: '기록 정리' }).isDisabled(), true);
 
+    await page.getByText('참석자 구분 취소 회의록').first().click();
+    await page.getByText('참석자 구분 취소 상태 확인').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).click();
+    await cancelDiarizationRequested;
+    const cancelRunningButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 취소' });
+    await cancelRunningButton.waitFor({ timeout: 10000 });
+    assert.equal(await cancelRunningButton.isDisabled(), false);
+    await cancelRunningButton.click();
+    const cancelPanel = page.locator('.diarization-stop-panel');
+    await cancelPanel.getByText('중지하면 원본 음성이 남아 있을 때 다시 실행할 수 있고, 취소하면 이 회의록에서는 참석자 구분을 사용하지 않습니다.').waitFor({ timeout: 10000 });
+    await cancelPanel.getByRole('button', { name: '취소' }).click();
+    await page.getByText('참석자 구분을 취소하고 있습니다.').first().waitFor({ timeout: 10000 });
+    releaseCancelDiarizationResponse();
+    assert.deepEqual(cancelDiarizationStopBodies, [{ action: 'cancel' }]);
+    const cancelledRecord = await page.evaluate(async ({ cancelMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get(cancelMeetingId);
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return record;
+    }, { cancelMeetingId });
+    assert.equal(cancelledRecord.diarizationRequested, false);
+    assert.equal(cancelledRecord.diarizationDeferred, false);
+    assert.equal(cancelledRecord.diarizationApplied, false);
+    await page.getByText('이 회의록에서는 참석자 구분을 사용하지 않습니다.').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).count(), 0);
+
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '기록 정리' }).click();
+
+    const diarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
+    await diarizationButton.click();
+    await diarizationRequested;
+    const stopDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 취소' });
+    await stopDiarizationButton.waitFor({ timeout: 10000 });
+    assert.equal(await stopDiarizationButton.isDisabled(), false);
+    await stopDiarizationButton.click();
+    await page.getByText('참석자 구분을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
+    await page.getByText('예상 남은 시간').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '중지' }).click();
+    await page.getByText('참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
+    const stoppingDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지 중' });
+    await stoppingDiarizationButton.waitFor({ timeout: 10000 });
+    assert.equal(await stoppingDiarizationButton.isDisabled(), true);
+    releaseDiarizationResponse();
+    assert.deepEqual(diarizationStopBodies, [{ action: 'defer' }]);
+    const deferredRecord = await page.evaluate(async ({ meetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get(meetingId);
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return record;
+    }, { meetingId });
+    assert.equal(deferredRecord.diarizationDeferred, true);
+    assert.equal(deferredRecord.diarizationApplied, false);
+    assert.equal(deferredRecord.diarizationRequested, true);
+    await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
+
     await page.getByRole('tab', { name: '주제별 정리' }).click();
 
     const topicButton = page.getByRole('button', { name: '주제별 정리' });
     await topicButton.click();
+    await topicSectionsRequested;
+    const runningTopicButton = page.getByRole('button', { name: '주제별 정리 중' });
+    await runningTopicButton.waitFor({ timeout: 10000 });
+    assert.equal(await runningTopicButton.isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '주제 추가 정리' }).isDisabled(), true);
+    assert.equal(await page.locator('button:has-text("정리 중") .animate-spin').count(), 1);
+    assert.equal(await page.locator('button:has-text("추가 정리") .animate-spin').count(), 0);
+
+    await page.getByText('다른 회의록').first().click();
+    await page.getByRole('heading', { name: '다른 회의록' }).waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByRole('tab', { name: '주제별 정리' }).click();
+    assert.equal(await page.getByRole('button', { name: '주제별 정리 중' }).count(), 0);
+    const otherTopicButton = page.getByRole('button', { name: '주제별 정리' });
+    assert.equal(await otherTopicButton.isDisabled(), true);
+    assert.equal(await page.locator('button:has-text("정리 중") .animate-spin').count(), 0);
+
+    await page.getByText('시뮬레이션 회의록').first().click();
+    await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByRole('tab', { name: '주제별 정리' }).click();
+    releaseTopicSectionsResponse();
     await page.getByText('AI 시스템 통제권과 지식 확장 방향을 정리했습니다.').waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '참석자별 정리' }).click();
     const speakerButton = page.getByRole('button', { name: '참석자별 정리', exact: true });
@@ -344,6 +790,15 @@ const run = async () => {
 
     await speakerButton.click();
     await page.getByText('AI 시스템 통제권과 지식 확장에 대한 핵심 의견을 제시했습니다.').waitFor({ timeout: 10000 });
+    await page.getByText('주요 의견 제안자').waitFor({ timeout: 10000 });
+    const speakerSummaryCards = page.locator('article.detail-subtle-card');
+    const kimCard = speakerSummaryCards.filter({ hasText: '김검토' });
+    const participantCard = speakerSummaryCards.filter({ hasText: '참석자02' });
+    assert.equal(await kimCard.count(), 1);
+    assert.equal(await participantCard.count(), 1);
+    await kimCard.getByText('발언 2회 · 텍스트 비중 83%').waitFor({ timeout: 10000 });
+    await participantCard.getByText('발언 1회 · 텍스트 비중 17%').waitFor({ timeout: 10000 });
+    await page.getByText('핵심 발언').first().waitFor({ timeout: 10000 });
 
     await page.getByRole('button', { name: '회의록 HWPX 파일을 다운로드 폴더에 저장' }).click();
     for (let attempt = 0; attempt < 50 && exportCalls.length === 0; attempt += 1) {
@@ -355,7 +810,16 @@ const run = async () => {
     assert.deepEqual(exportCalls, ['hwpx:save-copy']);
     assert.equal(exportBodies[0]?.meetingPurpose, 'AI 시스템 통제권 논의 정리');
     assert.equal(exportBodies[0]?.speakerLabels?.['화자1'], '김검토');
-    assert.equal(exportBodies[0]?.displaySegments?.[0]?.text, '사용자가 다듬은 대화록입니다.');
+    assert.equal(exportBodies[0]?.displaySegments?.[0]?.text, '사용자가 다듬은 대화록입니다. 통제권과 지식 확장 기준을 길게 설명했습니다.');
+
+    await page.getByText('기본 별칭 참석자 회의록').first().click();
+    await page.getByRole('heading', { name: '기본 별칭 참석자 회의록' }).waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByRole('tab', { name: '참석자별 정리' }).click();
+    const legacyCard = page.locator('article.detail-subtle-card').filter({ hasText: '참석자01' });
+    assert.equal(await legacyCard.count(), 1);
+    await legacyCard.getByText('발언 1회 · 텍스트 비중 100%').waitFor({ timeout: 10000 });
+
     console.log('ok - meeting detail flow simulation');
   } catch (error) {
     console.error(error);

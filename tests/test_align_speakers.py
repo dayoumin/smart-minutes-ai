@@ -23,6 +23,8 @@ class AlignSpeakersTest(unittest.TestCase):
         self.assertEqual(len(aligned), 2)
         self.assertEqual(aligned[0]["speaker"], "SPEAKER_00")
         self.assertEqual(aligned[1]["speaker"], "SPEAKER_01")
+        self.assertEqual(aligned[0]["speaker_name"], "참석자01")
+        self.assertEqual(aligned[1]["speaker_name"], "참석자02")
         self.assertEqual(aligned[0]["text"], "First speaker talks.")
         self.assertEqual(aligned[1]["text"], "Second speaker replies.")
         self.assertEqual(aligned[0]["end"], 5.0)

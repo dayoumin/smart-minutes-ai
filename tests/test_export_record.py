@@ -234,8 +234,8 @@ class ExportRecordTest(unittest.TestCase):
             speakerContextSummaries=[
                 {
                     "speaker": "SPEAKER_00",
-                    "display_name": "화자1",
-                    "summary": "발언자별 맥락 정리만 있는 기록입니다.",
+                    "display_name": "화자01",
+                    "summary": "참석자별 맥락 정리만 있는 기록입니다.",
                     "key_points": ["핵심 발언"],
                     "actions": ["후속 확인"],
                 }
@@ -246,8 +246,8 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         content = response.content.decode("utf-8")
-        self.assertIn("발언자별 맥락 정리만 있는 기록입니다.", content)
-        self.assertIn("화자1", content)
+        self.assertIn("참석자별 맥락 정리만 있는 기록입니다.", content)
+        self.assertIn("참석자01", content)
 
     def test_export_record_applies_speaker_labels_to_speaker_context_summaries(self):
         payload = legacy_meeting_payload(
@@ -262,7 +262,7 @@ class ExportRecordTest(unittest.TestCase):
                 {
                     "speaker": "SPEAKER_00",
                     "display_name": "화자1",
-                    "summary": "화자1은 발언자별 맥락을 정리했습니다.",
+                    "summary": "화자1은 참석자별 맥락을 정리했습니다.",
                     "key_points": ["화자1 핵심 발언"],
                     "actions": ["화자1 후속 확인"],
                 }
@@ -298,7 +298,7 @@ class ExportRecordTest(unittest.TestCase):
                 {
                     "speaker": "SPEAKER_00",
                     "display_name": "김철수",
-                    "summary": "김철수는 발언자별 맥락을 정리했습니다.",
+                    "summary": "김철수는 참석자별 맥락을 정리했습니다.",
                     "key_points": ["김철수 핵심 발언"],
                     "actions": ["김철수 후속 확인"],
                 }
@@ -309,8 +309,46 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         content = response.content.decode("utf-8")
-        self.assertIn("### SPEAKER_00", content)
+        self.assertIn("### 참석자01", content)
         self.assertNotIn("김철수", content)
+
+    def test_export_record_normalizes_legacy_zero_based_speaker_labels(self):
+        payload = legacy_meeting_payload(
+            speakerLabels={},
+            participantSummaries=[],
+            speakerContextSummaries=[
+                {"speaker": "SPEAKER_00", "display_name": "화자00", "summary": "첫 번째 참석자입니다."},
+                {"speaker": "SPEAKER_01", "display_name": "화자01", "summary": "두 번째 참석자입니다."},
+            ],
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("### 참석자01", content)
+        self.assertIn("### 참석자02", content)
+        self.assertNotIn("### 화자00", content)
+        self.assertNotIn("### 화자01", content)
+
+    def test_export_record_normalizes_legacy_labels_in_summary_fields(self):
+        payload = legacy_meeting_payload(
+            summary="화자1이 발화자 구분 결과를 확인했습니다.",
+            topics=["화자별 확인"],
+            actions=["화자1: 후속 확인"],
+            decisions=["발언자별 정리는 참석자 기준으로 표시"],
+            needsCheck=["화자 라벨 확인"],
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("참석자01이 참석자 구분 결과를 확인했습니다.", content)
+        self.assertIn("참석자별 확인", content)
+        self.assertIn("참석자01: 후속 확인", content)
+        self.assertIn("참석자별 정리는 참석자 기준으로 표시", content)
+        self.assertIn("자동 참석자 라벨 확인", content)
 
     def test_topic_generation_stays_completed_when_export_refresh_fails(self):
         job_id = "unit_topic_export_refresh_failure"

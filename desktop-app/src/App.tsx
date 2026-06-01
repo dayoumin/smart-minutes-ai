@@ -72,7 +72,7 @@ const benchmarkSegments = (result: BenchmarkResult): MeetingSegment[] => (
 
 const buildComparisonSummary = (label: string, model: string, seconds: number, hangulRatio?: number, segmentCount?: number, speakerCount?: number): string => (
     `${label} ${model} 테스트 결과입니다. 처리 시간은 ${seconds.toFixed(2)}초, 한글 비율은 ${hangulRatio !== undefined ? `${(hangulRatio * 100).toFixed(1)}%` : '확인 필요'}, ` +
-    `발화 segment는 ${segmentCount ?? 0}개, 참석자 수는 ${speakerCount ?? 0}명으로 확인했습니다.`
+    `대화 구간은 ${segmentCount ?? 0}개, 참석자 수는 ${speakerCount ?? 0}명으로 확인했습니다.`
 );
 
 const seedAsrComparisonMeetings = async (): Promise<string | null> => {
@@ -130,7 +130,7 @@ const seedHermesComparisonMeetings = async (): Promise<string | null> => {
             date: '2026-05-07 23:05',
             participants: 'faster-whisper-large-v3',
             sourceFile: '[Hermes Agent] 기억하고 진화하는 AI 헤르메스 에이전트.mp4',
-            summary: `Hermes 파일 앞 90초 faster-whisper 테스트 결과입니다. 처리 시간은 ${Number(faster.seconds ?? 0).toFixed(2)}초, 한글 비율은 ${(Number(faster.score?.hangul_ratio ?? 0) * 100).toFixed(1)}%, 발화 segment는 ${(faster.segments || []).length}개입니다.`,
+            summary: `Hermes 파일 앞 90초 faster-whisper 테스트 결과입니다. 처리 시간은 ${Number(faster.seconds ?? 0).toFixed(2)}초, 한글 비율은 ${(Number(faster.score?.hangul_ratio ?? 0) * 100).toFixed(1)}%, 대화 구간은 ${(faster.segments || []).length}개입니다.`,
             topics: ['전사 품질', '처리 속도', '발화 경계'],
             actions: ['긴 구간에서도 반복 문장 여부 확인'],
             decisions: ['Hermes 90초 구간에서도 faster-whisper가 훨씬 빠름'],

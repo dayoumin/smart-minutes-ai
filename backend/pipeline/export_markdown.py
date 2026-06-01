@@ -58,10 +58,10 @@ def export_markdown(result: dict, output_path: str) -> str:
 
     participant_summaries = summary.get("participant_summaries", []) or []
     if participant_summaries:
-        md_content += f"## {section_no}. 발언자별 요약 AI 초안\n\n"
+        md_content += f"## {section_no}. 참석자별 요약 AI 초안\n\n"
         section_no += 1
         for participant in participant_summaries:
-            md_content += f"### {participant.get('participant', '발언자')}\n\n"
+            md_content += f"### {participant.get('participant', '참석자')}\n\n"
             if participant.get("summary"):
                 md_content += f"{participant.get('summary')}\n\n"
             for point in participant.get("key_points", []) or []:

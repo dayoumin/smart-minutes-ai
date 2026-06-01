@@ -42,9 +42,23 @@ const safeFileName = (title: string): string => {
     return safe.slice(0, MAX_DOWNLOAD_STEM_CHARS).replace(/[.\-\s]+$/g, '') || 'meeting-minutes';
 };
 
+const participantLabel = (value?: string): string => {
+    const label = String(value || '').trim();
+    const speakerNumber = label.match(/^SPEAKER[_\s-]?(\d+)$/i);
+    if (speakerNumber) return `참석자${String(Number(speakerNumber[1]) + 1).padStart(2, '0')}`;
+    const legacyKoreanNumber = label.match(/^화자(\d+)$/);
+    if (legacyKoreanNumber) {
+        const [, digits] = legacyKoreanNumber;
+        const parsed = Number(digits);
+        const participantNumber = digits.length >= 2 ? parsed + 1 : Math.max(1, parsed);
+        return `참석자${String(participantNumber).padStart(2, '0')}`;
+    }
+    return label || '참석자';
+};
+
 const formatSegmentLine = (segment: MeetingSegment): string => {
     const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
-    return `${segment.start}-${segment.end}${timingLabel} ${segment.displaySpeaker || segment.speaker}: ${segment.text}`;
+    return `${segment.start}-${segment.end}${timingLabel} ${participantLabel(segment.displaySpeaker || segment.speaker)}: ${segment.text}`;
 };
 
 const transcriptSegmentsForExport = (meeting: MeetingRecord): MeetingSegment[] => (
@@ -69,7 +83,7 @@ const buildTranscriptText = (meeting: MeetingRecord): string => {
         ...(transcriptSegmentsForExport(meeting).length
             ? transcriptSegmentsForExport(meeting).map(segment => ({
                 ...segment,
-                displaySpeaker: segment.displaySpeaker || meeting.speakerLabels?.[segment.speaker],
+                displaySpeaker: meeting.speakerLabels?.[segment.speaker] || segment.displaySpeaker || participantLabel(segment.speaker),
             })).map(formatSegmentLine)
             : ['대화록이 없습니다. 다시 분석해 주세요.']),
     ];

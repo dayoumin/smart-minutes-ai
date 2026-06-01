@@ -28,7 +28,7 @@ def _format_time(value) -> str:
 
 def export_txt(segments: List[Dict], output_path: str) -> str:
     """
-    STT 결과를 단순 TXT 파일로 저장한다. 화자 정보가 있으면 포함한다.
+    STT 결과를 단순 TXT 파일로 저장한다. 참석자 정보가 있으면 포함한다.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
@@ -41,7 +41,7 @@ def export_txt(segments: List[Dict], output_path: str) -> str:
             text = seg.get("text", "")
             speaker = seg.get("speaker_name") or seg.get("speaker") or ""
             
-            # 포맷: [00:00:00] 화자: 텍스트
+            # 포맷: [00:00:00] 참석자: 텍스트
             time_str = f"[{_format_time(seg.get('start', 0.0))}]"
             
             if speaker:

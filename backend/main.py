@@ -59,11 +59,12 @@ BASE_DIR = normalize_windows_path(BASE_DIR)
 app = FastAPI(title="NIFS AI Meeting API")
 
 ANALYSIS_JOBS = AnalysisJobRegistry()
-GENERATION_STATUS_LOCK = threading.Lock()
+GENERATION_STATUS_LOCK = threading.RLock()
 JOB_STATE_LOCKS_LOCK = threading.Lock()
 JOB_STATE_LOCKS: dict[str, threading.RLock] = {}
 ACTIVE_GENERATIONS: set[tuple[str, str]] = set()
 GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
+GENERATION_STOP_REQUESTS: dict[tuple[str, str], dict] = {}
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
@@ -77,6 +78,8 @@ DETAIL_SPEAKER_INPUT_CHANGED = "speaker_input_changed"
 DETAIL_TOPIC_EMPTY_RESULT = "topic_generation_empty"
 DETAIL_SPEAKER_EMPTY_RESULT = "speaker_context_generation_empty"
 DETAIL_DIARIZATION_RUNTIME_ERROR = "diarization_runtime_error"
+DETAIL_DIARIZATION_CANCELLED = "diarization_cancelled"
+DETAIL_DIARIZATION_DEFERRED = "diarization_deferred"
 GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
 ANALYSIS_CHECKPOINT_VERSION = 1
 ANALYSIS_PIPELINE_VERSION = "2026-05-13-long-file-v1"
@@ -263,7 +266,7 @@ def _diarization_resource_decision(config: dict, source_wav_duration: float) -> 
             "run": False,
             "skipped": True,
             "skip_reason": "duration_limit",
-            "skip_message": "긴 음성 파일이라 발화자 구분은 제외하고 대화록을 먼저 저장했습니다.",
+            "skip_message": "긴 음성 파일이라 참석자 구분은 제외하고 대화록을 먼저 저장했습니다.",
         })
         return decision
     if max_waveform_mb > 0 and estimated_waveform_mb > max_waveform_mb:
@@ -271,7 +274,7 @@ def _diarization_resource_decision(config: dict, source_wav_duration: float) -> 
             "run": False,
             "skipped": True,
             "skip_reason": "memory_limit",
-            "skip_message": "음성 파일이 커서 발화자 구분은 제외하고 대화록을 먼저 저장했습니다.",
+            "skip_message": "음성 파일이 커서 참석자 구분은 제외하고 대화록을 먼저 저장했습니다.",
         })
     return decision
 
@@ -283,7 +286,7 @@ def _defer_diarization_decision(decision: dict) -> dict:
         "skipped": False,
         "deferred": True,
         "defer_reason": "manual",
-        "defer_message": "발화자 구분은 회의 기록에서 별도로 실행할 수 있습니다.",
+        "defer_message": "참석자 구분은 회의 기록에서 별도로 실행할 수 있습니다.",
     })
     return deferred
 
@@ -909,6 +912,74 @@ async def get_output_generation_progress(job_id: str, kind: str) -> dict:
     }
 
 
+@app.post("/api/outputs/{job_id}/generation-stop/{kind}")
+async def stop_output_generation(job_id: str, kind: str, payload: dict | None = Body(None)) -> dict:
+    job_id = _validate_job_id(job_id)
+    if kind != "diarization":
+        raise HTTPException(status_code=404, detail="Unknown generation type")
+
+    action = str((payload or {}).get("action") or "cancel")
+    if action not in {"cancel", "defer"}:
+        raise HTTPException(status_code=400, detail="Unknown stop action")
+
+    generation_key = (job_id, kind)
+    final_status = "deferred" if action == "defer" else "cancelled"
+    final_message = (
+        "참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다."
+        if action == "defer"
+        else "참석자 구분을 취소하고 있습니다."
+    )
+    stop_state_saved = False
+    with GENERATION_STATUS_LOCK:
+        progress = GENERATION_PROGRESS.get(generation_key) or {}
+        running = generation_key in ACTIVE_GENERATIONS
+        if not running:
+            return {
+                "job_id": job_id,
+                "kind": kind,
+                "action": action,
+                "status": "idle",
+                "message": "진행 중인 참석자 구분이 없습니다.",
+                "active": False,
+                "running": False,
+                "accepted": False,
+            }
+        GENERATION_STOP_REQUESTS[generation_key] = {
+            "action": action,
+            "final_status": final_status,
+            "requested_at": datetime.now().isoformat(),
+        }
+        try:
+            stop_state_saved = _apply_diarization_stop_to_result(job_id, {}, action)
+        except Exception:
+            logging.exception("Failed to persist diarization stop state")
+            raise HTTPException(status_code=500, detail="diarization_stop_persist_failed")
+        _set_generation_progress(
+            generation_key,
+            int(progress.get("progress") or 0),
+            final_message,
+            status="stopping",
+            active=True,
+        )
+
+    if stop_state_saved:
+        try:
+            _refresh_transcript_and_summary_exports(job_id, _load_job_result(job_id))
+        except Exception:
+            logging.exception("Failed to refresh exports after diarization stop")
+
+    return {
+        "job_id": job_id,
+        "kind": kind,
+        "action": action,
+        "status": "stopping",
+        "message": final_message,
+        "active": True,
+        "running": running,
+        "accepted": True,
+    }
+
+
 def _validate_job_id(job_id: str) -> str:
     if not job_id or os.path.basename(job_id) != job_id or ".." in job_id:
         raise HTTPException(status_code=400, detail="Invalid job id")
@@ -1320,6 +1391,7 @@ def _begin_generation(job_id: str, kind: str) -> tuple[str, str]:
     if generation_key in ACTIVE_GENERATIONS:
         raise HTTPException(status_code=409, detail=f"{kind} generation is already running")
     ACTIVE_GENERATIONS.add(generation_key)
+    GENERATION_STOP_REQUESTS.pop(generation_key, None)
     if kind == "diarization":
         _set_generation_progress(generation_key, 0, "준비 중")
     return generation_key
@@ -1328,6 +1400,7 @@ def _begin_generation(job_id: str, kind: str) -> tuple[str, str]:
 def _end_generation(generation_key: tuple[str, str] | None) -> None:
     if generation_key:
         ACTIVE_GENERATIONS.discard(generation_key)
+        GENERATION_STOP_REQUESTS.pop(generation_key, None)
         progress = GENERATION_PROGRESS.get(generation_key)
         if progress:
             progress["active"] = False
@@ -1377,6 +1450,59 @@ def _record_generation_progress(
         _set_generation_progress(generation_key, progress, message, status=status, active=active)
 
 
+def _generation_stop_request(generation_key: tuple[str, str] | None) -> dict | None:
+    if not generation_key:
+        return None
+    with GENERATION_STATUS_LOCK:
+        request = GENERATION_STOP_REQUESTS.get(generation_key)
+        return dict(request) if request else None
+
+
+def _raise_if_generation_stopped(generation_key: tuple[str, str] | None) -> None:
+    request = _generation_stop_request(generation_key)
+    if not request:
+        return
+    detail = DETAIL_DIARIZATION_DEFERRED if request.get("action") == "defer" else DETAIL_DIARIZATION_CANCELLED
+    raise HTTPException(status_code=409, detail=detail)
+
+
+def _apply_diarization_stop_to_result(job_id: str, result_data: dict, action: str) -> bool:
+    if not os.path.exists(_get_job_result_path(job_id)):
+        return False
+    latest_result = _load_latest_generation_result(job_id, result_data)
+    raw_segments = latest_result.get("raw_stt_segments")
+    if isinstance(raw_segments, list) and raw_segments:
+        latest_result["segments"] = raw_segments
+        latest_result["aligned_segments"] = raw_segments
+        latest_result["display_segments"] = raw_segments
+    latest_settings = latest_result.setdefault("settings", {})
+    is_deferred = action == "defer"
+    latest_settings.update({
+        "diarization": False,
+        "diarization_requested": is_deferred,
+        "diarization_skipped": False,
+        "diarization_deferred": is_deferred,
+        "diarization_skip_reason": "",
+        "diarization_skip_message": "",
+        "diarization_defer_message": (
+            "참석자 구분을 멈췄습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다."
+            if is_deferred
+            else ""
+        ),
+        "diarization_generation_status": "deferred" if is_deferred else "cancelled",
+    })
+    latest_settings.pop("diarization_error_detail", None)
+    latest_settings.pop("diarization_error_message", None)
+    latest_summary = latest_result.setdefault("summary", {})
+    latest_status = _ensure_generation_status(latest_summary)
+    latest_status["speaker_context_summaries"] = "not_started"
+    latest_summary["generation_status"] = latest_status
+    latest_summary["speaker_context_summaries"] = []
+    latest_summary["participant_summaries"] = []
+    _save_job_result(job_id, latest_result)
+    return True
+
+
 def _refresh_summary_exports(job_id: str, result_data: dict) -> dict:
     from pipeline.export_docx import export_docx
     from pipeline.export_hwpx import export_hwpx
@@ -1396,10 +1522,22 @@ def _refresh_summary_exports(job_id: str, result_data: dict) -> dict:
     return _result_outputs(job_id)
 
 
+def _refresh_transcript_and_summary_exports(job_id: str, result_data: dict) -> dict:
+    from pipeline.export_txt import export_txt
+    from pipeline.transcript_display import get_transcript_segments
+
+    output_dir = _get_output_dir()
+    out_txt_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_transcript.txt"))
+    if not out_txt_path.startswith(output_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid export path")
+    export_txt(get_transcript_segments(result_data), out_txt_path)
+    return _refresh_summary_exports(job_id, result_data)
+
+
 def _participant_summaries_from_speaker_context(items: list[dict]) -> list[dict]:
     return [
         {
-            "participant": item.get("display_name") or item.get("speaker") or "발언자",
+            "participant": item.get("display_name") or item.get("speaker") or "참석자",
             "summary": item.get("summary", ""),
             "key_points": item.get("key_points", []),
             "actions": item.get("actions", []),
@@ -1408,10 +1546,62 @@ def _participant_summaries_from_speaker_context(items: list[dict]) -> list[dict]
     ]
 
 
+def _default_participant_label(value: str) -> str:
+    label = str(value or "").strip()
+    speaker_match = re.match(r"^SPEAKER[_\s-]?(\d+)$", label, re.IGNORECASE)
+    if speaker_match:
+        return f"참석자{int(speaker_match.group(1)) + 1:02d}"
+    legacy_match = re.match(r"^화자(\d+)$", label)
+    if legacy_match:
+        digits = legacy_match.group(1)
+        value = int(digits)
+        participant_number = value + 1 if len(digits) >= 2 else max(1, value)
+        return f"참석자{participant_number:02d}"
+    return label or "참석자"
+
+
+def _is_default_speaker_label(value: str) -> bool:
+    label = str(value or "").strip()
+    return bool(
+        re.match(r"^SPEAKER[_\s-]?\d+$", label, re.IGNORECASE)
+        or re.match(r"^화자\d+$", label)
+        or re.match(r"^참석자\d+$", label)
+    )
+
+
+def _participant_copy_text(value: str) -> str:
+    text = str(value or "")
+    text = (
+        text.replace("발화자 구분", "참석자 구분")
+        .replace("화자 분리", "참석자 구분")
+        .replace("화자 구분", "참석자 구분")
+        .replace("화자별", "참석자별")
+        .replace("화자 라벨", "자동 참석자 라벨")
+        .replace("발화자", "참석자")
+        .replace("발언자", "참석자")
+    )
+    return re.sub(r"화자\d+", lambda match: _default_participant_label(match.group(0)), text)
+
+
+def _participant_copy_value(value):
+    if isinstance(value, str):
+        return _participant_copy_text(value)
+    if isinstance(value, list):
+        return [_participant_copy_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _participant_copy_value(item) for key, item in value.items()}
+    return value
+
+
 def _speaker_label_for_export(speaker_labels: dict, speaker: str, fallback: str = "") -> str:
     speaker = str(speaker or "").strip()
     fallback = str(fallback or "").strip()
-    return str(speaker_labels.get(speaker) or speaker_labels.get(fallback) or fallback or speaker).strip()
+    explicit_label = str(speaker_labels.get(speaker) or speaker_labels.get(fallback) or "").strip()
+    if explicit_label:
+        return explicit_label
+    if speaker and (not fallback or _is_default_speaker_label(fallback)):
+        return _default_participant_label(speaker)
+    return _default_participant_label(fallback or speaker)
 
 
 def _speaker_label_replacements(speaker: str, previous_label: str, next_label: str) -> list[tuple[str, str]]:
@@ -1649,8 +1839,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
     from pipeline.align_speakers import align_segments_with_speakers
     from pipeline.chunk_audio import get_wav_duration_seconds
     from pipeline.diarize import diarize_audio
-    from pipeline.export_txt import export_txt
-    from pipeline.transcript_display import build_display_segments, get_transcript_segments
+    from pipeline.transcript_display import build_display_segments
 
     job_id = _validate_job_id(job_id)
     generation_key = None
@@ -1680,19 +1869,23 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
         config = load_config()
         _record_generation_progress(generation_key, 8, "참석자 구분 준비 중")
+        _raise_if_generation_stopped(generation_key)
         source_audio_path = _resolve_job_audio_path(config, job_id)
         if not source_audio_path:
             _record_generation_progress(generation_key, 12, "원본 파일에서 참석자 구분용 음성 파일을 준비하는 중")
+            _raise_if_generation_stopped(generation_key)
             recoverable_source_path = _resolve_recoverable_source_path(config, job_id, payload, result_data)
             if recoverable_source_path:
                 source_audio_path = await asyncio.to_thread(
                     lambda: _restore_job_audio_path_for_diarization(config, job_id, recoverable_source_path)
                 )
                 restored_source_audio = bool(source_audio_path)
+                _raise_if_generation_stopped(generation_key)
         if not source_audio_path:
             raise HTTPException(status_code=404, detail="audio_required_for_diarization")
 
         _record_generation_progress(generation_key, 15, "음성 파일 확인 중")
+        _raise_if_generation_stopped(generation_key)
         decision = _diarization_resource_decision(config, get_wav_duration_seconds(source_audio_path))
         if decision.get("skipped"):
             raise HTTPException(status_code=409, detail="diarization_resource_limit")
@@ -1700,6 +1893,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             raise HTTPException(status_code=409, detail="diarization_disabled")
 
         _record_generation_progress(generation_key, 22, "참석자 구분 모델 확인 중")
+        _raise_if_generation_stopped(generation_key)
         diarization_spec = get_model_spec("diarization")
         if model_exists(BASE_DIR, diarization_spec):
             diarize_model_path = resolve_model_path(BASE_DIR, diarization_spec)
@@ -1713,13 +1907,17 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
         min_spk = config.get("diarization", {}).get("min_speakers")
         max_spk = config.get("diarization", {}).get("max_speakers")
         _record_generation_progress(generation_key, 30, "참석자 음성 구간 분석 중")
+        _raise_if_generation_stopped(generation_key)
         speaker_segments = await asyncio.to_thread(
             lambda: diarize_audio(source_audio_path, diarize_model_path, min_spk, max_spk)
         )
+        _raise_if_generation_stopped(generation_key)
         _record_generation_progress(generation_key, 78, "참석자 구간을 대화록 시간과 맞추는 중")
         aligned_segments = align_segments_with_speakers(copy.deepcopy(raw_segments), speaker_segments)
+        _raise_if_generation_stopped(generation_key)
         _record_generation_progress(generation_key, 86, "참석자 구분을 대화록에 반영 중")
         display_segments = build_display_segments(copy.deepcopy(aligned_segments))
+        _raise_if_generation_stopped(generation_key)
 
         output_dir = _get_output_dir()
         temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
@@ -1742,8 +1940,10 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             "config_fingerprint": config_fingerprint,
             "segments_fingerprint": segments_fingerprint,
         })
+        _raise_if_generation_stopped(generation_key)
 
         with GENERATION_STATUS_LOCK:
+            _raise_if_generation_stopped(generation_key)
             latest_result = _load_latest_generation_result(job_id, result_data)
             latest_result["segments"] = aligned_segments
             latest_result["aligned_segments"] = aligned_segments
@@ -1773,18 +1973,17 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             _save_job_result(job_id, latest_result)
             result_data = latest_result
 
-        out_txt_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_transcript.txt"))
-        if not out_txt_path.startswith(output_dir + os.sep):
-            raise HTTPException(status_code=400, detail="Invalid export path")
-        export_txt(get_transcript_segments(result_data), out_txt_path)
         export_error = None
         try:
+            _raise_if_generation_stopped(generation_key)
             _record_generation_progress(generation_key, 94, "내보내기 파일 갱신 중")
-            outputs = _refresh_summary_exports(job_id, result_data)
+            outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
+        except HTTPException:
+            raise
         except Exception:
             logging.exception("Failed to refresh summary exports after diarization")
             outputs = _result_outputs(job_id)
-            export_error = "발화자 구분은 저장했지만 일부 문서 파일을 갱신하지 못했습니다."
+            export_error = "참석자 구분은 저장했지만 일부 문서 파일을 갱신하지 못했습니다."
 
         _write_job_state(checkpoint_paths, {
             "diarization_completed": True,
@@ -1792,6 +1991,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             "diarization_deferred": False,
             "resume_supported": True,
         })
+        _raise_if_generation_stopped(generation_key)
         _record_generation_progress(generation_key, 100, "참석자 구분 완료", status="completed", active=False)
         if (
             restored_source_audio
@@ -1820,6 +2020,37 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             "export_error": export_error,
         }
     except HTTPException as exc:
+        if str(exc.detail) in {DETAIL_DIARIZATION_CANCELLED, DETAIL_DIARIZATION_DEFERRED}:
+            action = "defer" if str(exc.detail) == DETAIL_DIARIZATION_DEFERRED else "cancel"
+            message = (
+                "참석자 구분을 멈췄습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다."
+                if action == "defer"
+                else "참석자 구분을 취소했습니다."
+            )
+            stop_state_saved = False
+            with GENERATION_STATUS_LOCK:
+                try:
+                    _set_generation_progress(
+                        generation_key,
+                        GENERATION_PROGRESS.get(generation_key, {}).get("progress", 0),
+                        message,
+                        status="deferred" if action == "defer" else "cancelled",
+                        active=False,
+                    )
+                    stop_state_saved = _apply_diarization_stop_to_result(
+                        job_id,
+                        result_data if "result_data" in locals() else {},
+                        action,
+                    )
+                except Exception:
+                    logging.exception("Failed to persist diarization stop state")
+                    raise HTTPException(status_code=500, detail="diarization_stop_persist_failed")
+            if stop_state_saved:
+                try:
+                    _refresh_transcript_and_summary_exports(job_id, _load_job_result(job_id))
+                except Exception:
+                    logging.exception("Failed to refresh exports after diarization stop")
+            raise
         with GENERATION_STATUS_LOCK:
             try:
                 _set_generation_progress(
@@ -2851,17 +3082,17 @@ def _normalize_payload_segments(
             or ""
         )
         speaker = str(speaker or "").strip()
-        display_speaker = speaker_labels.get(speaker)
-        if not display_speaker and speaker_fallback_when_unlabeled and speaker:
-            display_speaker = speaker
-        if not display_speaker:
-            display_speaker = (
+        fallback_speaker = (
+            speaker
+            if speaker_fallback_when_unlabeled and speaker
+            else (
                 segment.get("displaySpeaker")
                 or segment.get("display_speaker")
                 or segment.get("speaker_name")
                 or speaker
             )
-        display_speaker = str(display_speaker or "").strip()
+        )
+        display_speaker = _speaker_label_for_export(speaker_labels, speaker, str(fallback_speaker or ""))
         segments.append({
             "start": _time_to_seconds(segment.get("start", 0.0)),
             "end": _time_to_seconds(segment.get("end", 0.0)),
@@ -2923,15 +3154,15 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
         },
         "summary": {
             "title": title,
-            "overview": payload.get("summary") or "",
-            "topics": payload.get("topics") or [],
-            "topic_sections": payload.get("topicSections") or payload.get("topic_sections") or [],
+            "overview": _participant_copy_value(payload.get("summary") or ""),
+            "topics": _participant_copy_value(payload.get("topics") or []),
+            "topic_sections": _participant_copy_value(payload.get("topicSections") or payload.get("topic_sections") or []),
             "participant_summaries": participant_summaries,
             "speaker_context_summaries": speaker_context_summaries,
             "generation_status": payload.get("generationStatus") or payload.get("generation_status") or {},
-            "actions": payload.get("actions") or [],
-            "decisions": payload.get("decisions") or [],
-            "needs_check": payload.get("needs_check") or payload.get("needsCheck") or [],
+            "actions": _participant_copy_value(payload.get("actions") or []),
+            "decisions": _participant_copy_value(payload.get("decisions") or []),
+            "needs_check": _participant_copy_value(payload.get("needs_check") or payload.get("needsCheck") or []),
         },
     }
 
@@ -3195,7 +3426,7 @@ async def analyze_meeting(
             (10, "파일 업로드 수신 완료"),
             (25, "오디오 전처리 준비 중"),
             (45, "음성 인식(STT) mock 처리 중"),
-            (65, "화자 분리 mock 처리 중"),
+            (65, "참석자 구분 mock 처리 중"),
             (85, "회의 요약 mock 생성 중"),
         ]
 
@@ -3236,13 +3467,13 @@ async def analyze_meeting(
                 {
                     "start": "00:00:00",
                     "end": "00:00:05",
-                    "speaker": "Speaker 1",
+                    "speaker": "참석자01",
                     "text": "FastAPI 서버가 업로드 요청을 정상적으로 받았습니다.",
                 },
                 {
                     "start": "00:00:06",
                     "end": "00:00:11",
-                    "speaker": "Speaker 2",
+                    "speaker": "참석자02",
                     "text": "프론트엔드는 SSE 스트림에서 진행률 이벤트를 수신하고 있습니다.",
                 },
             ],
@@ -3427,7 +3658,7 @@ async def stream_real_analysis(
             config["paths"]["diarization_model"] = resolve_model_path(BASE_DIR, diarization_spec)
         else:
             config["diarization"]["enabled"] = False
-            report_progress("화자 분리 모델이 없어 STT 중심 분석으로 진행합니다.", 10)
+            report_progress("참석자 구분 모델이 없어 STT 중심 분석으로 진행합니다.", 10)
 
         return config
 
@@ -3636,7 +3867,7 @@ def numeric_transcript_segments(segments: list[dict]) -> list[dict]:
             **segment,
             "start": start,
             "end": end,
-            "speaker": segment.get("speaker") or segment.get("speaker_name") or "Speaker",
+            "speaker": segment.get("speaker") or segment.get("speaker_name") or "참석자",
             "text": segment.get("text", ""),
         })
     return numeric_segments
@@ -3647,8 +3878,8 @@ def segments_for_ui(segments: list[dict]) -> list[dict]:
         {
             "start": seconds_to_timestamp(segment.get("start", 0.0)),
             "end": seconds_to_timestamp(segment.get("end", 0.0)),
-            "speaker": segment.get("speaker") or segment.get("speaker_name") or "Speaker",
-            "displaySpeaker": segment.get("speaker_name") or segment.get("speaker") or "Speaker",
+            "speaker": segment.get("speaker") or segment.get("speaker_name") or "참석자",
+            "displaySpeaker": segment.get("speaker_name") or segment.get("speaker") or "참석자",
             "text": segment.get("text", ""),
             "timingApproximate": bool(segment.get("timing_approximate", False)),
             "displayOnly": bool(segment.get("display_only", False)),
@@ -4216,7 +4447,7 @@ def process_audio_pipeline(
         )
 
         if can_reuse_diarization:
-            _report_progress("이전 화자 구분 결과를 재사용합니다.", 70)
+            _report_progress("이전 참석자 구분 결과를 재사용합니다.", 70)
             segments = aligned_checkpoint["segments"]
             reused_diarization = True
             _write_job_state(checkpoint_paths, {
@@ -4242,7 +4473,7 @@ def process_audio_pipeline(
                 "segments_fingerprint": segments_fingerprint,
             })
             _raise_if_cancelled()
-            _report_progress("화자 구간 분석 완료. 문장 시간과 맞추는 중", 78)
+            _report_progress("참석자 구간 확인 완료. 문장 시간과 맞추는 중", 78)
             segments = align_segments_with_speakers(segments, spk_segments)
             _write_job_state(checkpoint_paths, {
                 "diarization_completed": True,
@@ -4253,10 +4484,10 @@ def process_audio_pipeline(
     else:
         if segments and diarization_decision.get("deferred"):
             _set_stage("diarization_deferred")
-            _report_progress(str(diarization_decision.get("defer_message") or "발화자 구분은 별도로 실행할 수 있습니다."), 70)
+            _report_progress(str(diarization_decision.get("defer_message") or "참석자 구분은 별도로 실행할 수 있습니다."), 70)
         elif segments and diarization_decision.get("skipped"):
             _set_stage("diarization_skipped")
-            _report_progress(str(diarization_decision.get("skip_message") or "발화자 구분을 건너뜁니다."), 70)
+            _report_progress(str(diarization_decision.get("skip_message") or "참석자 구분을 건너뜁니다."), 70)
         aligned_segments = copy.deepcopy(segments)
         display_segments = build_display_segments(segments)
     atomic_write_json(checkpoint_paths.aligned_segments_path, {
@@ -4351,10 +4582,10 @@ def process_audio_pipeline(
     if reused_diarization:
         if reused_chunk_count > 0:
             resume_mode = "reused_stt_and_diarization"
-            resume_message = "이전 음성 인식 진행분과 화자 구분 결과를 재사용했습니다."
+            resume_message = "이전 음성 인식 진행분과 참석자 구분 결과를 재사용했습니다."
         else:
             resume_mode = "reused_diarization"
-            resume_message = "이전 화자 구분 결과를 재사용했습니다."
+            resume_message = "이전 참석자 구분 결과를 재사용했습니다."
 
     # Cleanup temp wav
     _write_job_state(checkpoint_paths, {

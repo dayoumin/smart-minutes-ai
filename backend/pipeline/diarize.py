@@ -20,7 +20,7 @@ def diarize_audio(
         pipeline = Pipeline.from_pretrained(diarization_model_path)
     except Exception as exc:
         raise RuntimeError(
-            "화자 분리 모델을 로컬에서 불러오지 못했습니다.\n"
+            "참석자 구분 모델을 로컬에서 불러오지 못했습니다.\n"
             f"모델 경로를 확인하세요: {diarization_model_path}\n"
             "포터블/오프라인 앱은 Hugging Face 원격 모델을 자동으로 불러오지 않습니다.\n"
             f"상세 오류: {exc}"

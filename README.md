@@ -35,13 +35,13 @@ releases\lmo_audio\
   models\
 ```
 
-`models`에는 기본 음성 인식 모델과 화자 분리 모델 파일이 들어갑니다. 현재 기본 음성 인식 모델은 `faster-whisper-large-v3`이며, `models\faster-whisper-large-v3` 폴더 안에 `model.bin`, `tokenizer.json`, `config.json` 같은 파일 묶음이 있어야 합니다.
+`models`에는 기본 음성 인식 모델과 참석자 구분 모델 파일이 들어갑니다. 현재 기본 음성 인식 모델은 `faster-whisper-large-v3`이며, `models\faster-whisper-large-v3` 폴더 안에 `model.bin`, `tokenizer.json`, `config.json` 같은 파일 묶음이 있어야 합니다.
 
 ## 소스 폴더
 
 `desktop-app`은 실행본이 아니라 앱 소스입니다. UI 수정, 설정 화면 수정, Tauri 빌드, 배포 파일 재생성이 필요하면 지우면 안 됩니다.
 
-`backend`는 분석 서버 소스입니다. FastAPI, STT, 화자 분리, 요약, 내보내기 로직이 들어 있습니다.
+`backend`는 분석 서버 소스입니다. FastAPI, STT, 참석자 구분, 요약, 내보내기 로직이 들어 있습니다.
 
 개발 중 웹 UI에서 실제 분석 서버를 쓸 때는 전역 Python이 아니라 백엔드 가상환경으로 실행합니다.
 
@@ -98,7 +98,7 @@ lmo_audio*.zip
 - 모델 원본 위치: `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`
 - 최종 실행 위치: `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`
 
-Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 화자 분리 모델만 사용합니다.
+Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 참석자 구분 모델만 사용합니다.
 
 ## 배포 정리 기준
 

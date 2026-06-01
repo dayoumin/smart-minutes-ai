@@ -45,6 +45,7 @@ class AnalyzeApiTest(unittest.TestCase):
         with main.GENERATION_STATUS_LOCK:
             main.ACTIVE_GENERATIONS.discard(generation_key)
             main.GENERATION_PROGRESS.pop(generation_key, None)
+            main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
             key = main._begin_generation(*generation_key)
             main._set_generation_progress(key, 42, "참석자 음성 구간 분석 중")
 
@@ -59,6 +60,152 @@ class AnalyzeApiTest(unittest.TestCase):
             with main.GENERATION_STATUS_LOCK:
                 main._end_generation(generation_key)
                 main.GENERATION_PROGRESS.pop(generation_key, None)
+                main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+
+    def test_generation_stop_defers_active_diarization(self) -> None:
+        with tempfile.TemporaryDirectory() as output_dir:
+            job_id = "unit_stop_job"
+            generation_key = (job_id, "diarization")
+            result_path = Path(output_dir) / f"{job_id}_result.json"
+            result_path.write_text(json.dumps({
+                "job_id": job_id,
+                "raw_stt_segments": [{"start": 0.0, "end": 1.0, "text": "raw hello", "speaker": "SPEAKER_00"}],
+                "segments": [{"start": 0.0, "end": 1.0, "text": "diarized hello", "speaker": "SPEAKER_01"}],
+                "summary": {
+                    "speaker_context_summaries": [{"speaker": "SPEAKER_01", "summary": "old speaker summary"}],
+                    "participant_summaries": [{"participant": "참석자02", "summary": "old participant summary"}],
+                    "generation_status": {"speaker_context_summaries": "completed"},
+                },
+                "settings": {"diarization": False, "diarization_generation_status": "generating"},
+            }, ensure_ascii=False), encoding="utf-8")
+
+            with main.GENERATION_STATUS_LOCK:
+                main.ACTIVE_GENERATIONS.discard(generation_key)
+                main.GENERATION_PROGRESS.pop(generation_key, None)
+                main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+                key = main._begin_generation(*generation_key)
+                main._set_generation_progress(key, 30, "참석자 음성 구간 분석 중")
+
+            try:
+                with (
+                    patch.object(main, "_get_output_dir", return_value=output_dir),
+                    patch.object(main, "_refresh_summary_exports", return_value={"job_id": job_id}),
+                ):
+                    response = self.client.post(
+                        f"/api/outputs/{job_id}/generation-stop/diarization",
+                        json={"action": "defer"},
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    payload = response.json()
+                    self.assertTrue(payload["active"])
+                    self.assertTrue(payload["running"])
+                    self.assertTrue(payload["accepted"])
+                    self.assertEqual(payload["status"], "stopping")
+
+                    progress_response = self.client.get(f"/api/outputs/{job_id}/generation-progress/diarization")
+                    self.assertEqual(progress_response.status_code, 200)
+                    progress = progress_response.json()
+                    self.assertTrue(progress["active"])
+                    self.assertEqual(progress["status"], "stopping")
+                    self.assertIn("중지", progress["message"])
+                    self.assertEqual(main.GENERATION_STOP_REQUESTS[generation_key]["action"], "defer")
+
+                saved = json.loads(result_path.read_text(encoding="utf-8"))
+                self.assertFalse(saved["settings"]["diarization"])
+                self.assertTrue(saved["settings"]["diarization_requested"])
+                self.assertTrue(saved["settings"]["diarization_deferred"])
+                self.assertEqual(saved["settings"]["diarization_generation_status"], "deferred")
+                self.assertEqual(saved["segments"][0]["text"], "raw hello")
+                self.assertEqual(saved["summary"]["speaker_context_summaries"], [])
+                self.assertEqual(saved["summary"]["participant_summaries"], [])
+                self.assertEqual(saved["summary"]["generation_status"]["speaker_context_summaries"], "not_started")
+                transcript_text = (Path(output_dir) / f"{job_id}_transcript.txt").read_text(encoding="utf-8")
+                self.assertIn("raw hello", transcript_text)
+                self.assertNotIn("diarized hello", transcript_text)
+            finally:
+                with main.GENERATION_STATUS_LOCK:
+                    main._end_generation(generation_key)
+                    main.GENERATION_PROGRESS.pop(generation_key, None)
+                    main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+
+    def test_generation_stop_cancel_marks_diarization_unused(self) -> None:
+        with tempfile.TemporaryDirectory() as output_dir:
+            job_id = "unit_cancel_diarization_job"
+            generation_key = (job_id, "diarization")
+            result_path = Path(output_dir) / f"{job_id}_result.json"
+            result_path.write_text(json.dumps({
+                "job_id": job_id,
+                "raw_stt_segments": [{"start": 0.0, "end": 1.0, "text": "hello", "speaker": "Speaker"}],
+                "segments": [{"start": 0.0, "end": 1.0, "text": "hello", "speaker": "Speaker"}],
+                "summary": {
+                    "speaker_context_summaries": [{"speaker": "Speaker", "summary": "old speaker summary"}],
+                    "participant_summaries": [{"participant": "참석자", "summary": "old participant summary"}],
+                    "generation_status": {"speaker_context_summaries": "completed"},
+                },
+                "settings": {
+                    "diarization": False,
+                    "diarization_requested": True,
+                    "diarization_deferred": True,
+                    "diarization_generation_status": "generating",
+                },
+            }, ensure_ascii=False), encoding="utf-8")
+
+            with main.GENERATION_STATUS_LOCK:
+                main.ACTIVE_GENERATIONS.discard(generation_key)
+                main.GENERATION_PROGRESS.pop(generation_key, None)
+                main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+                key = main._begin_generation(*generation_key)
+                main._set_generation_progress(key, 30, "참석자 음성 구간 분석 중")
+
+            try:
+                with (
+                    patch.object(main, "_get_output_dir", return_value=output_dir),
+                    patch.object(main, "_refresh_summary_exports", return_value={"job_id": job_id}),
+                ):
+                    response = self.client.post(
+                        f"/api/outputs/{job_id}/generation-stop/diarization",
+                        json={"action": "cancel"},
+                    )
+                    self.assertEqual(response.status_code, 200, response.text)
+                    payload = response.json()
+                    self.assertTrue(payload["active"])
+                    self.assertTrue(payload["accepted"])
+                    self.assertEqual(payload["status"], "stopping")
+                    self.assertEqual(main.GENERATION_STOP_REQUESTS[generation_key]["action"], "cancel")
+
+                saved = json.loads(result_path.read_text(encoding="utf-8"))
+                self.assertFalse(saved["settings"]["diarization"])
+                self.assertFalse(saved["settings"]["diarization_requested"])
+                self.assertFalse(saved["settings"]["diarization_deferred"])
+                self.assertEqual(saved["settings"]["diarization_defer_message"], "")
+                self.assertEqual(saved["settings"]["diarization_generation_status"], "cancelled")
+                self.assertEqual(saved["summary"]["speaker_context_summaries"], [])
+                self.assertEqual(saved["summary"]["participant_summaries"], [])
+                self.assertEqual(saved["summary"]["generation_status"]["speaker_context_summaries"], "not_started")
+            finally:
+                with main.GENERATION_STATUS_LOCK:
+                    main._end_generation(generation_key)
+                    main.GENERATION_PROGRESS.pop(generation_key, None)
+                    main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+
+    def test_generation_stop_noops_when_diarization_is_not_running(self) -> None:
+        generation_key = ("unit_stop_idle_job", "diarization")
+        with main.GENERATION_STATUS_LOCK:
+            main.ACTIVE_GENERATIONS.discard(generation_key)
+            main.GENERATION_PROGRESS.pop(generation_key, None)
+            main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+
+        response = self.client.post(
+            "/api/outputs/unit_stop_idle_job/generation-stop/diarization",
+            json={"action": "cancel"},
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse(payload["running"])
+        self.assertFalse(payload["active"])
+        self.assertFalse(payload["accepted"])
+        self.assertNotIn(generation_key, main.GENERATION_STOP_REQUESTS)
 
     def test_generation_progress_is_limited_to_diarization(self) -> None:
         response = self.client.get("/api/outputs/unit_progress_job/generation-progress/summary")
@@ -289,6 +436,67 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertFalse(Path(paths.source_wav_path).exists())
             state = load_json_checkpoint(paths.state_path)
             self.assertTrue(state["source_wav_deleted"])
+
+    def test_diarization_stop_during_export_is_not_marked_completed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            job_id = "unit_diarization_stop_during_export"
+            output_dir = os.path.join(tmpdir, "outputs")
+            temp_dir = os.path.join(tmpdir, "temp")
+            os.makedirs(output_dir, exist_ok=True)
+            config = {
+                "paths": {
+                    "temp_dir": temp_dir,
+                    "output_dir": output_dir,
+                    "ffmpeg": "ffmpeg.exe",
+                    "diarization_model": "model",
+                },
+                "preprocessing": {"enabled": True},
+                "privacy": {"preserve_extracted_audio": True},
+                "diarization": {"enabled": True},
+            }
+            result_path = Path(output_dir) / f"{job_id}_result.json"
+            result_path.write_text(json.dumps({
+                "job_id": job_id,
+                "source_file": "meeting.wav",
+                "raw_stt_segments": [{"start": 0.0, "end": 5.0, "text": "raw hello", "speaker": "SPEAKER_00"}],
+                "segments": [{"start": 0.0, "end": 5.0, "text": "raw hello", "speaker": "SPEAKER_00"}],
+                "summary": {
+                    "speaker_context_summaries": [{"speaker": "SPEAKER_00", "summary": "old speaker summary"}],
+                    "participant_summaries": [{"participant": "참석자01", "summary": "old participant summary"}],
+                    "generation_status": {"speaker_context_summaries": "completed"},
+                },
+                "settings": {"diarization": False},
+            }, ensure_ascii=False), encoding="utf-8")
+
+            with (
+                patch.object(main, "load_config", return_value=config),
+                patch.object(main, "_resolve_job_audio_path", return_value=TEST_AUDIO_PATH),
+                patch.object(main, "model_exists", return_value=True),
+                patch.object(main, "resolve_model_path", return_value=TEST_AUDIO_PATH),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.diarize.diarize_audio", return_value=[{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_01"}]),
+                patch("pipeline.align_speakers.align_segments_with_speakers", return_value=[
+                    {"start": 0.0, "end": 5.0, "text": "diarized hello", "speaker": "SPEAKER_01"},
+                ]),
+                patch.object(
+                    main,
+                    "_refresh_transcript_and_summary_exports",
+                    side_effect=main.HTTPException(status_code=409, detail=main.DETAIL_DIARIZATION_CANCELLED),
+                ),
+                patch.object(main.logging, "exception"),
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-diarization")
+
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["detail"], main.DETAIL_DIARIZATION_CANCELLED)
+            result_data = json.loads(result_path.read_text(encoding="utf-8"))
+            self.assertFalse(result_data["settings"]["diarization"])
+            self.assertFalse(result_data["settings"]["diarization_requested"])
+            self.assertEqual(result_data["settings"]["diarization_generation_status"], "cancelled")
+            self.assertEqual(result_data["segments"][0]["text"], "raw hello")
+            self.assertEqual(result_data["summary"]["speaker_context_summaries"], [])
+            self.assertEqual(result_data["summary"]["participant_summaries"], [])
+            self.assertEqual(result_data["summary"]["generation_status"]["speaker_context_summaries"], "not_started")
 
     def test_generation_progress_prunes_inactive_entries(self) -> None:
         with main.GENERATION_STATUS_LOCK:

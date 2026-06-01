@@ -322,6 +322,13 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
         manifest_path = portable_dir / "release-manifest.json"
         if not config_path.exists() or not manifest_path.exists():
             self.skipTest("Portable release folder is not available")
+        runtime_paths = [
+            portable_dir / "logs",
+            portable_dir / "backend" / "outputs",
+            portable_dir / "backend" / "temp",
+        ]
+        if any(path.exists() for path in runtime_paths):
+            self.skipTest("Portable release folder has runtime artifacts; preservation test requires a clean deploy folder")
 
         before_config = _sha256(config_path)
         before_manifest = _sha256(manifest_path)
@@ -367,6 +374,13 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
             "Contents/section0.xml",
         ):
             self.assertIn(required, script)
+
+    def test_release_process_cleanup_uses_path_boundary_check(self):
+        script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        self.assertIn("function Test-IsPathWithin", script)
+        self.assertIn("Test-IsPathWithin $_.ExecutablePath $portableFullPath", script)
+        self.assertIn("Test-IsPathWithin $_.Path $portableFullPath", script)
+        self.assertNotIn("ExecutablePath.StartsWith($portableFullPath", script)
 
     def test_verify_manifest_dirty_requires_allow_dirty(self):
         script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")

@@ -33,6 +33,13 @@ function Normalize-FullPath([string]$Path) {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
 }
 
+function Test-IsPathWithin([string]$Path, [string]$Root) {
+    $fullPath = Normalize-FullPath $Path
+    $rootPath = Normalize-FullPath $Root
+    return $fullPath.Equals($rootPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $fullPath.StartsWith($rootPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Resolve-PythonCommand([string]$PythonCommand) {
     if ($PythonCommand -match '[\\/]') {
         $resolvedPython = Resolve-InRepoPath $PythonCommand
@@ -153,7 +160,7 @@ function Stop-AppProcesses([string]$PortableRoot) {
     try {
         Get-CimInstance Win32_Process -ErrorAction Stop |
             Where-Object {
-                ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)) -or
+                ($_.ExecutablePath -and (Test-IsPathWithin $_.ExecutablePath $portableFullPath)) -or
                 ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
             } |
             ForEach-Object {
@@ -167,7 +174,7 @@ function Stop-AppProcesses([string]$PortableRoot) {
 
     Get-Process -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.Path -and $_.Path.StartsWith($portableFullPath, [System.StringComparison]::OrdinalIgnoreCase)
+            $_.Path -and (Test-IsPathWithin $_.Path $portableFullPath)
         } |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
@@ -250,6 +257,60 @@ function Get-FrontendAssets {
         })
 }
 
+function Get-PortablePayloadFiles([string]$PortableDir) {
+    $portableRoot = Normalize-FullPath $PortableDir
+    $files = @()
+    $rootPayloadNames = @($PortableAppExeName, "START_HERE.txt")
+
+    foreach ($name in $rootPayloadNames) {
+        $path = Join-Path $PortableDir $name
+        if (Test-Path -LiteralPath $path) {
+            $files += [ordered]@{
+                path = $name
+                sha256 = Get-FileHashValue $path
+                bytes = (Get-Item -LiteralPath $path).Length
+            }
+        }
+    }
+
+    foreach ($folder in @("binaries", "backend")) {
+        $root = Join-Path $PortableDir $folder
+        if (-not (Test-Path -LiteralPath $root)) {
+            continue
+        }
+        Get-ChildItem -LiteralPath $root -File -Recurse -Force |
+            Sort-Object FullName |
+            ForEach-Object {
+                $fullPath = Normalize-FullPath $_.FullName
+                $relativePath = $fullPath.Substring($portableRoot.Length).TrimStart("\", "/")
+                $relativeParts = $relativePath -split '[\\/]'
+                if ($relativeParts -contains "__pycache__") {
+                    return
+                }
+                if ($_.Name -like "*.pyc") {
+                    return
+                }
+                if (
+                    $relativeParts.Length -ge 2
+                    -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase)
+                    -and $relativeParts[1] -in @("outputs", "temp")
+                ) {
+                    return
+                }
+                if ($relativePath.Equals("backend\config.json", [System.StringComparison]::OrdinalIgnoreCase)) {
+                    return
+                }
+                $files += [ordered]@{
+                    path = $relativePath
+                    sha256 = Get-FileHashValue $_.FullName
+                    bytes = $_.Length
+                }
+            }
+    }
+
+    return @($files)
+}
+
 function Write-ReleaseManifest([string]$PortableDir) {
     $appExe = Join-Path $PortableDir $PortableAppExeName
     $sidecarExe = Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe"
@@ -297,6 +358,7 @@ function Write-ReleaseManifest([string]$PortableDir) {
                 sha256 = Get-FileHashValue $startHere
             }
         }
+        portablePayloadFiles = Get-PortablePayloadFiles $PortableDir
         frontendAssets = Get-FrontendAssets
         modelLayout = $ModelLayout
         modelMarkers = @($modelMarkers | ForEach-Object {

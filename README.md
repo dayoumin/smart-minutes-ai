@@ -5,7 +5,7 @@
 ## 폴더 구조
 
 ```text
-D:\Projects\smart-minutes-ai\
+D:\Projects\audio\
   backend\                         # FastAPI 분석 서버 소스
   desktop-app\                     # React/Tauri 데스크탑 앱 소스
   docs\                            # 설계/테스트/배포 문서
@@ -22,7 +22,7 @@ D:\Projects\smart-minutes-ai\
 실행할 때는 루트의 portable 폴더를 사용합니다.
 
 ```text
-D:\Projects\smart-minutes-ai\releases\lmo_audio\lmo_audio.exe
+D:\Projects\audio\releases\lmo_audio\lmo_audio.exe
 ```
 
 `lmo_audio.exe`만 따로 옮기면 안 됩니다. 아래 폴더들이 같은 위치에 있어야 합니다.

@@ -209,6 +209,60 @@ function Test-ReleaseManifest([string]$TargetRoot, $Manifest) {
         $checks += "dirty=true"
     }
 
+    if (-not $releaseManifest.files -or @($releaseManifest.files.PSObject.Properties).Count -eq 0) {
+        $checks += "file hashes missing"
+    }
+    else {
+        foreach ($property in $releaseManifest.files.PSObject.Properties) {
+            $entry = $property.Value
+            $relativePath = [string]$entry.path
+            $expectedHash = [string]$entry.sha256
+            if ([string]::IsNullOrWhiteSpace($relativePath) -or [string]::IsNullOrWhiteSpace($expectedHash)) {
+                $checks += "$($property.Name) missing path or sha256"
+                continue
+            }
+            $targetFile = Join-Path $TargetRoot $relativePath
+            if (-not (Test-IsPathWithin $targetFile $TargetRoot)) {
+                $checks += "$relativePath escaped target root"
+                continue
+            }
+            $actualHash = Get-FileHashValue $targetFile
+            if (-not $actualHash) {
+                $checks += "$relativePath missing"
+            }
+            elseif ($actualHash -ne $expectedHash) {
+                $checks += "$relativePath hash mismatch"
+            }
+        }
+    }
+
+    $payloadEntries = @($releaseManifest.portablePayloadFiles)
+    if ($payloadEntries.Count -eq 0) {
+        $checks += "portable payload file hashes missing"
+    }
+    else {
+        foreach ($entry in $payloadEntries) {
+            $relativePath = [string]$entry.path
+            $expectedHash = [string]$entry.sha256
+            if ([string]::IsNullOrWhiteSpace($relativePath) -or [string]::IsNullOrWhiteSpace($expectedHash)) {
+                $checks += "portable payload entry missing path or sha256"
+                continue
+            }
+            $targetFile = Join-Path $TargetRoot $relativePath
+            if (-not (Test-IsPathWithin $targetFile $TargetRoot)) {
+                $checks += "$relativePath escaped target root"
+                continue
+            }
+            $actualHash = Get-FileHashValue $targetFile
+            if (-not $actualHash) {
+                $checks += "$relativePath missing"
+            }
+            elseif ($actualHash -ne $expectedHash) {
+                $checks += "$relativePath hash mismatch"
+            }
+        }
+    }
+
     $configPath = Join-Path $TargetRoot "backend\config.json"
     if (-not (Test-Path -LiteralPath $configPath)) {
         $checks += "backend config missing"

@@ -1,11 +1,11 @@
 ---
 name: lmo-audio-release-build
-description: Build, package, and verify this repository's Windows portable desktop release. Use in smart-minutes-ai when the user asks to build, package, release, make an executable, prepare a general-user build, create a model-excluded update package, verify a portable build, or check whether ordinary users can run the app.
+description: Build, package, and verify this repository's Windows portable desktop release. Use in this repository when the user asks to build, package, release, make an executable, prepare a general-user build, create a model-excluded update package, verify a portable build, or check whether ordinary users can run the app.
 ---
 
 # LMO Audio Release Build
 
-Use this skill only inside `D:\Projects\smart-minutes-ai`. Stay Windows-native.
+Use this skill only inside this repository, normally `D:\Projects\audio`. Stay Windows-native.
 
 ## Default Meaning
 

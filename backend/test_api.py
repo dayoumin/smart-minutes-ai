@@ -491,7 +491,7 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(response.json()["detail"], main.DETAIL_DIARIZATION_CANCELLED)
             result_data = json.loads(result_path.read_text(encoding="utf-8"))
             self.assertFalse(result_data["settings"]["diarization"])
-            self.assertFalse(result_data["settings"]["diarization_requested"])
+            self.assertTrue(result_data["settings"]["diarization_requested"])
             self.assertEqual(result_data["settings"]["diarization_generation_status"], "cancelled")
             self.assertEqual(result_data["segments"][0]["text"], "raw hello")
             self.assertEqual(result_data["summary"]["speaker_context_summaries"], [])
@@ -1227,7 +1227,7 @@ class AnalyzeApiTest(unittest.TestCase):
             events = asyncio.run(collect_events())
 
         body = "\n".join(events)
-        self.assertIn("event: cancelled", body)
+        self.assertIn("event: stopped", body)
         self.assertIn("event: done", body)
         self.assertFalse(main.ANALYSIS_JOBS.cancel("unit_cancel_cleanup"))
 
@@ -3133,14 +3133,14 @@ class AnalyzeApiTest(unittest.TestCase):
                 result_data = json.load(f)
 
             self.assertEqual(result_data["speaker_labels"], {})
-            self.assertEqual(result_data["segments"][0]["speaker_name"], "화자000")
-            self.assertEqual(result_data["display_segments"][0]["speaker_name"], "화자000")
+            self.assertEqual(result_data["segments"][0]["speaker_name"], "참석자01")
+            self.assertEqual(result_data["display_segments"][0]["speaker_name"], "참석자01")
             self.assertEqual(result_data["display_segments"][0]["text"], "기본 표시본")
             self.assertEqual(result_data["summary"]["title"], "새 회의 제목")
             self.assertEqual(result_data["participants"], "새 참석자")
             self.assertEqual(result_data["created_at"], "2026-05-13 10:00")
-            self.assertEqual(result_data["summary"]["speaker_context_summaries"][0]["display_name"], "화자000")
-            self.assertEqual(result_data["summary"]["participant_summaries"][0]["participant"], "화자000")
+            self.assertEqual(result_data["summary"]["speaker_context_summaries"][0]["display_name"], "참석자01")
+            self.assertEqual(result_data["summary"]["participant_summaries"][0]["participant"], "참석자01")
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)

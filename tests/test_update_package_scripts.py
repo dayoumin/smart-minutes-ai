@@ -69,11 +69,60 @@ def _make_fake_portable(root: Path) -> Path:
         "dirty": False,
         "app": {"name": "lmo_audio"},
         "files": {
+            "appExe": {
+                "path": "lmo_audio.exe",
+                "sha256": _sha256(portable / "lmo_audio.exe"),
+            },
+            "sidecarExe": {
+                "path": "binaries\\meeting-backend-x86_64-pc-windows-msvc.exe",
+                "sha256": _sha256(portable / "binaries" / "meeting-backend-x86_64-pc-windows-msvc.exe"),
+            },
+            "backendMain": {
+                "path": "backend\\main.py",
+                "sha256": _sha256(portable / "backend" / "main.py"),
+            },
             "backendConfig": {
                 "path": "backend\\config.json",
                 "sha256": _sha256(portable / "backend" / "config.json"),
             }
         },
+        "portablePayloadFiles": [
+            {
+                "path": "lmo_audio.exe",
+                "sha256": _sha256(portable / "lmo_audio.exe"),
+                "bytes": (portable / "lmo_audio.exe").stat().st_size,
+            },
+            {
+                "path": "START_HERE.txt",
+                "sha256": _sha256(portable / "START_HERE.txt"),
+                "bytes": (portable / "START_HERE.txt").stat().st_size,
+            },
+            {
+                "path": "binaries\\meeting-backend-x86_64-pc-windows-msvc.exe",
+                "sha256": _sha256(portable / "binaries" / "meeting-backend-x86_64-pc-windows-msvc.exe"),
+                "bytes": (portable / "binaries" / "meeting-backend-x86_64-pc-windows-msvc.exe").stat().st_size,
+            },
+            {
+                "path": "backend\\ffmpeg.exe",
+                "sha256": _sha256(portable / "backend" / "ffmpeg.exe"),
+                "bytes": (portable / "backend" / "ffmpeg.exe").stat().st_size,
+            },
+            {
+                "path": "backend\\main.py",
+                "sha256": _sha256(portable / "backend" / "main.py"),
+                "bytes": (portable / "backend" / "main.py").stat().st_size,
+            },
+            {
+                "path": "backend\\module\\temp\\data.txt",
+                "sha256": _sha256(portable / "backend" / "module" / "temp" / "data.txt"),
+                "bytes": (portable / "backend" / "module" / "temp" / "data.txt").stat().st_size,
+            },
+            {
+                "path": "backend\\module\\config.json",
+                "sha256": _sha256(portable / "backend" / "module" / "config.json"),
+                "bytes": (portable / "backend" / "module" / "config.json").stat().st_size,
+            },
+        ],
         "modelMarkers": [],
     }
     _write(portable / "release-manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
@@ -161,6 +210,53 @@ class UpdatePackageScriptTest(unittest.TestCase):
                 )
                 self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
                 self.assertIn("does not match current HEAD", completed.stdout + completed.stderr)
+                self.assertFalse(package_root.exists())
+            finally:
+                shutil.rmtree(package_root, ignore_errors=True)
+
+    def test_create_update_package_rejects_manifest_file_hash_mismatch(self):
+        package_name = f"test_update_manifest_mismatch_{int(time.time() * 1000)}"
+        package_root = ROOT / "releases" / "updates" / package_name
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = _make_fake_portable(Path(temp_dir))
+            (portable / "backend" / "main.py").write_text("changed after manifest", encoding="utf-8")
+            try:
+                completed = _run_powershell(
+                    "& "
+                    + _ps_quote(ROOT / "scripts" / "create_update_package.ps1")
+                    + " -PortableDir "
+                    + _ps_quote(portable)
+                    + " -OutputRoot "
+                    + _ps_quote(ROOT / "releases" / "updates")
+                    + f" -PackageName {package_name} -AllowStale"
+                )
+                self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                self.assertIn("release manifest does not match", (completed.stdout + completed.stderr).lower())
+                self.assertFalse(package_root.exists())
+            finally:
+                shutil.rmtree(package_root, ignore_errors=True)
+
+    def test_create_update_package_rejects_empty_manifest_file_hashes(self):
+        package_name = f"test_update_empty_manifest_{int(time.time() * 1000)}"
+        package_root = ROOT / "releases" / "updates" / package_name
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = _make_fake_portable(Path(temp_dir))
+            manifest_path = portable / "release-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            manifest["files"] = {}
+            manifest_path.write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8")
+            try:
+                completed = _run_powershell(
+                    "& "
+                    + _ps_quote(ROOT / "scripts" / "create_update_package.ps1")
+                    + " -PortableDir "
+                    + _ps_quote(portable)
+                    + " -OutputRoot "
+                    + _ps_quote(ROOT / "releases" / "updates")
+                    + f" -PackageName {package_name} -AllowStale"
+                )
+                self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                self.assertIn("does not include file hashes", completed.stdout + completed.stderr)
                 self.assertFalse(package_root.exists())
             finally:
                 shutil.rmtree(package_root, ignore_errors=True)

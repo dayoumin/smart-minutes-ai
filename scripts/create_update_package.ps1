@@ -62,6 +62,13 @@ function Assert-SafePackageRoot([string]$OutputRootPath, [string]$PackageRootPat
     return $packageFullPath
 }
 
+function Test-IsPathWithin([string]$Path, [string]$Root) {
+    $fullPath = Normalize-FullPath $Path
+    $rootPath = Normalize-FullPath $Root
+    return $fullPath.Equals($rootPath, [System.StringComparison]::OrdinalIgnoreCase) -or
+        $fullPath.StartsWith($rootPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
 function Get-FileHashValue([string]$Path) {
     try {
         $hashCommand = Get-Command Get-FileHash -ErrorAction Stop
@@ -155,6 +162,58 @@ function Get-PayloadFileEntries([string]$PackageRoot, [string]$PayloadRoot) {
     return $files
 }
 
+function Assert-ManifestEntriesMatchPortable([string]$PortableRoot, $Entries, [string]$Label) {
+    $properties = @($Entries)
+    if ($null -eq $Entries) {
+        throw "Release manifest does not include $Label hashes. Rebuild the portable release first."
+    }
+
+    $mismatches = @()
+    foreach ($entry in $properties) {
+        $relativePath = [string]$entry.path
+        $expectedHash = [string]$entry.sha256
+        if ([string]::IsNullOrWhiteSpace($relativePath) -or [string]::IsNullOrWhiteSpace($expectedHash)) {
+            $mismatches += "$Label entry is missing path or sha256"
+            continue
+        }
+
+        $filePath = Join-Path $PortableRoot $relativePath
+        if (-not (Test-IsPathWithin $filePath $PortableRoot)) {
+            $mismatches += "$relativePath escaped portable root"
+            continue
+        }
+        if (-not (Test-Path -LiteralPath $filePath)) {
+            $mismatches += "$relativePath missing"
+            continue
+        }
+        $actualHash = Get-FileHashValue $filePath
+        if ($actualHash -ne $expectedHash) {
+            $mismatches += "$relativePath hash mismatch"
+        }
+    }
+
+    if ($properties.Count -eq 0) {
+        $mismatches += "$Label hashes are empty"
+    }
+
+    if ($mismatches.Count -gt 0) {
+        throw "Portable release manifest does not match current files: $($mismatches -join '; ')"
+    }
+}
+
+function Assert-ReleaseManifestMatchesPortable([string]$PortableRoot, $Manifest) {
+    if (-not $Manifest.files -or @($Manifest.files.PSObject.Properties).Count -eq 0) {
+        throw "Release manifest does not include file hashes. Rebuild the portable release first."
+    }
+
+    $fileEntries = @()
+    foreach ($property in $Manifest.files.PSObject.Properties) {
+        $fileEntries += $property.Value
+    }
+    Assert-ManifestEntriesMatchPortable $PortableRoot $fileEntries "core file"
+    Assert-ManifestEntriesMatchPortable $PortableRoot @($Manifest.portablePayloadFiles) "portable payload file"
+}
+
 $portablePath = Assert-SafePortablePath (Resolve-InRepoPath $PortableDir)
 $outputRootPath = Assert-SafeOutputPath (Resolve-InRepoPath $OutputRoot)
 $manifestPath = Join-Path $portablePath "release-manifest.json"
@@ -170,6 +229,7 @@ $releaseManifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Jso
 if (($releaseManifest.PSObject.Properties.Name -contains "dirty") -and [bool]$releaseManifest.dirty -and -not $AllowDirty) {
     throw "Refusing to package a dirty release manifest. Rebuild cleanly or pass -AllowDirty for local testing."
 }
+Assert-ReleaseManifestMatchesPortable $portablePath $releaseManifest
 
 $commit = if ($releaseManifest.commit) { [string]$releaseManifest.commit } else { "unknown" }
 if (-not $AllowStale) {

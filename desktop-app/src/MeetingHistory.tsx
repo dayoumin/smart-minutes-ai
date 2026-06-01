@@ -133,6 +133,7 @@ interface GenerationProgressResponse {
     progress?: number;
     message?: string;
     status?: 'idle' | 'processing' | 'completed' | 'failed' | string;
+    action?: DiarizationStopAction;
     started_at?: string;
     updated_at?: string;
 }
@@ -142,6 +143,7 @@ interface StopDiarizationResponse {
     active?: boolean;
     running?: boolean;
     status?: string;
+    action?: DiarizationStopAction;
     message?: string;
 }
 
@@ -700,6 +702,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     return {
                         ...payload,
                         progress: nextProgress,
+                        action: payload.action ?? current?.action,
                     };
                 });
                 if (payload.status === 'failed') {
@@ -1122,6 +1125,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 ...(current ?? {}),
                 active: data.active ?? true,
                 progress: current?.progress ?? 0,
+                action: data.action ?? action,
                 message: data.message || finalMessage,
                 status: data.status || 'stopping',
             }));
@@ -1271,10 +1275,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         && (generatingKind === 'diarization' || diarizationProgress?.active),
     );
     const diarizationStopRequested = Boolean(diarizationIsRunning && diarizationProgress?.status === 'stopping');
+    const diarizationStopAction = stoppingDiarizationAction ?? diarizationProgress?.action;
+    const diarizationStopLabel = diarizationStopAction === 'cancel' ? '취소 중' : '중지 중';
     const diarizationApplied = selectedMeeting?.diarizationApplied;
     const diarizationStatus = (() => {
         if (!hasTranscriptData) return { label: '대기', tone: 'neutral' };
-        if (diarizationStopRequested) return { label: '중지 중', tone: 'warning' };
+        if (diarizationStopRequested) return { label: diarizationStopLabel, tone: 'warning' };
         if (diarizationIsRunning) return { label: '진행 중', tone: 'info' };
         if (selectedMeeting?.diarizationSkipped) return { label: '제외', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
@@ -2201,6 +2207,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         diarizationProgressPercent,
         diarizationProgress?.status,
     );
+    const effectiveDiarizationRemainingEstimate = diarizationStopRequested
+        ? diarizationStopLabel
+        : diarizationRemainingEstimate;
     const diarizationProgressPanel = showDiarizationProgress ? (
         <div className="mt-3 border-t border-border/70 pt-3">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -2229,7 +2238,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     </div>
                     <div className="mt-3 text-xs text-muted-foreground">예상 남은 시간</div>
                     <div className="mt-1 text-sm font-semibold text-primary">
-                        {diarizationRemainingEstimate}
+                        {effectiveDiarizationRemainingEstimate}
                     </div>
                     {!isDiarizationStopConfirmOpen && !diarizationStopRequested && (
                         <Button
@@ -2246,7 +2255,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     {diarizationStopRequested && (
                         <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
                             <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-                            중지 중
+                            {diarizationStopLabel}
                         </div>
                     )}
                 </div>
@@ -2275,7 +2284,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             className="h-8 px-3 text-xs"
                             onClick={() => handleStopDiarization('cancel')}
                             disabled={isStoppingDiarization}
-                            title="이 회의록에서 참석자 구분을 사용하지 않음"
+                            title="이번 참석자 구분 실행만 취소"
                         >
                             {isStoppingDiarization && stoppingDiarizationAction === 'cancel' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
                             취소
@@ -2481,13 +2490,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 <Button
                                                     variant="outline"
                                                     className="meeting-status-run-button"
-                                                    aria-label={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                                    title={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                    aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                    title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
                                                     disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : generatingKind !== null}
                                                     onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
                                                 >
                                                     {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                                    {diarizationStopRequested ? '중지 중' : diarizationIsRunning ? '중지/취소' : '실행'}
+                                                    {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
                                                 </Button>
                                             )}
                                         </span>
@@ -2570,13 +2579,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         <Button
                                             variant="outline"
                                             className="detail-action-button"
-                                            aria-label={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                            title={diarizationStopRequested ? '참석자 구분 중지 중' : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                            aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                            title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
                                             disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : (!canGenerateDiarization || generatingKind !== null)}
                                             onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
                                         >
                                             {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                            {diarizationStopRequested ? '중지 중' : diarizationIsRunning ? '중지/취소' : '실행'}
+                                            {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
                                         </Button>
                                     </div>
                                 )}

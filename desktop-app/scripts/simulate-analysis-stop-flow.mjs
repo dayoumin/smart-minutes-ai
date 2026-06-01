@@ -194,6 +194,10 @@ const runScenario = async (browser, fixture, action) => {
       analyzeJobId = multipartField(postData, 'job_id');
       markAnalyzeStarted();
       await analyzeCanFinish;
+      const terminalStatus = action === 'stop' ? 'stopped' : 'cancelled';
+      const terminalMessage = action === 'stop'
+        ? '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.'
+        : '분석이 취소되었습니다.';
       return route.fulfill({
         status: 200,
         contentType: 'text/event-stream',
@@ -201,8 +205,8 @@ const runScenario = async (browser, fixture, action) => {
           'event: progress',
           `data: ${JSON.stringify({ type: 'progress', progress: 42, status: 'transcribing', message: 'Transcribing chunk 2/4...' })}`,
           '',
-          'event: cancelled',
-          `data: ${JSON.stringify({ type: 'cancelled', action, progress: 42, status: 'cancelled', message: '분석이 취소되었습니다.' })}`,
+          `event: ${terminalStatus}`,
+          `data: ${JSON.stringify({ type: terminalStatus, action, progress: 42, status: terminalStatus, message: terminalMessage })}`,
           '',
           'event: done',
           'data: [DONE]',
@@ -246,7 +250,11 @@ const runScenario = async (browser, fixture, action) => {
     assert.equal(cancelRequestCount, 1);
     assert.deepEqual(cancelRequestBodies, [{ action }]);
     if (action === 'stop') {
-      await page.waitForTimeout(1800);
+      await page.waitForFunction(() => {
+        const raw = window.localStorage.getItem('analysisResumeDrafts');
+        const drafts = raw ? JSON.parse(raw) : [];
+        return drafts.some(draft => draft.status === 'stopped');
+      });
       const draftsBeforeFinalCancel = await readLocalStorageJson(page, 'analysisResumeDrafts');
       assert.equal(draftsBeforeFinalCancel.length, 1);
       assert.equal(draftsBeforeFinalCancel[0].status, 'stopped');

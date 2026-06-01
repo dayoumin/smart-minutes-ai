@@ -3749,8 +3749,14 @@ async def stream_real_analysis(
             await queue.put("[DONE]")
         except AnalysisCancelledError as exc:
             cancel_action = ANALYSIS_JOBS.get_action(job_id) or "stop"
+            cancelled_status = "stopped" if cancel_action == "stop" else "cancelled"
+            cancelled_message = (
+                "분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다."
+                if cancel_action == "stop"
+                else str(exc)
+            )
             _write_job_state(checkpoint_paths, {
-                "stage": "cancelled",
+                "stage": cancelled_status,
                 "cancelled": True,
                 "cancel_action": cancel_action,
                 "resume_supported": cancel_action == "stop",
@@ -3763,12 +3769,12 @@ async def stream_real_analysis(
                 except Exception:
                     logging.exception("Failed to delete cancelled analysis draft artifacts")
             await queue.put({
-                "type": "cancelled",
+                "type": cancelled_status,
                 "mode": "real",
                 "progress": 0,
-                "status": "cancelled",
+                "status": cancelled_status,
                 "action": cancel_action,
-                "message": str(exc),
+                "message": cancelled_message,
             })
             await queue.put("[DONE]")
         except Exception as exc:

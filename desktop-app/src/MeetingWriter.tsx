@@ -1516,7 +1516,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     if (parsed.status === 'error') {
                         throw new Error(parsed.message || '분석 중 오류가 발생했습니다.');
                     }
-                    if (parsed.status === 'cancelled') {
+                    if (parsed.status === 'cancelled' || parsed.status === 'stopped') {
                         if (!analysisStopActionRef.current && (parsed.action === 'cancel' || parsed.action === 'stop')) {
                             analysisStopActionRef.current = parsed.action;
                         }
@@ -1745,7 +1745,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             queuePendingAnalysisDraftCleanup(jobId);
         }
         setResumeDrafts(listAnalysisResumeDrafts());
-        analysisCancelledRef.current = true;
         setErrorMessage('');
         setIsAnalysisStopConfirmOpen(false);
         window.setTimeout(() => {

@@ -1275,8 +1275,10 @@ class AnalyzeApiTest(unittest.TestCase):
             paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "unit_cancel_persist")
             state = load_json_checkpoint(paths.state_path)
 
-            self.assertIn("event: cancelled", body)
-            self.assertEqual(state["stage"], "cancelled")
+            self.assertIn("event: stopped", body)
+            self.assertIn('"status": "stopped"', body)
+            self.assertIn("분석을 중지했습니다", body)
+            self.assertEqual(state["stage"], "stopped")
             self.assertTrue(state["cancelled"])
             self.assertEqual(state["cancel_action"], "stop")
             self.assertTrue(state["resume_supported"])
@@ -1326,6 +1328,7 @@ class AnalyzeApiTest(unittest.TestCase):
             paths = build_job_checkpoint_paths(fake_config["paths"]["temp_dir"], "unit_cancel_delete")
 
             self.assertIn('"action": "cancel"', body)
+            self.assertIn('"status": "cancelled"', body)
             self.assertFalse(os.path.exists(paths.state_path))
 
     def test_resume_candidates_returns_matching_unfinished_job(self) -> None:

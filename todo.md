@@ -92,6 +92,7 @@
   - 30분, 1시간, 2시간, 5시간 파일로 처리 시간, 임시 파일 용량, 메모리, 실패 여부를 기록한다.
   - 결과는 `releases\lmo_audio\backend\outputs`, 임시 파일은 `releases\lmo_audio\backend\temp`에 생성된다.
   - 실패 시 `releases\lmo_audio\logs\analysis.log`, `sidecar.stderr.log`를 확인해 원인을 남긴다.
+  - 사용자 관점 자동 처리와 UI/UX 계획은 `docs/long-video-auto-processing-ux-plan.md`를 기준으로 진행한다.
   - 2026-05-11 프로젝트 내부 company-smoke 복사본 기준 104초 파일은 55.32초, 365초 파일은 139.25초에 완료됐다. 30분 이상 파일은 아직 미검증이다.
   - 2026-05-12 점검: 현재 병목/리스크는 STT 청크보다 `pyannote` 참석자 구분 단계다. diarization이 전체 WAV를 한 번에 메모리로 읽으므로 1시간/2시간 파일은 여기서 중단될 가능성을 우선 본다.
   - 대응 방향: 긴 파일은 내부적으로 나눠서 처리하고, STT/중간 산출물을 저장한 뒤 다시 불러와 이어서 쓰는 구조를 우선 검토한다.

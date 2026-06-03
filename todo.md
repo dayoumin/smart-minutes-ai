@@ -4,6 +4,17 @@
   - 최종 실행/검증 기준은 `releases\lmo_audio`이며, 루트 `lmo_audio`는 예전 산출물이므로 사용하지 않는다.
   - 이번 PC에서는 기존 `backend\models\...` 실모델을 복사하지 않기 위해 루트 `models\...`를 junction으로 연결했다. 회사 PC에서는 junction을 필수 절차로 보지 말고, 실제 모델 폴더를 루트 `models` 아래에 두거나 명시적으로 링크한 뒤 `release_portable.ps1`를 실행한다.
   - Qwen 모델은 회사 전달용 portable과 재빌드용 모델 원본에 넣지 않는다.
+- [ ] 2026-06-03 회사 PC 빌드 및 데스크탑앱 실제 검증
+  - 이번 집 PC 검증은 백엔드 단위 테스트, 프론트 typecheck/lint, 웹 기반 Playwright 시뮬레이션까지이며, `releases\lmo_audio\lmo_audio.exe`를 직접 실행한 데스크탑앱 검증은 아니다.
+  - 회사 PC에서는 먼저 최신 `origin/main`을 pull한 뒤, 기존 회사 PC 모델 폴더를 유지하고 코드/설정만 최신화한다.
+  - 회사 PC에서 재빌드할 때는 루트에서 `corepack pnpm build`를 실행한다. 이 명령은 웹 빌드가 아니라 사용자용 portable 배포 빌드다.
+  - 빌드 후 최종 실행 기준은 `releases\lmo_audio` 폴더 전체다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
+  - 빌드 후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`로 manifest, sidecar, 모델, health, export smoke를 확인한다.
+  - 실제 앱 검증은 `releases\lmo_audio\lmo_audio.exe` 실행 기준으로 한다. 개발 서버나 웹 브라우저 테스트 결과만으로 완료 처리하지 않는다.
+  - 데스크탑앱 한계 체크는 `docs\tauri-desktop-release-checklist.md`의 `0-1. 데스크탑앱 한계 체크`를 기준으로 본다.
+  - 최소 수동 시나리오: 앱 실행 시 콘솔 창 없음, 필수 모델 준비 상태, 짧은 MP4/WAV 대화록 작성, 참석자 구분 실행 가능/불가 상태, 저장공간 부족 안내, HWPX/TXT/DOCX 다운로드, 다운로드 위치와 내부 결과 폴더 구분.
+  - Ollama 정리 모델이 없으면 대화록 작성은 완료되어야 하고, 전체 요약/주제별 정리/참석자별 정리는 준비 필요 또는 별도 실행 상태로 남아야 한다.
+  - 실패 시 `releases\lmo_audio\logs\analysis.log`, `releases\lmo_audio\backend\logs`, `releases\lmo_audio\backend\outputs`, `releases\lmo_audio\backend\temp`를 확인하고 원인을 기록한다.
 - [ ] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
   - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
   - 집에서 작업을 시작하면 먼저 `README.md`, `docs/tauri-desktop-release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.

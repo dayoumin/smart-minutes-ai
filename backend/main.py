@@ -47,6 +47,7 @@ from model_manager import (
     resolve_model_path,
 )
 from pipeline.transcribe import get_stt_device_status
+from storage_preflight import build_analysis_storage_preflight
 
 BASE_DIR = os.path.abspath(
     os.environ.get(
@@ -3359,6 +3360,20 @@ async def save_export_record_copy(kind: str, request: Request, payload: dict = B
         "size_bytes": target_path.stat().st_size,
         "title": result_data.get("summary", {}).get("title", title),
     }
+
+
+def _build_analysis_storage_preflight(file_size_bytes: int | float | None, duration_seconds: float | int | None) -> dict:
+    config = load_config()
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    return build_analysis_storage_preflight(temp_dir, file_size_bytes, duration_seconds)
+
+
+@app.post("/api/analyze/preflight")
+async def analyze_preflight(payload: dict = Body(...)) -> dict:
+    return _build_analysis_storage_preflight(
+        payload.get("file_size"),
+        payload.get("duration_seconds"),
+    )
 
 
 @app.post("/api/analyze")

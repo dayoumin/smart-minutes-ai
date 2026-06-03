@@ -1278,20 +1278,28 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const diarizationStopAction = stoppingDiarizationAction ?? diarizationProgress?.action;
     const diarizationStopLabel = diarizationStopAction === 'cancel' ? '취소 중' : '중지 중';
     const diarizationApplied = selectedMeeting?.diarizationApplied;
+    const diarizationNeedsSourceAudio = Boolean(
+        selectedMeeting?.jobId
+        && hasTranscriptData
+        && !diarizationApplied
+        && !selectedMeeting?.diarizationSkipped
+        && audioAvailability === 'missing',
+    );
     const diarizationStatus = (() => {
         if (!hasTranscriptData) return { label: '대기', tone: 'neutral' };
         if (diarizationStopRequested) return { label: diarizationStopLabel, tone: 'warning' };
         if (diarizationIsRunning) return { label: '진행 중', tone: 'info' };
-        if (selectedMeeting?.diarizationSkipped) return { label: '제외', tone: 'warning' };
+        if (selectedMeeting?.diarizationSkipped) return { label: '제외됨', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
-        if (selectedMeeting?.diarizationDeferred) return { label: '별도 실행', tone: 'neutral' };
-        if (diarizationApplied === false) return { label: '별도 실행', tone: 'neutral' };
-        return { label: '별도 실행', tone: 'neutral' };
+        if (diarizationNeedsSourceAudio) return { label: '원본 필요', tone: 'warning' };
+        if (audioAvailability === 'checking') return { label: '확인 중', tone: 'info' };
+        if (selectedMeeting?.jobId) return { label: '대기', tone: 'neutral' };
+        return { label: '대기', tone: 'neutral' };
     })();
     const diarizationStatusTitle = selectedMeeting?.diarizationSkipped
         ? toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.')
         : selectedMeeting?.diarizationDeferred && !selectedMeeting.diarizationApplied
-            ? toParticipantCopy(selectedMeeting.diarizationDeferMessage || '참석자 구분은 기록 정리에서 별도로 실행할 수 있습니다.')
+            ? toParticipantCopy(selectedMeeting.diarizationDeferMessage || '대화록은 저장되었습니다. 필요할 때 참석자 구분을 실행하세요.')
             : undefined;
     const canGenerateSummary = Boolean(selectedMeeting?.jobId && hasTranscriptData);
     const canGenerateDiarization = Boolean(
@@ -1299,13 +1307,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         && hasTranscriptData
         && !selectedMeeting?.diarizationApplied
         && !selectedMeeting?.diarizationSkipped
+        && audioAvailability === 'available'
     );
     const diarizationActionMeta = canGenerateDiarization
-        ? (diarizationIsRunning ? '구분 중' : '별도 실행')
+        ? (diarizationIsRunning ? '구분 중' : '대기')
         : selectedMeeting?.diarizationApplied
             ? '완료'
             : selectedMeeting?.diarizationSkipped
-                ? '제외'
+                ? '제외됨'
+                : diarizationNeedsSourceAudio
+                    ? '원본 필요'
                 : '';
     const canGenerateTopicSections = Boolean(selectedMeeting?.jobId && hasTranscriptData && summaryGenerationStatus !== 'skipped');
     const speakerGenerationStatus = getSpeakerGenerationStatus(

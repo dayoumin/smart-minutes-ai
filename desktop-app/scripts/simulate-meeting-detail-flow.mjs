@@ -455,6 +455,17 @@ const installRoutes = async (page) => {
     });
   });
 
+  await page.route('**/api/outputs/*/audio', route => {
+    const url = route.request().url();
+    const hasAudio = url.includes(`/api/outputs/${jobId}/audio`)
+      || url.includes(`/api/outputs/${cancelJobId}/audio`);
+    return route.fulfill({
+      status: hasAudio ? 200 : 404,
+      contentType: 'audio/wav',
+      body: hasAudio ? 'RIFF' : '',
+    });
+  });
+
   await page.route(`**/api/outputs/${jobId}/generate-topic-sections`, async route => {
     markTopicSectionsRequested();
     await topicSectionsResponseDelay;

@@ -41,7 +41,32 @@ const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
 const BACKEND_READY_INTERVAL_MS = 1_000;
 const ANALYSIS_STALL_WARNING_MS = 120_000;
+const LONG_MEDIA_NOTICE_SECONDS = 30 * 60;
+const VERY_LONG_MEDIA_NOTICE_SECONDS = 90 * 60;
+const PARTICIPANT_SEPARATION_CAUTION_SECONDS = 140 * 60;
 const getNowMs = (): number => Date.now();
+
+const getSelectedFileProcessingGuidance = (durationSeconds: number | null): string | null => {
+    if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
+    if (durationSeconds >= PARTICIPANT_SEPARATION_CAUTION_SECONDS) {
+        return '매우 긴 파일입니다. 대화록을 먼저 저장합니다. 참석자 구분은 PC 상태에 따라 결과 화면에서 실행하지 못할 수 있습니다.';
+    }
+    if (durationSeconds >= VERY_LONG_MEDIA_NOTICE_SECONDS) {
+        return '긴 파일입니다. 대화록을 먼저 저장하고, 참석자 구분과 정리는 결과 화면에서 실행할 수 있습니다.';
+    }
+    return '긴 파일입니다. 대화록을 먼저 저장한 뒤 참석자 구분과 정리를 결과 화면에서 실행할 수 있습니다.';
+};
+
+const getAnalysisProgressGuidance = (durationSeconds: number | null, isTranscriptReady: boolean): string | null => {
+    if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
+    if (isTranscriptReady) {
+        return '대화록 저장이 끝나면 결과 화면에서 참석자 구분과 정리를 실행할 수 있습니다.';
+    }
+    if (durationSeconds >= VERY_LONG_MEDIA_NOTICE_SECONDS) {
+        return '파일이 길어 시간이 오래 걸릴 수 있습니다. 대화록 예상은 저장 기준이며, 완료된 진행분은 이어서 사용할 수 있게 남깁니다.';
+    }
+    return '대화록 예상은 저장 기준입니다. 참석자 구분과 정리는 결과 화면에서 실행할 수 있습니다.';
+};
 
 interface AnalyzeResult {
     status?: string;
@@ -161,6 +186,16 @@ interface ModelsPayload {
     ready: boolean;
     models: ModelStatus[];
     errors?: string[];
+}
+
+interface AnalysisStoragePreflightPayload {
+    ok?: boolean;
+    level?: 'ok' | 'warning' | 'error';
+    reason?: string;
+    message?: string;
+    required_bytes?: number;
+    available_bytes?: number | null;
+    target_dir?: string;
 }
 
 type ReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
@@ -443,6 +478,38 @@ const getAutoSaveCompletionNote = (result: AnalyzeResult): string | undefined =>
         notes.push(`${failedKinds.join(', ')} 자동 저장은 실패했습니다.`);
     }
     return notes.length ? notes.join(' ') : undefined;
+};
+
+const requestAnalysisStoragePreflight = async (
+    apiBase: string,
+    selectedFile: File,
+    durationSeconds: number | null,
+    signal?: AbortSignal,
+): Promise<AnalysisStoragePreflightPayload> => {
+    const response = await fetch(`${apiBase}/api/analyze/preflight`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            file_size: selectedFile.size,
+            duration_seconds: durationSeconds,
+            source_filename: selectedFile.name,
+        }),
+        signal,
+    });
+    if (!response.ok) {
+        const detailText = await response.text().catch(() => '');
+        let message = detailText;
+        if (detailText.startsWith('{')) {
+            try {
+                const parsedDetail = JSON.parse(detailText) as { detail?: string };
+                message = parsedDetail.detail || detailText;
+            } catch {
+                message = detailText;
+            }
+        }
+        throw new Error(message || '저장 공간을 확인하지 못했습니다.');
+    }
+    return await response.json() as AnalysisStoragePreflightPayload;
 };
 
 const toResumeDraftFileKey = (selectedFile: File): AnalysisResumeDraftFileKey => ({
@@ -1414,6 +1481,22 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     }
                 }
             }
+            if (ANALYSIS_MODE === 'real' && file) {
+                setStatusMessage('저장 공간을 확인하고 있습니다.');
+                const storagePreflight = await requestAnalysisStoragePreflight(
+                    apiBase,
+                    file,
+                    fileDurationSeconds,
+                    analysisAbortControllerRef.current?.signal,
+                );
+                if (storagePreflight.ok === false) {
+                    throw new Error(storagePreflight.message || '저장 공간이 부족합니다. 임시 파일을 정리한 뒤 다시 시도해 주세요.');
+                }
+                if (storagePreflight.level === 'warning' && storagePreflight.message) {
+                    showOperationToast(storagePreflight.message, 'warning');
+                }
+                setStatusMessage(resumeRequested ? '이전 음성 인식 진행분 재사용을 시도합니다.' : '');
+            }
             analysisJobIdRef.current = analysisJobId;
             analysisResumeDraftIdRef.current = analysisJobId;
             saveResumeDraft('active', {
@@ -1796,6 +1879,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
         ].filter(Boolean).join(' · ')
         : '음성/영상 파일을 선택해 주세요.';
+    const selectedFileGuidance = file ? getSelectedFileProcessingGuidance(fileDurationSeconds) : null;
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
     const transcriptEstimateLabel = formatTranscriptReadyEstimate(
         elapsedMs,
@@ -1808,6 +1892,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         rawStatusMessage || currentStatusMessage,
         transcriptReady,
     );
+    const analysisProgressGuidance = getAnalysisProgressGuidance(fileDurationSeconds, transcriptReady);
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
@@ -2089,6 +2174,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             </div>
                         </div>
                     </div>
+                    {selectedFileGuidance && (
+                        <div className="detail-inline-note">
+                            {selectedFileGuidance}
+                        </div>
+                    )}
                     {selectedResumeDraft && (
                         <div className={`text-xs ${resumeDraftFileMismatch || selectedResumeDraftUnavailable ? 'text-destructive' : 'text-muted-foreground'}`}>
                             {selectedResumeDraftUnavailable
@@ -2282,8 +2372,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 </div>
                                 <div>
                                     <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                        <span>예상 시간</span>
-                                        <span title="대화록이 저장될 때까지의 추정 시간입니다. 참석자 구분과 정리, 요약은 포함하지 않습니다." className="inline-flex items-center">
+                                        <span>대화록 예상</span>
+                                        <span title="대화록이 저장될 때까지의 추정 시간입니다. 참석자 구분과 기록 정리는 포함하지 않습니다." className="inline-flex items-center">
                                             <CircleHelp size={13} />
                                         </span>
                                     </div>
@@ -2310,6 +2400,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             )}
                         </div>
                     </div>
+                    {analysisProgressGuidance && (
+                        <div className="detail-inline-note mt-3">
+                            {analysisProgressGuidance}
+                        </div>
+                    )}
                     {isAnalysisStopConfirmOpen && (
                         <div className="analysis-stop-panel" role="group" aria-label="분석 중지 또는 취소 방식 선택">
                             <div className="min-w-0 flex-1">

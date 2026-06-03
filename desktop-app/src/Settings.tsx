@@ -402,7 +402,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 />
                                 <span>
                                     <span className="block font-medium text-foreground">참석자 구분</span>
-                                    <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다. 긴 파일은 먼저 대화록과 요약을 만듭니다.</span>
+                                    <span className="text-sm text-muted-foreground">누가 말했는지 자동으로 나눕니다. 긴 파일은 대화록을 먼저 저장하고, 내부 음성 파일이 남아 있으면 결과 화면에서 실행할 수 있습니다.</span>
                                 </span>
                             </label>
 
@@ -426,7 +426,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 />
                                 <span>
                                     <span className="block font-medium text-foreground">음성 재생 파일 보관</span>
-                                    <span className="text-sm text-muted-foreground">결과 화면에서 다시 듣거나 참석자 구분을 나중에 실행해야 할 때만 내부 음성 파일을 남깁니다.</span>
+                                    <span className="text-sm text-muted-foreground">결과 화면에서 다시 듣거나 대화록 작성 후 참석자 구분을 실행할 수 있도록 내부 음성 파일을 남깁니다.</span>
                                 </span>
                             </label>
 
@@ -451,7 +451,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 />
                                 <span>
                                     <span className="block font-medium text-foreground">음성 파일 자동 저장</span>
-                                    <span className="text-sm text-muted-foreground">음성 재생 파일을 보관할 때만 다운로드 폴더에도 저장합니다. 영상만 음성으로 바꿀 때는 작성 화면의 음성 추출을 사용하세요.</span>
+                                    <span className="text-sm text-muted-foreground">보관한 음성 파일을 다운로드 폴더에도 저장합니다. 영상만 음성으로 바꿀 때는 작성 화면의 음성 추출을 사용하세요.</span>
                                 </span>
                             </label>
                         </section>

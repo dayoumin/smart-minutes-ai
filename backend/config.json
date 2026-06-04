@@ -45,7 +45,28 @@
     "generate_during_analysis": false,
     "mode": "meeting_minutes",
     "provider": "ollama",
-    "model": "gemma4:e2b"
+    "model": "gemma4:e2b",
+    "model_options": [
+      {
+        "model": "gemma4:e2b",
+        "label": "권장 2B",
+        "description": "용량과 속도를 우선할 때 사용합니다.",
+        "url": "https://ollama.com/library/gemma4%3Ae2b",
+        "command": "ollama run gemma4:e2b"
+      },
+      {
+        "model": "gemma4:e4b",
+        "label": "선택 4B",
+        "description": "PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.",
+        "url": "https://ollama.com/library/gemma4%3Ae4b",
+        "command": "ollama run gemma4:e4b"
+      },
+      {
+        "label": "모델 목록",
+        "description": "Ollama에서 Gemma 4 모델을 비교합니다.",
+        "url": "https://ollama.com/library/gemma4"
+      }
+    ]
   },
   "export_templates": {
     "use_custom_template": false,

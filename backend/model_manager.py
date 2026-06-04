@@ -2,6 +2,12 @@ import os
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
+from config_normalization import (
+    DEFAULT_SUMMARY_MODEL,
+    get_summary_candidate_models,
+    get_summary_model_options,
+    get_summary_option_models,
+)
 from ollama_utils import find_ollama_executable
 from process_utils import run_hidden
 
@@ -28,6 +34,9 @@ class ModelSpec:
     license_url: str = ""
     requires_token: bool = False
     manual_note: str = ""
+    install_url: str = ""
+    install_command: str = ""
+    install_options: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
 
 MODEL_SPECS = [
@@ -61,14 +70,6 @@ MODEL_SPECS = [
             "참석자 구분 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
             "기존 models\\speaker-diarization-community-1 폴더 방식도 함께 인식합니다."
         ),
-    ),
-    ModelSpec(
-        key="llm",
-        label="Gemma via Ollama",
-        repo_id=None,
-        local_dir="ollama:gemma4:e2b",
-        required=False,
-        manual_note="Ollama에 gemma4:e2b 또는 호환 Gemma 모델이 있으면 요약 품질이 좋아집니다.",
     ),
 ]
 
@@ -153,7 +154,59 @@ def ollama_model_exists(model_name: str) -> bool:
     return any(line.split(maxsplit=1)[0] == model_name for line in result.stdout.splitlines()[1:])
 
 
-def get_model_status(base_dir: str) -> Dict:
+def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
+    config = config or {"summary": {"model": DEFAULT_SUMMARY_MODEL}}
+    summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
+    configured_model = str(summary.get("model") or DEFAULT_SUMMARY_MODEL).strip()
+    options = get_summary_model_options(config)
+    option_models = get_summary_option_models(config)
+    uses_configured_option = configured_model in option_models
+    visible_options = options if uses_configured_option else []
+    candidate_models = get_summary_candidate_models(config)
+
+    installed_model = ""
+    installed_path = ""
+    for model in candidate_models:
+        candidate_path = resolve_backend_path(base_dir, model) if model.startswith((".", "..")) or (model.endswith((".gguf", ".bin")) and not os.path.isabs(model)) else model
+        if os.path.exists(candidate_path):
+            installed_model = model
+            installed_path = candidate_path
+            break
+        if not model.endswith((".gguf", ".bin")) and ollama_model_exists(model):
+            installed_model = model
+            installed_path = f"ollama:{model}"
+            break
+
+    primary_option = next((option for option in visible_options if option.get("model") == configured_model), None)
+    first_actionable_option = next((option for option in visible_options if option.get("url") or option.get("command")), {})
+    install_url = (primary_option or first_actionable_option).get("url", "")
+    install_command = (primary_option or first_actionable_option).get("command", "")
+    if not install_command and configured_model and not configured_model.endswith((".gguf", ".bin")):
+        install_command = f"ollama run {configured_model}"
+
+    return {
+        "key": "llm",
+        "label": configured_model or "Ollama summary model",
+        "repo_id": None,
+        "path": installed_path or (f"ollama:{configured_model}" if configured_model and not configured_model.endswith((".gguf", ".bin")) else configured_model),
+        "installed": bool(installed_model),
+        "installed_model": installed_model,
+        "configured_model": configured_model,
+        "required": False,
+        "gated": False,
+        "requires_token": False,
+        "token_available": False,
+        "license_name": "",
+        "license_url": install_url,
+        "manual_note": f"Ollama 설치 후 {configured_model} 모델을 준비하면 전체 요약과 주제별 정리를 사용할 수 있습니다.",
+        "install_url": install_url,
+        "install_command": install_command,
+        "install_options": visible_options,
+        "downloadable": False,
+    }
+
+
+def get_model_status(base_dir: str, config: Optional[dict] = None) -> Dict:
     models = []
     for spec in MODEL_SPECS:
         installed = model_exists(base_dir, spec)
@@ -170,8 +223,12 @@ def get_model_status(base_dir: str) -> Dict:
             "license_name": spec.license_name,
             "license_url": spec.license_url,
             "manual_note": spec.manual_note,
+            "install_url": spec.install_url,
+            "install_command": spec.install_command,
+            "install_options": list(spec.install_options),
             "downloadable": False,
         })
+    models.append(_summary_model_status(base_dir, config))
 
     required_models = [model for model in models if model["required"]]
     return {

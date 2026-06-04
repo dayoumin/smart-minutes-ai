@@ -19,7 +19,7 @@ import main
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from job_checkpoints import atomic_write_json, build_job_checkpoint_paths, load_json_checkpoint
 from main import app, make_analysis_heartbeat, normalize_stt_config, process_audio_pipeline, stream_real_analysis
-from model_manager import normalize_windows_path, resolve_backend_path
+from model_manager import get_model_status, normalize_windows_path, resolve_backend_path
 from pipeline.audio_preprocess import resolve_preprocessing_plan
 import pipeline.transcribe as transcribe_module
 from pipeline.transcribe import transcribe_audio_fallback_whisper
@@ -538,8 +538,45 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("stt_faster_whisper", model_keys)
         self.assertIn("llm", model_keys)
         self.assertNotIn("stt_primary", model_keys)
+        llm_model = next(model for model in models_response.json()["models"] if model["key"] == "llm")
+        self.assertEqual(llm_model["install_command"], "ollama run gemma4:e2b")
+        self.assertEqual(llm_model["install_url"], "https://ollama.com/library/gemma4%3Ae2b")
+        install_commands = {option["command"] for option in llm_model["install_options"] if option.get("command")}
+        self.assertIn("ollama run gemma4:e2b", install_commands)
+        self.assertIn("ollama run gemma4:e4b", install_commands)
+        option_models = {option["model"] for option in llm_model["install_options"] if option.get("model")}
+        self.assertIn("gemma4:e2b", option_models)
+        self.assertIn("gemma4:e4b", option_models)
         self.assertEqual(settings_response.json()["stt"]["device"], "cpu")
         self.assertIn("stt_device_status", models_response.json())
+
+    def test_update_settings_accepts_summary_model_name(self) -> None:
+        config_ref = main.normalize_app_config({
+            "paths": {"stt_model": "../models/faster-whisper-large-v3"},
+            "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+            "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+            "preprocessing": {"enabled": True, "normalize_audio": True, "normalization_mode": "auto"},
+            "diarization": {"enabled": False},
+            "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
+            "privacy": {"preserve_extracted_audio": True},
+        })
+
+        def fake_save_config(config: dict, config_path: str = "config.json") -> None:
+            config_ref.clear()
+            config_ref.update(copy.deepcopy(config))
+
+        with (
+            patch("main.load_config", side_effect=lambda: copy.deepcopy(config_ref)),
+            patch("main.save_config", side_effect=fake_save_config),
+        ):
+            response = self.client.patch(
+                "/api/settings",
+                json={"summary": {"provider": "ollama", "model": "llama3.2:3b"}},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["summary"]["provider"], "ollama")
+        self.assertEqual(response.json()["summary"]["model"], "llama3.2:3b")
 
     def test_model_status_uses_faster_whisper_even_with_legacy_selection(self) -> None:
         fake_status = {
@@ -572,7 +609,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertFalse(readiness["ready"])
         self.assertEqual(readiness["status"], "skipped")
-        self.assertIn("gemma-4b", readiness["message"])
+        self.assertIn("gemma4:e2b", readiness["message"])
 
     def test_summary_model_readiness_accepts_available_ollama_model(self) -> None:
         with patch.object(main, "ollama_model_exists", return_value=True):
@@ -580,6 +617,92 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertTrue(readiness["ready"])
         self.assertEqual(readiness["status"], "ready")
+
+    def test_summary_model_readiness_accepts_available_gemma4_e4b_fallback(self) -> None:
+        def fake_ollama_exists(model_name: str) -> bool:
+            return model_name == "gemma4:e4b"
+
+        with patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists):
+            readiness = main._summary_model_readiness({"summary": {"enabled": True, "model": "gemma4:e2b"}, "paths": {}})
+            resolved_model = main._resolve_summary_model({"summary": {"enabled": True, "model": "gemma4:e2b"}, "paths": {}})
+
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["status"], "ready")
+        self.assertEqual(resolved_model, "gemma4:e4b")
+
+    def test_models_status_marks_llm_ready_when_configured_option_fallback_installed(self) -> None:
+        config = main.normalize_app_config({
+            "paths": {"stt_model": "../models/faster-whisper-large-v3"},
+            "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+            "diarization": {"enabled": False},
+            "summary": {"enabled": True, "model": "gemma4:e2b"},
+        })
+
+        def fake_ollama_exists(model_name: str) -> bool:
+            return model_name == "gemma4:e4b"
+
+        with (
+            patch("main.load_config", return_value=config),
+            patch("main.get_stt_device_status", return_value={"gpu_usable": False, "gpu_reason": "GPU unavailable", "recommended_device": "cpu", "selected_device_allowed": ["cpu"]}),
+            patch("model_manager.ollama_model_exists", side_effect=fake_ollama_exists),
+            patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists),
+        ):
+            response = self.client.get("/api/models/status")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        llm_model = next(model for model in payload["models"] if model["key"] == "llm")
+        self.assertTrue(payload["summary_ready"])
+        self.assertTrue(llm_model["installed"])
+        self.assertEqual(llm_model["installed_model"], "gemma4:e4b")
+
+    def test_summary_model_readiness_does_not_fallback_for_custom_missing_model(self) -> None:
+        config = main.normalize_app_config({
+            "summary": {
+                "enabled": True,
+                "model": "custom-summary:latest",
+            },
+            "paths": {},
+        })
+
+        def fake_ollama_exists(model_name: str) -> bool:
+            return model_name == "gemma4:e4b"
+
+        with patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists):
+            readiness = main._summary_model_readiness(config)
+            resolved_model = main._resolve_summary_model(config)
+
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["status"], "skipped")
+        self.assertEqual(resolved_model, "custom-summary:latest")
+        self.assertIn("custom-summary:latest", readiness["message"])
+
+    def test_model_status_uses_summary_model_options_from_config(self) -> None:
+        config = main.normalize_app_config({
+            "summary": {
+                "enabled": True,
+                "model": "llama3.2:3b",
+                "model_options": [
+                    {
+                        "model": "llama3.2:3b",
+                        "label": "선택 3B",
+                        "description": "사용자 지정 요약 모델입니다.",
+                        "url": "https://ollama.com/library/llama3.2",
+                        "command": "ollama run llama3.2:3b",
+                    }
+                ],
+            },
+            "paths": {},
+        })
+
+        with patch("model_manager.ollama_model_exists", side_effect=lambda model_name: model_name == "llama3.2:3b"):
+            status = get_model_status(main.BASE_DIR, config)
+
+        llm_model = next(model for model in status["models"] if model["key"] == "llm")
+        self.assertTrue(llm_model["installed"])
+        self.assertEqual(llm_model["configured_model"], "llama3.2:3b")
+        self.assertEqual(llm_model["install_command"], "ollama run llama3.2:3b")
+        self.assertEqual(llm_model["install_options"][0]["model"], "llama3.2:3b")
 
     def test_save_copy_rejects_missing_origin(self) -> None:
         response = self.client.post("/api/export-record/txt/save-copy", json={"title": "테스트 회의"})

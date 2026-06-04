@@ -6,6 +6,7 @@ import { chromium } from 'playwright';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
+const PAGE_GOTO_TIMEOUT_MS = 60000;
 const meetingId = 'codex-detail-flow-simulation';
 const jobId = 'codex-detail-flow-job';
 const skippedMeetingId = 'codex-detail-flow-summary-skipped';
@@ -118,7 +119,7 @@ const startServer = async () => {
   }
 
   const url = new URL(APP_URL);
-  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5173'}`;
+  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5173'} --strictPort --configLoader runner`;
   const child = process.platform === 'win32'
     ? spawn(
       process.env.ComSpec ?? 'cmd.exe',
@@ -132,7 +133,7 @@ const startServer = async () => {
     )
     : spawn(
       'corepack',
-      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port || '5173'],
+      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port || '5173', '--strictPort', '--configLoader', 'runner'],
       {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, BROWSER: 'none' },
@@ -592,6 +593,26 @@ const installRoutes = async (page) => {
       processing: { long_audio_chunk_seconds: 30, enable_long_audio_chunking: true },
       diarization: { enabled: false },
       stt: { device: 'cpu' },
+      summary: {
+        provider: 'ollama',
+        model: 'gemma4:e2b',
+        model_options: [
+          {
+            model: 'gemma4:e2b',
+            label: '권장 2B',
+            description: '용량과 속도를 우선할 때 사용합니다.',
+            url: 'https://ollama.com/library/gemma4%3Ae2b',
+            command: 'ollama run gemma4:e2b',
+          },
+          {
+            model: 'gemma4:e4b',
+            label: '선택 4B',
+            description: 'PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.',
+            url: 'https://ollama.com/library/gemma4%3Ae4b',
+            command: 'ollama run gemma4:e4b',
+          },
+        ],
+      },
       preprocessing: { enabled: true, normalize_audio: true, normalization_mode: 'auto' },
       privacy: { preserve_extracted_audio: true, auto_save_hwpx_copy: false, auto_save_audio_copy: false },
     }),
@@ -607,6 +628,35 @@ const installRoutes = async (page) => {
       summary_message: summaryReady ? '' : '요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.',
       models: [
         { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
+        {
+          key: 'llm',
+          label: 'Gemma via Ollama',
+          installed: summaryReady,
+          required: false,
+          manual_note: 'Ollama 설치 후 Gemma 모델을 준비하면 전체 요약과 주제별 정리를 사용할 수 있습니다.',
+          install_url: 'https://ollama.com/library/gemma4%3Ae2b',
+          install_command: 'ollama run gemma4:e2b',
+          install_options: [
+            {
+              label: '권장 2B',
+              description: '용량과 속도를 우선할 때 사용합니다.',
+              url: 'https://ollama.com/library/gemma4%3Ae2b',
+              command: 'ollama run gemma4:e2b',
+            },
+            {
+              label: '선택 4B',
+              description: 'PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.',
+              url: 'https://ollama.com/library/gemma4%3Ae4b',
+              command: 'ollama run gemma4:e4b',
+            },
+            {
+              label: '모델 목록',
+              description: 'Ollama에서 Gemma 4 모델을 비교합니다.',
+              url: 'https://ollama.com/library/gemma4',
+              command: '',
+            },
+          ],
+        },
       ],
     }),
   }));
@@ -845,7 +895,7 @@ const run = async () => {
       });
     }
 
-    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     await seedMeeting(page);
     await seedSkippedSummaryMeeting(page);
     await seedExistingContentModelMissingMeeting(page);
@@ -866,6 +916,14 @@ const run = async () => {
     const settingsModelsTab = page.getByRole('tab', { name: '분석 준비' });
     await settingsModelsTab.waitFor({ timeout: 10000 });
     assert.equal(await settingsModelsTab.getAttribute('aria-selected'), 'true');
+    await page.getByText('회의 요약').waitFor({ timeout: 10000 });
+    await page.getByText('회의 요약 모델').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '추천 모델' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '모델명 직접 입력' }).click();
+    await page.getByPlaceholder('예: llama3.2:3b').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '추천 모델' }).click();
+    await page.getByRole('link', { name: /권장 2B/ }).waitFor({ timeout: 10000 });
+    await page.getByRole('link', { name: /선택 4B/ }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
 

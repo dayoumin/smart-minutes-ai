@@ -12,6 +12,14 @@ import { getApiBase, isTauriRuntime, restartDesktopBackend } from './apiBase';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 
+interface SummaryModelOption {
+    model?: string;
+    label?: string;
+    description?: string;
+    url?: string;
+    command?: string;
+}
+
 interface ModelStatus {
     key: string;
     label: string;
@@ -25,6 +33,9 @@ interface ModelStatus {
     license_name: string;
     license_url: string;
     manual_note: string;
+    install_url?: string;
+    install_command?: string;
+    install_options?: SummaryModelOption[];
     downloadable: boolean;
 }
 
@@ -36,6 +47,7 @@ interface SettingsPayload {
     summary?: {
         provider?: string;
         model?: string;
+        model_options?: SummaryModelOption[];
     };
     diarization?: {
         enabled?: boolean;
@@ -89,7 +101,13 @@ export type SettingsTab = 'general' | 'models' | 'advanced';
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '기본 음성 인식 파일';
     if (model.key === 'diarization') return '참석자 구분';
+    if (model.key === 'llm') return '회의 요약';
     return model.label;
+};
+
+const getModelUsageText = (model: ModelStatus): string => {
+    if (model.key === 'llm') return '전체 요약과 주제별 정리에 사용합니다.';
+    return '회의록 분석에 필요합니다.';
 };
 
 const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Response> => {
@@ -124,12 +142,18 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(true);
     const [autoSaveHwpxCopy, setAutoSaveHwpxCopy] = useState(false);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState(false);
+    const [summaryModelMode, setSummaryModelMode] = useState<'recommended' | 'direct'>('recommended');
+    const [summaryModelInput, setSummaryModelInput] = useState('');
 
     const userVisibleModels = useMemo(
         () => (models?.models || []).filter(
-            model => model.key === 'stt_faster_whisper' || model.key === 'diarization',
+            model => model.key === 'stt_faster_whisper' || model.key === 'diarization' || model.key === 'llm',
         ),
         [models],
+    );
+    const summaryModelOptions = useMemo(
+        () => (settings?.summary?.model_options || []).filter(option => option.model),
+        [settings],
     );
 
     const applySettingsToForm = useCallback((nextSettings: SettingsPayload) => {
@@ -143,6 +167,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
         setAutoSaveHwpxCopy(nextSettings.privacy?.auto_save_hwpx_copy ?? false);
         setAutoSaveAudioCopy(nextSettings.privacy?.auto_save_audio_copy ?? false);
+        const nextSummaryModel = nextSettings.summary?.model || '';
+        const nextSummaryOptionModels = (nextSettings.summary?.model_options || [])
+            .map(option => option.model)
+            .filter((model): model is string => Boolean(model));
+        setSummaryModelInput(nextSummaryModel);
+        setSummaryModelMode(nextSummaryModel && nextSummaryOptionModels.includes(nextSummaryModel) ? 'recommended' : 'direct');
     }, []);
 
     useEffect(() => {
@@ -237,6 +267,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         try {
+            const summaryModel = summaryModelInput.trim();
+            if (!summaryModel) {
+                throw new Error('회의 요약 모델명을 입력하거나 추천 모델을 선택해 주세요.');
+            }
             const base = apiBase || await getApiBase();
             const response = await fetchWithTimeout(`${base}/api/settings`, {
                 method: 'PATCH',
@@ -252,6 +286,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     stt: {
                         selected_model: 'faster-whisper-large-v3',
                         device: sttDevice,
+                    },
+                    summary: {
+                        provider: 'ollama',
+                        model: summaryModel,
                     },
                     preprocessing: {
                         enabled: preprocessingEnabled,
@@ -466,6 +504,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     <p className="section-description">필수 모델이 준비되어야 분석을 시작할 수 있습니다.</p>
                                 </div>
                                 <div className="flex flex-wrap gap-2">
+                                    <Button onClick={handleSaveSettings} disabled={!canSaveSettings}>
+                                        {isSaving ? '저장 중...' : '저장'}
+                                    </Button>
                                     <Button variant="outline" onClick={() => void loadSettings()} disabled={isLoading || isSaving}>
                                         <RefreshCw size={16} />
                                         상태 새로고침
@@ -476,7 +517,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             <div className="rounded-md border border-border bg-muted/20 p-4 text-sm text-muted-foreground">
                                 <div className="font-medium text-foreground">분석 파일 준비</div>
                                 <p className="mt-1">
-                                    필요한 파일을 앱 폴더의 `models` 폴더에 넣은 뒤 상태 새로고침을 누르세요.
+                                    음성 인식 파일은 앱 폴더에 넣고, 요약 모델은 안내된 설치 방법으로 준비한 뒤 상태 새로고침을 누르세요.
                                 </p>
                             </div>
 
@@ -510,13 +551,74 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 </div>
                             )}
 
+                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div>
+                                        <div className="font-medium text-foreground">회의 요약 모델</div>
+                                        <p className="mt-1 text-sm text-muted-foreground">
+                                            Ollama에 설치할 모델을 선택하거나 설치한 모델명을 입력합니다.
+                                        </p>
+                                    </div>
+                                    <div className="inline-flex rounded-md border border-border bg-background p-1">
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setSummaryModelMode('recommended');
+                                                const firstModel = summaryModelOptions[0]?.model;
+                                                if (firstModel) setSummaryModelInput(firstModel);
+                                            }}
+                                            className={`rounded px-3 py-1.5 text-sm transition-colors ${summaryModelMode === 'recommended' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                                        >
+                                            추천 모델
+                                        </button>
+                                        <button
+                                            type="button"
+                                            onClick={() => setSummaryModelMode('direct')}
+                                            className={`rounded px-3 py-1.5 text-sm transition-colors ${summaryModelMode === 'direct' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                                        >
+                                            모델명 직접 입력
+                                        </button>
+                                    </div>
+                                </div>
+
+                                {summaryModelMode === 'recommended' && summaryModelOptions.length > 0 ? (
+                                    <label className="mt-4 block">
+                                        <span className="text-xs font-medium text-muted-foreground">추천 모델</span>
+                                        <select
+                                            value={summaryModelInput}
+                                            onChange={event => setSummaryModelInput(event.target.value)}
+                                            className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2"
+                                        >
+                                            {summaryModelOptions.map(option => (
+                                                <option key={option.model} value={option.model}>
+                                                    {option.label ? `${option.label} (${option.model})` : option.model}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                ) : (
+                                    <label className="mt-4 block">
+                                        <span className="text-xs font-medium text-muted-foreground">Ollama 모델명</span>
+                                        <input
+                                            value={summaryModelInput}
+                                            onChange={event => setSummaryModelInput(event.target.value)}
+                                            placeholder="예: llama3.2:3b"
+                                            className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2"
+                                        />
+                                    </label>
+                                )}
+                                <div className="mt-2 text-xs text-muted-foreground">
+                                    입력한 이름은 Ollama의 모델명과 같아야 합니다.
+                                </div>
+                            </div>
+
                             <div className="grid grid-cols-1 gap-3">
                                 {userVisibleModels.map(model => (
                                     <div key={model.key} className="rounded-md border border-border bg-muted/20 p-4">
                                         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                             <div>
                                                 <div className="font-medium text-foreground">{getUserModelLabel(model)}</div>
-                                                <div className="mt-1 text-xs text-muted-foreground">회의록 분석에 필요합니다.</div>
+                                                <div className="mt-1 text-xs text-muted-foreground">{getModelUsageText(model)}</div>
                                             </div>
                                             <span className={`status-pill ${model.installed ? 'status-success' : 'status-warning'}`}>
                                                 {model.installed ? <CheckCircle2 size={13} /> : <AlertCircle size={13} />}
@@ -526,7 +628,48 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
                                         {!model.installed && (
                                             <div className="mt-3 text-xs leading-relaxed text-muted-foreground">
-                                                필요한 파일을 `models` 폴더에 넣은 뒤 상태 새로고침을 누르세요.
+                                                <div>{model.manual_note || '필요한 파일을 `models` 폴더에 넣은 뒤 상태 새로고침을 누르세요.'}</div>
+                                                {model.install_options?.length ? (
+                                                    <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                                                        {model.install_options.map((option, index) => {
+                                                            const optionContent = (
+                                                                <>
+                                                                    <span className="block text-xs font-semibold">{option.label || option.model || '모델'}</span>
+                                                                    {option.description && <span className="mt-1 block text-[11px] text-muted-foreground">{option.description}</span>}
+                                                                    {option.command && <span className="mt-2 block font-mono text-[11px]">{option.command}</span>}
+                                                                </>
+                                                            );
+                                                            const optionClassName = 'rounded-md border border-border bg-background p-3 text-foreground transition-colors hover:border-primary/50';
+                                                            return option.url ? (
+                                                                <a
+                                                                    key={`${option.label || option.url || index}`}
+                                                                    href={option.url}
+                                                                    target="_blank"
+                                                                    rel="noreferrer"
+                                                                    className={optionClassName}
+                                                                >
+                                                                    {optionContent}
+                                                                </a>
+                                                            ) : (
+                                                                <div key={`${option.label || option.command || index}`} className={optionClassName}>
+                                                                    {optionContent}
+                                                                </div>
+                                                            );
+                                                        })}
+                                                    </div>
+                                                ) : model.install_command && (
+                                                    <div className="mt-2 font-mono text-[11px] text-foreground">{model.install_command}</div>
+                                                )}
+                                                {model.install_url && !model.install_options?.length && (
+                                                    <a
+                                                        href={model.install_url}
+                                                        target="_blank"
+                                                        rel="noreferrer"
+                                                        className="mt-2 inline-flex text-xs font-medium text-primary hover:underline"
+                                                    >
+                                                        모델 페이지 열기
+                                                    </a>
+                                                )}
                                             </div>
                                         )}
                                     </div>

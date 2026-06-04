@@ -24,7 +24,9 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from config_normalization import (
     DEFAULT_LONG_AUDIO_CHUNK_SECONDS,
+    DEFAULT_SUMMARY_MODEL,
     DEFAULT_STT_CHUNK_SECONDS,
+    get_summary_candidate_models,
     normalize_app_config,
 )
 from job_checkpoints import (
@@ -624,6 +626,22 @@ async def update_settings(payload: dict = Body(...)) -> dict:
                 raise HTTPException(status_code=400, detail="stt.device must be cpu or cuda")
             config.setdefault("stt", {})["device"] = device
 
+    if "summary" in payload:
+        summary = payload["summary"] or {}
+        target = config.setdefault("summary", {})
+        if "provider" in summary:
+            provider = str(summary["provider"]).strip().lower()
+            if provider not in {"ollama"}:
+                raise HTTPException(status_code=400, detail="summary.provider must be ollama")
+            target["provider"] = provider
+        if "model" in summary:
+            model = str(summary["model"]).strip()
+            if not model:
+                raise HTTPException(status_code=400, detail="summary.model is required")
+            if any(character.isspace() for character in model):
+                raise HTTPException(status_code=400, detail="summary.model must not contain spaces")
+            target["model"] = model
+
     if "privacy" in payload:
         privacy = payload["privacy"] or {}
         if "preserve_extracted_audio" in privacy:
@@ -640,8 +658,8 @@ async def update_settings(payload: dict = Body(...)) -> dict:
 @app.get("/api/models/status")
 async def models_status() -> dict:
     try:
-        status = get_model_status(BASE_DIR)
         config = load_config()
+        status = get_model_status(BASE_DIR, config)
         selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
@@ -1237,9 +1255,17 @@ def _save_job_result(job_id: str, result_data: dict) -> None:
 
 
 def _resolve_summary_model(config: dict) -> str:
-    llm_model = config.get("summary", {}).get("model", "gemma-4b")
+    summary_config = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
+    llm_model = str(summary_config.get("model") or DEFAULT_SUMMARY_MODEL).strip()
     if llm_model and llm_model.startswith((".", "..")):
         llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
+    if llm_model and os.path.exists(llm_model):
+        return llm_model
+    if llm_model and llm_model.endswith((".gguf", ".bin")):
+        return llm_model
+    for candidate in get_summary_candidate_models(config):
+        if candidate and ollama_model_exists(candidate):
+            return candidate
     return llm_model
 
 

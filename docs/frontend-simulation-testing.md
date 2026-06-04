@@ -26,6 +26,7 @@ For the broader user-facing scenario matrix across file length, file type, stop/
 ## Environment notes
 
 - These scripts use the project `playwright` package, not the Codex in-app browser.
+- If a simulation times out at the initial `page.goto` before mocked API calls appear, verify the Vite server separately, check the selected port/processes, and retry with a warmed server before treating it as a product regression.
 - On a PC that has not installed Playwright browsers yet, run:
 
 ```powershell

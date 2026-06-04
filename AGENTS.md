@@ -79,6 +79,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 
 - Treat `desktop-app/scripts/simulate-*.mjs` as project Playwright tests, not as Codex in-app browser checks.
 - Before rewriting a simulation to avoid Playwright, confirm whether the missing piece is simply the Playwright browser install or launch permission.
+- If a Playwright simulation times out at the initial `page.goto` before any mocked API calls occur, treat it first as a dev-server/browser-entry issue. Check the Vite port, direct HTTP response, and this session's simulation processes before changing product code.
 - Keep detailed setup and recovery notes in `docs/frontend-simulation-testing.md`, not in this file.
 
 Related docs:

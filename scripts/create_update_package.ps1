@@ -11,6 +11,12 @@ $ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
+$PreservedTargetPaths = @(
+    "models",
+    "backend\config.json",
+    "backend\outputs",
+    "backend\temp"
+)
 
 function Normalize-FullPath([string]$Path) {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
@@ -67,6 +73,24 @@ function Test-IsPathWithin([string]$Path, [string]$Root) {
     $rootPath = Normalize-FullPath $Root
     return $fullPath.Equals($rootPath, [System.StringComparison]::OrdinalIgnoreCase) -or
         $fullPath.StartsWith($rootPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
+}
+
+function Normalize-RelativePath([string]$Path) {
+    return ($Path -replace '/', '\').TrimStart("\", "/")
+}
+
+function Test-IsPreservedTargetPath([string]$RelativePath) {
+    $normalizedPath = Normalize-RelativePath $RelativePath
+    foreach ($preservedPath in $PreservedTargetPaths) {
+        $normalizedPreservedPath = Normalize-RelativePath $preservedPath
+        if ($normalizedPath.Equals($normalizedPreservedPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+        if ($normalizedPath.StartsWith($normalizedPreservedPath + "\", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
 }
 
 function Get-FileHashValue([string]$Path) {
@@ -162,7 +186,7 @@ function Get-PayloadFileEntries([string]$PackageRoot, [string]$PayloadRoot) {
     return $files
 }
 
-function Assert-ManifestEntriesMatchPortable([string]$PortableRoot, $Entries, [string]$Label) {
+function Assert-ManifestEntriesMatchPortable([string]$PortableRoot, $Entries, [string]$Label, [switch]$SkipPreservedTargetPaths) {
     $properties = @($Entries)
     if ($null -eq $Entries) {
         throw "Release manifest does not include $Label hashes. Rebuild the portable release first."
@@ -171,9 +195,17 @@ function Assert-ManifestEntriesMatchPortable([string]$PortableRoot, $Entries, [s
     $mismatches = @()
     foreach ($entry in $properties) {
         $relativePath = [string]$entry.path
+        if ([string]::IsNullOrWhiteSpace($relativePath)) {
+            $mismatches += "$Label entry is missing path"
+            continue
+        }
+        if ($SkipPreservedTargetPaths -and (Test-IsPreservedTargetPath $relativePath)) {
+            continue
+        }
+
         $expectedHash = [string]$entry.sha256
-        if ([string]::IsNullOrWhiteSpace($relativePath) -or [string]::IsNullOrWhiteSpace($expectedHash)) {
-            $mismatches += "$Label entry is missing path or sha256"
+        if ([string]::IsNullOrWhiteSpace($expectedHash)) {
+            $mismatches += "$Label entry is missing sha256"
             continue
         }
 
@@ -210,7 +242,7 @@ function Assert-ReleaseManifestMatchesPortable([string]$PortableRoot, $Manifest)
     foreach ($property in $Manifest.files.PSObject.Properties) {
         $fileEntries += $property.Value
     }
-    Assert-ManifestEntriesMatchPortable $PortableRoot $fileEntries "core file"
+    Assert-ManifestEntriesMatchPortable $PortableRoot $fileEntries "core file" -SkipPreservedTargetPaths
     Assert-ManifestEntriesMatchPortable $PortableRoot @($Manifest.portablePayloadFiles) "portable payload file"
 }
 
@@ -299,12 +331,7 @@ $updateManifest = [ordered]@{
         releaseManifestBytes = (Get-Item -LiteralPath (Join-Path $payloadRoot "release-manifest.json")).Length
         releaseManifestSha256 = Get-FileHashValue (Join-Path $payloadRoot "release-manifest.json")
     }
-    preservedTargetPaths = @(
-        "models",
-        "backend\config.json",
-        "backend\outputs",
-        "backend\temp"
-    )
+    preservedTargetPaths = $PreservedTargetPaths
     excludedPayloadPaths = @(
         "payload\models",
         "payload\backend\config.json",

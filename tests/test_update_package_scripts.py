@@ -3,8 +3,8 @@ import json
 import shutil
 import subprocess
 import tempfile
-import time
 import unittest
+import uuid
 from pathlib import Path
 
 
@@ -41,6 +41,10 @@ def _sha256(path: Path) -> str:
 def _write(path: Path, content: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _package_name(prefix: str) -> str:
+    return f"{prefix}_{uuid.uuid4().hex}"
 
 
 def _write_model_markers(root: Path) -> None:
@@ -155,7 +159,7 @@ class UpdatePackageScriptTest(unittest.TestCase):
         self.assertIn("verify_update.ps1", scripts["verify:update"])
 
     def test_create_update_package_excludes_user_owned_paths(self):
-        package_name = f"test_update_package_{int(time.time() * 1000)}"
+        package_name = _package_name("test_update_package")
         package_root = ROOT / "releases" / "updates" / package_name
         with tempfile.TemporaryDirectory() as temp_dir:
             portable = _make_fake_portable(Path(temp_dir))
@@ -193,8 +197,34 @@ class UpdatePackageScriptTest(unittest.TestCase):
             finally:
                 shutil.rmtree(package_root, ignore_errors=True)
 
+    def test_create_update_package_allows_modified_preserved_backend_config(self):
+        package_name = _package_name("test_update_preserved_config")
+        package_root = ROOT / "releases" / "updates" / package_name
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = _make_fake_portable(Path(temp_dir))
+            (portable / "backend" / "config.json").write_text('{"from":"user-edited"}', encoding="utf-8")
+            try:
+                completed = _run_powershell(
+                    "& "
+                    + _ps_quote(ROOT / "scripts" / "create_update_package.ps1")
+                    + " -PortableDir "
+                    + _ps_quote(portable)
+                    + " -OutputRoot "
+                    + _ps_quote(ROOT / "releases" / "updates")
+                    + f" -PackageName {package_name} -AllowStale -Force"
+                )
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                self.assertFalse((package_root / "payload" / "backend" / "config.json").exists())
+
+                manifest = json.loads((package_root / "update-manifest.json").read_text(encoding="utf-8-sig"))
+                payload_paths = {entry["path"] for entry in manifest["payloadFiles"]}
+                self.assertIn("backend\\config.json", manifest["preservedTargetPaths"])
+                self.assertNotIn("payload\\backend\\config.json", payload_paths)
+            finally:
+                shutil.rmtree(package_root, ignore_errors=True)
+
     def test_create_update_package_rejects_stale_release_without_override(self):
-        package_name = f"test_update_stale_{int(time.time() * 1000)}"
+        package_name = _package_name("test_update_stale")
         package_root = ROOT / "releases" / "updates" / package_name
         with tempfile.TemporaryDirectory() as temp_dir:
             portable = _make_fake_portable(Path(temp_dir))
@@ -215,7 +245,7 @@ class UpdatePackageScriptTest(unittest.TestCase):
                 shutil.rmtree(package_root, ignore_errors=True)
 
     def test_create_update_package_rejects_manifest_file_hash_mismatch(self):
-        package_name = f"test_update_manifest_mismatch_{int(time.time() * 1000)}"
+        package_name = _package_name("test_update_manifest_mismatch")
         package_root = ROOT / "releases" / "updates" / package_name
         with tempfile.TemporaryDirectory() as temp_dir:
             portable = _make_fake_portable(Path(temp_dir))
@@ -237,7 +267,7 @@ class UpdatePackageScriptTest(unittest.TestCase):
                 shutil.rmtree(package_root, ignore_errors=True)
 
     def test_create_update_package_rejects_empty_manifest_file_hashes(self):
-        package_name = f"test_update_empty_manifest_{int(time.time() * 1000)}"
+        package_name = _package_name("test_update_empty_manifest")
         package_root = ROOT / "releases" / "updates" / package_name
         with tempfile.TemporaryDirectory() as temp_dir:
             portable = _make_fake_portable(Path(temp_dir))
@@ -277,7 +307,7 @@ class UpdatePackageScriptTest(unittest.TestCase):
             self.assertIn("PackageName must be a concrete child folder name", completed.stdout + completed.stderr)
 
     def test_update_package_applies_payload_and_preserves_user_owned_paths(self):
-        package_name = f"test_update_apply_{int(time.time() * 1000)}"
+        package_name = _package_name("test_update_apply")
         package_root = ROOT / "releases" / "updates" / package_name
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as target_dir:
             portable = _make_fake_portable(Path(source_dir))
@@ -335,7 +365,7 @@ class UpdatePackageScriptTest(unittest.TestCase):
                 shutil.rmtree(package_root, ignore_errors=True)
 
     def test_update_package_preflights_tampered_payload_before_touching_target(self):
-        package_name = f"test_update_tamper_{int(time.time() * 1000)}"
+        package_name = _package_name("test_update_tamper")
         package_root = ROOT / "releases" / "updates" / package_name
         with tempfile.TemporaryDirectory() as source_dir, tempfile.TemporaryDirectory() as target_dir:
             portable = _make_fake_portable(Path(source_dir))

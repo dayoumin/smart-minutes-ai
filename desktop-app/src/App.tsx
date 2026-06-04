@@ -324,6 +324,7 @@ export const App: React.FC = () => {
                 <div className={activeTab === 'history' ? 'contents' : 'hidden'}>
                     <MeetingHistory
                         selectedMeetingId={selectedMeetingId}
+                        onOpenSettings={() => setIsSettingsOpen(true)}
                         onCreateMeeting={handleCreateMeeting}
                         onSelectMeetingId={setSelectedMeetingId}
                         onRegisterLeaveGuard={(guard) => {

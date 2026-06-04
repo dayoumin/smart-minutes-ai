@@ -23,6 +23,7 @@ interface MeetingHistoryProps {
     onCreateMeeting?: () => void;
     onSelectMeetingId?: (id: string | null) => void;
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
+    onOpenSettings?: () => void;
 }
 
 type DetailTab = 'summary' | 'script';
@@ -230,58 +231,72 @@ const parseGenerationStartedAt = (value?: string): number | null => {
 
 const speakerToneCount = 6;
 
-const getGenerationErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+interface GenerationErrorInfo {
+    message: string;
+    detail?: string;
+}
+
+interface GenerationRequestError extends Error {
+    detail?: string;
+}
+
+const getGenerationErrorInfo = async (response: Response, fallback: string): Promise<GenerationErrorInfo> => {
     const body = await response.text().catch(() => '');
-    if (!body) return fallback;
+    if (!body) return { message: fallback };
 
     try {
         const parsed = JSON.parse(body) as { detail?: string };
         if (parsed.detail === 'Output result not found') {
-            return '분석 원본을 찾지 못했습니다. 다시 정리해 주세요.';
+            return { message: '분석 원본을 찾지 못했습니다. 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'Transcript segments are required') {
-            return '대화록이 없어 정리할 수 없습니다. 다시 분석해 주세요.';
+            return { message: '대화록이 없어 정리할 수 없습니다. 다시 분석해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'summary_input_changed') {
-            return '대화록이 바뀌어 이번 정리는 저장하지 않았습니다. 다시 정리해 주세요.';
+            return { message: '대화록이 바뀌어 이번 정리는 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'summary_model_not_ready') {
-            return '요약 AI가 준비되지 않았습니다. 대화록은 사용할 수 있고, 요약은 Ollama 모델을 준비한 뒤 다시 실행해 주세요.';
+            return { message: '요약 AI가 준비되지 않았습니다. 대화록은 사용할 수 있고, 요약은 Ollama 모델을 준비한 뒤 다시 실행해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'topic_input_changed') {
-            return '대화록이나 요약이 바뀌어 주제별 정리를 저장하지 않았습니다. 다시 정리해 주세요.';
+            return { message: '대화록이나 요약이 바뀌어 주제별 정리를 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'speaker_input_changed') {
-            return '대화록이나 주제별 정리가 바뀌어 참석자별 정리를 저장하지 않았습니다. 다시 정리해 주세요.';
+            return { message: '대화록이나 주제별 정리가 바뀌어 참석자별 정리를 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'topic_generation_empty') {
-            return '주제별 정리 결과가 비어 있습니다. 요약 내용을 확인한 뒤 다시 정리해 주세요.';
+            return { message: '주제별 정리 결과가 비어 있습니다. 요약 내용을 확인한 뒤 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'speaker_context_generation_empty') {
-            return '참석자별 정리 결과가 비어 있습니다. 주제별 정리와 대화록을 확인한 뒤 다시 정리해 주세요.';
+            return { message: '참석자별 정리 결과가 비어 있습니다. 주제별 정리와 대화록을 확인한 뒤 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'audio_required_for_diarization') {
-            return '참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.';
+            return { message: '참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'diarization_model_not_ready') {
-            return '참석자 구분 모델이 준비되지 않았습니다. models 폴더를 확인해 주세요.';
+            return { message: '참석자 구분 모델이 준비되지 않았습니다. models 폴더를 확인해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'diarization_resource_limit') {
-            return '음성 파일이 너무 길거나 커서 참석자 구분을 실행하지 않았습니다. 대화록은 그대로 사용할 수 있습니다.';
+            return { message: '음성 파일이 너무 길거나 커서 참석자 구분을 실행하지 않았습니다. 대화록은 그대로 사용할 수 있습니다.', detail: parsed.detail };
         }
         if (parsed.detail === 'diarization_already_completed') {
-            return '이미 참석자 구분이 완료된 대화록입니다.';
+            return { message: '이미 참석자 구분이 완료된 대화록입니다.', detail: parsed.detail };
         }
         if (parsed.detail === 'diarization generation is already running') {
-            return '참석자 구분이 이미 진행 중입니다.';
+            return { message: '참석자 구분이 이미 진행 중입니다.', detail: parsed.detail };
         }
         if (parsed.detail === 'diarization_runtime_error') {
-            return '참석자 구분 실행 중 오류가 발생했습니다. 원본 음성과 참석자 구분 모델 상태를 확인한 뒤 다시 실행해 주세요.';
+            return { message: '참석자 구분 실행 중 오류가 발생했습니다. 원본 음성과 참석자 구분 모델 상태를 확인한 뒤 다시 실행해 주세요.', detail: parsed.detail };
         }
-        return parsed.detail || fallback;
+        return { message: parsed.detail || fallback, detail: parsed.detail };
     } catch {
-        return body || fallback;
+        return { message: body || fallback };
     }
+};
+
+const getGenerationErrorMessage = async (response: Response, fallback: string): Promise<string> => {
+    const errorInfo = await getGenerationErrorInfo(response, fallback);
+    return errorInfo.message;
 };
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -459,7 +474,7 @@ const buildGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON
     meetingPurpose: meeting.meetingPurpose || '',
 });
 
-export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard }) => {
+export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard, onOpenSettings }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
@@ -1008,7 +1023,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 body: JSON.stringify(targetMeeting),
                 signal: abortController.signal,
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '참석자 구분을 실행하지 못했습니다.'));
+            if (!response.ok) {
+                const errorInfo = await getGenerationErrorInfo(response, '참석자 구분을 실행하지 못했습니다.');
+                const requestError = new Error(errorInfo.message) as GenerationRequestError;
+                requestError.detail = errorInfo.detail;
+                throw requestError;
+            }
 
             const data = await response.json() as GenerateDiarizationResponse;
             if (diarizationProgressJobIdRef.current === targetJobId) {
@@ -1053,6 +1073,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             if (diarizationProgressJobIdRef.current === targetJobId) {
                 setDiarizationNow(getCurrentTimeMs());
                 const message = error instanceof Error ? error.message : '참석자 구분 실행 중 오류가 발생했습니다.';
+                const detail = error instanceof Error ? (error as GenerationRequestError).detail : undefined;
+                if (detail === 'audio_required_for_diarization') {
+                    setAudioSourceUrl('');
+                    setAudioAvailability('missing');
+                }
                 setDiarizationProgress(current => ({
                     ...(current ?? {}),
                     active: false,
@@ -1162,9 +1187,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const handleGenerateSummary = async () => {
         if (generatingKind !== null || summaryGenerationStatus === 'generating') return;
         if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
-        if (!canGenerateSummary || !selectedMeeting?.jobId) {
+        if (!canRunSummaryGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(hasTranscriptData ? '분석 원본이 있어야 전체 요약을 정리할 수 있습니다.' : '대화록이 있어야 전체 요약을 정리할 수 있습니다.');
+            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 전체 요약을 정리할 수 있습니다.' : '대화록이 있어야 전체 요약을 정리할 수 있습니다.');
             return;
         }
 
@@ -1338,12 +1363,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const summaryModelUnavailable = !hasExistingOrganizeContent
         && (summaryModelReady === false
             || (summaryModelReady !== true && summaryGenerationStatus === 'skipped'));
-    const canOpenOrganizeTab = Boolean(hasTranscriptData && !summaryModelUnavailable);
+    const canOpenOrganizeTab = hasTranscriptData;
     const organizeTabDisabledMessage = !hasTranscriptData
         ? '대화록이 있어야 기록 정리를 사용할 수 있습니다.'
-        : summaryModelUnavailable
-            ? (summaryModelMessage || '정리 모델이 준비되면 기록 정리를 사용할 수 있습니다.')
-            : '';
+        : '';
+    const organizeModelGuidanceMessage = summaryModelMessage || '정리 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
+    const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
+    const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable;
+    const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;
     const summaryRegenerationWillResetDerived = Boolean(selectedMeeting?.topicSections?.length || selectedMeeting?.speakerContextSummaries?.length || selectedMeeting?.participantSummaries?.length);
 
     useEffect(() => {
@@ -1354,9 +1381,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const handleGenerateTopicSections = async () => {
         if (generatingKind !== null || topicGenerationStatus === 'generating') return;
         if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
-        if (!canGenerateTopicSections || !selectedMeeting?.jobId) {
+        if (!canRunTopicGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
+            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
             return;
         }
 
@@ -1445,9 +1472,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             setErrorMessage('추가로 정리할 주제 제목을 입력해 주세요.');
             return;
         }
-        if (!canGenerateTopicSections || !selectedMeeting?.jobId) {
+        if (!canRunTopicGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
+            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
             return;
         }
 
@@ -1532,9 +1559,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const handleGenerateSpeakerContext = async () => {
         if (generatingKind !== null || speakerGenerationStatus === 'generating') return;
         if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
-        if (!canGenerateTopicSections || !selectedMeeting?.jobId) {
+        if (!canRunTopicGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(hasTranscriptData ? '분석 원본이 있어야 참석자별 정리를 할 수 있습니다.' : '대화록이 있어야 참석자별 정리를 할 수 있습니다.');
+            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 참석자별 정리를 할 수 있습니다.' : '대화록이 있어야 참석자별 정리를 할 수 있습니다.');
             return;
         }
         if (!canCreateSpeakerContext) {
@@ -2167,7 +2194,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         ? '추가 주제를 정리 중입니다.'
         : isTopicGenerationRunning || isOtherMeetingGenerating
             ? '다른 정리가 진행 중입니다.'
-            : canGenerateTopicSections
+            : summaryModelUnavailable
+                ? organizeModelGuidanceMessage
+            : canRunTopicGeneration
                 ? '입력한 주제로 추가 정리'
                 : '전체 요약을 먼저 정리해 주세요.';
     const customTopicButtonAriaLabel = isCustomTopicGenerationRunning ? '추가 주제 정리 중' : '주제 추가 정리';
@@ -2180,7 +2209,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         ? '주제별 정리 중입니다.'
         : isTopicGenerationRunning || isOtherMeetingGenerating
             ? '다른 정리가 진행 중입니다.'
-            : canGenerateTopicSections
+            : summaryModelUnavailable
+                ? organizeModelGuidanceMessage
+            : canRunTopicGeneration
                 ? (shouldOfferTopicRegeneration ? '주제별 다시 정리' : '주제별 정리')
                 : '전체 요약을 먼저 정리해 주세요.';
     const topicActionButtonAriaLabel = isMainTopicGenerationRunning ? '주제별 정리 중' : '주제별 정리';
@@ -2577,6 +2608,20 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 <div className="meeting-detail-body space-y-6">
                     {detailTab === 'summary' && (
                         <>
+                            {summaryModelUnavailable && (
+                                <StatusBanner
+                                    tone="warning"
+                                    heading="분석 준비 필요"
+                                    className="mb-4"
+                                    action={onOpenSettings ? (
+                                        <Button variant="outline" onClick={onOpenSettings}>
+                                            분석 준비
+                                        </Button>
+                                    ) : undefined}
+                                >
+                                    {organizeModelGuidanceMessage}
+                                </StatusBanner>
+                            )}
                             <section className="detail-action-row">
                                 <h3 className="section-title mb-3">대화록</h3>
                                 {selectedMeeting.diarizationApplied ? (
@@ -2729,9 +2774,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     variant="outline"
                                                     className="detail-action-button"
                                                     aria-label="전체 요약 정리"
-                                                    disabled={!canGenerateSummary || generatingKind !== null || summaryGenerationStatus === 'generating'}
+                                                    disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
                                                     onClick={handleGenerateSummary}
-                                                    title="전체 요약 정리"
+                                                    title={summaryModelUnavailable ? organizeModelGuidanceMessage : '전체 요약 정리'}
                                                 >
                                                     {renderRunIcon('summary', summaryGenerationStatus)}
                                                     {getActionLabel(summaryGenerationStatus)}
@@ -2761,7 +2806,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 variant="outline"
                                                 className="detail-action-button h-10 sm:w-24"
                                                 aria-label={customTopicButtonAriaLabel}
-                                                disabled={!customTopicTitle.trim() || !canGenerateTopicSections || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                 onClick={handleGenerateCustomTopicSection}
                                                 title={customTopicButtonTitle}
                                             >
@@ -2840,7 +2885,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     variant="outline"
                                                     className="detail-action-button"
                                                     aria-label={topicActionButtonAriaLabel}
-                                                    disabled={!canGenerateTopicSections || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                    disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                     onClick={handleGenerateTopicSections}
                                                     title={topicActionButtonTitle}
                                                 >
@@ -2957,9 +3002,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     variant="outline"
                                                     className="detail-action-button"
                                                     aria-label="참석자별 정리"
-                                                    disabled={!canGenerateTopicSections || generatingKind !== null || speakerGenerationStatus === 'generating' || !canCreateSpeakerContext}
+                                                    disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
                                                     onClick={handleGenerateSpeakerContext}
-                                                    title={canCreateSpeakerContext ? '참석자별 정리' : '주제별 정리를 먼저 만들어 주세요.'}
+                                                    title={summaryModelUnavailable ? organizeModelGuidanceMessage : canCreateSpeakerContext ? '참석자별 정리' : '주제별 정리를 먼저 만들어 주세요.'}
                                                 >
                                                     {renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
                                                     {getActionLabel(speakerGenerationStatus)}

@@ -78,16 +78,17 @@ class StoragePreflightTest(unittest.TestCase):
         self.assertEqual(payload["level"], "ok")
         self.assertEqual(payload["reason"], "enough_storage")
 
-    def test_preflight_uses_source_size_and_safety_when_duration_is_unknown(self) -> None:
+    def test_preflight_uses_source_size_as_wav_fallback_when_duration_is_unknown(self) -> None:
         file_size = 10 * 1024 * 1024
+        expected_required = file_size + (file_size * 2) + ANALYSIS_STORAGE_SAFETY_BYTES
 
         self.assertEqual(
             estimate_analysis_required_storage_bytes(file_size, None),
-            file_size + ANALYSIS_STORAGE_SAFETY_BYTES,
+            expected_required,
         )
         self.assertEqual(
             estimate_analysis_required_storage_bytes(file_size, "unknown"),
-            file_size + ANALYSIS_STORAGE_SAFETY_BYTES,
+            expected_required,
         )
 
     def test_estimates_zero_wav_size_for_invalid_duration(self) -> None:

@@ -14,6 +14,8 @@ const otherMeetingId = 'codex-detail-flow-other-meeting';
 const otherJobId = 'codex-detail-flow-other-job';
 const cancelMeetingId = 'codex-detail-flow-diarization-cancel';
 const cancelJobId = 'codex-detail-flow-diarization-cancel-job';
+const audioMissingMeetingId = 'codex-detail-flow-diarization-audio-missing';
+const audioMissingJobId = 'codex-detail-flow-diarization-audio-missing-job';
 const legacyParticipantMeetingId = 'codex-detail-flow-legacy-participant';
 const legacyParticipantJobId = 'codex-detail-flow-legacy-participant-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
@@ -53,6 +55,10 @@ const cancelDiarizationRequested = new Promise(resolve => {
   markCancelDiarizationRequested = resolve;
 });
 const cancelDiarizationStopBodies = [];
+let markAudioMissingDiarizationRequested = () => {};
+const audioMissingDiarizationRequested = new Promise(resolve => {
+  markAudioMissingDiarizationRequested = resolve;
+});
 
 const contentTypeByFormat = {
   hwpx: 'application/hwp+zip',
@@ -379,6 +385,58 @@ const seedDiarizationCancelMeeting = async (page) => {
   }, { cancelMeetingId, cancelJobId });
 };
 
+const seedAudioMissingDiarizationMeeting = async (page) => {
+  await page.evaluate(async ({ audioMissingMeetingId, audioMissingJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: audioMissingMeetingId,
+      jobId: audioMissingJobId,
+      date: '2026-05-08 00:04',
+      title: '원본 음성 누락 회의록',
+      summary: '참석자 구분 원본 음성 누락 확인용 회의록입니다.',
+      participants: '화자1',
+      meetingPurpose: '참석자 구분 원본 음성 누락 확인',
+      sourceFile: 'audio-missing-diarization.mp4',
+      topics: [],
+      topicSections: [],
+      speakerContextSummaries: [],
+      generationStatus: { summary: 'completed', topicSections: 'not_started', speakerContextSummaries: 'not_started' },
+      speakerLabels: {},
+      segments: [
+        {
+          start: '00:00:01',
+          end: '00:00:04',
+          speaker: '화자1',
+          text: '원본 음성이 사라진 참석자 구분 상태를 확인합니다.',
+        },
+      ],
+      editedDisplaySegments: [],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { audioMissingMeetingId, audioMissingJobId });
+};
+
 const seedLegacyParticipantMeeting = async (page) => {
   await page.evaluate(async ({ legacyParticipantMeetingId, legacyParticipantJobId }) => {
     const request = indexedDB.open('MeetingHistoryDB', 1);
@@ -455,10 +513,25 @@ const installRoutes = async (page) => {
     });
   });
 
+  await page.route('**/api/models/status', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ready: true,
+      summary_ready: false,
+      summary_status: 'skipped',
+      summary_message: '요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.',
+      models: [
+        { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
+      ],
+    }),
+  }));
+
   await page.route('**/api/outputs/*/audio', route => {
     const url = route.request().url();
     const hasAudio = url.includes(`/api/outputs/${jobId}/audio`)
-      || url.includes(`/api/outputs/${cancelJobId}/audio`);
+      || url.includes(`/api/outputs/${cancelJobId}/audio`)
+      || url.includes(`/api/outputs/${audioMissingJobId}/audio`);
     return route.fulfill({
       status: hasAudio ? 200 : 404,
       contentType: 'audio/wav',
@@ -561,6 +634,15 @@ const installRoutes = async (page) => {
     } catch {
       return undefined;
     }
+  });
+
+  await page.route(`**/api/outputs/${audioMissingJobId}/generate-diarization`, route => {
+    markAudioMissingDiarizationRequested();
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'audio_required_for_diarization' }),
+    });
   });
 
   await page.route(`**/api/outputs/${cancelJobId}/generation-stop/diarization`, route => {
@@ -684,12 +766,36 @@ const run = async () => {
     await seedSkippedSummaryMeeting(page);
     await seedOtherMeeting(page);
     await seedDiarizationCancelMeeting(page);
+    await seedAudioMissingDiarizationMeeting(page);
     await seedLegacyParticipantMeeting(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
 
     await page.getByText('요약 AI 미준비 회의록').first().click();
     await page.getByText('요약 AI가 없어도 대화록은 확인할 수 있습니다.').waitFor({ timeout: 10000 });
-    assert.equal(await page.getByRole('tab', { name: '기록 정리' }).isDisabled(), true);
+    const skippedOrganizeTab = page.getByRole('tab', { name: '기록 정리' });
+    assert.equal(await skippedOrganizeTab.isDisabled(), false);
+    await skippedOrganizeTab.click();
+    await page.getByText('분석 준비 필요').waitFor({ timeout: 10000 });
+    await page.getByText('요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '분석 준비' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
+
+    await page.getByText('원본 음성 누락 회의록').first().click();
+    await page.getByText('참석자 구분 원본 음성 누락 확인').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    const audioRequiredButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
+    await audioRequiredButton.waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => {
+      const buttons = Array.from(document.querySelectorAll('section.detail-action-row button'));
+      return buttons.some(button => button.textContent?.includes('실행') && !button.disabled);
+    }, null, { timeout: 10000 });
+    assert.equal(await audioRequiredButton.isDisabled(), false);
+    await audioRequiredButton.click();
+    await audioMissingDiarizationRequested;
+    await page.getByText('참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.').first().waitFor({ timeout: 10000 });
+    await page.getByText('원본 필요').first().waitFor({ timeout: 10000 });
+    await page.getByText('저장된 음성 파일이 없습니다. 영상에서 음성만 필요하면 작성 화면에서 음성 추출을 사용하세요.').waitFor({ timeout: 10000 });
+    assert.equal(await audioRequiredButton.isDisabled(), true);
 
     await page.getByText('참석자 구분 취소 회의록').first().click();
     await page.getByText('참석자 구분 취소 상태 확인').waitFor({ timeout: 10000 });

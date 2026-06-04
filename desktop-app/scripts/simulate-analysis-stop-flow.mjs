@@ -129,6 +129,19 @@ const installBaseRoutes = async (page) => {
     body: JSON.stringify({ recommended_job_id: null, candidates: [] }),
   }));
 
+  await page.route('**/api/analyze/preflight', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      level: 'ok',
+      reason: 'enough_storage',
+      required_bytes: 1024,
+      available_bytes: 1024 * 1024,
+      message: '저장 공간을 확인했습니다.',
+    }),
+  }));
+
   await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({
     status: 404,
     contentType: 'application/json',

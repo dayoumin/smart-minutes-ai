@@ -9,11 +9,19 @@ Use the `desktop-app/scripts/simulate-*.mjs` scripts to verify frontend state tr
 - stale generation (`409`) recovery
 - export/download fallback behavior
 
+For the broader user-facing scenario matrix across file length, file type, stop/cancel, and resume behavior, see `docs/user-scenario-test-matrix.md`.
+
 ## Current scripts
 
 - `corepack pnpm --dir desktop-app test:generation-flow`
 - `corepack pnpm --dir desktop-app test:meeting-detail-flow`
+- `corepack pnpm --dir desktop-app test:analysis-stop-flow`
+- `corepack pnpm --dir desktop-app test:resume-flow`
+- `corepack pnpm --dir desktop-app test:resume-draft-flow`
 - `corepack pnpm --dir desktop-app test:edit-guard-flow`
+- `corepack pnpm --dir desktop-app test:close-guard-flow`
+- `corepack pnpm --dir desktop-app test:settings-backend-restart`
+- `corepack pnpm --dir desktop-app test:topic-generation-ui`
 
 ## Environment notes
 

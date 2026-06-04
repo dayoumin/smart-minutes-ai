@@ -5,7 +5,7 @@ description: Build, package, and verify this repository's Windows portable deskt
 
 # LMO Audio Release Build
 
-Use this skill only inside this repository, normally `D:\Projects\audio`. Stay Windows-native.
+Use this skill only inside this repository, normally `D:\Projects\smart-minutes-ai`. Stay Windows-native.
 
 ## Default Meaning
 

@@ -39,6 +39,8 @@ def estimate_analysis_required_storage_bytes(file_size_bytes: int | float | None
         source_size = 0
     source_size = max(0, source_size)
     estimated_wav_size = estimate_analysis_wav_size_bytes(duration_seconds)
+    if estimated_wav_size <= 0 and source_size > 0:
+        estimated_wav_size = source_size
     return source_size + (estimated_wav_size * 2) + ANALYSIS_STORAGE_SAFETY_BYTES
 
 

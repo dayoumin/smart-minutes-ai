@@ -10,6 +10,8 @@ const meetingId = 'codex-detail-flow-simulation';
 const jobId = 'codex-detail-flow-job';
 const skippedMeetingId = 'codex-detail-flow-summary-skipped';
 const skippedJobId = 'codex-detail-flow-summary-skipped-job';
+const existingContentModelMissingMeetingId = 'codex-detail-flow-existing-content-model-missing';
+const existingContentModelMissingJobId = 'codex-detail-flow-existing-content-model-missing-job';
 const otherMeetingId = 'codex-detail-flow-other-meeting';
 const otherJobId = 'codex-detail-flow-other-job';
 const cancelMeetingId = 'codex-detail-flow-diarization-cancel';
@@ -19,6 +21,7 @@ const audioMissingJobId = 'codex-detail-flow-diarization-audio-missing-job';
 const legacyParticipantMeetingId = 'codex-detail-flow-legacy-participant';
 const legacyParticipantJobId = 'codex-detail-flow-legacy-participant-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
+let summaryReady = false;
 let releaseTopicSectionsResponse = () => {};
 const topicSectionsResponseDelay = new Promise(resolve => {
   releaseTopicSectionsResponse = resolve;
@@ -281,6 +284,75 @@ const seedSkippedSummaryMeeting = async (page) => {
   }, { skippedMeetingId, skippedJobId });
 };
 
+const seedExistingContentModelMissingMeeting = async (page) => {
+  await page.evaluate(async ({ existingContentModelMissingMeetingId, existingContentModelMissingJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: existingContentModelMissingMeetingId,
+      jobId: existingContentModelMissingJobId,
+      date: '2026-05-08 00:00',
+      title: '기존 정리 모델 미준비 회의록',
+      summary: '이미 저장된 전체 요약입니다.',
+      participants: '화자1',
+      meetingPurpose: '기존 정리 결과 표시와 재생성 잠금 확인',
+      sourceFile: 'existing-content-model-missing.mp4',
+      topics: ['기존 주제'],
+      topicSections: [
+        {
+          topic: '기존 주제',
+          summary: '이미 저장된 주제별 정리입니다.',
+          evidence: ['기존 근거입니다.'],
+          actions: [],
+        },
+      ],
+      speakerContextSummaries: [
+        {
+          speaker: '화자1',
+          displaySpeaker: '참석자01',
+          summary: '이미 저장된 참석자별 정리입니다.',
+          keyPoints: ['기존 참석자 핵심 발언입니다.'],
+          actions: [],
+        },
+      ],
+      participantSummaries: [],
+      generationStatus: { summary: 'completed', topicSections: 'completed', speakerContextSummaries: 'completed' },
+      transcriptEditMeta: { edited: true, summaryOutdated: true, topicSectionsOutdated: true, speakerContextOutdated: true },
+      speakerLabels: {},
+      segments: [
+        {
+          start: '00:00:01',
+          end: '00:00:04',
+          speaker: '화자1',
+          text: '기존 정리 결과가 있는 대화록입니다.',
+        },
+      ],
+      editedDisplaySegments: [],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { existingContentModelMissingMeetingId, existingContentModelMissingJobId });
+};
+
 const seedOtherMeeting = async (page) => {
   await page.evaluate(async ({ otherMeetingId, otherJobId }) => {
     const request = indexedDB.open('MeetingHistoryDB', 1);
@@ -513,14 +585,26 @@ const installRoutes = async (page) => {
     });
   });
 
+  await page.route('**/api/settings', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      processing: { long_audio_chunk_seconds: 30, enable_long_audio_chunking: true },
+      diarization: { enabled: false },
+      stt: { device: 'cpu' },
+      preprocessing: { enabled: true, normalize_audio: true, normalization_mode: 'auto' },
+      privacy: { preserve_extracted_audio: true, auto_save_hwpx_copy: false, auto_save_audio_copy: false },
+    }),
+  }));
+
   await page.route('**/api/models/status', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
       ready: true,
-      summary_ready: false,
-      summary_status: 'skipped',
-      summary_message: '요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.',
+      summary_ready: summaryReady,
+      summary_status: summaryReady ? 'ready' : 'skipped',
+      summary_message: summaryReady ? '' : '요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.',
       models: [
         { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
       ],
@@ -764,6 +848,7 @@ const run = async () => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await seedMeeting(page);
     await seedSkippedSummaryMeeting(page);
+    await seedExistingContentModelMissingMeeting(page);
     await seedOtherMeeting(page);
     await seedDiarizationCancelMeeting(page);
     await seedAudioMissingDiarizationMeeting(page);
@@ -777,8 +862,34 @@ const run = async () => {
     await skippedOrganizeTab.click();
     await page.getByText('분석 준비 필요').waitFor({ timeout: 10000 });
     await page.getByText('요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.').waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '분석 준비' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '분석 준비' }).click();
+    const settingsModelsTab = page.getByRole('tab', { name: '분석 준비' });
+    await settingsModelsTab.waitFor({ timeout: 10000 });
+    assert.equal(await settingsModelsTab.getAttribute('aria-selected'), 'true');
+    await page.getByRole('button', { name: '설정 닫기' }).click();
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
+
+    await page.getByText('기존 정리 모델 미준비 회의록').first().click();
+    await page.getByText('기존 정리 결과가 있는 대화록입니다.').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByText('이미 저장된 전체 요약입니다.').waitFor({ timeout: 10000 });
+    await page.getByText('분석 준비 필요').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
+    await page.getByRole('tab', { name: '주제별 정리' }).click();
+    await page.getByText('이미 저장된 주제별 정리입니다.').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '주제별 정리' }).isDisabled(), true);
+    await page.getByRole('tab', { name: '참석자별 정리' }).click();
+    await page.getByText('이미 저장된 참석자별 정리입니다.').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '참석자별 정리', exact: true }).isDisabled(), true);
+    await page.getByRole('button', { name: '분석 준비' }).click();
+    summaryReady = true;
+    await page.getByRole('button', { name: '상태 새로고침' }).click();
+    await page.getByRole('button', { name: '설정 닫기' }).click();
+    await page.getByRole('tab', { name: '전체 요약' }).click();
+    await page.waitForFunction(() => {
+      const button = Array.from(document.querySelectorAll('button')).find(item => item.getAttribute('aria-label') === '전체 요약 정리');
+      return button && !button.disabled;
+    }, null, { timeout: 10000 });
 
     await page.getByText('원본 음성 누락 회의록').first().click();
     await page.getByText('참석자 구분 원본 음성 누락 확인').waitFor({ timeout: 10000 });
@@ -877,6 +988,10 @@ const run = async () => {
     await page.getByRole('tab', { name: '주제별 정리' }).click();
 
     const topicButton = page.getByRole('button', { name: '주제별 정리' });
+    await page.waitForFunction(() => {
+      const button = Array.from(document.querySelectorAll('button')).find(item => item.getAttribute('aria-label') === '주제별 정리');
+      return button && !button.disabled;
+    }, null, { timeout: 10000 });
     await topicButton.click();
     await topicSectionsRequested;
     const runningTopicButton = page.getByRole('button', { name: '주제별 정리 중' });

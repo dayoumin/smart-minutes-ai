@@ -3,6 +3,7 @@ import { Layout } from './Layout';
 import { MeetingWriter } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
 import { Settings } from './Settings';
+import type { SettingsTab } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
 import { getApiBase, isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
@@ -154,6 +155,7 @@ export const App: React.FC = () => {
     const [closeGuardActive, setCloseGuardActive] = useState(false);
     const closeGuardSourcesRef = useRef(new Map<string, boolean>());
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general');
     const leaveGuardRef = React.useRef<() => boolean>(() => true);
     const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
     const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
@@ -181,6 +183,10 @@ export const App: React.FC = () => {
     };
     const handleDeleteMeeting = (id: string) => {
         setSelectedMeetingId(current => current === id ? null : current);
+    };
+    const openSettings = (tab: SettingsTab = 'general') => {
+        setSettingsInitialTab(tab);
+        setIsSettingsOpen(true);
     };
 
     useEffect(() => {
@@ -300,7 +306,7 @@ export const App: React.FC = () => {
                 activeTab={activeTab}
                 selectedMeetingId={selectedMeetingId}
                 onTabChange={handleTabChange}
-                onOpenSettings={() => setIsSettingsOpen(true)}
+                onOpenSettings={() => openSettings('general')}
                 onCreateMeeting={handleCreateMeeting}
                 onDeleteMeeting={handleDeleteMeeting}
                 onSelectResumeDraft={handleSelectResumeDraft}
@@ -314,7 +320,7 @@ export const App: React.FC = () => {
             >
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
                     <MeetingWriter
-                        onOpenSettings={() => setIsSettingsOpen(true)}
+                        onOpenSettings={() => openSettings('general')}
                         resumeDraftSelectionRequest={resumeDraftSelectionRequest}
                         onRegisterLeaveGuard={(guard) => {
                             writerLeaveGuardRef.current = guard ?? (() => true);
@@ -324,7 +330,7 @@ export const App: React.FC = () => {
                 <div className={activeTab === 'history' ? 'contents' : 'hidden'}>
                     <MeetingHistory
                         selectedMeetingId={selectedMeetingId}
-                        onOpenSettings={() => setIsSettingsOpen(true)}
+                        onOpenSettings={() => openSettings('models')}
                         onCreateMeeting={handleCreateMeeting}
                         onSelectMeetingId={setSelectedMeetingId}
                         onRegisterLeaveGuard={(guard) => {
@@ -341,6 +347,7 @@ export const App: React.FC = () => {
             {isSettingsOpen && (
                 <Settings
                     onClose={() => setIsSettingsOpen(false)}
+                    initialTab={settingsInitialTab}
                     analysisActive={analysisStatus.active || backendTaskActive}
                 />
             )}

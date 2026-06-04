@@ -1353,16 +1353,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         selectedMeeting?.topicSections,
     );
     const canCreateSpeakerContext = baseCanCreateSpeakerContext && !topicSectionsOutdated;
-    const hasGeneratedSummaryForAvailability = summaryGenerationStatus === 'completed'
-        && Boolean(selectedMeeting?.summary?.trim())
-        && !summarySkippedForDeferredAnalysis;
-    const hasExistingOrganizeContent = hasGeneratedSummaryForAvailability
-        || Boolean(selectedMeeting?.topicSections?.length)
-        || Boolean(selectedMeeting?.speakerContextSummaries?.length)
-        || Boolean(selectedMeeting?.participantSummaries?.length);
-    const summaryModelUnavailable = !hasExistingOrganizeContent
-        && (summaryModelReady === false
-            || (summaryModelReady !== true && summaryGenerationStatus === 'skipped'));
+    const summaryModelUnavailable = summaryModelReady === false
+        || (summaryModelReady !== true && summaryGenerationStatus === 'skipped');
     const canOpenOrganizeTab = hasTranscriptData;
     const organizeTabDisabledMessage = !hasTranscriptData
         ? '대화록이 있어야 기록 정리를 사용할 수 있습니다.'

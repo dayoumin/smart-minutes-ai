@@ -290,11 +290,10 @@ function Get-PortablePayloadFiles([string]$PortableDir) {
                 if ($_.Name -like "*.pyc") {
                     return
                 }
-                if (
-                    $relativeParts.Length -ge 2
-                    -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase)
-                    -and $relativeParts[1] -in @("outputs", "temp")
-                ) {
+                $isBackendRuntimeFile = $relativeParts.Length -ge 2 -and
+                    $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and
+                    ($relativeParts[1] -in @("outputs", "temp"))
+                if ($isBackendRuntimeFile) {
                     return
                 }
                 if ($relativePath.Equals("backend\config.json", [System.StringComparison]::OrdinalIgnoreCase)) {

@@ -81,9 +81,10 @@ interface ModelsPayload {
 interface SettingsProps {
     onClose: () => void;
     analysisActive?: boolean;
+    initialTab?: SettingsTab;
 }
 
-type SettingsTab = 'general' | 'models' | 'advanced';
+export type SettingsTab = 'general' | 'models' | 'advanced';
 
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '기본 음성 인식 파일';
@@ -102,8 +103,8 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
     }
 };
 
-export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false }) => {
-    const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general' }) => {
+    const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
     const [apiBase, setApiBase] = useState('');
@@ -158,6 +159,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
             const nextModels = await modelsResponse.json() as ModelsPayload;
             setModels(nextModels);
+            window.dispatchEvent(new Event('analysis:settings-updated'));
             return nextModels;
         } catch (error) {
             setModels(null);
@@ -274,7 +276,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             applySettingsToForm(nextSettings);
             setDownloadFormatPreference(downloadFormat);
             await loadModelsStatus(base, { surfaceErrors: false });
-            window.dispatchEvent(new Event('analysis:settings-updated'));
             setMessage('저장했습니다. 다운로드 형식은 바로 반영되고, 분석 옵션은 다음 분석부터 적용됩니다.');
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');

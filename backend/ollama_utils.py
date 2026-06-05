@@ -17,7 +17,10 @@ def find_ollama_executable() -> str:
         Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Ollama" / "ollama.exe",
     ]
     for candidate in candidates:
-        if candidate.is_file():
-            return str(candidate)
+        try:
+            if candidate.is_file():
+                return str(candidate)
+        except OSError:
+            continue
 
     return "ollama"

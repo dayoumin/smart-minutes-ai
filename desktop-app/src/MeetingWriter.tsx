@@ -1290,7 +1290,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             if (!isCurrentRequest()) return;
             setAudioExtractNotice({
                 tone: 'success',
-                message: '다운로드 폴더에 저장했습니다.',
+                message: '다운로드 폴더에 WAV 파일을 저장했습니다.',
                 savedPath: data?.saved_path ?? null,
                 elapsedMs: Date.now() - startedAt,
             });
@@ -1872,6 +1872,28 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const audioExtractButtonTitle = (isExtractingAudio || audioExtractNotice?.elapsedMs !== undefined)
         ? `${audioExtractMessage} 소요 시간 ${audioExtractElapsedLabel}`
         : audioExtractMessage;
+    const audioExtractStatusVisible = !resumeSelectionActive && !isAnalyzing && (hasAudioExtractFile || isExtractingAudio || Boolean(audioExtractNotice));
+    const audioExtractStatusTone: 'info' | 'warning' | 'error' | 'success' | 'neutral' = audioExtractFailed
+        ? 'error'
+        : audioExtractSaved
+            ? 'success'
+            : isExtractingAudio
+                ? 'info'
+                : 'neutral';
+    const audioExtractStatusHeading = isExtractingAudio
+        ? '오디오 추출 중'
+        : audioExtractSaved
+            ? '오디오 저장 완료'
+            : audioExtractFailed
+                ? '오디오 추출 실패'
+                : '영상 선택됨';
+    const audioExtractStatusMessage = isExtractingAudio
+        ? `선택한 영상에서 음성만 추출하고 있습니다. 소요 시간 ${audioExtractElapsedLabel}`
+        : audioExtractSaved
+            ? `${audioExtractMessage} 소요 시간 ${audioExtractElapsedLabel}`
+            : audioExtractFailed
+                ? audioExtractMessage
+                : '다운로드를 누르면 선택한 영상을 WAV 파일로 저장합니다.';
     const selectedFileMeta = file
         ? [
             fileKind === 'video' ? '영상' : fileKind === 'audio' ? '음성' : '파일',
@@ -2209,7 +2231,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                     title="오디오를 추출할 영상 파일을 선택합니다."
                                 >
                                     <UploadCloud size={15} />
-                                    {hasAudioExtractFile && !audioExtractSaved ? '영상 변경' : '오디오 추출'}
+                                    {hasAudioExtractFile ? audioExtractSaved ? '다른 영상' : '영상 변경' : '오디오 추출'}
                                 </Button>
                                 {hasAudioExtractFile ? (
                                     <Button
@@ -2226,23 +2248,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                         ) : (
                                             <FileAudio size={15} />
                                         )}
-                                        {isExtractingAudio ? '추출 중' : audioExtractSaved ? '저장됨' : audioExtractFailed ? '다시 추출' : '추출'}
+                                        {isExtractingAudio ? '추출 중' : audioExtractSaved ? '완료' : audioExtractFailed ? '다시 다운로드' : '다운로드'}
                                     </Button>
                                 ) : null}
                                 <span
-                                    title="영상 파일을 고른 뒤 추출을 누르면 회의록 없이 WAV 파일만 저장합니다."
+                                    title="영상 파일을 고른 뒤 다운로드를 누르면 회의록 없이 WAV 파일만 저장합니다."
                                     aria-label="오디오 추출 도움말"
                                     className="inline-flex items-center text-muted-foreground"
                                     tabIndex={0}
                                 >
                                     <CircleHelp size={14} />
                                 </span>
-                                {audioExtractNotice?.savedPath && isTauriRuntime() && (
-                                    <Button variant="outline" className="detail-action-button" onClick={handleOpenExtractedAudioLocation}>
-                                        <FolderOpen size={15} />
-                                        열기
-                                    </Button>
-                                )}
                             </div>
                         ) : (
                             <div />
@@ -2251,6 +2267,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             {buttonLabel}
                         </Button>
                     </div>
+                )}
+                {audioExtractStatusVisible && (
+                    <StatusBanner
+                        tone={audioExtractStatusTone}
+                        heading={audioExtractStatusHeading}
+                        className="mt-3"
+                        action={audioExtractNotice?.savedPath && isTauriRuntime() ? (
+                            <Button variant="outline" className="status-action-button" onClick={handleOpenExtractedAudioLocation}>
+                                <FolderOpen size={15} />
+                                폴더 열기
+                            </Button>
+                        ) : undefined}
+                    >
+                        {audioExtractStatusMessage}
+                    </StatusBanner>
                 )}
             </div>
 

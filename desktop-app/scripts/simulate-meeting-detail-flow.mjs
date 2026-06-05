@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
 const meetingId = 'codex-detail-flow-simulation';
@@ -19,6 +20,8 @@ const cancelMeetingId = 'codex-detail-flow-diarization-cancel';
 const cancelJobId = 'codex-detail-flow-diarization-cancel-job';
 const audioMissingMeetingId = 'codex-detail-flow-diarization-audio-missing';
 const audioMissingJobId = 'codex-detail-flow-diarization-audio-missing-job';
+const unlabeledAudioMissingMeetingId = 'codex-detail-flow-unlabeled-audio-missing';
+const unlabeledAudioMissingJobId = 'codex-detail-flow-unlabeled-audio-missing-job';
 const legacyParticipantMeetingId = 'codex-detail-flow-legacy-participant';
 const legacyParticipantJobId = 'codex-detail-flow-legacy-participant-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
@@ -85,6 +88,20 @@ const waitForApp = async (url, timeoutMs = 30000) => {
   throw new Error(`Timed out waiting for ${url}`);
 };
 
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
+
 const stopServer = async (child) => {
   if (!child || child.exitCode !== null) return;
 
@@ -109,17 +126,16 @@ const stopServer = async (child) => {
 };
 
 const startServer = async () => {
-  if (!shouldStartServer) return null;
-
-  try {
-    await waitForApp(APP_URL, 1000);
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start a local Vite server when the app is not already available.
   }
 
   const url = new URL(APP_URL);
-  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5173'} --strictPort --configLoader runner`;
+  const port = await getAvailablePort(url.hostname);
+  url.port = String(port);
+  APP_URL = url.toString();
+  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`;
   const child = process.platform === 'win32'
     ? spawn(
       process.env.ComSpec ?? 'cmd.exe',
@@ -133,7 +149,7 @@ const startServer = async () => {
     )
     : spawn(
       'corepack',
-      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port || '5173', '--strictPort', '--configLoader', 'runner'],
+      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port, '--strictPort', '--configLoader', 'runner'],
       {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, BROWSER: 'none' },
@@ -510,6 +526,58 @@ const seedAudioMissingDiarizationMeeting = async (page) => {
   }, { audioMissingMeetingId, audioMissingJobId });
 };
 
+const seedUnlabeledAudioMissingMeeting = async (page) => {
+  await page.evaluate(async ({ unlabeledAudioMissingMeetingId, unlabeledAudioMissingJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) {
+          db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+      };
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+
+    const meeting = {
+      id: unlabeledAudioMissingMeetingId,
+      jobId: unlabeledAudioMissingJobId,
+      date: '2026-05-08 00:05',
+      title: '참석자 표식 없는 회의록',
+      summary: '참석자 표식이 없는 원본 음성 누락 확인용 회의록입니다.',
+      participants: '',
+      meetingPurpose: '참석자 표식 없는 원본 음성 누락 확인',
+      sourceFile: 'unlabeled-audio-missing.mp4',
+      topics: [],
+      topicSections: [],
+      speakerContextSummaries: [],
+      generationStatus: { summary: 'completed', topicSections: 'not_started', speakerContextSummaries: 'not_started' },
+      speakerLabels: {},
+      segments: [
+        {
+          start: '00:00:01',
+          end: '00:00:04',
+          speaker: '',
+          text: '참석자 표식이 없는 대화록입니다.',
+        },
+      ],
+      editedDisplaySegments: [],
+      actions: [],
+      decisions: [],
+      needsCheck: [],
+    };
+
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { unlabeledAudioMissingMeetingId, unlabeledAudioMissingJobId });
+};
+
 const seedLegacyParticipantMeeting = async (page) => {
   await page.evaluate(async ({ legacyParticipantMeetingId, legacyParticipantJobId }) => {
     const request = indexedDB.open('MeetingHistoryDB', 1);
@@ -591,7 +659,7 @@ const installRoutes = async (page) => {
     contentType: 'application/json',
     body: JSON.stringify({
       processing: { long_audio_chunk_seconds: 30, enable_long_audio_chunking: true },
-      diarization: { enabled: false },
+      diarization: { enabled: true, generate_during_analysis: false },
       stt: { device: 'cpu' },
       summary: {
         provider: 'ollama',
@@ -625,13 +693,16 @@ const installRoutes = async (page) => {
       ready: true,
       summary_ready: summaryReady,
       summary_status: summaryReady ? 'ready' : 'skipped',
-      summary_message: summaryReady ? '' : '요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.',
+      summary_message: summaryReady ? '' : '요약 모델이 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 모델 상태를 확인해 주세요.',
       models: [
         { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
         {
           key: 'llm',
           label: 'Gemma via Ollama',
           installed: summaryReady,
+          configured_model: 'gemma4:e2b',
+          installed_model: summaryReady ? 'gemma4:e2b' : null,
+          installed_models: summaryReady ? ['gemma4:e2b'] : [],
           required: false,
           manual_note: 'Ollama 설치 후 Gemma 모델을 준비하면 전체 요약과 주제별 정리를 사용할 수 있습니다.',
           install_url: 'https://ollama.com/library/gemma4%3Ae2b',
@@ -640,12 +711,14 @@ const installRoutes = async (page) => {
             {
               label: '권장 2B',
               description: '용량과 속도를 우선할 때 사용합니다.',
+              model: 'gemma4:e2b',
               url: 'https://ollama.com/library/gemma4%3Ae2b',
               command: 'ollama run gemma4:e2b',
             },
             {
               label: '선택 4B',
               description: 'PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.',
+              model: 'gemma4:e4b',
               url: 'https://ollama.com/library/gemma4%3Ae4b',
               command: 'ollama run gemma4:e4b',
             },
@@ -856,19 +929,22 @@ const installRoutes = async (page) => {
 };
 
 const run = async () => {
-  const server = await startServer();
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+  let server = null;
+  let browser = null;
+  let page = null;
   const exportCalls = [];
   const exportBodies = [];
   const apiCalls = [];
-  page.on('request', request => {
-    if (request.url().includes('/api/')) {
-      apiCalls.push(`${request.method()} ${request.url()}`);
-    }
-  });
 
   try {
+    server = await startServer();
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    page.on('request', request => {
+      if (request.url().includes('/api/')) {
+        apiCalls.push(`${request.method()} ${request.url()}`);
+      }
+    });
     await installRoutes(page);
     for (const format of formats) {
       await page.route(`**/api/export-record/${format}/save-copy`, route => {
@@ -902,6 +978,7 @@ const run = async () => {
     await seedOtherMeeting(page);
     await seedDiarizationCancelMeeting(page);
     await seedAudioMissingDiarizationMeeting(page);
+    await seedUnlabeledAudioMissingMeeting(page);
     await seedLegacyParticipantMeeting(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
 
@@ -910,20 +987,21 @@ const run = async () => {
     const skippedOrganizeTab = page.getByRole('tab', { name: '기록 정리' });
     assert.equal(await skippedOrganizeTab.isDisabled(), false);
     await skippedOrganizeTab.click();
-    await page.getByText('분석 준비 필요').waitFor({ timeout: 10000 });
-    await page.getByText('요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 분석 준비를 확인해 주세요.').waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '분석 준비' }).click();
-    const settingsModelsTab = page.getByRole('tab', { name: '분석 준비' });
+    await page.getByText('모델 필요').waitFor({ timeout: 10000 });
+    await page.getByText('요약 모델이 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 모델 상태를 확인해 주세요.').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '모델', exact: true }).click();
+    const settingsModelsTab = page.getByRole('tab', { name: '모델' });
     await settingsModelsTab.waitFor({ timeout: 10000 });
     assert.equal(await settingsModelsTab.getAttribute('aria-selected'), 'true');
-    await page.getByText('회의 요약').waitFor({ timeout: 10000 });
-    await page.getByText('회의 요약 모델').waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '추천 모델' }).waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '모델명 직접 입력' }).click();
+    await page.getByText('회의 요약 모델', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('모델 선택', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('#settings-models-panel select').first().waitFor({ timeout: 10000 });
     await page.getByPlaceholder('예: llama3.2:3b').waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '추천 모델' }).click();
-    await page.getByRole('link', { name: /권장 2B/ }).waitFor({ timeout: 10000 });
-    await page.getByRole('link', { name: /선택 4B/ }).waitFor({ timeout: 10000 });
+    await page.locator('#settings-models-panel option[value="gemma4:e2b"]').waitFor({ state: 'attached', timeout: 10000 });
+    await page.locator('#settings-models-panel option[value="gemma4:e4b"]').waitFor({ state: 'attached', timeout: 10000 });
+    await page.getByRole('link', { name: 'gemma4:e2b 모델 페이지' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: 'gemma4:e2b 모델 받기' }).first().waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).first().waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
 
@@ -931,7 +1009,7 @@ const run = async () => {
     await page.getByText('기존 정리 결과가 있는 대화록입니다.').waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '기록 정리' }).click();
     await page.getByText('이미 저장된 전체 요약입니다.').waitFor({ timeout: 10000 });
-    await page.getByText('분석 준비 필요').waitFor({ timeout: 10000 });
+    await page.getByText('모델 필요').waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
     await page.getByRole('tab', { name: '주제별 정리' }).click();
     await page.getByText('이미 저장된 주제별 정리입니다.').waitFor({ timeout: 10000 });
@@ -939,9 +1017,11 @@ const run = async () => {
     await page.getByRole('tab', { name: '참석자별 정리' }).click();
     await page.getByText('이미 저장된 참석자별 정리입니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: '참석자별 정리', exact: true }).isDisabled(), true);
-    await page.getByRole('button', { name: '분석 준비' }).click();
+    await page.getByRole('button', { name: '모델', exact: true }).click();
     summaryReady = true;
-    await page.getByRole('button', { name: '상태 새로고침' }).click();
+    await page.getByRole('button', { name: '설정 닫기' }).click();
+    await page.getByRole('button', { name: '모델', exact: true }).click();
+    await page.getByText('사용 중').first().waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.getByRole('tab', { name: '전체 요약' }).click();
     await page.waitForFunction(() => {
@@ -952,26 +1032,36 @@ const run = async () => {
     await page.getByText('원본 음성 누락 회의록').first().click();
     await page.getByText('참석자 구분 원본 음성 누락 확인').waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '기록 정리' }).click();
-    const audioRequiredButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
+    const topDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
+    const detailDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
+    const audioRequiredButton = topDiarizationButton;
     await audioRequiredButton.waitFor({ timeout: 10000 });
     await page.waitForFunction(() => {
-      const buttons = Array.from(document.querySelectorAll('section.detail-action-row button'));
+      const buttons = Array.from(document.querySelectorAll('.meeting-status-grid button'));
       return buttons.some(button => button.textContent?.includes('실행') && !button.disabled);
     }, null, { timeout: 10000 });
     assert.equal(await audioRequiredButton.isDisabled(), false);
+    assert.equal(await detailDiarizationButton.count(), 0);
     await audioRequiredButton.click();
     await audioMissingDiarizationRequested;
     await page.getByText('참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.').first().waitFor({ timeout: 10000 });
-    await page.getByText('원본 필요').first().waitFor({ timeout: 10000 });
-    await page.getByText('저장된 음성 파일이 없습니다. 영상에서 음성만 필요하면 작성 화면에서 음성 추출을 사용하세요.').waitFor({ timeout: 10000 });
-    assert.equal(await audioRequiredButton.isDisabled(), true);
+    await page.getByText('표식 1명').first().waitFor({ timeout: 10000 });
+    await page.getByText('대화록의 참석자 표식이 1명입니다. 추가 구분이 필요하면 원본 음성을 보관한 상태로 다시 분석해 주세요.').waitFor({ timeout: 10000 });
+    assert.equal(await detailDiarizationButton.count(), 0);
+
+    await page.getByText('참석자 표식 없는 회의록').first().click();
+    await page.getByText('참석자 표식 없는 원본 음성 누락 확인').waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByText('재실행 불가').first().waitFor({ timeout: 10000 });
+    await page.getByText('저장된 음성 파일이 없어 참석자 구분을 다시 실행할 수 없습니다.').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).count(), 0);
 
     await page.getByText('참석자 구분 취소 회의록').first().click();
     await page.getByText('참석자 구분 취소 상태 확인').waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '기록 정리' }).click();
-    await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).click();
+    await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).click();
     await cancelDiarizationRequested;
-    const cancelRunningButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지/취소' });
+    const cancelRunningButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
     await cancelRunningButton.waitFor({ timeout: 10000 });
     assert.equal(await cancelRunningButton.isDisabled(), false);
     await cancelRunningButton.click();
@@ -999,25 +1089,26 @@ const run = async () => {
     assert.equal(cancelledRecord.diarizationRequested, true);
     assert.equal(cancelledRecord.diarizationDeferred, false);
     assert.equal(cancelledRecord.diarizationApplied, false);
-    await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
+    await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
 
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '기록 정리' }).click();
 
-    const diarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
+    const diarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
     await diarizationButton.click();
     await diarizationRequested;
-    const stopDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지/취소' });
+    const stopDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
     await stopDiarizationButton.waitFor({ timeout: 10000 });
     assert.equal(await stopDiarizationButton.isDisabled(), false);
     await stopDiarizationButton.click();
     await page.getByText('참석자 구분을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
+    await page.getByText('경과 시간').waitFor({ timeout: 10000 });
     await page.getByText('예상 남은 시간').waitFor({ timeout: 10000 });
     await page.locator('.diarization-stop-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByText('참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
-    const stoppingDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 중지 중' });
+    const stoppingDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지 중' });
     await stoppingDiarizationButton.waitFor({ timeout: 10000 });
     assert.equal(await stoppingDiarizationButton.isDisabled(), true);
     releaseDiarizationResponse();
@@ -1040,8 +1131,8 @@ const run = async () => {
     assert.equal(deferredRecord.diarizationDeferred, true);
     assert.equal(deferredRecord.diarizationApplied, false);
     assert.equal(deferredRecord.diarizationRequested, true);
-    await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
+    await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
 
     await page.getByRole('tab', { name: '주제별 정리' }).click();
 
@@ -1055,7 +1146,7 @@ const run = async () => {
     const runningTopicButton = page.getByRole('button', { name: '주제별 정리 중' });
     await runningTopicButton.waitFor({ timeout: 10000 });
     assert.equal(await runningTopicButton.isDisabled(), true);
-    assert.equal(await page.getByRole('button', { name: '주제 추가 정리' }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '주제 추가 정리' }).count(), 0);
     assert.equal(await page.locator('button:has-text("정리 중") .animate-spin').count(), 1);
     assert.equal(await page.locator('button:has-text("추가 정리") .animate-spin').count(), 0);
 
@@ -1114,10 +1205,12 @@ const run = async () => {
   } catch (error) {
     console.error(error);
     console.error('api calls:', apiCalls);
-    console.error('body:', (await page.locator('body').innerText()).slice(0, 2000));
+    if (page) {
+      console.error('body:', (await page.locator('body').innerText()).slice(0, 2000));
+    }
     throw error;
   } finally {
-    await browser.close();
+    await browser?.close().catch(() => undefined);
     await stopServer(server);
   }
 };

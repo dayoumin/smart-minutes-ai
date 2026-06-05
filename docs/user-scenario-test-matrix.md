@@ -21,6 +21,7 @@
 | --- | --- | --- | --- | --- |
 | UST-01 | 짧은 음성 파일로 대화록 작성 | 분석 시작, 진행률 표시, 대화록 저장, 기록 정리 진입 가능 | `test:generation-flow`, backend/export 단위 테스트 일부 | 유지 |
 | UST-02 | 짧은 영상 파일로 대화록 작성 | 영상에서 음성을 준비하고 대화록을 저장함 | `test:analysis-stop-flow`가 mp4 fixture로 분석 시작 흐름 확인 | 파일 선택 안내까지 확장 가능 |
+| UST-02A | 영상에서 오디오만 추출 | 영상 선택 후 다운로드 버튼 표시, 완료 후 저장 완료 안내와 폴더 열기 CTA 표시 | `test:audio-extract-ui` | 유지 |
 | UST-03 | 긴 음성 파일 시작 전 | 긴 파일 안내, 저장공간 사전점검, 대화록 우선 안내 | `backend/test_storage_preflight.py` | 프론트 파일 안내 시뮬레이션 추가 |
 | UST-04 | 긴 영상 파일 시작 전 | 영상 길이/크기 기준 안내, 저장공간 부족 시 시작 차단 | `backend/test_storage_preflight.py` | 프론트 파일 안내 시뮬레이션 추가 |
 | UST-05 | 음성인식 중 중지 | 완료된 구간을 남기고 중지, 같은 파일로 이어하기 가능 | `test:analysis-stop-flow` | 유지 |
@@ -37,6 +38,10 @@
 | UST-16 | 기록 정리 중 입력 변경 | 오래된 결과 저장 방지, 다시 정리 안내 | `test:generation-flow`, `test:topic-generation-ui` | 유지 |
 | UST-17 | 내보내기 | TXT/MD/HWPX/DOCX 다운로드가 깨지지 않음 | `test:meeting-detail-flow`, backend export tests | 유지 |
 | UST-18 | 내부 음성 파일 보존 설정 변경 | 나중 참석자 구분 가능 여부 안내가 일관됨 | 설정 UI 일부 | 설정-결과 화면 연결 시나리오 추가 |
+| UST-19 | 요약 모델 직접 입력/추천 선택 | 모델 탭에서 추천 모델, 직접 입력 모델, 사용 중 모델 표시가 일관됨 | `backend/test_api.py`, `test:meeting-detail-flow` 일부 | 직접 입력 저장 UI 시뮬레이션 보강 가능 |
+| UST-20 | Ollama 모델 받기/삭제 | 모델명 검증, 받는 중/완료/실패 상태, 사용 중/받는 중 모델 삭제 차단 | `backend/test_api.py`, `test:settings-model-management` | 유지 |
+| UST-21 | 참석자 구분 원본 음성 없음 | 표식 1명 상태와 재실행 불가 상태를 구분해 안내 | `test:meeting-detail-flow`, backend/API 오류 매핑 | 유지 |
+| UST-22 | 분석 중 참석자 구분 실행 옵션 변경 | 설정 저장, `/api/models/status` 반영, 분석 결과 설정 기록 일관성 | `backend/test_api.py` | 설정 UI 저장 시뮬레이션 보강 가능 |
 
 ## 자동화 우선순위
 
@@ -49,6 +54,10 @@
 
 3. 설정과 결과 화면 연결 시나리오를 추가한다.
    - 내부 음성 파일 보존이 꺼져 있으면 참석자 구분 재실행 가능 안내가 과장되지 않아야 한다.
+
+4. 모델 탭 UI 시뮬레이션을 유지한다.
+   - 직접 입력 모델 저장, Ollama 모델 받기 진행 상태, 삭제 차단/삭제 완료를 mock route로 확인한다.
+   - 실제 `ollama pull`은 릴리스 후보 수동 확인으로 분리하고 기본 자동 테스트에서는 실행하지 않는다.
 
 ## 릴리스 후보 수동 샘플
 
@@ -68,7 +77,10 @@
 corepack pnpm --dir desktop-app test:analysis-stop-flow
 corepack pnpm --dir desktop-app test:resume-flow
 corepack pnpm --dir desktop-app test:resume-draft-flow
+corepack pnpm --dir desktop-app test:audio-extract-ui
 corepack pnpm --dir desktop-app test:meeting-detail-flow
+corepack pnpm --dir desktop-app test:settings-backend-restart
+corepack pnpm --dir desktop-app test:settings-model-management
 corepack pnpm --dir desktop-app test:generation-flow
 corepack pnpm --dir desktop-app test:topic-generation-ui
 ```

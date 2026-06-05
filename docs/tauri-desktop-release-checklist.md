@@ -68,6 +68,12 @@
 - 분석 실패 시 진행 영역에서 실패 원인이 보이는지 확인한다.
 - 회의 기록 저장과 HWPX/TXT/DOCX 다운로드가 동작하는지 확인한다.
 - HWPX는 zip/XML smoke만으로 완료 처리하지 않는다. 회사 PC에서 실제 한글 또는 HWPX 뷰어로 열어 제목, 일시, 참석자, 본문이 표시되는지 확인한다.
+- 설정은 `일반`과 `모델` 탭 기준으로 확인한다. 더 이상 일반 사용자 흐름에서 `분석 준비` 탭명을 기대하지 않는다.
+- 설정 `일반` 탭에서 참석자 구분 사용 여부와 분석 중 참석자 구분 실행 옵션이 저장되고 `/api/models/status`에 반영되는지 확인한다.
+- 설정 `모델` 탭에서 추천 모델, 직접 입력 모델, 설치된 Ollama 모델, 사용 중 모델 표시가 서로 일관되는지 확인한다.
+- Ollama 모델 받기/상태 확인/삭제 기능은 사용자 입력 모델명 검증, 받는 중 표시, 완료/실패 안내, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 함께 확인한다.
+- 결과 화면에서 요약 모델이 없을 때는 `모델 필요` 수준의 사용자 문구와 `모델` 탭 이동이 동작해야 한다.
+- 결과 화면에서 원본 음성이 없을 때 참석자 구분 상태를 구분한다. 기존 참석자 표식이 1명뿐이면 `표식 1명`, 표식 자체가 없으면 `재실행 불가` 안내가 나와야 한다.
 
 ## 6. 배포 전 자동 점검
 
@@ -79,8 +85,23 @@
 - 백엔드 모델/ffmpeg 폴더 구조
 - 앱 실행 후 sidecar listen 포트 탐지
 - `/api/health`, `/api/settings`, `/api/models/status` 응답 확인
+- `/api/models/ollama/pull`, `/api/models/ollama/pull-status`, `/api/models/ollama/model` 응답 확인
 - 필수 모델 누락 목록 출력
 - 테스트 후 앱/sidecar 프로세스 종료
+
+현재 루트 점검 명령:
+
+```powershell
+corepack pnpm check:quick
+corepack pnpm check:release
+corepack pnpm check:portable
+```
+
+- `check:quick`: 수정 중 반복 실행한다. 프론트 타입체크/린트, 가벼운 백엔드 unittest, 배포 스크립트 계약 테스트를 실행한다.
+- `check:release`: 배포 후보에서 실행한다. `check:quick` 범위에 백엔드 API unittest, 업데이트 패키지 테스트, 프론트 사용자 흐름 시뮬레이션을 추가한다.
+- `check:portable`: 이미 `releases\lmo_audio`를 만든 뒤 실행한다. `check:release` 범위에 portable 폴더 검증을 추가한다.
+- 실제 모델을 사용하는 STT smoke는 기본 자동 게이트에서 제외한다. 필요할 때 `scripts\run_release_checks.ps1 -Tier release -IncludeModelSmoke`로 별도 실행한다.
+- 현재 `check:release`의 백엔드 API unittest는 Ollama 모델 받기/상태/삭제, 직접 입력 모델 저장, 참석자 구분 분석 중 실행 옵션을 포함한다. 프론트 시뮬레이션은 모델 탭 진입, 추천/직접 입력 표시, 참석자 구분 재실행 상태를 일부 확인한다.
 
 ## 7. 이 프로젝트의 단일 배포 흐름
 
@@ -99,6 +120,7 @@
 
 1. 변경 범위를 분류한다: 웹 UI, 데스크탑/Tauri, 백엔드, 배포 스크립트, 모델/성능.
 2. 변경 범위에 맞는 좁은 검증을 먼저 실행한다.
+   - 공통 빠른 점검: `corepack pnpm check:quick`.
    - 프론트엔드: `corepack pnpm --dir desktop-app run typecheck`, `corepack pnpm --dir desktop-app run lint`, 필요한 `desktop-app/scripts/simulate-*.mjs`.
    - Tauri/Rust: `cargo check` in `desktop-app\src-tauri`.
    - 백엔드: 관련 Python unittest 또는 `py_compile`.
@@ -108,6 +130,7 @@
 6. 루트에서 `corepack pnpm build`를 실행한다.
 7. 실패하면 레이어를 나눠 확인한다: sidecar packaging, Tauri exe build, portable packaging, deploy-folder verify.
 8. `scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`가 통과하는지 확인한다.
+   - 전체 자동 게이트로는 `corepack pnpm check:portable`을 사용한다.
 9. `releases\lmo_audio\release-manifest.json`의 `commit`이 `git rev-parse HEAD`와 같고 `dirty=false`인지 확인한다.
 10. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다.
 

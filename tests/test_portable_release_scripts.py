@@ -50,6 +50,35 @@ class PortableReleaseScriptTest(unittest.TestCase):
         self.assertEqual(desktop_package["scripts"]["build:web"], "vite build")
         self.assertIn("..\\scripts\\build_user_release.ps1", desktop_package["scripts"]["build:portable"])
 
+    def test_root_release_check_scripts_define_tiered_gates(self):
+        root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
+        scripts = root_package["scripts"]
+
+        self.assertEqual(
+            scripts["check"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier quick",
+        )
+        self.assertEqual(
+            scripts["check:quick"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier quick",
+        )
+        self.assertEqual(
+            scripts["check:release"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier release",
+        )
+        self.assertEqual(
+            scripts["check:portable"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier portable",
+        )
+
+        check_script = (ROOT / "scripts" / "run_release_checks.ps1").read_text(encoding="utf-8")
+        self.assertIn('[ValidateSet("quick", "release", "portable")]', check_script)
+        self.assertIn('"backend.test_api"', check_script)
+        self.assertIn('"test:analysis-stop-flow"', check_script)
+        self.assertIn("verify_portable.ps1", check_script)
+        self.assertIn("PYTHONPATH", check_script)
+        self.assertIn("IncludeModelSmoke", check_script)
+
     def test_project_local_release_build_skill_is_not_global(self):
         skill_path = ROOT / ".agents" / "skills" / "lmo-audio-release-build" / "SKILL.md"
         self.assertTrue(skill_path.exists())

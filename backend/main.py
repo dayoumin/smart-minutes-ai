@@ -7,6 +7,7 @@ import json
 import logging
 import re
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -26,8 +27,13 @@ from config_normalization import (
     DEFAULT_LONG_AUDIO_CHUNK_SECONDS,
     DEFAULT_SUMMARY_MODEL,
     DEFAULT_STT_CHUNK_SECONDS,
+    add_summary_user_model,
     get_summary_candidate_models,
+    get_summary_model_options,
+    normalize_summary_model_name,
+    normalize_summary_user_models,
     normalize_app_config,
+    remove_summary_user_model,
 )
 from job_checkpoints import (
     CorruptCheckpointError,
@@ -48,7 +54,9 @@ from model_manager import (
     ollama_model_exists,
     resolve_model_path,
 )
+from ollama_utils import find_ollama_executable
 from pipeline.transcribe import get_stt_device_status
+from process_utils import hidden_subprocess_kwargs
 from storage_preflight import build_analysis_storage_preflight
 
 BASE_DIR = os.path.abspath(
@@ -63,11 +71,14 @@ app = FastAPI(title="NIFS AI Meeting API")
 
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
+OLLAMA_PULL_STATUS_LOCK = threading.RLock()
+CONFIG_LOCK = threading.RLock()
 JOB_STATE_LOCKS_LOCK = threading.Lock()
 JOB_STATE_LOCKS: dict[str, threading.RLock] = {}
 ACTIVE_GENERATIONS: set[tuple[str, str]] = set()
 GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
 GENERATION_STOP_REQUESTS: dict[tuple[str, str], dict] = {}
+OLLAMA_PULL_STATUS: dict[str, dict] = {}
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
@@ -242,9 +253,9 @@ def _estimate_diarization_waveform_mb(duration_seconds: float) -> float:
     return bytes_count / (1024 * 1024)
 
 
-def _diarization_resource_decision(config: dict, source_wav_duration: float) -> dict:
+def _diarization_resource_decision(config: dict, source_wav_duration: float, requested_override: bool | None = None) -> dict:
     diarization_config = config.get("diarization", {})
-    requested = bool(diarization_config.get("enabled", True))
+    requested = bool(diarization_config.get("enabled", True)) if requested_override is None else bool(requested_override)
     max_duration = int(diarization_config.get("max_duration_seconds") or 0)
     max_waveform_mb = int(diarization_config.get("max_waveform_mb") or 0)
     estimated_waveform_mb = _estimate_diarization_waveform_mb(source_wav_duration)
@@ -306,6 +317,20 @@ def _source_not_preserved_diarization_decision(decision: dict) -> dict:
         "defer_message": "",
     })
     return skipped
+
+
+def _failed_diarization_decision(decision: dict, message: str | None = None) -> dict:
+    failed = {**decision}
+    failed.update({
+        "run": False,
+        "skipped": True,
+        "deferred": False,
+        "skip_reason": "runtime_error",
+        "skip_message": message or "참석자 구분 중 문제가 있어 회의록만 저장했습니다. 결과 화면에서 다시 실행할 수 있습니다.",
+        "defer_reason": "",
+        "defer_message": "",
+    })
+    return failed
 
 
 def _can_defer_diarization_for_later(config: dict) -> bool:
@@ -587,71 +612,72 @@ async def get_settings() -> dict:
 
 @app.patch("/api/settings")
 async def update_settings(payload: dict = Body(...)) -> dict:
-    config = load_config()
+    with CONFIG_LOCK:
+        config = load_config()
 
-    if "processing" in payload:
-        processing = payload["processing"] or {}
-        if "enable_long_audio_chunking" in processing:
-            config.setdefault("processing", {})["enable_long_audio_chunking"] = bool(processing["enable_long_audio_chunking"])
-        if "long_audio_chunk_seconds" in processing:
-            chunk_seconds = int(processing["long_audio_chunk_seconds"])
-            if chunk_seconds < 10 or chunk_seconds > 3600:
-                raise HTTPException(status_code=400, detail="long_audio_chunk_seconds must be between 10 and 3600")
-            config.setdefault("processing", {})["long_audio_chunk_seconds"] = chunk_seconds
+        if "processing" in payload:
+            processing = payload["processing"] or {}
+            if "enable_long_audio_chunking" in processing:
+                config.setdefault("processing", {})["enable_long_audio_chunking"] = bool(processing["enable_long_audio_chunking"])
+            if "long_audio_chunk_seconds" in processing:
+                chunk_seconds = int(processing["long_audio_chunk_seconds"])
+                if chunk_seconds < 10 or chunk_seconds > 3600:
+                    raise HTTPException(status_code=400, detail="long_audio_chunk_seconds must be between 10 and 3600")
+                config.setdefault("processing", {})["long_audio_chunk_seconds"] = chunk_seconds
 
-    if "preprocessing" in payload:
-        preprocessing = payload["preprocessing"] or {}
-        target = config.setdefault("preprocessing", {})
-        if "enabled" in preprocessing:
-            target["enabled"] = bool(preprocessing["enabled"])
-        if "normalize_audio" in preprocessing:
-            target["normalize_audio"] = bool(preprocessing["normalize_audio"])
-        if "normalization_mode" in preprocessing:
-            mode = str(preprocessing["normalization_mode"]).lower()
-            if mode not in {"auto", "loudnorm", "dynaudnorm", "speechnorm"}:
-                raise HTTPException(status_code=400, detail="preprocessing.normalization_mode must be auto, loudnorm, dynaudnorm, or speechnorm")
-            target["normalization_mode"] = mode
+        if "preprocessing" in payload:
+            preprocessing = payload["preprocessing"] or {}
+            target = config.setdefault("preprocessing", {})
+            if "enabled" in preprocessing:
+                target["enabled"] = bool(preprocessing["enabled"])
+            if "normalize_audio" in preprocessing:
+                target["normalize_audio"] = bool(preprocessing["normalize_audio"])
+            if "normalization_mode" in preprocessing:
+                mode = str(preprocessing["normalization_mode"]).lower()
+                if mode not in {"auto", "loudnorm", "dynaudnorm", "speechnorm"}:
+                    raise HTTPException(status_code=400, detail="preprocessing.normalization_mode must be auto, loudnorm, dynaudnorm, or speechnorm")
+                target["normalization_mode"] = mode
 
-    if "diarization" in payload:
-        diarization = payload["diarization"] or {}
-        if "enabled" in diarization:
-            config.setdefault("diarization", {})["enabled"] = bool(diarization["enabled"])
+        if "diarization" in payload:
+            diarization = payload["diarization"] or {}
+            target = config.setdefault("diarization", {})
+            if "enabled" in diarization:
+                target["enabled"] = bool(diarization["enabled"])
+            if "generate_during_analysis" in diarization:
+                target["generate_during_analysis"] = bool(diarization["generate_during_analysis"])
 
-    if "stt" in payload:
-        stt = payload["stt"] or {}
-        config.setdefault("stt", {})["selected_model"] = "faster-whisper-large-v3"
-        if "device" in stt:
-            device = str(stt["device"])
-            if device not in {"cpu", "cuda"}:
-                raise HTTPException(status_code=400, detail="stt.device must be cpu or cuda")
-            config.setdefault("stt", {})["device"] = device
+        if "stt" in payload:
+            stt = payload["stt"] or {}
+            config.setdefault("stt", {})["selected_model"] = "faster-whisper-large-v3"
+            if "device" in stt:
+                device = str(stt["device"])
+                if device not in {"cpu", "cuda"}:
+                    raise HTTPException(status_code=400, detail="stt.device must be cpu or cuda")
+                config.setdefault("stt", {})["device"] = device
 
-    if "summary" in payload:
-        summary = payload["summary"] or {}
-        target = config.setdefault("summary", {})
-        if "provider" in summary:
-            provider = str(summary["provider"]).strip().lower()
-            if provider not in {"ollama"}:
-                raise HTTPException(status_code=400, detail="summary.provider must be ollama")
-            target["provider"] = provider
-        if "model" in summary:
-            model = str(summary["model"]).strip()
-            if not model:
-                raise HTTPException(status_code=400, detail="summary.model is required")
-            if any(character.isspace() for character in model):
-                raise HTTPException(status_code=400, detail="summary.model must not contain spaces")
-            target["model"] = model
+        if "summary" in payload:
+            summary = payload["summary"] or {}
+            target = config.setdefault("summary", {})
+            if "provider" in summary:
+                provider = str(summary["provider"]).strip().lower()
+                if provider not in {"ollama"}:
+                    raise HTTPException(status_code=400, detail="summary.provider must be ollama")
+                target["provider"] = provider
+            if "model" in summary:
+                model = _validate_ollama_model_name(str(summary["model"]))
+                target["model"] = model
+                add_summary_user_model(config, model)
 
-    if "privacy" in payload:
-        privacy = payload["privacy"] or {}
-        if "preserve_extracted_audio" in privacy:
-            config.setdefault("privacy", {})["preserve_extracted_audio"] = bool(privacy["preserve_extracted_audio"])
-        if "auto_save_hwpx_copy" in privacy:
-            config.setdefault("privacy", {})["auto_save_hwpx_copy"] = bool(privacy["auto_save_hwpx_copy"])
-        if "auto_save_audio_copy" in privacy:
-            config.setdefault("privacy", {})["auto_save_audio_copy"] = bool(privacy["auto_save_audio_copy"])
+        if "privacy" in payload:
+            privacy = payload["privacy"] or {}
+            if "preserve_extracted_audio" in privacy:
+                config.setdefault("privacy", {})["preserve_extracted_audio"] = bool(privacy["preserve_extracted_audio"])
+            if "auto_save_hwpx_copy" in privacy:
+                config.setdefault("privacy", {})["auto_save_hwpx_copy"] = bool(privacy["auto_save_hwpx_copy"])
+            if "auto_save_audio_copy" in privacy:
+                config.setdefault("privacy", {})["auto_save_audio_copy"] = bool(privacy["auto_save_audio_copy"])
 
-    save_config(config)
+        save_config(config)
     return await get_settings()
 
 
@@ -663,23 +689,28 @@ async def models_status() -> dict:
         selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
+        diarization_during_analysis = bool(config.get("diarization", {}).get("generate_during_analysis", False))
         summary_readiness = _summary_model_readiness(config)
         stt_device_status = get_stt_device_status()
+        memory_gb = _system_memory_gb()
         required_stt_keys = {"stt_faster_whisper"}
         for model in status.get("models", []):
             key = model.get("key")
             if key == "stt_faster_whisper":
                 model["required"] = key in required_stt_keys
             elif key == "diarization":
-                model["required"] = diarization_enabled
+                model["required"] = diarization_during_analysis
         required_models = [model for model in status.get("models", []) if model.get("required")]
         status["ready"] = all(model.get("installed") for model in required_models)
         status["selected_stt_model"] = selected_stt
         status["selected_stt_device"] = selected_device
         status["diarization_enabled"] = diarization_enabled
+        status["diarization_generate_during_analysis"] = diarization_during_analysis
         status["summary_ready"] = bool(summary_readiness.get("ready"))
         status["summary_status"] = summary_readiness.get("status")
         status["summary_message"] = summary_readiness.get("message", "")
+        status["system_profile"] = {"memory_gb": memory_gb}
+        status["summary_model_recommendation"] = _summary_model_recommendation(config, memory_gb)
         status["stt_device_status"] = stt_device_status
         if selected_device == "cuda" and not stt_device_status.get("gpu_usable"):
             status["ready"] = False
@@ -697,6 +728,320 @@ async def models_status() -> dict:
                 str(exc),
             ],
         }
+
+
+def _system_memory_gb() -> float | None:
+    try:
+        if sys.platform.startswith("win"):
+            import ctypes
+
+            class MemoryStatusEx(ctypes.Structure):
+                _fields_ = [
+                    ("dwLength", ctypes.c_ulong),
+                    ("dwMemoryLoad", ctypes.c_ulong),
+                    ("ullTotalPhys", ctypes.c_ulonglong),
+                    ("ullAvailPhys", ctypes.c_ulonglong),
+                    ("ullTotalPageFile", ctypes.c_ulonglong),
+                    ("ullAvailPageFile", ctypes.c_ulonglong),
+                    ("ullTotalVirtual", ctypes.c_ulonglong),
+                    ("ullAvailVirtual", ctypes.c_ulonglong),
+                    ("sullAvailExtendedVirtual", ctypes.c_ulonglong),
+                ]
+
+            status = MemoryStatusEx()
+            status.dwLength = ctypes.sizeof(MemoryStatusEx)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(status)):
+                return round(status.ullTotalPhys / (1024 ** 3), 1)
+            return None
+        if hasattr(os, "sysconf"):
+            pages = os.sysconf("SC_PHYS_PAGES")
+            page_size = os.sysconf("SC_PAGE_SIZE")
+            return round((pages * page_size) / (1024 ** 3), 1)
+    except Exception:
+        return None
+    return None
+
+
+def _summary_model_recommendation(config: dict, memory_gb: float | None) -> dict:
+    option_models = [
+        option.get("model", "")
+        for option in get_summary_model_options(config)
+        if option.get("model")
+    ]
+    if "gemma4:e4b" in option_models and memory_gb is not None and memory_gb >= 16:
+        return {
+            "model": "gemma4:e4b",
+            "basis": "memory",
+            "message": f"이 PC 메모리 {memory_gb:g}GB 기준입니다. 16GB 이상이라 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.",
+        }
+
+    fallback_model = DEFAULT_SUMMARY_MODEL if DEFAULT_SUMMARY_MODEL in option_models else (option_models[0] if option_models else DEFAULT_SUMMARY_MODEL)
+    message = (
+        "PC 메모리를 확인하지 못해 가벼운 2B 모델을 권장합니다."
+        if memory_gb is None
+        else f"이 PC 메모리 {memory_gb:g}GB 기준입니다. 16GB 미만이라 가벼운 2B 모델을 권장합니다. 여유가 충분하면 4B도 선택할 수 있습니다."
+    )
+    return {
+        "model": fallback_model,
+        "basis": "memory",
+        "message": message,
+    }
+
+
+def _validate_ollama_model_name(model_name: str) -> str:
+    model_name = normalize_summary_model_name(model_name)
+    if not model_name:
+        raise HTTPException(status_code=400, detail="model is required")
+    if model_name.startswith("-") or any(character.isspace() for character in model_name):
+        raise HTTPException(status_code=400, detail="model must be a valid Ollama model name")
+    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model_name):
+        raise HTTPException(status_code=400, detail="model must be a valid Ollama model name")
+    return model_name
+
+
+def _ollama_pull_snapshot(model_name: str) -> dict:
+    with OLLAMA_PULL_STATUS_LOCK:
+        status = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
+    if status:
+        return status
+    return {
+        "model": model_name,
+        "active": False,
+        "status": "idle",
+        "message": "",
+        "started_at": "",
+        "updated_at": "",
+        "exit_code": None,
+    }
+
+
+def _set_ollama_pull_status(model_name: str, **updates) -> dict:
+    now = datetime.now().isoformat()
+    with OLLAMA_PULL_STATUS_LOCK:
+        current = dict(OLLAMA_PULL_STATUS.get(model_name) or {"model": model_name})
+        current.update(updates)
+        current["model"] = model_name
+        current["updated_at"] = now
+        OLLAMA_PULL_STATUS[model_name] = current
+        return dict(current)
+
+
+def _remember_summary_model(model_name: str, *, managed_by_app: bool = False) -> None:
+    with CONFIG_LOCK:
+        config = load_config()
+        add_summary_user_model(config, model_name, managed_by_app=managed_by_app)
+        save_config(config)
+
+
+def _run_ollama_pull(model_name: str) -> None:
+    _set_ollama_pull_status(
+        model_name,
+        active=True,
+        status="running",
+        message=f"{model_name} 모델을 받거나 업데이트를 확인하는 중입니다.",
+        started_at=datetime.now().isoformat(),
+        exit_code=None,
+        error="",
+    )
+    try:
+        completed = subprocess.run(
+            [find_ollama_executable(), "pull", model_name],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=None,
+            **hidden_subprocess_kwargs(),
+        )
+        output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part and part.strip())
+        if completed.returncode == 0:
+            _set_ollama_pull_status(
+                model_name,
+                active=False,
+                status="completed",
+                message=f"{model_name} 모델 받기가 완료되었습니다.",
+                exit_code=completed.returncode,
+                output=output[-4000:],
+            )
+        else:
+            _set_ollama_pull_status(
+                model_name,
+                active=False,
+                status="failed",
+                message=f"{model_name} 모델을 받지 못했습니다. Ollama 설치와 네트워크 연결을 확인해 주세요.",
+                exit_code=completed.returncode,
+                error=output[-4000:],
+            )
+    except FileNotFoundError:
+        _set_ollama_pull_status(
+            model_name,
+            active=False,
+            status="failed",
+            message="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.",
+            exit_code=None,
+            error="ollama executable not found",
+        )
+    except Exception as exc:
+        logging.exception("Failed to pull Ollama model %s", model_name)
+        _set_ollama_pull_status(
+            model_name,
+            active=False,
+            status="failed",
+            message=f"{model_name} 모델을 받지 못했습니다.",
+            exit_code=None,
+            error=str(exc),
+        )
+
+
+def _ollama_model_exists_strict(model_name: str) -> bool:
+    try:
+        completed = subprocess.run(
+            [find_ollama_executable(), "list"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            **hidden_subprocess_kwargs(),
+        )
+    except FileNotFoundError:
+        raise HTTPException(status_code=503, detail="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.")
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Ollama 모델 상태를 확인하지 못했습니다: {exc}")
+
+    output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part and part.strip())
+    if completed.returncode != 0:
+        raise HTTPException(
+            status_code=503,
+            detail=output[-4000:] or "Ollama 모델 상태를 확인하지 못했습니다.",
+        )
+
+    return any(line.split(maxsplit=1)[0] == model_name for line in completed.stdout.splitlines()[1:] if line.split())
+
+
+def _remove_ollama_model(model_name: str) -> dict:
+    def _assert_removable(config: dict) -> None:
+        configured_model = normalize_summary_model_name(config.get("summary", {}).get("model") or DEFAULT_SUMMARY_MODEL)
+        if model_name == configured_model:
+            raise HTTPException(status_code=409, detail="사용 중인 모델은 삭제할 수 없습니다. 다른 모델을 선택한 뒤 삭제해 주세요.")
+        managed_model_names = {
+            option.get("model")
+            for option in normalize_summary_user_models(config.get("summary", {}).get("user_models", []))
+            if isinstance(option, dict) and option.get("managed_by_app")
+        }
+        if model_name not in managed_model_names:
+            raise HTTPException(
+                status_code=403,
+                detail="이 앱에서 받은 모델만 PC에서 삭제할 수 있습니다. 다른 Ollama 모델은 Ollama 앱이나 명령어에서 관리해 주세요.",
+            )
+
+    with CONFIG_LOCK:
+        config = load_config()
+        _assert_removable(config)
+
+        with OLLAMA_PULL_STATUS_LOCK:
+            current_pull = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
+        if current_pull.get("active"):
+            raise HTTPException(status_code=409, detail="받는 중인 모델은 삭제할 수 없습니다. 완료 후 다시 시도해 주세요.")
+
+    was_installed = _ollama_model_exists_strict(model_name)
+    removed = False
+    output = ""
+    if was_installed:
+        try:
+            completed = subprocess.run(
+                [find_ollama_executable(), "rm", model_name],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=120,
+                **hidden_subprocess_kwargs(),
+            )
+        except FileNotFoundError:
+            raise HTTPException(status_code=503, detail="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.")
+        output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part and part.strip())
+        if completed.returncode != 0:
+            raise HTTPException(
+                status_code=500,
+                detail=output[-4000:] or f"{model_name} 모델을 삭제하지 못했습니다.",
+            )
+        removed = True
+
+    with CONFIG_LOCK:
+        config = load_config()
+        _assert_removable(config)
+        remove_summary_user_model(config, model_name)
+        save_config(config)
+    return {
+        "model": model_name,
+        "removed": removed,
+        "message": f"{model_name} 모델을 삭제했습니다." if removed else f"{model_name} 모델은 설치되어 있지 않습니다.",
+        "output": output[-4000:],
+    }
+
+
+def _forget_summary_model(model_name: str) -> dict:
+    with CONFIG_LOCK:
+        config = load_config()
+        configured_model = normalize_summary_model_name(config.get("summary", {}).get("model") or DEFAULT_SUMMARY_MODEL)
+        if model_name == configured_model:
+            raise HTTPException(status_code=409, detail="사용 중인 모델은 목록에서 제거할 수 없습니다. 다른 모델을 선택한 뒤 제거해 주세요.")
+
+        before_models = {
+            option.get("model")
+            for option in config.get("summary", {}).get("user_models", [])
+            if isinstance(option, dict)
+        }
+        remove_summary_user_model(config, model_name)
+        save_config(config)
+        return {
+            "model": model_name,
+            "removed": model_name in before_models,
+            "message": f"{model_name} 모델을 목록에서 제거했습니다.",
+        }
+
+
+def _start_ollama_pull(model_name: str) -> dict:
+    with OLLAMA_PULL_STATUS_LOCK:
+        current = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
+        if current.get("active"):
+            return current
+        OLLAMA_PULL_STATUS[model_name] = {
+            "model": model_name,
+            "active": True,
+            "status": "starting",
+            "message": f"{model_name} 모델 받기 또는 업데이트 확인을 시작합니다.",
+            "started_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "exit_code": None,
+            "error": "",
+        }
+
+    worker = threading.Thread(target=_run_ollama_pull, args=(model_name,), daemon=True)
+    worker.start()
+    return _ollama_pull_snapshot(model_name)
+
+
+@app.post("/api/models/ollama/pull")
+async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
+    model_name = _validate_ollama_model_name(str((payload or {}).get("model") or ""))
+    _remember_summary_model(model_name, managed_by_app=True)
+    return _start_ollama_pull(model_name)
+
+
+@app.get("/api/models/ollama/pull-status")
+async def get_ollama_model_pull_status(model: str) -> dict:
+    model_name = _validate_ollama_model_name(model)
+    return _ollama_pull_snapshot(model_name)
+
+
+@app.delete("/api/models/ollama/model")
+async def delete_ollama_model(model: str, delete_files: bool = False) -> dict:
+    model_name = _validate_ollama_model_name(model)
+    if delete_files:
+        return _remove_ollama_model(model_name)
+    return _forget_summary_model(model_name)
 
 
 def _asr_benchmark_dirs() -> list[Path]:
@@ -1913,11 +2258,13 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
         _record_generation_progress(generation_key, 15, "음성 파일 확인 중")
         _raise_if_generation_stopped(generation_key)
-        decision = _diarization_resource_decision(config, get_wav_duration_seconds(source_audio_path))
+        decision = _diarization_resource_decision(
+            config,
+            get_wav_duration_seconds(source_audio_path),
+            requested_override=True,
+        )
         if decision.get("skipped"):
             raise HTTPException(status_code=409, detail="diarization_resource_limit")
-        if not decision.get("requested"):
-            raise HTTPException(status_code=409, detail="diarization_disabled")
 
         _record_generation_progress(generation_key, 22, "참석자 구분 모델 확인 중")
         _raise_if_generation_stopped(generation_key)
@@ -3965,15 +4312,17 @@ def normalize_stt_config(config: dict) -> dict:
 def load_config(config_path: str = "config.json") -> dict:
     # Resolve relative to script location for sidecar stability
     full_path = os.path.join(BASE_DIR, config_path)
-    with open(full_path, "r", encoding="utf-8") as f:
-        return normalize_app_config(json.load(f))
+    with CONFIG_LOCK:
+        with open(full_path, "r", encoding="utf-8") as f:
+            return normalize_app_config(json.load(f))
 
 
 def save_config(config: dict, config_path: str = "config.json") -> None:
     full_path = os.path.join(BASE_DIR, config_path)
-    with open(full_path, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
-        f.write("\n")
+    with CONFIG_LOCK:
+        with open(full_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, ensure_ascii=False, indent=2)
+            f.write("\n")
 
 def process_audio_pipeline(
     input_file: str,
@@ -4155,7 +4504,11 @@ def process_audio_pipeline(
     except Exception:
         source_wav_duration = float(existing_state.get("source_wav_duration") or 0.0)
     source_wav_size = os.path.getsize(temp_wav_path) if os.path.exists(temp_wav_path) else 0
-    diarization_decision = _diarization_resource_decision(config, source_wav_duration)
+    diarization_decision = _diarization_resource_decision(
+        config,
+        source_wav_duration,
+        requested_override=_should_generate_diarization_during_analysis(config),
+    )
     if diarization_decision.get("run") and not _should_generate_diarization_during_analysis(config):
         if _can_defer_diarization_for_later(config):
             diarization_decision = _defer_diarization_decision(diarization_decision)
@@ -4484,64 +4837,82 @@ def process_audio_pipeline(
     
     # 3. Diarization (Optional)
     if segments and diarization_decision.get("run"):
-        _set_stage("diarization")
-        diarization_checkpoint = load_json_checkpoint(checkpoint_paths.diarization_segments_path)
-        aligned_checkpoint = load_json_checkpoint(checkpoint_paths.aligned_segments_path)
-        display_checkpoint = load_json_checkpoint(checkpoint_paths.display_segments_path)
-        can_reuse_diarization = (
-            resume_requested
-            and bool(existing_state.get("diarization_completed"))
-            and existing_state.get("pipeline_version") == ANALYSIS_PIPELINE_VERSION
-            and existing_state.get("checkpoint_version") == ANALYSIS_CHECKPOINT_VERSION
-            and isinstance(diarization_checkpoint, dict)
-            and isinstance(aligned_checkpoint, dict)
-            and isinstance(display_checkpoint, dict)
-            and diarization_checkpoint.get("input_fingerprint") == input_fingerprint
-            and diarization_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
-            and diarization_checkpoint.get("segments_fingerprint") == segments_fingerprint
-            and aligned_checkpoint.get("input_fingerprint") == input_fingerprint
-            and aligned_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
-            and aligned_checkpoint.get("segments_fingerprint") == segments_fingerprint
-            and display_checkpoint.get("input_fingerprint") == input_fingerprint
-            and display_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
-            and display_checkpoint.get("segments_fingerprint") == segments_fingerprint
-            and isinstance(aligned_checkpoint.get("segments"), list)
-            and isinstance(display_checkpoint.get("segments"), list)
-        )
+        try:
+            _set_stage("diarization")
+            diarization_checkpoint = load_json_checkpoint(checkpoint_paths.diarization_segments_path)
+            aligned_checkpoint = load_json_checkpoint(checkpoint_paths.aligned_segments_path)
+            display_checkpoint = load_json_checkpoint(checkpoint_paths.display_segments_path)
+            can_reuse_diarization = (
+                resume_requested
+                and bool(existing_state.get("diarization_completed"))
+                and existing_state.get("pipeline_version") == ANALYSIS_PIPELINE_VERSION
+                and existing_state.get("checkpoint_version") == ANALYSIS_CHECKPOINT_VERSION
+                and isinstance(diarization_checkpoint, dict)
+                and isinstance(aligned_checkpoint, dict)
+                and isinstance(display_checkpoint, dict)
+                and diarization_checkpoint.get("input_fingerprint") == input_fingerprint
+                and diarization_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
+                and diarization_checkpoint.get("segments_fingerprint") == segments_fingerprint
+                and aligned_checkpoint.get("input_fingerprint") == input_fingerprint
+                and aligned_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
+                and aligned_checkpoint.get("segments_fingerprint") == segments_fingerprint
+                and display_checkpoint.get("input_fingerprint") == input_fingerprint
+                and display_checkpoint.get("config_fingerprint") in compatible_config_fingerprints
+                and display_checkpoint.get("segments_fingerprint") == segments_fingerprint
+                and isinstance(aligned_checkpoint.get("segments"), list)
+                and isinstance(display_checkpoint.get("segments"), list)
+            )
 
-        if can_reuse_diarization:
-            _report_progress("이전 참석자 구분 결과를 재사용합니다.", 70)
-            segments = aligned_checkpoint["segments"]
-            reused_diarization = True
+            if can_reuse_diarization:
+                _report_progress("이전 참석자 구분 결과를 재사용합니다.", 70)
+                segments = aligned_checkpoint["segments"]
+                reused_diarization = True
+                _write_job_state(checkpoint_paths, {
+                    "diarization_completed": True,
+                    "resume_supported": True,
+                })
+                aligned_segments = copy.deepcopy(segments)
+                display_segments = display_checkpoint["segments"]
+            else:
+                _report_progress("Speaker Diarization & Alignment...", 70)
+                _raise_if_cancelled()
+                diarize_model_path = config["paths"]["diarization_model"]
+                if diarize_model_path and diarize_model_path.startswith((".", "..")):
+                    diarize_model_path = os.path.normpath(os.path.join(BASE_DIR, diarize_model_path))
+                min_spk = config["diarization"].get("min_speakers")
+                max_spk = config["diarization"].get("max_speakers")
+
+                spk_segments = diarize_audio(temp_wav_path, diarize_model_path, min_spk, max_spk)
+                atomic_write_json(checkpoint_paths.diarization_segments_path, {
+                    "speaker_segments": spk_segments,
+                    "input_fingerprint": input_fingerprint,
+                    "config_fingerprint": config_fingerprint,
+                    "segments_fingerprint": segments_fingerprint,
+                })
+                _raise_if_cancelled()
+                _report_progress("참석자 구간 확인 완료. 문장 시간과 맞추는 중", 78)
+                segments = align_segments_with_speakers(segments, spk_segments)
+                _write_job_state(checkpoint_paths, {
+                    "diarization_completed": True,
+                    "resume_supported": True,
+                })
+                aligned_segments = copy.deepcopy(segments)
+                display_segments = build_display_segments(segments)
+        except AnalysisCancelledError:
+            raise
+        except Exception as exc:
+            logging.exception("Failed to run diarization during analysis")
+            message = "참석자 구분 중 문제가 있어 회의록만 저장했습니다. 결과 화면에서 다시 실행할 수 있습니다."
+            diarization_decision = _failed_diarization_decision(diarization_decision, message)
+            _set_stage("diarization_skipped")
+            _report_progress(message, 70)
             _write_job_state(checkpoint_paths, {
-                "diarization_completed": True,
+                "diarization_completed": False,
+                "diarization_skipped": True,
+                "diarization_error_detail": str(exc),
                 "resume_supported": True,
             })
-            aligned_segments = copy.deepcopy(segments)
-            display_segments = display_checkpoint["segments"]
-        else:
-            _report_progress("Speaker Diarization & Alignment...", 70)
-            _raise_if_cancelled()
-            diarize_model_path = config["paths"]["diarization_model"]
-            if diarize_model_path and diarize_model_path.startswith((".", "..")):
-                diarize_model_path = os.path.normpath(os.path.join(BASE_DIR, diarize_model_path))
-            min_spk = config["diarization"].get("min_speakers")
-            max_spk = config["diarization"].get("max_speakers")
-
-            spk_segments = diarize_audio(temp_wav_path, diarize_model_path, min_spk, max_spk)
-            atomic_write_json(checkpoint_paths.diarization_segments_path, {
-                "speaker_segments": spk_segments,
-                "input_fingerprint": input_fingerprint,
-                "config_fingerprint": config_fingerprint,
-                "segments_fingerprint": segments_fingerprint,
-            })
-            _raise_if_cancelled()
-            _report_progress("참석자 구간 확인 완료. 문장 시간과 맞추는 중", 78)
-            segments = align_segments_with_speakers(segments, spk_segments)
-            _write_job_state(checkpoint_paths, {
-                "diarization_completed": True,
-                "resume_supported": True,
-            })
+            segments = copy.deepcopy(raw_stt_segments)
             aligned_segments = copy.deepcopy(segments)
             display_segments = build_display_segments(segments)
     else:

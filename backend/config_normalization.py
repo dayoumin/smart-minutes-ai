@@ -15,6 +15,10 @@ DEFAULT_DIARIZATION_MAX_WAVEFORM_MB = 512
 MIN_LONG_AUDIO_CHUNK_SECONDS = 10
 MAX_LONG_AUDIO_CHUNK_SECONDS = 3600
 DEFAULT_SUMMARY_MODEL = "gemma4:e2b"
+SUMMARY_MODEL_ALIASES = {
+    "gemma4:2b": "gemma4:e2b",
+    "gemma4:4b": "gemma4:e4b",
+}
 DEFAULT_SUMMARY_MODEL_OPTIONS = (
     {
         "model": "gemma4:e2b",
@@ -22,6 +26,7 @@ DEFAULT_SUMMARY_MODEL_OPTIONS = (
         "description": "용량과 속도를 우선할 때 사용합니다.",
         "url": "https://ollama.com/library/gemma4%3Ae2b",
         "command": "ollama run gemma4:e2b",
+        "source": "recommended",
     },
     {
         "model": "gemma4:e4b",
@@ -29,6 +34,7 @@ DEFAULT_SUMMARY_MODEL_OPTIONS = (
         "description": "PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.",
         "url": "https://ollama.com/library/gemma4%3Ae4b",
         "command": "ollama run gemma4:e4b",
+        "source": "recommended",
     },
     {
         "label": "모델 목록",
@@ -46,6 +52,11 @@ def _safe_int(value: Any, default: int) -> int:
         return default
 
 
+def normalize_summary_model_name(model: Any) -> str:
+    model_name = str(model or "").strip()
+    return SUMMARY_MODEL_ALIASES.get(model_name, model_name)
+
+
 def normalize_summary_model_options(options: Any) -> list[dict[str, str]]:
     if not isinstance(options, list):
         options = list(DEFAULT_SUMMARY_MODEL_OPTIONS)
@@ -55,11 +66,17 @@ def normalize_summary_model_options(options: Any) -> list[dict[str, str]]:
         if not isinstance(option, dict):
             continue
         normalized: dict[str, str] = {}
-        model = str(option.get("model") or option.get("id") or "").strip()
+        raw_model = str(option.get("model") or option.get("id") or "").strip()
+        model = normalize_summary_model_name(raw_model)
         label = str(option.get("label") or model or "모델").strip()
         description = str(option.get("description") or "").strip()
         url = str(option.get("url") or "").strip()
         command = str(option.get("command") or "").strip()
+        source = str(option.get("source") or "").strip()
+        if raw_model and model != raw_model:
+            if command == f"ollama run {raw_model}":
+                command = f"ollama run {model}"
+            url = url.replace(raw_model, model).replace(raw_model.replace(":", "%3A"), model.replace(":", "%3A"))
         if model:
             normalized["model"] = model
         if label:
@@ -70,6 +87,8 @@ def normalize_summary_model_options(options: Any) -> list[dict[str, str]]:
             normalized["url"] = url
         if command:
             normalized["command"] = command
+        if source in {"recommended", "user"}:
+            normalized["source"] = source
         if normalized.get("model") or normalized.get("url") or normalized.get("command"):
             normalized_options.append(normalized)
 
@@ -78,9 +97,62 @@ def normalize_summary_model_options(options: Any) -> list[dict[str, str]]:
     return normalized_options
 
 
-def get_summary_model_options(config: dict) -> list[dict[str, str]]:
+def normalize_summary_user_models(models: Any) -> list[dict[str, Any]]:
+    if not isinstance(models, list):
+        return []
+
+    normalized_models: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in models:
+        if isinstance(item, str):
+            model = normalize_summary_model_name(item)
+            option = {}
+        elif isinstance(item, dict):
+            model = normalize_summary_model_name(item.get("model") or item.get("id"))
+            option = item
+        else:
+            continue
+        if not model or model in seen:
+            continue
+        seen.add(model)
+        label = str(option.get("label") or "직접 입력").strip()
+        description = str(option.get("description") or "직접 입력한 Ollama 모델입니다.").strip()
+        command = str(option.get("command") or f"ollama run {model}").strip()
+        normalized = {
+            "model": model,
+            "label": label,
+            "description": description,
+            "command": command,
+            "source": "user",
+        }
+        if bool(option.get("managed_by_app")):
+            normalized["managed_by_app"] = True
+        url = str(option.get("url") or "").strip()
+        if url:
+            normalized["url"] = url
+        normalized_models.append(normalized)
+    return normalized_models
+
+
+def get_summary_recommended_model_options(config: dict) -> list[dict[str, str]]:
     summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
     return normalize_summary_model_options(summary.get("model_options"))
+
+
+def get_summary_user_model_options(config: dict) -> list[dict[str, str]]:
+    summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
+    return normalize_summary_user_models(summary.get("user_models"))
+
+
+def get_summary_model_options(config: dict) -> list[dict[str, str]]:
+    options = get_summary_recommended_model_options(config)
+    seen_models = {option.get("model") for option in options if option.get("model")}
+    for option in get_summary_user_model_options(config):
+        model = option.get("model", "").strip()
+        if model and model not in seen_models:
+            options.append(option)
+            seen_models.add(model)
+    return options
 
 
 def get_summary_option_models(config: dict) -> list[str]:
@@ -92,10 +164,19 @@ def get_summary_option_models(config: dict) -> list[str]:
     return models
 
 
+def get_summary_recommended_option_models(config: dict) -> list[str]:
+    models: list[str] = []
+    for option in get_summary_recommended_model_options(config):
+        model = option.get("model", "").strip()
+        if model and model not in models:
+            models.append(model)
+    return models
+
+
 def get_summary_candidate_models(config: dict) -> list[str]:
     summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
-    configured_model = str(summary.get("model") or DEFAULT_SUMMARY_MODEL).strip()
-    option_models = get_summary_option_models(config)
+    configured_model = normalize_summary_model_name(summary.get("model") or DEFAULT_SUMMARY_MODEL)
+    option_models = get_summary_recommended_option_models(config)
     candidates: list[str] = []
     if configured_model:
         candidates.append(configured_model)
@@ -109,8 +190,43 @@ def get_summary_candidate_models(config: dict) -> list[str]:
 
 def summary_model_uses_managed_options(config: dict) -> bool:
     summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
-    configured_model = str(summary.get("model") or DEFAULT_SUMMARY_MODEL).strip()
+    configured_model = normalize_summary_model_name(summary.get("model") or DEFAULT_SUMMARY_MODEL)
     return configured_model in get_summary_option_models(config)
+
+
+def add_summary_user_model(config: dict, model: str, *, managed_by_app: bool = False) -> None:
+    model = normalize_summary_model_name(model)
+    if not model or model in get_summary_recommended_option_models(config):
+        return
+    summary = config.setdefault("summary", {})
+    user_models = normalize_summary_user_models(summary.get("user_models"))
+    for option in user_models:
+        if option.get("model") == model:
+            if managed_by_app and not option.get("managed_by_app"):
+                option["managed_by_app"] = True
+                summary["user_models"] = user_models
+            else:
+                summary["user_models"] = user_models
+            return
+    user_models.append({
+        "model": model,
+        "label": "직접 입력",
+        "description": "직접 입력한 Ollama 모델입니다.",
+        "command": f"ollama run {model}",
+        "source": "user",
+        **({"managed_by_app": True} if managed_by_app else {}),
+    })
+    summary["user_models"] = user_models
+
+
+def remove_summary_user_model(config: dict, model: str) -> None:
+    model = normalize_summary_model_name(model)
+    summary = config.setdefault("summary", {})
+    summary["user_models"] = [
+        option
+        for option in normalize_summary_user_models(summary.get("user_models"))
+        if option.get("model") != model
+    ]
 
 
 def normalize_app_config(config: dict) -> dict:
@@ -172,8 +288,9 @@ def normalize_app_config(config: dict) -> dict:
     privacy["auto_save_audio_copy"] = bool(privacy.get("auto_save_audio_copy", False))
     summary.setdefault("enabled", True)
     summary.setdefault("provider", "ollama")
-    summary.setdefault("model", DEFAULT_SUMMARY_MODEL)
+    summary["model"] = normalize_summary_model_name(summary.get("model") or DEFAULT_SUMMARY_MODEL)
     summary["model_options"] = normalize_summary_model_options(summary.get("model_options"))
+    summary["user_models"] = normalize_summary_user_models(summary.get("user_models"))
     processing.setdefault("enable_long_audio_chunking", True)
     processing["long_audio_chunk_seconds"] = min(
         MAX_LONG_AUDIO_CHUNK_SECONDS,

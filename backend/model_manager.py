@@ -7,6 +7,7 @@ from config_normalization import (
     get_summary_candidate_models,
     get_summary_model_options,
     get_summary_option_models,
+    normalize_summary_model_name,
 )
 from ollama_utils import find_ollama_executable
 from process_utils import run_hidden
@@ -49,7 +50,8 @@ MODEL_SPECS = [
         marker_files=("model.bin", "tokenizer.json", "config.json"),
         required=True,
         license_url="https://huggingface.co/Systran/faster-whisper-large-v3",
-        manual_note="실행 파일 옆 models\\faster-whisper-large-v3 폴더에 model.bin, tokenizer.json, config.json 등을 넣어 주세요.",
+        install_url="https://huggingface.co/Systran/faster-whisper-large-v3",
+        manual_note="models\\faster-whisper-large-v3 폴더에 model.bin, tokenizer.json, config.json 등을 넣어 주세요.",
     ),
     ModelSpec(
         key="diarization",
@@ -65,10 +67,11 @@ MODEL_SPECS = [
         ),
         gated=True,
         license_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
+        install_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
         manual_note=(
-            "참석자 구분 모델도 실행 파일 옆 models 폴더 바로 아래에 넣을 수 있습니다. "
-            "기존 models\\speaker-diarization-community-1 폴더 방식도 함께 인식합니다."
+            "참석자 구분을 사용할 때 필요합니다. 배포본에 포함되어 있으면 별도 작업이 필요 없고, "
+            "없으면 models\\speaker-diarization-community-1 폴더에 넣어 주세요."
         ),
     ),
 ]
@@ -138,6 +141,10 @@ def model_exists(base_dir: str, spec: ModelSpec) -> bool:
 
 
 def ollama_model_exists(model_name: str) -> bool:
+    return model_name in list_ollama_models()
+
+
+def list_ollama_models() -> list[str]:
     try:
         result = run_hidden(
             [find_ollama_executable(), "list"],
@@ -149,30 +156,61 @@ def ollama_model_exists(model_name: str) -> bool:
             timeout=5,
         )
     except Exception:
-        return False
+        return []
 
-    return any(line.split(maxsplit=1)[0] == model_name for line in result.stdout.splitlines()[1:])
+    models: list[str] = []
+    for line in result.stdout.splitlines()[1:]:
+        parts = line.split(maxsplit=1)
+        if parts and parts[0] not in models:
+            models.append(parts[0])
+    return models
 
 
 def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
     config = config or {"summary": {"model": DEFAULT_SUMMARY_MODEL}}
     summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
-    configured_model = str(summary.get("model") or DEFAULT_SUMMARY_MODEL).strip()
+    configured_model = normalize_summary_model_name(summary.get("model") or DEFAULT_SUMMARY_MODEL)
     options = get_summary_model_options(config)
     option_models = get_summary_option_models(config)
     uses_configured_option = configured_model in option_models
     visible_options = options if uses_configured_option else []
     candidate_models = get_summary_candidate_models(config)
+    ollama_models = []
+    for model in list_ollama_models():
+        normalized_model = normalize_summary_model_name(model)
+        if normalized_model and normalized_model not in ollama_models:
+            ollama_models.append(normalized_model)
+    ollama_model_set = set(ollama_models)
+    visible_model_names: list[str] = []
+    for model in [configured_model, *get_summary_option_models(config)]:
+        if model and model not in visible_model_names:
+            visible_model_names.append(model)
+    for model in ollama_models:
+        if model and model not in visible_model_names:
+            visible_options.append({
+                "model": model,
+                "label": "설치된 모델",
+                "description": "이 PC의 Ollama에 설치된 모델입니다.",
+                "command": f"ollama run {model}",
+                "source": "installed",
+            })
+            visible_model_names.append(model)
 
     installed_model = ""
     installed_path = ""
+    installed_models: list[str] = []
+    for model in visible_model_names:
+        candidate_path = resolve_backend_path(base_dir, model) if model.startswith((".", "..")) or (model.endswith((".gguf", ".bin")) and not os.path.isabs(model)) else model
+        if os.path.exists(candidate_path) or (not model.endswith((".gguf", ".bin")) and model in ollama_model_set):
+            installed_models.append(model)
+
     for model in candidate_models:
         candidate_path = resolve_backend_path(base_dir, model) if model.startswith((".", "..")) or (model.endswith((".gguf", ".bin")) and not os.path.isabs(model)) else model
         if os.path.exists(candidate_path):
             installed_model = model
             installed_path = candidate_path
             break
-        if not model.endswith((".gguf", ".bin")) and ollama_model_exists(model):
+        if not model.endswith((".gguf", ".bin")) and model in ollama_model_set:
             installed_model = model
             installed_path = f"ollama:{model}"
             break
@@ -191,6 +229,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
         "path": installed_path or (f"ollama:{configured_model}" if configured_model and not configured_model.endswith((".gguf", ".bin")) else configured_model),
         "installed": bool(installed_model),
         "installed_model": installed_model,
+        "installed_models": installed_models,
         "configured_model": configured_model,
         "required": False,
         "gated": False,

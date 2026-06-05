@@ -2,6 +2,10 @@
   "name": "smart-minutes-ai-release",
   "private": true,
   "scripts": {
+    "check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier quick",
+    "check:quick": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier quick",
+    "check:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier release",
+    "check:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier portable",
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
     "package:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\create_update_package.ps1",

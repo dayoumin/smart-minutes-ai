@@ -407,6 +407,7 @@ const normalizeTranscriptDrafts = (segments: MeetingSegment[]): MeetingSegment[]
         }))
         .filter(segment => Boolean(segment.text))
 );
+
 const formatEditableTranscript = (segments: MeetingSegment[]): string => (
     normalizeTranscriptDrafts(segments)
         .map(segment => {
@@ -1308,7 +1309,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         () => resolveBaseDisplaySegments(selectedMeeting),
         [selectedMeeting],
     );
-    const effectiveStoredDisplaySegments = resolveEffectiveTranscriptSegments(selectedMeeting);
+    const effectiveStoredDisplaySegments = useMemo(
+        () => resolveEffectiveTranscriptSegments(selectedMeeting),
+        [selectedMeeting],
+    );
     const transcriptEditMeta = selectedMeeting?.transcriptEditMeta ?? {};
     const topicSectionsOutdated = Boolean(transcriptEditMeta.topicSectionsOutdated);
     const speakerContextOutdated = Boolean(transcriptEditMeta.speakerContextOutdated);
@@ -1320,6 +1324,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         || (selectedMeeting?.displaySegments?.length ?? 0)
         || (selectedMeeting?.segments?.length ?? 0),
     );
+    const transcriptSpeakerCount = new Set(
+        effectiveStoredDisplaySegments
+            .map(segment => String(segment.speaker || segment.displaySpeaker || '').trim())
+            .filter(Boolean),
+    ).size;
+    const transcriptLooksSingleSpeaker = hasTranscriptData && transcriptSpeakerCount === 1;
     const summarySkippedForDeferredAnalysis = summaryGenerationStatus === 'skipped'
         && Boolean(selectedMeeting?.summary?.includes('정리는 회의 기록에서 별도로 실행'));
     const diarizationProgressMatchesSelected = Boolean(
@@ -1347,16 +1357,27 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (diarizationIsRunning) return { label: '진행 중', tone: 'info' };
         if (selectedMeeting?.diarizationSkipped) return { label: '제외됨', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
-        if (diarizationNeedsSourceAudio) return { label: '원본 필요', tone: 'warning' };
+        if (diarizationNeedsSourceAudio && transcriptLooksSingleSpeaker) return { label: '표식 1명', tone: 'neutral' };
+        if (diarizationNeedsSourceAudio) return { label: '재실행 불가', tone: 'neutral' };
         if (audioAvailability === 'checking') return { label: '확인 중', tone: 'info' };
         if (selectedMeeting?.jobId) return { label: '대기', tone: 'neutral' };
         return { label: '대기', tone: 'neutral' };
     })();
-    const diarizationStatusTitle = selectedMeeting?.diarizationSkipped
-        ? toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.')
-        : selectedMeeting?.diarizationDeferred && !selectedMeeting.diarizationApplied
-            ? toParticipantCopy(selectedMeeting.diarizationDeferMessage || '대화록은 저장되었습니다. 필요할 때 참석자 구분을 실행하세요.')
-            : undefined;
+    const diarizationStatusTitle = (() => {
+        if (selectedMeeting?.diarizationSkipped) {
+            return toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.');
+        }
+        if (diarizationNeedsSourceAudio && transcriptLooksSingleSpeaker) {
+            return '대화록의 참석자 표식이 1명입니다. 추가 구분이 필요하면 원본 음성을 보관한 상태로 다시 분석해 주세요.';
+        }
+        if (diarizationNeedsSourceAudio) {
+            return '저장된 음성 파일이 없어 참석자 구분을 다시 실행할 수 없습니다.';
+        }
+        if (selectedMeeting?.diarizationDeferred && !selectedMeeting.diarizationApplied) {
+            return toParticipantCopy(selectedMeeting.diarizationDeferMessage || '대화록은 저장되었습니다. 필요할 때 참석자 구분을 실행하세요.');
+        }
+        return undefined;
+    })();
     const canGenerateSummary = Boolean(selectedMeeting?.jobId && hasTranscriptData);
     const canGenerateDiarization = Boolean(
         selectedMeeting?.jobId
@@ -1365,15 +1386,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         && !selectedMeeting?.diarizationSkipped
         && audioAvailability === 'available'
     );
-    const diarizationActionMeta = canGenerateDiarization
-        ? (diarizationIsRunning ? '구분 중' : '대기')
-        : selectedMeeting?.diarizationApplied
-            ? '완료'
-            : selectedMeeting?.diarizationSkipped
-                ? '제외됨'
-                : diarizationNeedsSourceAudio
-                    ? '원본 필요'
-                : '';
     const canGenerateTopicSections = Boolean(selectedMeeting?.jobId && hasTranscriptData && summaryGenerationStatus !== 'skipped');
     const speakerGenerationStatus = getSpeakerGenerationStatus(
         selectedMeeting?.generationStatus,
@@ -2084,6 +2096,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         setIsTranscriptEditing(false);
         setNoticeMessage('');
     };
+
     const handleCopyEditableTranscript = async () => {
         const transcriptText = formatEditableTranscript(displaySegments);
         if (!transcriptText) {
@@ -2213,6 +2226,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         && (selectedMeeting?.topicSections?.filter(section => section.topic?.trim()).length ?? 0) <= 1;
     const shouldShowTopicAction = topicGenerationStatus !== 'completed' || topicSectionsOutdated || shouldOfferTopicRegeneration;
     const shouldShowSpeakerAction = speakerGenerationStatus !== 'completed' || speakerContextOutdated || topicSectionsOutdated;
+    const hasTopicSectionResults = Boolean(
+        selectedMeeting?.topicSections?.some(section => section.topic?.trim() || section.summary?.trim()),
+    );
+    const canShowCompletedCustomTopicInput = topicGenerationStatus === 'completed' && !topicSectionsOutdated && hasTopicSectionResults;
+    const speakerActionBlockedMessage = !summaryModelUnavailable && shouldShowSpeakerAction && !canRunSpeakerContextGeneration
+        ? topicSectionsOutdated
+            ? '주제별 정리를 다시 한 뒤 참석자별 정리를 실행할 수 있습니다.'
+            : '주제별 정리를 먼저 하면 참석자별 정리를 실행할 수 있습니다.'
+        : '';
     const isCurrentTopicGenerationRequest = Boolean(
         topicGenerationIntent?.meetingId
         && selectedMeeting?.id
@@ -2230,6 +2252,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         topicGenerationStatus,
         topicGenerationIntent: selectedTopicGenerationIntent,
     });
+    const shouldShowCustomTopicInput = canShowCompletedCustomTopicInput || isCustomTopicGenerationRunning;
     const customTopicButtonLabel = isCustomTopicGenerationRunning ? '정리 중' : '추가 정리';
     const customTopicButtonTitle = isCustomTopicGenerationRunning
         ? '추가 주제를 정리 중입니다.'
@@ -2237,9 +2260,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             ? '다른 정리가 진행 중입니다.'
             : summaryModelUnavailable
                 ? organizeModelGuidanceMessage
-            : canRunTopicGeneration
-                ? '입력한 주제로 추가 정리'
-                : '전체 요약을 먼저 정리해 주세요.';
+                : canRunTopicGeneration
+                    ? '입력한 주제로 추가 정리'
+                    : '전체 요약을 먼저 정리해 주세요.';
     const customTopicButtonAriaLabel = isCustomTopicGenerationRunning ? '추가 주제 정리 중' : '주제 추가 정리';
     const topicActionButtonLabel = isMainTopicGenerationRunning
         ? '정리 중'
@@ -2600,9 +2623,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         src={audioSourceUrl}
                                     />
                                 )}
-                                {selectedMeeting.jobId && audioAvailability === 'missing' && (
+                                {diarizationStatusTitle && !selectedMeeting.diarizationSkipped && (
+                                    <div className="status-note mt-3">
+                                        {diarizationStatusTitle}
+                                    </div>
+                                )}
+                                {selectedMeeting.jobId && audioAvailability === 'missing' && !diarizationStatusTitle && (
                                     <div className="mt-2 text-xs text-muted-foreground">
-                                        저장된 음성 파일이 없습니다. 영상에서 음성만 필요하면 작성 화면에서 음성 추출을 사용하세요.
+                                        참석자 구분을 다시 실행하려면 분석 당시 보관한 음성 파일이 필요합니다.
                                     </div>
                                 )}
                             </>
@@ -2652,42 +2680,23 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             {summaryModelUnavailable && (
                                 <StatusBanner
                                     tone="warning"
-                                    heading="분석 준비 필요"
+                                    heading="모델 필요"
                                     className="mb-4"
                                     action={onOpenSettings ? (
                                         <Button variant="outline" onClick={onOpenSettings}>
-                                            분석 준비
+                                            모델
                                         </Button>
                                     ) : undefined}
                                 >
                                     {organizeModelGuidanceMessage}
                                 </StatusBanner>
                             )}
-                            <section className="detail-action-row">
-                                <h3 className="section-title mb-3">대화록</h3>
-                                {selectedMeeting.diarizationApplied ? (
-                                    <div className="detail-inline-note">참석자 구분이 반영된 대화록입니다.</div>
-                                ) : (
-                                    <div className="ai-action-item">
-                                        <div className="min-w-0">
-                                            <div className="ai-action-title">참석자 구분</div>
-                                            <div className="ai-action-meta">{diarizationActionMeta}</div>
-                                        </div>
-                                        <Button
-                                            variant="outline"
-                                            className="detail-action-button"
-                                            aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                            title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                            disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : (!canGenerateDiarization || generatingKind !== null)}
-                                            onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
-                                        >
-                                            {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                            {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
-                                        </Button>
-                                    </div>
-                                )}
-                                {diarizationProgressPanel}
-                            </section>
+                            {showDiarizationProgress && (
+                                <section className="detail-action-row">
+                                    <h3 className="section-title mb-3">대화록</h3>
+                                    {diarizationProgressPanel}
+                                </section>
+                            )}
 
                             <section className="detail-action-row">
                                 <div className="mb-3 flex items-center gap-2">
@@ -2829,32 +2838,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
                                 {organizeTab === 'topics' && (
                                     <div className="space-y-3" ref={topicSectionsSectionRef}>
-                                        <div className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-background p-3 sm:flex-row">
-                                            <Input
-                                                value={customTopicTitle}
-                                                onChange={event => setCustomTopicTitle(event.target.value)}
-                                                onKeyDown={event => {
-                                                    if (event.key === 'Enter') {
-                                                        event.preventDefault();
-                                                        void handleGenerateCustomTopicSection();
-                                                    }
-                                                }}
-                                                placeholder="추가로 정리할 주제 제목"
-                                                aria-label="추가로 정리할 주제 제목"
-                                                disabled={generatingKind !== null}
-                                            />
-                                            <Button
-                                                variant="outline"
-                                                className="detail-action-button h-10 sm:w-24"
-                                                aria-label={customTopicButtonAriaLabel}
-                                                disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
-                                                onClick={handleGenerateCustomTopicSection}
-                                                title={customTopicButtonTitle}
-                                            >
-                                                {renderRunIcon('topicSections', topicGenerationStatus, isCustomTopicGenerationRunning)}
-                                                {customTopicButtonLabel}
-                                            </Button>
-                                        </div>
                                         {topicSectionsOutdated && (
                                             <div className="detail-inline-note">
                                                 회의 정보나 대화록이 바뀌어 현재 주제별 정리는 이전 기준일 수 있습니다.
@@ -2920,6 +2903,34 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                         : '주제별 정리를 하면 각 주제의 논의 내용이 여기에 표시됩니다.'}
                                             </div>
                                         )}
+                                        {shouldShowCustomTopicInput && (
+                                            <div className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-background p-3 sm:flex-row">
+                                                <Input
+                                                    value={customTopicTitle}
+                                                    onChange={event => setCustomTopicTitle(event.target.value)}
+                                                    onKeyDown={event => {
+                                                        if (event.key === 'Enter') {
+                                                            event.preventDefault();
+                                                            void handleGenerateCustomTopicSection();
+                                                        }
+                                                    }}
+                                                    placeholder="추가로 정리할 주제 제목"
+                                                    aria-label="추가로 정리할 주제 제목"
+                                                    disabled={generatingKind !== null}
+                                                />
+                                                <Button
+                                                    variant="outline"
+                                                    className="detail-action-button h-10 sm:w-24"
+                                                    aria-label={customTopicButtonAriaLabel}
+                                                    disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                    onClick={handleGenerateCustomTopicSection}
+                                                    title={customTopicButtonTitle}
+                                                >
+                                                    {renderRunIcon('topicSections', topicGenerationStatus, isCustomTopicGenerationRunning)}
+                                                    {customTopicButtonLabel}
+                                                </Button>
+                                            </div>
+                                        )}
                                         {shouldShowTopicAction && (
                                             <div className="flex justify-end">
                                                 <Button
@@ -2946,6 +2957,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         {speakerContextOutdated && (
                                             <div className="detail-inline-note">
                                                 회의 정보나 대화록이 바뀌어 현재 참석자별 정리는 이전 기준일 수 있습니다.
+                                            </div>
+                                        )}
+                                        {speakerActionBlockedMessage && filteredSpeakerSummaries.length > 0 && (
+                                            <div className="detail-inline-note">
+                                                {speakerActionBlockedMessage}
                                             </div>
                                         )}
                                         {filteredSpeakerSummaries.length ? (
@@ -3034,7 +3050,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     ? '검색과 일치하는 참석자별 정리가 없습니다.'
                                                     : hasCompletedEmptySpeakerContext
                                                         ? '참석자별 정리 내용이 없습니다. 참석자 구분을 확인해 주세요.'
-                                                        : '참석자별 정리를 하면 참석자별 요약과 핵심 발언이 여기에 표시됩니다.'}
+                                                        : speakerActionBlockedMessage
+                                                            ? speakerActionBlockedMessage
+                                                            : '참석자별 정리를 하면 참석자별 요약과 핵심 발언이 여기에 표시됩니다.'}
                                             </div>
                                         )}
                                         {shouldShowSpeakerAction && (

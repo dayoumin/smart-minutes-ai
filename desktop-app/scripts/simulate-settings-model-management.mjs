@@ -1,0 +1,481 @@
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import net from 'node:net';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as sleep } from 'node:timers/promises';
+import { chromium } from 'playwright';
+
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+const shouldStartServer = !process.env.APP_URL;
+const PAGE_GOTO_TIMEOUT_MS = 60000;
+
+const waitForApp = async (url, timeoutMs = 30000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      const response = await fetch(url);
+      if (response.ok) return;
+    } catch {
+      // Retry until Vite is ready.
+    }
+    await sleep(500);
+  }
+  throw new Error(`Timed out waiting for ${url}`);
+};
+
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
+
+const stopServer = async (child) => {
+  if (!child || child.exitCode !== null) return;
+
+  if (process.platform === 'win32') {
+    await new Promise(resolve => {
+      const killer = spawn(
+        process.env.ComSpec ?? 'cmd.exe',
+        ['/d', '/s', '/c', `taskkill /pid ${child.pid} /t /f`],
+        { stdio: 'ignore', windowsHide: true },
+      );
+      killer.on('exit', resolve);
+      killer.on('error', resolve);
+    });
+    return;
+  }
+
+  child.kill('SIGTERM');
+  await Promise.race([
+    new Promise(resolve => child.once('exit', resolve)),
+    sleep(2000),
+  ]);
+};
+
+const startServer = async () => {
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
+    return null;
+  }
+
+  const url = new URL(APP_URL);
+  const port = await getAvailablePort(url.hostname);
+  url.port = String(port);
+  APP_URL = url.toString();
+  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`;
+  const child = process.platform === 'win32'
+    ? spawn(
+      process.env.ComSpec ?? 'cmd.exe',
+      ['/d', '/s', '/c', command],
+      {
+        cwd: fileURLToPath(new URL('..', import.meta.url)),
+        env: { ...process.env, BROWSER: 'none' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
+      },
+    )
+    : spawn(
+      'corepack',
+      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port, '--strictPort', '--configLoader', 'runner'],
+      {
+        cwd: fileURLToPath(new URL('..', import.meta.url)),
+        env: { ...process.env, BROWSER: 'none' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      },
+    );
+
+  child.stdout.on('data', data => {
+    if (process.env.DEBUG_FLOW_TEST) process.stdout.write(data);
+  });
+  child.stderr.on('data', data => {
+    if (process.env.DEBUG_FLOW_TEST) process.stderr.write(data);
+  });
+
+  try {
+    await waitForApp(APP_URL);
+    return child;
+  } catch (error) {
+    await stopServer(child);
+    throw error;
+  }
+};
+
+const createRouteState = () => {
+  const installedModels = new Set(['gemma4:e2b', 'user-ready:1b', 'custom-ready:1b']);
+  const pullRequests = [];
+  const pullStatusRequests = [];
+  const deleteRequests = [];
+  const settingsPatches = [];
+  let settingsState = {
+    processing: { long_audio_chunk_seconds: 30, enable_long_audio_chunking: true },
+    diarization: { enabled: true, generate_during_analysis: false },
+    stt: { selected_model: 'faster-whisper-large-v3', device: 'cpu' },
+    preprocessing: { enabled: true },
+    privacy: { preserve_extracted_audio: true, auto_save_hwpx_copy: false, auto_save_audio_copy: false },
+    summary: {
+      provider: 'ollama',
+      model: 'gemma4:e2b',
+      model_options: [
+        {
+          model: 'gemma4:e2b',
+          label: '권장 2B',
+          description: '용량과 속도를 우선할 때 사용합니다.',
+          url: 'https://ollama.com/library/gemma4%3Ae2b',
+          command: 'ollama run gemma4:e2b',
+        },
+        {
+          model: 'gemma4:e4b',
+          label: '선택 4B',
+          description: 'PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.',
+          url: 'https://ollama.com/library/gemma4%3Ae4b',
+          command: 'ollama run gemma4:e4b',
+        },
+      ],
+      user_models: [
+        {
+          model: 'user-ready:1b',
+          label: '앱 관리 모델',
+          description: 'PC 삭제 상태 확인용 모델입니다.',
+          source: 'user',
+          managed_by_app: true,
+        },
+        {
+          model: 'list-only:1b',
+          label: '목록 전용 모델',
+          description: '목록 제거 상태 확인용 모델입니다.',
+          source: 'user',
+        },
+        {
+          model: 'user-running:1b',
+          label: '받는 중 삭제 차단 모델',
+          description: '받는 중에는 목록 제거가 비활성화되어야 합니다.',
+          source: 'user',
+        },
+      ],
+    },
+  };
+
+  return {
+    get settingsState() {
+      return settingsState;
+    },
+    installedModels,
+    pullRequests,
+    pullStatusRequests,
+    deleteRequests,
+    settingsPatches,
+    patchSettings(patch) {
+      settingsPatches.push(patch);
+      settingsState = {
+        ...settingsState,
+        ...Object.fromEntries(
+          Object.entries(patch).map(([key, value]) => [
+            key,
+            value && typeof value === 'object' && !Array.isArray(value)
+              ? { ...(settingsState[key] || {}), ...value }
+              : value,
+          ]),
+        ),
+      };
+    },
+    removeUserModel(model) {
+      settingsState = {
+        ...settingsState,
+        summary: {
+          ...settingsState.summary,
+          user_models: settingsState.summary.user_models.filter(option => option.model !== model),
+        },
+      };
+    },
+  };
+};
+
+const installRoutes = async (page, state) => {
+  await page.route('**/api/health', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ ok: true }),
+  }));
+
+  await page.route('**/api/settings', async route => {
+    if (route.request().method() === 'PATCH') {
+      state.patchSettings(route.request().postDataJSON());
+    }
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify(state.settingsState),
+    });
+  });
+
+  await page.route('**/api/models/status', route => {
+    const configuredModel = state.settingsState.summary.model;
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ready: true,
+        summary_ready: state.installedModels.has(configuredModel),
+        models: [
+          {
+            key: 'stt_faster_whisper',
+            label: 'STT',
+            repo_id: 'Systran/faster-whisper-large-v3',
+            installed: true,
+            required: true,
+            install_url: 'https://huggingface.co/Systran/faster-whisper-large-v3',
+          },
+          {
+            key: 'diarization',
+            label: 'Diarization',
+            repo_id: 'pyannote/speaker-diarization-community-1',
+            installed: true,
+            required: true,
+            install_url: 'https://huggingface.co/pyannote/speaker-diarization-community-1',
+          },
+          {
+            key: 'llm',
+            label: 'Gemma via Ollama',
+            installed: state.installedModels.has(configuredModel),
+            configured_model: configuredModel,
+            installed_model: state.installedModels.has(configuredModel) ? configuredModel : null,
+            installed_models: Array.from(state.installedModels),
+            required: false,
+            install_options: state.settingsState.summary.model_options,
+          },
+        ],
+        stt_device_status: { gpu_detected: false, gpu_usable: false },
+        system_profile: { memory_gb: 16 },
+        summary_model_recommendation: {
+          model: 'gemma4:e4b',
+          basis: 'memory',
+          message: '이 PC 메모리 16GB 기준입니다. 16GB 이상이라 4B를 권장합니다.',
+        },
+      }),
+    });
+  });
+
+  await page.route('**/api/models/ollama/pull', route => {
+    const body = route.request().postDataJSON();
+    const model = body.model;
+    state.pullRequests.push(model);
+
+    if (model === 'broken-model:1b') {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          model,
+          active: false,
+          status: 'failed',
+          message: 'broken-model:1b 모델을 받지 못했습니다.',
+        }),
+      });
+      return;
+    }
+
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model,
+        active: true,
+        status: 'running',
+        message: `${model} 모델을 받는 중입니다.`,
+      }),
+    });
+  });
+
+  await page.route('**/api/models/ollama/pull-status**', route => {
+    const url = new URL(route.request().url());
+    const model = url.searchParams.get('model') || '';
+    state.pullStatusRequests.push(model);
+
+    if (model === 'gemma4:e4b') {
+      state.installedModels.add(model);
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          model,
+          active: false,
+          status: 'completed',
+          message: 'gemma4:e4b 모델 받기가 완료되었습니다.',
+        }),
+      });
+      return;
+    }
+
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model,
+        active: true,
+        status: 'running',
+        message: `${model} 모델을 받는 중입니다.`,
+      }),
+    });
+  });
+
+  await page.route('**/api/models/ollama/model**', route => {
+    assert.equal(route.request().method(), 'DELETE');
+    const url = new URL(route.request().url());
+    const model = url.searchParams.get('model') || '';
+    const deleteFiles = url.searchParams.get('delete_files') === 'true';
+    state.deleteRequests.push({ model, deleteFiles });
+    if (deleteFiles) {
+      state.installedModels.delete(model);
+    } else {
+      state.removeUserModel(model);
+    }
+
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        message: deleteFiles ? `${model} 모델을 삭제했습니다.` : `${model} 모델을 목록에서 제거했습니다.`,
+      }),
+    });
+  });
+
+  await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({
+    status: 404,
+    contentType: 'application/json',
+    body: JSON.stringify({ detail: 'benchmark fixtures disabled for this simulation' }),
+  }));
+};
+
+const expectDisabled = async (locator, expected, message) => {
+  await locator.waitFor({ state: 'visible', timeout: 10000 });
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const disabled = !(await locator.isEnabled());
+    if (disabled === expected) return;
+    await sleep(250);
+  }
+  assert.equal(!(await locator.isEnabled()), expected, message);
+};
+
+const run = async () => {
+  let server = null;
+  let browser = null;
+  let page = null;
+  const state = createRouteState();
+
+  try {
+    server = await startServer();
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage({ viewport: { width: 1360, height: 900 } });
+    await page.addInitScript(() => {
+      window.__confirmMessages = [];
+      window.__confirmResponses = [];
+      window.confirm = (message) => {
+        window.__confirmMessages.push(message);
+        if (window.__confirmResponses.length > 0) {
+          return window.__confirmResponses.shift();
+        }
+        return true;
+      };
+      window.__TAURI__ = {
+        core: {
+          invoke: async (command) => {
+            if (command === 'get_backend_base_url') return window.location.origin;
+            if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
+            return null;
+          },
+        },
+      };
+    });
+    await installRoutes(page, state);
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+
+    await page.getByRole('button', { name: '시스템 설정' }).click();
+    await page.getByRole('tab', { name: '모델' }).click();
+    const modelsPanel = page.locator('#settings-models-panel');
+    await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('이 PC 메모리 16GB 기준입니다. 16GB 이상이라 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
+
+    assert.equal(await modelsPanel.getByRole('button', { name: 'gemma4:e2b PC 모델 삭제' }).count(), 0, 'current model should not expose PC delete');
+    assert.equal(await modelsPanel.getByRole('button', { name: 'gemma4:e2b 목록 제거' }).count(), 0, 'current model should not expose list removal');
+
+    await modelsPanel.locator('select').selectOption('gemma4:e4b');
+    await modelsPanel.getByText('선택한 모델은 아직 준비되지 않았습니다. 아래 카드에서 받기를 누르면 완료 후 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).click();
+    await modelsPanel.getByText('gemma4:e4b 모델 받기가 완료되었습니다.').first().waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 사용' }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.deepEqual(state.pullRequests, ['gemma4:e4b']);
+    assert.deepEqual(state.pullStatusRequests.filter(model => model === 'gemma4:e4b'), ['gemma4:e4b']);
+
+    await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 사용' }).click();
+    const gemma4e4bCard = modelsPanel
+      .getByRole('link', { name: 'gemma4:e4b 모델 페이지' })
+      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+    await gemma4e4bCard.getByText('사용 중', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'gemma4:e4b', 'using a completed model should save it as the configured summary model');
+    assert.equal(await modelsPanel.getByRole('button', { name: 'gemma4:e4b PC 모델 삭제' }).count(), 0, 'selected model should not expose delete');
+
+    const runningPullButton = modelsPanel.getByRole('button', { name: 'user-running:1b 모델 받기' });
+    await runningPullButton.click();
+    await expectDisabled(modelsPanel.getByRole('button', { name: 'user-running:1b 목록 제거' }), true, 'running pull should block list removal');
+    await modelsPanel.getByText('user-running:1b 모델을 받는 중입니다.').waitFor({ state: 'visible', timeout: 10000 });
+
+    await modelsPanel.getByLabel('다른 모델명 추가').fill('broken-model:1b');
+    await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 받기' }).click();
+    await page.getByRole('alert').getByText('broken-model:1b 모델을 받지 못했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(state.pullRequests.includes('broken-model:1b'), true, 'failed pull should call backend with the typed model');
+
+    await modelsPanel.getByLabel('다른 모델명 추가').fill('custom-ready:1b');
+    await modelsPanel.getByRole('button', { name: '직접 입력 custom-ready:1b 모델 사용' }).click();
+    await modelsPanel.locator('select').selectOption('custom-ready:1b');
+    await modelsPanel.getByRole('button', { name: 'custom-ready:1b 모델 다시 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'custom-ready:1b', 'direct input installed model should save as the configured summary model');
+
+    await modelsPanel.getByRole('button', { name: 'user-ready:1b PC 모델 삭제' }).click();
+    await page.getByText('user-ready:1b 모델을 삭제했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.deepEqual(state.deleteRequests.at(-1), { model: 'user-ready:1b', deleteFiles: true });
+    await modelsPanel.getByRole('button', { name: 'user-ready:1b 모델 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+
+    const deleteRequestsBeforeCancel = state.deleteRequests.length;
+    await page.evaluate(() => {
+      window.__confirmResponses.push(false);
+    });
+    await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).click();
+    await sleep(250);
+    assert.equal(state.deleteRequests.length, deleteRequestsBeforeCancel, 'cancelled list removal should not call delete API');
+    await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).waitFor({ state: 'visible', timeout: 10000 });
+
+    await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).click();
+    await page.getByText('list-only:1b 모델을 목록에서 제거했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.deepEqual(state.deleteRequests.at(-1), { model: 'list-only:1b', deleteFiles: false });
+    await page.waitForFunction(() => !document.querySelector('#settings-models-panel')?.textContent?.includes('list-only:1b 목록 전용 모델'), null, { timeout: 10000 });
+    assert.equal(await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).count(), 0);
+
+    const confirmMessages = await page.evaluate(() => window.__confirmMessages);
+    assert.equal(confirmMessages.some(message => message.includes('Ollama 저장소에서 삭제할까요')), true, 'PC delete should ask for file-delete confirmation');
+    assert.equal(confirmMessages.some(message => message.includes('추가한 모델 목록에서 제거할까요')), true, 'list removal should ask for list confirmation');
+
+    console.log('ok - settings model management simulation');
+  } catch (error) {
+    console.error(error);
+    if (page) {
+      console.error('body:', (await page.locator('body').innerText()).slice(0, 4000));
+    }
+    throw error;
+  } finally {
+    await browser?.close().catch(() => undefined);
+    await stopServer(server);
+  }
+};
+
+run().catch(error => {
+  console.error(error);
+  process.exit(1);
+});

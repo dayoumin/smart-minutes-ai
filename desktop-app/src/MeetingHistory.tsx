@@ -329,14 +329,14 @@ interface DetailHelpButtonProps {
 }
 
 const DetailHelpButton = ({ title, ariaLabel }: DetailHelpButtonProps) => (
-    <button
-        type="button"
+    <span
         className="detail-help-button"
         title={title}
-        aria-label={ariaLabel}
+        aria-label={`${ariaLabel}: ${title}`}
+        role="img"
     >
         <CircleHelp size={16} />
-    </button>
+    </span>
 );
 
 interface DetailTabButtonProps {
@@ -350,8 +350,7 @@ interface DetailTabButtonProps {
 const DetailTabButton = ({ active, disabled = false, title, onClick, children }: DetailTabButtonProps) => (
     <button
         type="button"
-        role="tab"
-        aria-selected={active}
+        aria-pressed={active}
         aria-disabled={disabled || undefined}
         className={`tab-button ${active ? 'tab-button-active' : ''}`}
         disabled={disabled}
@@ -2800,7 +2799,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     </div>
 
                     <div className="flex flex-col gap-3 pt-4 lg:flex-row lg:items-end lg:justify-between">
-                        <div className="tab-list" role="tablist" aria-label="회의록 상세">
+                        <div className="tab-list" aria-label="회의록 상세">
                             <DetailTabButton
                                 active={detailTab === 'script'}
                                 onClick={() => setDetailTab('script')}
@@ -2862,7 +2861,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     />
                                 </div>
                                 <div className="mb-4 flex flex-wrap items-end gap-2">
-                                    <div className="tab-list flex-1" role="tablist" aria-label="정리 종류">
+                                    <div className="tab-list flex-1" aria-label="정리 종류">
                                         <DetailTabButton
                                             active={organizeTab === 'summary'}
                                             onClick={() => setOrganizeTab('summary')}

@@ -170,8 +170,8 @@
 7. helper text 총량 축소
 
 2026-06-05 적용:
-- 새 회의록 작성 폼이 먼저 읽히도록 resume 기록 패널에 `resume-drafts-panel`을 적용해 화면 순서를 낮췄다.
-- 사이드바 미완료 분석 기록은 `status-*` semantic token과 `status-pill`을 사용해 진행/주의/실패/중립 상태가 같은 규칙으로 보이게 했다.
+- 새 회의록 작성 폼이 DOM/키보드 순서에서도 먼저 읽히도록 resume 기록 패널을 작성 폼 뒤로 재배치했다.
+- 사이드바 미완료 분석 기록은 `status-*` semantic token과 `status-pill`을 사용해 진행/주의/실패 상태가 같은 규칙으로 보이게 했다. 사용자가 취소한 기록은 실패가 아니라 주의 톤으로 표시한다.
 - `ResumeDraftSection` / `ResumeDraftCard` 컴포넌트 분리는 다음 단계로 남긴다.
 
 검증:

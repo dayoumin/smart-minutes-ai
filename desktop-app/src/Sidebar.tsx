@@ -63,16 +63,16 @@ const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
     if (draft.status === 'active') return '진행 중';
     if (draft.resumeEligible === false) return '이어하기 불가';
     if (draft.status === 'stopped') return '중단됨';
-    if (draft.status === 'cancelled') return '취소됨';
+    if (draft.status === 'cancelled') return '사용자 취소';
     if (draft.status === 'failed') return '실패';
     return '이어하기 가능';
 };
 
 const getSidebarResumeDraftTone = (draft: AnalysisResumeDraft): 'info' | 'warning' | 'error' | 'neutral' => {
     if (draft.status === 'active') return 'info';
-    if (draft.status === 'failed' || draft.status === 'cancelled') return 'error';
+    if (draft.status === 'failed') return 'error';
     if (draft.resumeEligible === false) return 'warning';
-    if (draft.status === 'stopped') return 'neutral';
+    if (draft.status === 'cancelled' || draft.status === 'stopped') return 'warning';
     return 'info';
 };
 

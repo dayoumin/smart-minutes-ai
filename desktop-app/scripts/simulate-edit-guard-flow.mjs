@@ -203,13 +203,13 @@ const run = async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('수정본 가드 시뮬레이션').first().click();
 
-    await page.getByRole('tab', { name: '대화록' }).click();
+    await page.locator('.tab-list').getByRole('button', { name: '대화록' }).click();
     await page.getByRole('button', { name: '대화록 편집' }).click();
     await page.getByLabel('참석자01 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
 
-    await page.getByRole('tab', { name: '기록 정리' }).click();
-    await page.getByRole('tab', { name: '주제별 정리' }).click();
-    await page.getByRole('button', { name: '주제별 정리' }).click();
+    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('button', { name: '주제별 정리' }).click();
+    await page.locator('button.detail-action-button[aria-label="주제별 정리"]').click();
     await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 
     await page.getByRole('button', { name: '회의록 HWPX 파일을 다운로드 폴더에 저장' }).click();
@@ -220,12 +220,12 @@ const run = async () => {
       `download API should be blocked before request: ${apiCalls.join('\n')}`,
     );
 
-    await page.getByRole('tab', { name: '대화록' }).click();
+    await page.locator('.tab-list').getByRole('button', { name: '대화록' }).click();
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await page.getByText('대화록 수정본을 저장했습니다.').waitFor({ timeout: 10000 });
 
-    await page.getByRole('tab', { name: '기록 정리' }).click();
-    await page.getByRole('tab', { name: '전체 요약' }).click();
+    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('button', { name: '전체 요약' }).click();
     await page.getByRole('button', { name: '전체 요약 정리' }).click();
     await page.getByText(staleSummaryMessage).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '전체 요약 정리' }).waitFor({ timeout: 10000 });

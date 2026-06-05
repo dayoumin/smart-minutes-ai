@@ -1935,152 +1935,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 <h2 className="text-lg font-semibold text-foreground">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
             </div>
 
-            {(activeResumeDrafts.length > 0 || resumableResumeDrafts.length > 0) && !isAnalyzing && (
-                <div className="app-panel resume-drafts-panel p-4 sm:p-5">
-                    {activeResumeDrafts.length > 0 && (
-                        <div>
-                            <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                                <span>진행 중이던 분석 기록</span>
-                                <span
-                                    title="다른 창이나 이전 실행에서 아직 끝나지 않은 분석입니다."
-                                    className="inline-flex items-center text-muted-foreground"
-                                >
-                                    <CircleHelp size={14} />
-                                </span>
-                            </div>
-                            <div className="mt-1 text-xs text-muted-foreground">
-                                실제로 진행 중이면 삭제되지 않고, 오래된 기록은 정리할 수 있습니다.
-                            </div>
-                            <div className="mt-3 grid gap-2">
-                                {activeResumeDrafts.map(draft => {
-                                    const isSelected = selectedResumeDraftId === draft.jobId;
-                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
-                                    return (
-                                    <div
-                                        key={draft.jobId}
-                                        className={`resume-draft-card status-info ${isSelected ? 'resume-draft-card-selected' : ''}`}
-                                    >
-                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                            <button
-                                                type="button"
-                                                className="min-w-0 flex-1 text-left"
-                                                onClick={() => handleResumeDraftPrepare(draft)}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
-                                                    {isSelected && <span className="status-pill status-info">선택됨</span>}
-                                                </div>
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    <span className="status-pill status-info">{getResumeDraftStatusLabel(draft.status)}</span>
-                                                    <span className="ml-2">{draft.sourceFilename}</span>
-                                                </div>
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
-                                                </div>
-                                            </button>
-                                            <IconButton
-                                                variant="outline"
-                                                icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                                                onClick={() => handleDeleteResumeDraft(draft)}
-                                                disabled={isDeleting}
-                                                aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
-                                                title="분석 기록 삭제"
-                                            />
-                                        </div>
-                                    </div>
-                                );
-                                })}
-                            </div>
-                        </div>
-                    )}
-                    {resumableResumeDrafts.length > 0 && (
-                        <div className={activeResumeDrafts.length > 0 ? 'mt-5 border-t border-border pt-5' : ''}>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                                    <span>이전 분석 기록</span>
-                                    <span
-                                        title="같은 파일을 선택하면 이전 진행분 재사용을 시도합니다."
-                                        className="inline-flex items-center text-muted-foreground"
-                                    >
-                                        <CircleHelp size={14} />
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="mt-3 grid gap-2">
-                                {resumableResumeDrafts.map(draft => {
-                                    const isSelected = selectedResumeDraftId === draft.jobId;
-                                    const toneClass = getResumeDraftTone(draft.status);
-                                    const draftCanResume = canResumeDraft(draft);
-                                    const unavailableReason = getResumeUnavailableReasonLabel(draft);
-                                    const showUnavailableBadge = !draftCanResume && draft.status !== 'completed';
-                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
-                                    const detailTextClass = draft.status === 'completed'
-                                        ? 'text-muted-foreground'
-                                        : 'text-destructive';
-                                    return (
-                                        <div
-                                            key={draft.jobId}
-                                            className={`resume-draft-card status-${toneClass} ${isSelected ? 'resume-draft-card-selected' : ''}`}
-                                        >
-                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                                <button
-                                                    type="button"
-                                                    className="min-w-0 flex-1 text-left"
-                                                    onClick={() => handleResumeDraftPrepare(draft)}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="truncate text-sm font-semibold text-foreground">{draft.title || '이전 분석'}</div>
-                                                        {isSelected && (
-                                                            <span className="status-pill status-info">{resumeReady ? '이어하기 준비' : '같은 파일 필요'}</span>
-                                                        )}
-                                                        {showUnavailableBadge && (
-                                                            <span className={`status-pill status-${toneClass}`}>이어하기 불가</span>
-                                                        )}
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-muted-foreground">
-                                                        <span className={`status-pill status-${toneClass}`}>{getResumeDraftStatusLabel(draft.status)}</span>
-                                                        <span className="ml-2">{draft.sourceFilename}</span>
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-muted-foreground">
-                                                        {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
-                                                    </div>
-                                                    {draft.errorMessage && (
-                                                        <div className={`mt-1 text-xs ${detailTextClass}`}>{draft.errorMessage}</div>
-                                                    )}
-                                                    {!draft.errorMessage && unavailableReason && (
-                                                        <div className="mt-1 text-xs text-muted-foreground">{unavailableReason}</div>
-                                                    )}
-                                                </button>
-                                                <div className="flex shrink-0 gap-2">
-                                                    {draftCanResume && (
-                                                        <IconButton
-                                                            variant={isSelected ? 'secondary' : 'outline'}
-                                                            icon={<Play size={16} />}
-                                                            onClick={() => handleResumeDraftPrepare(draft)}
-                                                            disabled={isDeleting}
-                                                            aria-label={isSelected ? '이어하기 선택됨' : '이어하기'}
-                                                            title={isSelected ? '이어하기 선택됨' : '이어하기'}
-                                                        />
-                                                    )}
-                                                    <IconButton
-                                                        variant="outline"
-                                                        icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                                                        onClick={() => handleDeleteResumeDraft(draft)}
-                                                        disabled={isDeleting}
-                                                        aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
-                                                        title="분석 기록 삭제"
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
-
             <div className="app-panel p-4 flex flex-col gap-5 sm:p-6">
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -2284,6 +2138,152 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     </StatusBanner>
                 )}
             </div>
+
+            {(activeResumeDrafts.length > 0 || resumableResumeDrafts.length > 0) && !isAnalyzing && (
+                <div className="app-panel resume-drafts-panel p-4 sm:p-5">
+                    {activeResumeDrafts.length > 0 && (
+                        <div>
+                            <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                                <span>진행 중이던 분석 기록</span>
+                                <span
+                                    title="다른 창이나 이전 실행에서 아직 끝나지 않은 분석입니다."
+                                    className="inline-flex items-center text-muted-foreground"
+                                >
+                                    <CircleHelp size={14} />
+                                </span>
+                            </div>
+                            <div className="mt-1 text-xs text-muted-foreground">
+                                실제로 진행 중이면 삭제되지 않고, 오래된 기록은 정리할 수 있습니다.
+                            </div>
+                            <div className="mt-3 grid gap-2">
+                                {activeResumeDrafts.map(draft => {
+                                    const isSelected = selectedResumeDraftId === draft.jobId;
+                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
+                                    return (
+                                    <div
+                                        key={draft.jobId}
+                                        className={`resume-draft-card status-info ${isSelected ? 'resume-draft-card-selected' : ''}`}
+                                    >
+                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                            <button
+                                                type="button"
+                                                className="min-w-0 flex-1 text-left"
+                                                onClick={() => handleResumeDraftPrepare(draft)}
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
+                                                    {isSelected && <span className="status-pill status-info">선택됨</span>}
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    <span className="status-pill status-info">{getResumeDraftStatusLabel(draft.status)}</span>
+                                                    <span className="ml-2">{draft.sourceFilename}</span>
+                                                </div>
+                                                <div className="mt-1 text-xs text-muted-foreground">
+                                                    {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
+                                                </div>
+                                            </button>
+                                            <IconButton
+                                                variant="outline"
+                                                icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                                onClick={() => handleDeleteResumeDraft(draft)}
+                                                disabled={isDeleting}
+                                                aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
+                                                title="분석 기록 삭제"
+                                            />
+                                        </div>
+                                    </div>
+                                );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                    {resumableResumeDrafts.length > 0 && (
+                        <div className={activeResumeDrafts.length > 0 ? 'mt-5 border-t border-border pt-5' : ''}>
+                            <div className="flex items-start justify-between gap-3">
+                                <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
+                                    <span>이전 분석 기록</span>
+                                    <span
+                                        title="같은 파일을 선택하면 이전 진행분 재사용을 시도합니다."
+                                        className="inline-flex items-center text-muted-foreground"
+                                    >
+                                        <CircleHelp size={14} />
+                                    </span>
+                                </div>
+                            </div>
+                            <div className="mt-3 grid gap-2">
+                                {resumableResumeDrafts.map(draft => {
+                                    const isSelected = selectedResumeDraftId === draft.jobId;
+                                    const toneClass = getResumeDraftTone(draft.status);
+                                    const draftCanResume = canResumeDraft(draft);
+                                    const unavailableReason = getResumeUnavailableReasonLabel(draft);
+                                    const showUnavailableBadge = !draftCanResume && draft.status !== 'completed';
+                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
+                                    const detailTextClass = draft.status === 'completed'
+                                        ? 'text-muted-foreground'
+                                        : 'text-destructive';
+                                    return (
+                                        <div
+                                            key={draft.jobId}
+                                            className={`resume-draft-card status-${toneClass} ${isSelected ? 'resume-draft-card-selected' : ''}`}
+                                        >
+                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                                <button
+                                                    type="button"
+                                                    className="min-w-0 flex-1 text-left"
+                                                    onClick={() => handleResumeDraftPrepare(draft)}
+                                                >
+                                                    <div className="flex items-center gap-2">
+                                                        <div className="truncate text-sm font-semibold text-foreground">{draft.title || '이전 분석'}</div>
+                                                        {isSelected && (
+                                                            <span className="status-pill status-info">{resumeReady ? '이어하기 준비' : '같은 파일 필요'}</span>
+                                                        )}
+                                                        {showUnavailableBadge && (
+                                                            <span className={`status-pill status-${toneClass}`}>이어하기 불가</span>
+                                                        )}
+                                                    </div>
+                                                    <div className="mt-1 text-xs text-muted-foreground">
+                                                        <span className={`status-pill status-${toneClass}`}>{getResumeDraftStatusLabel(draft.status)}</span>
+                                                        <span className="ml-2">{draft.sourceFilename}</span>
+                                                    </div>
+                                                    <div className="mt-1 text-xs text-muted-foreground">
+                                                        {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
+                                                    </div>
+                                                    {draft.errorMessage && (
+                                                        <div className={`mt-1 text-xs ${detailTextClass}`}>{draft.errorMessage}</div>
+                                                    )}
+                                                    {!draft.errorMessage && unavailableReason && (
+                                                        <div className="mt-1 text-xs text-muted-foreground">{unavailableReason}</div>
+                                                    )}
+                                                </button>
+                                                <div className="flex shrink-0 gap-2">
+                                                    {draftCanResume && (
+                                                        <IconButton
+                                                            variant={isSelected ? 'secondary' : 'outline'}
+                                                            icon={<Play size={16} />}
+                                                            onClick={() => handleResumeDraftPrepare(draft)}
+                                                            disabled={isDeleting}
+                                                            aria-label={isSelected ? '이어하기 선택됨' : '이어하기'}
+                                                            title={isSelected ? '이어하기 선택됨' : '이어하기'}
+                                                        />
+                                                    )}
+                                                    <IconButton
+                                                        variant="outline"
+                                                        icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                                        onClick={() => handleDeleteResumeDraft(draft)}
+                                                        disabled={isDeleting}
+                                                        aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
+                                                        title="분석 기록 삭제"
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
 
             {hasBlockingReadinessIssue && (
                 <StatusBanner tone="error">

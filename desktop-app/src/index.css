@@ -508,10 +508,6 @@
     box-shadow: inset 0 0 0 1px var(--status-current-progress);
   }
 
-  .resume-drafts-panel {
-    @apply order-last;
-  }
-
   .sidebar-resume-draft-button {
     @apply w-full rounded-md border px-3 py-2 shadow-sm transition-colors;
     background-color: var(--status-action-bg);

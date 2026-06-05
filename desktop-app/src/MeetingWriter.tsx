@@ -1936,7 +1936,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             </div>
 
             {(activeResumeDrafts.length > 0 || resumableResumeDrafts.length > 0) && !isAnalyzing && (
-                <div className="app-panel p-4 sm:p-5">
+                <div className="app-panel resume-drafts-panel p-4 sm:p-5">
                     {activeResumeDrafts.length > 0 && (
                         <div>
                             <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">

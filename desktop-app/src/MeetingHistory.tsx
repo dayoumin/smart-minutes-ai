@@ -314,6 +314,168 @@ const highlightSearchText = (text: string, query: string): React.ReactNode => {
     ));
 };
 
+interface InlineStateNoteProps {
+    children: React.ReactNode;
+    className?: string;
+}
+
+const InlineStateNote = ({ children, className = '' }: InlineStateNoteProps) => (
+    <div className={`detail-inline-note ${className}`}>{children}</div>
+);
+
+interface DetailHelpButtonProps {
+    title: string;
+    ariaLabel: string;
+}
+
+const DetailHelpButton = ({ title, ariaLabel }: DetailHelpButtonProps) => (
+    <button
+        type="button"
+        className="detail-help-button"
+        title={title}
+        aria-label={ariaLabel}
+    >
+        <CircleHelp size={16} />
+    </button>
+);
+
+interface DetailTabButtonProps {
+    active: boolean;
+    disabled?: boolean;
+    title?: string;
+    onClick: () => void;
+    children: React.ReactNode;
+}
+
+const DetailTabButton = ({ active, disabled = false, title, onClick, children }: DetailTabButtonProps) => (
+    <button
+        type="button"
+        role="tab"
+        aria-selected={active}
+        aria-disabled={disabled || undefined}
+        className={`tab-button ${active ? 'tab-button-active' : ''}`}
+        disabled={disabled}
+        onClick={onClick}
+        title={title}
+    >
+        {children}
+    </button>
+);
+
+interface OrganizeRunButtonProps {
+    ariaLabel: string;
+    title: string;
+    disabled: boolean;
+    icon: React.ReactNode;
+    label: string;
+    className?: string;
+    onClick: () => void | Promise<void>;
+}
+
+const OrganizeRunButton = ({
+    ariaLabel,
+    title,
+    disabled,
+    icon,
+    label,
+    className = '',
+    onClick,
+}: OrganizeRunButtonProps) => (
+    <Button
+        variant="outline"
+        className={`detail-action-button ${className}`}
+        aria-label={ariaLabel}
+        disabled={disabled}
+        onClick={() => { void onClick(); }}
+        title={title}
+    >
+        {icon}
+        {label}
+    </Button>
+);
+
+interface SpeakerLabelPanelProps {
+    panelRef: React.RefObject<HTMLDivElement | null>;
+    speakers: string[];
+    drafts: Record<string, string>;
+    hasChanges: boolean;
+    getTone: (speaker: string, index: number) => string;
+    getName: (speaker: string) => string;
+    onChange: (speaker: string, value: string) => void;
+    onSave: () => void | Promise<void>;
+    onClear: (speaker: string) => void;
+}
+
+const SpeakerLabelPanel = ({
+    panelRef,
+    speakers,
+    drafts,
+    hasChanges,
+    getTone,
+    getName,
+    onChange,
+    onSave,
+    onClear,
+}: SpeakerLabelPanelProps) => (
+    <div ref={panelRef} className="speaker-label-panel">
+        {hasChanges && (
+            <div className="speaker-label-panel-header">
+                <span className="font-medium text-foreground">저장되지 않은 변경</span>
+            </div>
+        )}
+        {speakers.map((speaker, index) => {
+            const speakerDraft = drafts[speaker] ?? '';
+            const hasSpeakerLabelInput = Boolean(speakerDraft.trim());
+            const speakerName = getName(speaker);
+            return (
+                <label key={speaker} className="speaker-label-field">
+                    <span className="speaker-label-field-title">
+                        <span className={`speaker-dot ${getTone(speaker, index)}`} />
+                        {speakerName}
+                    </span>
+                    <div className="relative">
+                        <Input
+                            value={speakerDraft}
+                            aria-label={`${speakerName} 이름`}
+                            className={hasSpeakerLabelInput ? 'speaker-label-input' : ''}
+                            onChange={event => onChange(speaker, event.target.value)}
+                            onKeyDown={event => {
+                                if (event.key === 'Enter') {
+                                    event.preventDefault();
+                                    void onSave();
+                                }
+                            }}
+                        />
+                        {hasSpeakerLabelInput && (
+                            <div className="absolute inset-y-1 right-1 flex items-center gap-1">
+                                <button
+                                    type="button"
+                                    className="speaker-label-input-action"
+                                    title="이름 저장"
+                                    aria-label={`${speakerName} 이름 저장`}
+                                    onClick={() => { void onSave(); }}
+                                    disabled={!hasChanges}
+                                >
+                                    ↵
+                                </button>
+                                <button
+                                    type="button"
+                                    className="speaker-label-input-action"
+                                    title="입력 지우기"
+                                    aria-label={`${speakerName} 이름 입력 지우기`}
+                                    onClick={() => onClear(speaker)}
+                                >
+                                    <X size={14} />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                </label>
+            );
+        })}
+    </div>
+);
+
 const getSpeakerTone = (speaker: string, index: number): string => {
     const match = speaker.match(/(\d+)/);
     const speakerIndex = match
@@ -2629,7 +2791,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     </div>
                                 )}
                                 {selectedMeeting.jobId && audioAvailability === 'missing' && !diarizationStatusTitle && (
-                                    <div className="mt-2 text-xs text-muted-foreground">
+                                    <div className="status-note mt-3">
                                         참석자 구분을 다시 실행하려면 분석 당시 보관한 음성 파일이 필요합니다.
                                     </div>
                                 )}
@@ -2639,27 +2801,20 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
                     <div className="flex flex-col gap-3 pt-4 lg:flex-row lg:items-end lg:justify-between">
                         <div className="tab-list" role="tablist" aria-label="회의록 상세">
-                            <button
-                                type="button"
-                                role="tab"
-                                aria-selected={detailTab === 'script'}
-                                className={`tab-button ${detailTab === 'script' ? 'tab-button-active' : ''}`}
+                            <DetailTabButton
+                                active={detailTab === 'script'}
                                 onClick={() => setDetailTab('script')}
                             >
                                 대화록
-                            </button>
-                            <button
-                                type="button"
-                                role="tab"
-                                aria-selected={detailTab === 'summary'}
-                                aria-disabled={!canOpenOrganizeTab}
-                                className={`tab-button ${detailTab === 'summary' ? 'tab-button-active' : ''}`}
+                            </DetailTabButton>
+                            <DetailTabButton
+                                active={detailTab === 'summary'}
                                 disabled={!canOpenOrganizeTab}
                                 onClick={() => setDetailTab('summary')}
                                 title={canOpenOrganizeTab ? '기록 정리' : organizeTabDisabledMessage}
                             >
                                 기록 정리
-                            </button>
+                            </DetailTabButton>
                         </div>
                         <label className="relative w-full lg:max-w-xs">
                             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
@@ -2701,55 +2856,38 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             <section className="detail-action-row">
                                 <div className="mb-3 flex items-center gap-2">
                                     <h3 className="section-title">정리</h3>
-                                    <button
-                                        type="button"
-                                        className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                                    <DetailHelpButton
                                         title="필요한 정리 탭을 열어 정리합니다. 전체 요약을 먼저 만들면 주제별 정리와 참석자별 정리를 이어서 만들 수 있습니다."
-                                        aria-label="정리 도움말"
-                                    >
-                                        <CircleHelp size={16} />
-                                    </button>
+                                        ariaLabel="정리 도움말"
+                                    />
                                 </div>
                                 <div className="mb-4 flex flex-wrap items-end gap-2">
                                     <div className="tab-list flex-1" role="tablist" aria-label="정리 종류">
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={organizeTab === 'summary'}
-                                            className={`tab-button ${organizeTab === 'summary' ? 'tab-button-active' : ''}`}
+                                        <DetailTabButton
+                                            active={organizeTab === 'summary'}
                                             onClick={() => setOrganizeTab('summary')}
                                         >
                                             전체 요약
-                                        </button>
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={organizeTab === 'topics'}
-                                            className={`tab-button ${organizeTab === 'topics' ? 'tab-button-active' : ''}`}
+                                        </DetailTabButton>
+                                        <DetailTabButton
+                                            active={organizeTab === 'topics'}
                                             onClick={() => setOrganizeTab('topics')}
                                         >
                                             주제별 정리
-                                        </button>
-                                        <button
-                                            type="button"
-                                            role="tab"
-                                            aria-selected={organizeTab === 'speakers'}
-                                            className={`tab-button ${organizeTab === 'speakers' ? 'tab-button-active' : ''}`}
+                                        </DetailTabButton>
+                                        <DetailTabButton
+                                            active={organizeTab === 'speakers'}
                                             onClick={() => setOrganizeTab('speakers')}
                                         >
                                             참석자별 정리
-                                        </button>
+                                        </DetailTabButton>
                                     </div>
                                     {organizeTab === 'speakers' && (
                                         <div className="flex items-center gap-2 pb-1">
-                                            <button
-                                                type="button"
-                                                className="inline-flex h-8 w-8 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground"
+                                            <DetailHelpButton
                                                 title="AI가 참석자별로 정리한 초안입니다. 텍스트 비중은 대화록 글자 수 기준입니다."
-                                                aria-label="참석자별 정리 도움말"
-                                            >
-                                                <CircleHelp size={16} />
-                                            </button>
+                                                ariaLabel="참석자별 정리 도움말"
+                                            />
                                             {(!!visibleSpeakerSummaries.length || hasCompletedEmptySpeakerContext) && (
                                                 <IconButton
                                                     variant="outline"
@@ -2770,17 +2908,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             summaryMatches ? (
                                                 <div className="detail-callout">{renderSearchText(toParticipantCopy(selectedMeeting.summary))}</div>
                                             ) : (
-                                                <div className="detail-inline-note">검색과 일치하는 전체 요약이 없습니다.</div>
+                                                <InlineStateNote>검색과 일치하는 전체 요약이 없습니다.</InlineStateNote>
                                             )
                                         ) : (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 전체 요약을 정리하면 주요 내용, 결정사항, 할 일을 여기에서 확인할 수 있습니다.
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {summaryOutdated && hasGeneratedSummary && (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 회의 정보나 대화록이 바뀌어 현재 전체 요약은 이전 기준일 수 있습니다.
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {hasResultHighlights && (
                                             <div className="grid gap-3">
@@ -2820,17 +2958,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         )}
                                         {shouldShowSummaryAction && (
                                             <div className="flex justify-end">
-                                                <Button
-                                                    variant="outline"
-                                                    className="detail-action-button"
-                                                    aria-label="전체 요약 정리"
+                                                <OrganizeRunButton
+                                                    ariaLabel="전체 요약 정리"
                                                     disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
                                                     onClick={handleGenerateSummary}
                                                     title={summaryModelUnavailable ? organizeModelGuidanceMessage : '전체 요약 정리'}
-                                                >
-                                                    {renderRunIcon('summary', summaryGenerationStatus)}
-                                                    {getActionLabel(summaryGenerationStatus)}
-                                                </Button>
+                                                    icon={renderRunIcon('summary', summaryGenerationStatus)}
+                                                    label={getActionLabel(summaryGenerationStatus)}
+                                                />
                                             </div>
                                         )}
                                     </div>
@@ -2839,9 +2974,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 {organizeTab === 'topics' && (
                                     <div className="space-y-3" ref={topicSectionsSectionRef}>
                                         {topicSectionsOutdated && (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 회의 정보나 대화록이 바뀌어 현재 주제별 정리는 이전 기준일 수 있습니다.
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {visibleTopicSections.length ? (
                                             <>
@@ -2895,16 +3030,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 </div>
                                             </>
                                         ) : (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 {isFiltering
                                                     ? '검색과 일치하는 주제별 정리가 없습니다.'
                                                     : hasCompletedEmptyTopicSections
                                                         ? '주제별 정리 내용이 없습니다. 대화록을 확인해 주세요.'
                                                         : '주제별 정리를 하면 각 주제의 논의 내용이 여기에 표시됩니다.'}
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {shouldShowCustomTopicInput && (
-                                            <div className="flex flex-col gap-2 rounded-[var(--radius-card)] border border-border bg-background p-3 sm:flex-row">
+                                            <div className="detail-control-card">
                                                 <Input
                                                     value={customTopicTitle}
                                                     onChange={event => setCustomTopicTitle(event.target.value)}
@@ -2918,32 +3053,27 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     aria-label="추가로 정리할 주제 제목"
                                                     disabled={generatingKind !== null}
                                                 />
-                                                <Button
-                                                    variant="outline"
-                                                    className="detail-action-button h-10 sm:w-24"
-                                                    aria-label={customTopicButtonAriaLabel}
+                                                <OrganizeRunButton
+                                                    className="h-10 sm:w-24"
+                                                    ariaLabel={customTopicButtonAriaLabel}
                                                     disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                     onClick={handleGenerateCustomTopicSection}
                                                     title={customTopicButtonTitle}
-                                                >
-                                                    {renderRunIcon('topicSections', topicGenerationStatus, isCustomTopicGenerationRunning)}
-                                                    {customTopicButtonLabel}
-                                                </Button>
+                                                    icon={renderRunIcon('topicSections', topicGenerationStatus, isCustomTopicGenerationRunning)}
+                                                    label={customTopicButtonLabel}
+                                                />
                                             </div>
                                         )}
                                         {shouldShowTopicAction && (
                                             <div className="flex justify-end">
-                                                <Button
-                                                    variant="outline"
-                                                    className="detail-action-button"
-                                                    aria-label={topicActionButtonAriaLabel}
+                                                <OrganizeRunButton
+                                                    ariaLabel={topicActionButtonAriaLabel}
                                                     disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                     onClick={handleGenerateTopicSections}
                                                     title={topicActionButtonTitle}
-                                                >
-                                                    {renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
-                                                    {topicActionButtonLabel}
-                                                </Button>
+                                                    icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
+                                                    label={topicActionButtonLabel}
+                                                />
                                             </div>
                                         )}
                                     </div>
@@ -2951,18 +3081,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
                                 {organizeTab === 'speakers' && (
                                     <div className="space-y-3" ref={speakerSummarySectionRef}>
-                                        <div className="detail-inline-note">
+                                        <InlineStateNote>
                                             AI가 참석자별로 정리한 초안입니다. 이름은 필요하면 수정해 주세요.
-                                        </div>
+                                        </InlineStateNote>
                                         {speakerContextOutdated && (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 회의 정보나 대화록이 바뀌어 현재 참석자별 정리는 이전 기준일 수 있습니다.
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {speakerActionBlockedMessage && filteredSpeakerSummaries.length > 0 && (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 {speakerActionBlockedMessage}
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {filteredSpeakerSummaries.length ? (
                                             <>
@@ -2998,7 +3128,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                         <article key={item.key} className="detail-subtle-card">
                                                             <button
                                                                 type="button"
-                                                                className="flex w-full items-start justify-between gap-3 text-left"
+                                                                className="speaker-summary-toggle"
                                                                 onClick={() => setCollapsedSpeakerSummaryKeys(current => ({
                                                                     ...current,
                                                                     [item.key]: !current[item.key],
@@ -3009,14 +3139,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                                     <div className="flex flex-wrap items-center gap-2">
                                                                         <h4 className="font-semibold text-foreground">{renderSearchText(item.name)}</h4>
                                                                         {item.role && (
-                                                                            <span className="inline-flex items-center rounded-md border border-border bg-background px-2 py-0.5 text-[11px] font-medium text-muted-foreground">
+                                                                            <span className="speaker-summary-role">
                                                                                 {renderSearchText(item.role)}
                                                                             </span>
                                                                         )}
                                                                     </div>
                                                                     {item.contributionLabel && (
                                                                         <div
-                                                                            className="mt-1 text-xs text-muted-foreground"
+                                                                            className="speaker-summary-contribution"
                                                                             title="대화록 글자 수 기준입니다. 발언 시간이나 중요도 비율은 아닙니다."
                                                                         >
                                                                             {renderSearchText(item.contributionLabel)}
@@ -3045,7 +3175,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 </div>
                                             </>
                                         ) : (
-                                            <div className="detail-inline-note">
+                                            <InlineStateNote>
                                                 {isFiltering
                                                     ? '검색과 일치하는 참석자별 정리가 없습니다.'
                                                     : hasCompletedEmptySpeakerContext
@@ -3053,21 +3183,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                         : speakerActionBlockedMessage
                                                             ? speakerActionBlockedMessage
                                                             : '참석자별 정리를 하면 참석자별 요약과 핵심 발언이 여기에 표시됩니다.'}
-                                            </div>
+                                            </InlineStateNote>
                                         )}
                                         {shouldShowSpeakerAction && (
                                             <div className="flex justify-end">
-                                                <Button
-                                                    variant="outline"
-                                                    className="detail-action-button"
-                                                    aria-label="참석자별 정리"
+                                                <OrganizeRunButton
+                                                    ariaLabel="참석자별 정리"
                                                     disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
                                                     onClick={handleGenerateSpeakerContext}
                                                     title={summaryModelUnavailable ? organizeModelGuidanceMessage : canCreateSpeakerContext ? '참석자별 정리' : '주제별 정리를 먼저 만들어 주세요.'}
-                                                >
-                                                    {renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
-                                                    {getActionLabel(speakerGenerationStatus)}
-                                                </Button>
+                                                    icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
+                                                    label={getActionLabel(speakerGenerationStatus)}
+                                                />
                                             </div>
                                         )}
                                     </div>
@@ -3131,70 +3258,25 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     </div>
                                 </div>
                                 {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && (
-                                    <div className="detail-inline-note">
+                                    <InlineStateNote>
                                         현재 화면은 수정본 대화록입니다. 원본은 별도로 보존됩니다.
-                                    </div>
+                                    </InlineStateNote>
                                 )}
                                 {!!speakersInTranscript.length && (isSpeakerLabelPanelOpen || hasSpeakerLabelChanges) && (
-                                    <div ref={speakerLabelsPanelRef} className="speaker-label-panel">
-                                        {hasSpeakerLabelChanges && (
-                                            <div className="speaker-label-panel-header">
-                                                <span className="font-medium text-foreground">저장되지 않은 변경</span>
-                                            </div>
-                                        )}
-                                        {speakersInTranscript.map((speaker, index) => {
-                                            const speakerDraft = speakerLabelDrafts[speaker] ?? '';
-                                            const hasSpeakerLabelInput = Boolean(speakerDraft.trim());
-                                            return (
-                                                <label key={speaker} className="speaker-label-field">
-                                                    <span className="speaker-label-field-title">
-                                                        <span className={`speaker-dot ${getSpeakerTone(speaker, index)}`} />
-                                                        {defaultSpeakerName(speaker)}
-                                                    </span>
-                                                    <div className="relative">
-                                                        <Input
-                                                            value={speakerDraft}
-                                                            aria-label={`${defaultSpeakerName(speaker)} 이름`}
-                                                            className={hasSpeakerLabelInput ? 'speaker-label-input' : ''}
-                                                            onChange={event => setSpeakerLabelDrafts(prev => ({
-                                                                ...prev,
-                                                                [speaker]: event.target.value,
-                                                            }))}
-                                                            onKeyDown={event => {
-                                                                if (event.key === 'Enter') {
-                                                                    event.preventDefault();
-                                                                    void handleSaveSpeakerLabels();
-                                                                }
-                                                            }}
-                                                        />
-                                                        {hasSpeakerLabelInput && (
-                                                            <div className="absolute inset-y-1 right-1 flex items-center gap-1">
-                                                                <button
-                                                                    type="button"
-                                                                    className="speaker-label-input-action"
-                                                                    title="이름 저장"
-                                                                    aria-label={`${defaultSpeakerName(speaker)} 이름 저장`}
-                                                                    onClick={() => void handleSaveSpeakerLabels()}
-                                                                    disabled={!hasSpeakerLabelChanges}
-                                                                >
-                                                                    ↵
-                                                                </button>
-                                                                <button
-                                                                    type="button"
-                                                                    className="speaker-label-input-action"
-                                                                    title="입력 지우기"
-                                                                    aria-label={`${defaultSpeakerName(speaker)} 이름 입력 지우기`}
-                                                                    onClick={() => handleClearSpeakerLabel(speaker)}
-                                                                >
-                                                                    <X size={14} />
-                                                                </button>
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                </label>
-                                            );
-                                        })}
-                                    </div>
+                                    <SpeakerLabelPanel
+                                        panelRef={speakerLabelsPanelRef}
+                                        speakers={speakersInTranscript}
+                                        drafts={speakerLabelDrafts}
+                                        hasChanges={hasSpeakerLabelChanges}
+                                        getTone={getSpeakerTone}
+                                        getName={defaultSpeakerName}
+                                        onChange={(speaker, value) => setSpeakerLabelDrafts(prev => ({
+                                            ...prev,
+                                            [speaker]: value,
+                                        }))}
+                                        onSave={handleSaveSpeakerLabels}
+                                        onClear={handleClearSpeakerLabel}
+                                    />
                                 )}
                             </div>
                             {(isTranscriptEditing ? transcriptSegmentDrafts.length : visibleSegments.length) ? (
@@ -3213,7 +3295,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     <textarea
                                                         value={segment.text}
                                                         onChange={event => handleTranscriptDraftChange(index, event.target.value)}
-                                                        className="min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed text-foreground outline-none transition focus:ring-2 focus:ring-primary/30"
+                                                        className="script-edit-textarea"
                                                         aria-label={`${segment.displaySpeaker || segment.speaker || '참석자'} 대화록 수정`}
                                                     />
                                                 ) : (
@@ -3224,7 +3306,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     })}
                                 </div>
                             ) : (
-                                <div className="detail-inline-note">대화록 내용이 없습니다.</div>
+                                <InlineStateNote>대화록 내용이 없습니다.</InlineStateNote>
                             )}
                         </section>
                     )}

@@ -103,6 +103,16 @@ const installBaseRoutes = async (page) => {
     }),
   }));
 
+  await page.route('**/api/analyze/preflight', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      ok: true,
+      level: 'ok',
+      message: '',
+    }),
+  }));
+
   await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({
     status: 404,
     contentType: 'application/json',

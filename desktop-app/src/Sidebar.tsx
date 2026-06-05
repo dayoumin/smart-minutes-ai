@@ -68,6 +68,14 @@ const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
     return '이어하기 가능';
 };
 
+const getSidebarResumeDraftTone = (draft: AnalysisResumeDraft): 'info' | 'warning' | 'error' | 'neutral' => {
+    if (draft.status === 'active') return 'info';
+    if (draft.status === 'failed' || draft.status === 'cancelled') return 'error';
+    if (draft.resumeEligible === false) return 'warning';
+    if (draft.status === 'stopped') return 'neutral';
+    return 'info';
+};
+
 const formatResumeDraftUpdatedAt = (value: string): string => {
     const date = new Date(value);
     if (Number.isNaN(date.getTime())) return '';
@@ -247,26 +255,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         </button>
                         {showResumeDrafts && (
                             <div className="mt-2 grid gap-1.5">
-                                {resumeDrafts.map(draft => (
-                                    <button
-                                        key={draft.jobId}
-                                        type="button"
-                                        className="sidebar-resume-draft-button text-left"
-                                        onClick={() => {
-                                            setOpenMenuId(null);
-                                            onSelectResumeDraft?.(draft.jobId);
-                                        }}
-                                    >
-                                        <span className="flex min-w-0 items-center justify-between gap-2">
-                                            <span className="truncate font-medium text-foreground">{draft.title || draft.sourceFilename}</span>
-                                            <span className="shrink-0 text-[11px] text-primary">{getSidebarResumeDraftStatus(draft)}</span>
-                                        </span>
-                                        <span className="mt-1 block truncate text-[11px] text-muted-foreground">{draft.sourceFilename}</span>
-                                        <span className="mt-1 block truncate text-[11px] text-muted-foreground">
-                                            {formatResumeDraftUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${formatSidebarStatus(draft.lastMessage)}` : ''}
-                                        </span>
-                                    </button>
-                                ))}
+                                {resumeDrafts.map(draft => {
+                                    const tone = getSidebarResumeDraftTone(draft);
+                                    return (
+                                        <button
+                                            key={draft.jobId}
+                                            type="button"
+                                            className={`sidebar-resume-draft-button status-${tone} text-left`}
+                                            onClick={() => {
+                                                setOpenMenuId(null);
+                                                onSelectResumeDraft?.(draft.jobId);
+                                            }}
+                                        >
+                                            <span className="flex min-w-0 items-center justify-between gap-2">
+                                                <span className="truncate font-medium text-foreground">{draft.title || draft.sourceFilename}</span>
+                                                <span className={`status-pill status-${tone}`}>{getSidebarResumeDraftStatus(draft)}</span>
+                                            </span>
+                                            <span className="mt-1 block truncate text-[11px] text-muted-foreground">{draft.sourceFilename}</span>
+                                            <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                                                {formatResumeDraftUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${formatSidebarStatus(draft.lastMessage)}` : ''}
+                                            </span>
+                                        </button>
+                                    );
+                                })}
                             </div>
                         )}
                     </div>

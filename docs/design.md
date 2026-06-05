@@ -23,7 +23,10 @@
 - `summary-block`: 요약 본문
 - `topic-chip`: 주요 주제 태그
 - `speaker-turn`, `speaker-meta`: 대화록 행
+- `detail-inline-note`, `detail-help-button`, `detail-control-card`: 상세 화면 보조문, 도움말, 입력 제어 묶음
+- `speaker-label-panel`, `speaker-summary-*`: 참석자 이름 변경과 참석자별 정리
 - `status-note`: 짧은 안내 및 주의 문구
+- `resume-draft-card`, `resume-drafts-panel`, `sidebar-resume-draft-button`: 이어하기/미완료 분석 기록
 
 ## 버튼 문구 규칙
 

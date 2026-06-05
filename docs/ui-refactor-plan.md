@@ -136,11 +136,17 @@
 - 현재 가장 복잡하고, 상태/카피 중복도 가장 많다.
 
 작업:
-1. `SummaryActionCard` 도입
+1. `SummaryActionCard` 또는 동일 역할의 실행 버튼/상태 컴포넌트 도입
 2. `InlineStateNote` 도입
 3. `SpeakerLabelPanel` 분리
 4. `SpeakerSummaryList` 분리 초안
 5. 빈 상태 문구 통일
+
+2026-06-05 적용:
+- 현재 탭형 정리 UI를 유지하기 위해 `SummaryActionCard` 대신 `OrganizeRunButton`, `DetailTabButton`, `DetailHelpButton`으로 먼저 분리했다.
+- `InlineStateNote`와 `SpeakerLabelPanel`을 `MeetingHistory.tsx`에 분리했고, 참석자별 정리 내부의 역할/기여도/토글 표면은 `speaker-summary-*` 공통 클래스로 옮겼다.
+- 대화록 수정 textarea와 추가 주제 입력 영역도 `script-edit-textarea`, `detail-control-card`로 옮겨 화면 JSX에서 색상/테두리 조합을 줄였다.
+- `SpeakerSummaryList` 전체 분리는 아직 하지 않았고, 다음에 참석자별 정리 제어 밀도를 더 줄일 때 별도 컴포넌트로 뺀다.
 
 검증:
 - `회의 요약` 탭에서 상태/버튼/보조문이 한눈에 구분되는지
@@ -162,6 +168,11 @@
 5. `미완료 분석 기록` 배지와 resume 카드에 semantic status token 적용
 6. completion/status banner 문구 정리
 7. helper text 총량 축소
+
+2026-06-05 적용:
+- 새 회의록 작성 폼이 먼저 읽히도록 resume 기록 패널에 `resume-drafts-panel`을 적용해 화면 순서를 낮췄다.
+- 사이드바 미완료 분석 기록은 `status-*` semantic token과 `status-pill`을 사용해 진행/주의/실패/중립 상태가 같은 규칙으로 보이게 했다.
+- `ResumeDraftSection` / `ResumeDraftCard` 컴포넌트 분리는 다음 단계로 남긴다.
 
 검증:
 - 새 회의록 작성 폼이 먼저 읽히는지

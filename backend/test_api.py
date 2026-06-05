@@ -563,10 +563,11 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        recommendation = main._summary_model_recommendation(config, 16.0)
+        recommendation = main._summary_model_recommendation(config, 15.9)
 
         self.assertEqual(recommendation["model"], "gemma4:e4b")
         self.assertEqual(recommendation["basis"], "memory")
+        self.assertIn("약 16GB", recommendation["message"])
 
     def test_summary_model_recommendation_prefers_light_model_for_low_memory(self) -> None:
         config = main.normalize_app_config({
@@ -652,7 +653,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("llama3.2:3b", llm_model["installed_models"])
         self.assertIn("llama3.2:3b", {option["model"] for option in llm_model["install_options"] if option.get("model")})
 
-    def test_model_status_lists_installed_ollama_models_outside_settings(self) -> None:
+    def test_model_status_tracks_installed_ollama_models_without_showing_unregistered_cards(self) -> None:
         config = main.normalize_app_config({
             "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
             "paths": {},
@@ -663,8 +664,8 @@ class AnalyzeApiTest(unittest.TestCase):
 
         llm_model = next(model for model in status["models"] if model["key"] == "llm")
         self.assertIn("llama3.2:3b", llm_model["installed_models"])
-        installed_options = [option for option in llm_model["install_options"] if option.get("model") == "llama3.2:3b"]
-        self.assertEqual(installed_options[0]["source"], "installed")
+        visible_options = [option for option in llm_model["install_options"] if option.get("model") == "llama3.2:3b"]
+        self.assertEqual(visible_options, [])
 
     def test_model_status_normalizes_installed_ollama_aliases(self) -> None:
         config = main.normalize_app_config({
@@ -673,8 +674,8 @@ class AnalyzeApiTest(unittest.TestCase):
                 "provider": "ollama",
                 "model": "gemma4:e2b",
                 "model_options": [
-                    {"model": "gemma4:e2b", "label": "권장 2B"},
-                    {"model": "gemma4:e4b", "label": "선택 4B"},
+                    {"model": "gemma4:e2b", "label": "2B"},
+                    {"model": "gemma4:e4b", "label": "4B"},
                 ],
             },
             "paths": {},
@@ -716,6 +717,43 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         self.assertTrue(response.json()["diarization"]["enabled"])
         self.assertTrue(response.json()["diarization"]["generate_during_analysis"])
+
+    def test_update_settings_clamps_audio_auto_save_when_audio_not_preserved(self) -> None:
+        config_ref = main.normalize_app_config({
+            "paths": {"stt_model": "../models/faster-whisper-large-v3"},
+            "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
+            "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+            "preprocessing": {"enabled": True, "normalize_audio": True, "normalization_mode": "auto"},
+            "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
+            "privacy": {"preserve_extracted_audio": True, "auto_save_audio_copy": True},
+        })
+
+        def fake_save_config(config: dict, config_path: str = "config.json") -> None:
+            config_ref.clear()
+            config_ref.update(copy.deepcopy(config))
+
+        with (
+            patch("main.load_config", side_effect=lambda: copy.deepcopy(config_ref)),
+            patch("main.save_config", side_effect=fake_save_config),
+        ):
+            response = self.client.patch(
+                "/api/settings",
+                json={"privacy": {"preserve_extracted_audio": False, "auto_save_audio_copy": True}},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertFalse(response.json()["privacy"]["preserve_extracted_audio"])
+        self.assertFalse(response.json()["privacy"]["auto_save_audio_copy"])
+        self.assertFalse(config_ref["privacy"]["auto_save_audio_copy"])
+
+    def test_normalize_app_config_clamps_audio_auto_save_when_audio_not_preserved(self) -> None:
+        config = main.normalize_app_config({
+            "privacy": {"preserve_extracted_audio": False, "auto_save_audio_copy": True},
+            "paths": {},
+        })
+
+        self.assertFalse(config["privacy"]["preserve_extracted_audio"])
+        self.assertFalse(config["privacy"]["auto_save_audio_copy"])
 
     def test_start_ollama_pull_accepts_manual_user_action(self) -> None:
         with (
@@ -832,6 +870,75 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 409)
 
+    def test_delete_ollama_model_switches_configured_model_to_replacement(self) -> None:
+        with main.OLLAMA_PULL_STATUS_LOCK:
+            main.OLLAMA_PULL_STATUS.pop("gemma4:e2b", None)
+        config_ref = main.normalize_app_config({
+            "summary": {
+                "enabled": True,
+                "provider": "ollama",
+                "model": "gemma4:e2b",
+                "model_options": [
+                    {"model": "gemma4:e2b", "label": "2B"},
+                    {"model": "gemma4:e4b", "label": "4B"},
+                ],
+            },
+            "paths": {},
+        })
+
+        def fake_save_config(config: dict, config_path: str = "config.json") -> None:
+            config_ref.clear()
+            config_ref.update(copy.deepcopy(config))
+
+        fake_completed = types.SimpleNamespace(returncode=0, stdout="deleted", stderr="")
+        with (
+            patch("main.load_config", side_effect=lambda: copy.deepcopy(config_ref)),
+            patch("main.save_config", side_effect=fake_save_config),
+            patch.object(main, "_ollama_model_exists_strict", return_value=True),
+            patch.object(main.subprocess, "run", return_value=fake_completed) as run_mock,
+        ):
+            response = self.client.delete(
+                "/api/models/ollama/model",
+                params={"model": "gemma4:e2b", "delete_files": "true", "replacement_model": "gemma4:e4b"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["removed"])
+        self.assertEqual(response.json()["replacement_model"], "gemma4:e4b")
+        self.assertEqual(config_ref["summary"]["model"], "gemma4:e4b")
+        run_mock.assert_called_once()
+
+    def test_delete_ollama_model_rejects_uninstalled_replacement(self) -> None:
+        with main.OLLAMA_PULL_STATUS_LOCK:
+            main.OLLAMA_PULL_STATUS.pop("gemma4:e2b", None)
+        config_ref = main.normalize_app_config({
+            "summary": {
+                "enabled": True,
+                "provider": "ollama",
+                "model": "gemma4:e2b",
+                "model_options": [
+                    {"model": "gemma4:e2b", "label": "2B"},
+                    {"model": "gemma4:e4b", "label": "4B"},
+                ],
+            },
+            "paths": {},
+        })
+
+        with (
+            patch("main.load_config", side_effect=lambda: copy.deepcopy(config_ref)),
+            patch.object(main, "_ollama_model_exists_strict", side_effect=lambda model: model == "gemma4:e2b"),
+            patch.object(main.subprocess, "run") as run_mock,
+        ):
+            response = self.client.delete(
+                "/api/models/ollama/model",
+                params={"model": "gemma4:e2b", "delete_files": "true", "replacement_model": "gemma4:e4b"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertIn("설치된 모델", response.json()["detail"])
+        self.assertEqual(config_ref["summary"]["model"], "gemma4:e2b")
+        run_mock.assert_not_called()
+
     def test_delete_ollama_model_removes_user_model_reference_by_default(self) -> None:
         with main.OLLAMA_PULL_STATUS_LOCK:
             main.OLLAMA_PULL_STATUS.pop("llama3.2:3b", None)
@@ -921,7 +1028,7 @@ class AnalyzeApiTest(unittest.TestCase):
         exists_mock.assert_not_called()
         run_mock.assert_not_called()
 
-    def test_delete_ollama_model_rejects_user_model_without_app_pull(self) -> None:
+    def test_delete_ollama_model_deletes_registered_user_model_without_app_pull(self) -> None:
         with main.OLLAMA_PULL_STATUS_LOCK:
             main.OLLAMA_PULL_STATUS.pop("external-model:latest", None)
         config_ref = main.normalize_app_config({
@@ -934,19 +1041,26 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
+        def fake_save_config(config: dict, config_path: str = "config.json") -> None:
+            config_ref.clear()
+            config_ref.update(copy.deepcopy(config))
+
+        fake_completed = types.SimpleNamespace(returncode=0, stdout="deleted", stderr="")
         with (
             patch("main.load_config", side_effect=lambda: copy.deepcopy(config_ref)),
-            patch.object(main, "_ollama_model_exists_strict") as exists_mock,
-            patch.object(main.subprocess, "run") as run_mock,
+            patch("main.save_config", side_effect=fake_save_config),
+            patch.object(main, "_ollama_model_exists_strict", return_value=True),
+            patch.object(main.subprocess, "run", return_value=fake_completed) as run_mock,
         ):
             response = self.client.delete(
                 "/api/models/ollama/model",
                 params={"model": "external-model:latest", "delete_files": "true"},
             )
 
-        self.assertEqual(response.status_code, 403)
-        exists_mock.assert_not_called()
-        run_mock.assert_not_called()
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["removed"])
+        self.assertNotIn("external-model:latest", {option["model"] for option in config_ref["summary"]["user_models"]})
+        run_mock.assert_called_once()
 
     def test_update_settings_remembered_model_is_not_app_managed_for_pc_delete(self) -> None:
         config_ref = main.normalize_app_config({
@@ -981,17 +1095,18 @@ class AnalyzeApiTest(unittest.TestCase):
                 **config_ref,
                 "summary": {**config_ref["summary"], "model": "gemma4:e2b"},
             })),
-            patch.object(main, "_ollama_model_exists_strict") as exists_mock,
-            patch.object(main.subprocess, "run") as run_mock,
+            patch("main.save_config", side_effect=fake_save_config),
+            patch.object(main, "_ollama_model_exists_strict", return_value=True),
+            patch.object(main.subprocess, "run", return_value=types.SimpleNamespace(returncode=0, stdout="deleted", stderr="")) as run_mock,
         ):
             delete_response = self.client.delete(
                 "/api/models/ollama/model",
                 params={"model": "external-model:latest", "delete_files": "true"},
             )
 
-        self.assertEqual(delete_response.status_code, 403)
-        exists_mock.assert_not_called()
-        run_mock.assert_not_called()
+        self.assertEqual(delete_response.status_code, 200, delete_response.text)
+        self.assertTrue(delete_response.json()["removed"])
+        run_mock.assert_called_once()
 
     def test_model_status_uses_faster_whisper_even_with_legacy_selection(self) -> None:
         fake_status = {

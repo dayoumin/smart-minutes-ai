@@ -22,7 +22,7 @@ SUMMARY_MODEL_ALIASES = {
 DEFAULT_SUMMARY_MODEL_OPTIONS = (
     {
         "model": "gemma4:e2b",
-        "label": "권장 2B",
+        "label": "2B",
         "description": "용량과 속도를 우선할 때 사용합니다.",
         "url": "https://ollama.com/library/gemma4%3Ae2b",
         "command": "ollama run gemma4:e2b",
@@ -30,7 +30,7 @@ DEFAULT_SUMMARY_MODEL_OPTIONS = (
     },
     {
         "model": "gemma4:e4b",
-        "label": "선택 4B",
+        "label": "4B",
         "description": "PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.",
         "url": "https://ollama.com/library/gemma4%3Ae4b",
         "command": "ollama run gemma4:e4b",
@@ -286,6 +286,8 @@ def normalize_app_config(config: dict) -> dict:
     privacy["preserve_extracted_audio"] = bool(privacy.get("preserve_extracted_audio", True))
     privacy["auto_save_hwpx_copy"] = bool(privacy.get("auto_save_hwpx_copy", False))
     privacy["auto_save_audio_copy"] = bool(privacy.get("auto_save_audio_copy", False))
+    if not privacy["preserve_extracted_audio"]:
+        privacy["auto_save_audio_copy"] = False
     summary.setdefault("enabled", True)
     summary.setdefault("provider", "ollama")
     summary["model"] = normalize_summary_model_name(summary.get("model") or DEFAULT_SUMMARY_MODEL)

@@ -173,7 +173,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
     options = get_summary_model_options(config)
     option_models = get_summary_option_models(config)
     uses_configured_option = configured_model in option_models
-    visible_options = options if uses_configured_option else []
+    visible_options = list(options) if uses_configured_option else []
     candidate_models = get_summary_candidate_models(config)
     ollama_models = []
     for model in list_ollama_models():
@@ -185,21 +185,15 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
     for model in [configured_model, *get_summary_option_models(config)]:
         if model and model not in visible_model_names:
             visible_model_names.append(model)
+    status_model_names = list(visible_model_names)
     for model in ollama_models:
-        if model and model not in visible_model_names:
-            visible_options.append({
-                "model": model,
-                "label": "설치된 모델",
-                "description": "이 PC의 Ollama에 설치된 모델입니다.",
-                "command": f"ollama run {model}",
-                "source": "installed",
-            })
-            visible_model_names.append(model)
+        if model and model not in status_model_names:
+            status_model_names.append(model)
 
     installed_model = ""
     installed_path = ""
     installed_models: list[str] = []
-    for model in visible_model_names:
+    for model in status_model_names:
         candidate_path = resolve_backend_path(base_dir, model) if model.startswith((".", "..")) or (model.endswith((".gguf", ".bin")) and not os.path.isabs(model)) else model
         if os.path.exists(candidate_path) or (not model.endswith((".gguf", ".bin")) and model in ollama_model_set):
             installed_models.append(model)

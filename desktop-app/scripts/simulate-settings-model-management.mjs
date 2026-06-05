@@ -126,14 +126,14 @@ const createRouteState = () => {
       model_options: [
         {
           model: 'gemma4:e2b',
-          label: '권장 2B',
+          label: '2B',
           description: '용량과 속도를 우선할 때 사용합니다.',
           url: 'https://ollama.com/library/gemma4%3Ae2b',
           command: 'ollama run gemma4:e2b',
         },
         {
           model: 'gemma4:e4b',
-          label: '선택 4B',
+          label: '4B',
           description: 'PC 여유가 있으면 더 큰 모델을 사용할 수 있습니다.',
           url: 'https://ollama.com/library/gemma4%3Ae4b',
           command: 'ollama run gemma4:e4b',
@@ -257,7 +257,7 @@ const installRoutes = async (page, state) => {
         summary_model_recommendation: {
           model: 'gemma4:e4b',
           basis: 'memory',
-          message: '이 PC 메모리 16GB 기준입니다. 16GB 이상이라 4B를 권장합니다.',
+          message: '이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.',
         },
       }),
     });
@@ -364,6 +364,12 @@ const expectDisabled = async (locator, expected, message) => {
   assert.equal(!(await locator.isEnabled()), expected, message);
 };
 
+const openModelMenu = async (modelsPanel, modelName) => {
+  const card = modelsPanel.locator('.rounded-md.border.border-border.bg-background.p-3.text-sm').filter({ hasText: modelName }).first();
+  await card.getByRole('button', { name: `${modelName} 모델 작업` }).click();
+  return card;
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -377,12 +383,17 @@ const run = async () => {
     await page.addInitScript(() => {
       window.__confirmMessages = [];
       window.__confirmResponses = [];
+      window.__openedUrls = [];
       window.confirm = (message) => {
         window.__confirmMessages.push(message);
         if (window.__confirmResponses.length > 0) {
           return window.__confirmResponses.shift();
         }
         return true;
+      };
+      window.open = (url) => {
+        window.__openedUrls.push(String(url));
+        return null;
       };
       window.__TAURI__ = {
         core: {
@@ -401,10 +412,17 @@ const run = async () => {
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('이 PC 메모리 16GB 기준입니다. 16GB 이상이라 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('선택됨', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    const gemma4e4bInitialCard = modelsPanel
+      .getByRole('link', { name: 'gemma4:e4b 모델 페이지' })
+      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+    await gemma4e4bInitialCard.getByText('권장', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('권장 2B', { exact: true }).count(), 0, '2B should not look recommended when memory recommends 4B');
 
-    assert.equal(await modelsPanel.getByRole('button', { name: 'gemma4:e2b PC 모델 삭제' }).count(), 0, 'current model should not expose PC delete');
-    assert.equal(await modelsPanel.getByRole('button', { name: 'gemma4:e2b 목록 제거' }).count(), 0, 'current model should not expose list removal');
+    await openModelMenu(modelsPanel, 'gemma4:e2b');
+    await modelsPanel.getByRole('menuitem', { name: 'gemma4:e2b PC에서 삭제' }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.keyboard.press('Escape');
 
     await modelsPanel.locator('select').selectOption('gemma4:e4b');
     await modelsPanel.getByText('선택한 모델은 아직 준비되지 않았습니다. 아래 카드에서 받기를 누르면 완료 후 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
@@ -418,16 +436,27 @@ const run = async () => {
     const gemma4e4bCard = modelsPanel
       .getByRole('link', { name: 'gemma4:e4b 모델 페이지' })
       .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
-    await gemma4e4bCard.getByText('사용 중', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await gemma4e4bCard.waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await gemma4e4bCard.getByText('사용 중', { exact: true }).count(), 0);
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'gemma4:e4b', 'using a completed model should save it as the configured summary model');
-    assert.equal(await modelsPanel.getByRole('button', { name: 'gemma4:e4b PC 모델 삭제' }).count(), 0, 'selected model should not expose delete');
+    await openModelMenu(modelsPanel, 'gemma4:e4b');
+    await modelsPanel.getByRole('menuitem', { name: 'gemma4:e4b PC에서 삭제' }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.keyboard.press('Escape');
 
     const runningPullButton = modelsPanel.getByRole('button', { name: 'user-running:1b 모델 받기' });
     await runningPullButton.click();
-    await expectDisabled(modelsPanel.getByRole('button', { name: 'user-running:1b 목록 제거' }), true, 'running pull should block list removal');
+    await openModelMenu(modelsPanel, 'user-running:1b');
+    await expectDisabled(modelsPanel.getByRole('menuitem', { name: 'user-running:1b 등록 해제' }), true, 'running pull should block list removal');
     await modelsPanel.getByText('user-running:1b 모델을 받는 중입니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await page.keyboard.press('Escape');
 
     await modelsPanel.getByLabel('다른 모델명 추가').fill('broken-model:1b');
+    await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 검색' }).click();
+    assert.equal(
+      (await page.evaluate(() => window.__openedUrls)).at(-1),
+      'https://ollama.com/search?q=broken-model%3A1b',
+      'direct input should search before download',
+    );
     await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 받기' }).click();
     await page.getByRole('alert').getByText('broken-model:1b 모델을 받지 못했습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(state.pullRequests.includes('broken-model:1b'), true, 'failed pull should call backend with the typed model');
@@ -435,10 +464,13 @@ const run = async () => {
     await modelsPanel.getByLabel('다른 모델명 추가').fill('custom-ready:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 custom-ready:1b 모델 사용' }).click();
     await modelsPanel.locator('select').selectOption('custom-ready:1b');
-    await modelsPanel.getByRole('button', { name: 'custom-ready:1b 모델 다시 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+    await openModelMenu(modelsPanel, 'custom-ready:1b');
+    await modelsPanel.getByRole('menuitem', { name: /^받기$/ }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.keyboard.press('Escape');
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'custom-ready:1b', 'direct input installed model should save as the configured summary model');
 
-    await modelsPanel.getByRole('button', { name: 'user-ready:1b PC 모델 삭제' }).click();
+    await openModelMenu(modelsPanel, 'user-ready:1b');
+    await modelsPanel.getByRole('menuitem', { name: 'user-ready:1b PC에서 삭제' }).click();
     await page.getByText('user-ready:1b 모델을 삭제했습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.deepEqual(state.deleteRequests.at(-1), { model: 'user-ready:1b', deleteFiles: true });
     await modelsPanel.getByRole('button', { name: 'user-ready:1b 모델 받기' }).waitFor({ state: 'visible', timeout: 10000 });
@@ -447,16 +479,17 @@ const run = async () => {
     await page.evaluate(() => {
       window.__confirmResponses.push(false);
     });
-    await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).click();
+    await openModelMenu(modelsPanel, 'list-only:1b');
+    await modelsPanel.getByRole('menuitem', { name: 'list-only:1b 등록 해제' }).click();
     await sleep(250);
     assert.equal(state.deleteRequests.length, deleteRequestsBeforeCancel, 'cancelled list removal should not call delete API');
-    await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).waitFor({ state: 'visible', timeout: 10000 });
 
-    await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).click();
+    await openModelMenu(modelsPanel, 'list-only:1b');
+    await modelsPanel.getByRole('menuitem', { name: 'list-only:1b 등록 해제' }).click();
     await page.getByText('list-only:1b 모델을 목록에서 제거했습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.deepEqual(state.deleteRequests.at(-1), { model: 'list-only:1b', deleteFiles: false });
     await page.waitForFunction(() => !document.querySelector('#settings-models-panel')?.textContent?.includes('list-only:1b 목록 전용 모델'), null, { timeout: 10000 });
-    assert.equal(await modelsPanel.getByRole('button', { name: 'list-only:1b 목록 제거' }).count(), 0);
+    assert.equal(await modelsPanel.getByRole('button', { name: 'list-only:1b 모델 작업' }).count(), 0);
 
     const confirmMessages = await page.evaluate(() => window.__confirmMessages);
     assert.equal(confirmMessages.some(message => message.includes('Ollama 저장소에서 삭제할까요')), true, 'PC delete should ask for file-delete confirmation');

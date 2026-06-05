@@ -30,8 +30,8 @@ from config_normalization import (
     add_summary_user_model,
     get_summary_candidate_models,
     get_summary_model_options,
+    get_summary_option_models,
     normalize_summary_model_name,
-    normalize_summary_user_models,
     normalize_app_config,
     remove_summary_user_model,
 )
@@ -112,6 +112,7 @@ HWPX_REQUIRED_ENTRIES = {
 DIARIZATION_WAVEFORM_SAMPLE_RATE = 16000
 DIARIZATION_WAVEFORM_CHANNELS = 1
 DIARIZATION_WAVEFORM_BYTES_PER_SAMPLE = 4
+SUMMARY_4B_MEMORY_THRESHOLD_GB = 15.5
 RECOVERABLE_SOURCE_EXTENSIONS = {
     ".aac",
     ".avi",
@@ -670,12 +671,15 @@ async def update_settings(payload: dict = Body(...)) -> dict:
 
         if "privacy" in payload:
             privacy = payload["privacy"] or {}
+            privacy_config = config.setdefault("privacy", {})
             if "preserve_extracted_audio" in privacy:
-                config.setdefault("privacy", {})["preserve_extracted_audio"] = bool(privacy["preserve_extracted_audio"])
+                privacy_config["preserve_extracted_audio"] = bool(privacy["preserve_extracted_audio"])
             if "auto_save_hwpx_copy" in privacy:
-                config.setdefault("privacy", {})["auto_save_hwpx_copy"] = bool(privacy["auto_save_hwpx_copy"])
+                privacy_config["auto_save_hwpx_copy"] = bool(privacy["auto_save_hwpx_copy"])
             if "auto_save_audio_copy" in privacy:
-                config.setdefault("privacy", {})["auto_save_audio_copy"] = bool(privacy["auto_save_audio_copy"])
+                privacy_config["auto_save_audio_copy"] = bool(privacy["auto_save_audio_copy"])
+            if not privacy_config.get("preserve_extracted_audio", True):
+                privacy_config["auto_save_audio_copy"] = False
 
         save_config(config)
     return await get_settings()
@@ -768,18 +772,19 @@ def _summary_model_recommendation(config: dict, memory_gb: float | None) -> dict
         for option in get_summary_model_options(config)
         if option.get("model")
     ]
-    if "gemma4:e4b" in option_models and memory_gb is not None and memory_gb >= 16:
+    if "gemma4:e4b" in option_models and memory_gb is not None and memory_gb >= SUMMARY_4B_MEMORY_THRESHOLD_GB:
+        memory_label = f"약 {round(memory_gb):g}GB"
         return {
             "model": "gemma4:e4b",
             "basis": "memory",
-            "message": f"이 PC 메모리 {memory_gb:g}GB 기준입니다. 16GB 이상이라 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.",
+            "message": f"이 PC 메모리는 {memory_label}입니다. 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.",
         }
 
     fallback_model = DEFAULT_SUMMARY_MODEL if DEFAULT_SUMMARY_MODEL in option_models else (option_models[0] if option_models else DEFAULT_SUMMARY_MODEL)
     message = (
         "PC 메모리를 확인하지 못해 가벼운 2B 모델을 권장합니다."
         if memory_gb is None
-        else f"이 PC 메모리 {memory_gb:g}GB 기준입니다. 16GB 미만이라 가벼운 2B 모델을 권장합니다. 여유가 충분하면 4B도 선택할 수 있습니다."
+        else f"이 PC 메모리는 약 {round(memory_gb):g}GB입니다. 2B를 권장합니다. 여유가 충분하면 4B도 선택할 수 있습니다."
     )
     return {
         "model": fallback_model,
@@ -919,30 +924,35 @@ def _ollama_model_exists_strict(model_name: str) -> bool:
     return any(line.split(maxsplit=1)[0] == model_name for line in completed.stdout.splitlines()[1:] if line.split())
 
 
-def _remove_ollama_model(model_name: str) -> dict:
-    def _assert_removable(config: dict) -> None:
+def _remove_ollama_model(model_name: str, replacement_model: str = "") -> dict:
+    def _assert_removable(config: dict) -> str:
         configured_model = normalize_summary_model_name(config.get("summary", {}).get("model") or DEFAULT_SUMMARY_MODEL)
-        if model_name == configured_model:
-            raise HTTPException(status_code=409, detail="사용 중인 모델은 삭제할 수 없습니다. 다른 모델을 선택한 뒤 삭제해 주세요.")
-        managed_model_names = {
-            option.get("model")
-            for option in normalize_summary_user_models(config.get("summary", {}).get("user_models", []))
-            if isinstance(option, dict) and option.get("managed_by_app")
-        }
-        if model_name not in managed_model_names:
+        visible_model_names = set(get_summary_option_models(config))
+        if model_name not in visible_model_names:
             raise HTTPException(
                 status_code=403,
-                detail="이 앱에서 받은 모델만 PC에서 삭제할 수 있습니다. 다른 Ollama 모델은 Ollama 앱이나 명령어에서 관리해 주세요.",
+                detail="이 앱의 요약 모델 목록에 있는 모델만 PC에서 삭제할 수 있습니다. 다른 Ollama 모델은 Ollama 앱이나 명령어에서 관리해 주세요.",
             )
+        if model_name == configured_model:
+            replacement = normalize_summary_model_name(replacement_model)
+            if not replacement or replacement == model_name:
+                raise HTTPException(status_code=409, detail="사용 중인 모델은 다른 요약 모델로 바꾼 뒤 삭제할 수 있습니다.")
+            if replacement not in visible_model_names:
+                raise HTTPException(status_code=400, detail="삭제 후 사용할 요약 모델을 찾지 못했습니다.")
+            return replacement
+        return ""
 
     with CONFIG_LOCK:
         config = load_config()
-        _assert_removable(config)
+        replacement = _assert_removable(config)
 
         with OLLAMA_PULL_STATUS_LOCK:
             current_pull = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
         if current_pull.get("active"):
             raise HTTPException(status_code=409, detail="받는 중인 모델은 삭제할 수 없습니다. 완료 후 다시 시도해 주세요.")
+
+    if replacement and not _ollama_model_exists_strict(replacement):
+        raise HTTPException(status_code=400, detail="삭제 후 사용할 요약 모델이 이 PC에 없습니다. 설치된 모델로 먼저 바꾼 뒤 삭제해 주세요.")
 
     was_installed = _ollama_model_exists_strict(model_name)
     removed = False
@@ -970,13 +980,20 @@ def _remove_ollama_model(model_name: str) -> dict:
 
     with CONFIG_LOCK:
         config = load_config()
-        _assert_removable(config)
+        replacement = _assert_removable(config)
+        if replacement:
+            config.setdefault("summary", {})["provider"] = "ollama"
+            config.setdefault("summary", {})["model"] = replacement
         remove_summary_user_model(config, model_name)
         save_config(config)
+    message = f"{model_name} 모델을 삭제했습니다." if removed else f"{model_name} 모델은 설치되어 있지 않습니다."
+    if replacement:
+        message = f"{message} 요약 모델은 {replacement}로 변경했습니다."
     return {
         "model": model_name,
         "removed": removed,
-        "message": f"{model_name} 모델을 삭제했습니다." if removed else f"{model_name} 모델은 설치되어 있지 않습니다.",
+        "replacement_model": replacement,
+        "message": message,
         "output": output[-4000:],
     }
 
@@ -1037,10 +1054,11 @@ async def get_ollama_model_pull_status(model: str) -> dict:
 
 
 @app.delete("/api/models/ollama/model")
-async def delete_ollama_model(model: str, delete_files: bool = False) -> dict:
+async def delete_ollama_model(model: str, delete_files: bool = False, replacement_model: str = "") -> dict:
     model_name = _validate_ollama_model_name(model)
     if delete_files:
-        return _remove_ollama_model(model_name)
+        replacement = _validate_ollama_model_name(replacement_model) if replacement_model else ""
+        return _remove_ollama_model(model_name, replacement)
     return _forget_summary_model(model_name)
 
 

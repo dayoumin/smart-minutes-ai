@@ -92,6 +92,15 @@ const startServer = async () => {
 const installRoutes = async (page) => {
   const settingsPatches = [];
   const pullRequests = [];
+  const routeState = {
+    settingsPatches,
+    pullRequests,
+    audioModelState: {
+      sttInstalled: false,
+      diarizationInstalled: true,
+    },
+    delayNextSettingsPatchMs: 0,
+  };
   let settingsState = {
     processing: { long_audio_chunk_seconds: 95, enable_long_audio_chunking: false },
     diarization: { enabled: false, generate_during_analysis: false },
@@ -102,12 +111,11 @@ const installRoutes = async (page) => {
       provider: 'ollama',
       model: 'gemma4:e2b',
       model_options: [
-        { model: 'gemma4:e2b', label: '권장 2B', url: 'https://ollama.com/library/gemma4%3Ae2b', command: 'ollama run gemma4:e2b' },
-        { model: 'gemma4:e4b', label: '선택 4B', url: 'https://ollama.com/library/gemma4%3Ae4b', command: 'ollama run gemma4:e4b' },
+        { model: 'gemma4:e2b', label: '2B', url: 'https://ollama.com/library/gemma4%3Ae2b', command: 'ollama run gemma4:e2b' },
+        { model: 'gemma4:e4b', label: '4B', url: 'https://ollama.com/library/gemma4%3Ae4b', command: 'ollama run gemma4:e4b' },
       ],
     },
   };
-
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -124,7 +132,7 @@ const installRoutes = async (page) => {
           key: 'stt_faster_whisper',
           label: 'STT',
           repo_id: 'Systran/faster-whisper-large-v3',
-          installed: true,
+          installed: routeState.audioModelState.sttInstalled,
           required: true,
           install_url: 'https://huggingface.co/Systran/faster-whisper-large-v3',
         },
@@ -132,7 +140,7 @@ const installRoutes = async (page) => {
           key: 'diarization',
           label: 'Diarization',
           repo_id: 'pyannote/speaker-diarization-community-1',
-          installed: true,
+          installed: routeState.audioModelState.diarizationInstalled,
           required: true,
           install_url: 'https://huggingface.co/pyannote/speaker-diarization-community-1',
         },
@@ -152,7 +160,7 @@ const installRoutes = async (page) => {
       summary_model_recommendation: {
         model: 'gemma4:e4b',
         basis: 'memory',
-        message: '이 PC 메모리 16GB 기준입니다. 16GB 이상이라 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.',
+        message: '이 PC 메모리는 약 16GB입니다. 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.',
       },
     }),
   }));
@@ -204,6 +212,11 @@ const installRoutes = async (page) => {
           ]),
         ),
       };
+      const delayMs = routeState.delayNextSettingsPatchMs;
+      routeState.delayNextSettingsPatchMs = 0;
+      if (delayMs > 0) {
+        await sleep(delayMs);
+      }
     }
     await route.fulfill({
       status: 200,
@@ -218,7 +231,7 @@ const installRoutes = async (page) => {
     body: JSON.stringify({ detail: 'benchmark fixtures disabled for this simulation' }),
   }));
 
-  return { settingsPatches, pullRequests };
+  return routeState;
 };
 
 const run = async () => {
@@ -229,6 +242,11 @@ const run = async () => {
   try {
     await page.addInitScript(() => {
       window.__restartCalls = 0;
+      window.__openedUrls = [];
+      window.open = (url) => {
+        window.__openedUrls.push(String(url));
+        return null;
+      };
       window.__TAURI__ = {
         core: {
           invoke: async (command) => {
@@ -253,18 +271,39 @@ const run = async () => {
     });
 
     await page.getByRole('button', { name: '시스템 설정' }).click();
+    const settingsDialog = page.getByRole('dialog', { name: '시스템 설정' });
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    const generalDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));
     await page.getByRole('tab', { name: '모델' }).click();
+    const modelDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));
+    assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
     const modelsPanel = page.locator('#settings-models-panel');
-    await modelsPanel.getByText('분석 필수 모델').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByRole('link', { name: /Systran\/faster-whisper-large-v3 모델 페이지/ }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('이 PC 메모리 16GB 기준입니다. 16GB 이상이라 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.locator('.status-pill').filter({ hasText: /^메모리 16GB 기준 권장$/ }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('참석자 구분 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByRole('button', { name: '음성 인식 모델 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByLabel('참석자 구분 모델 있음').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('준비됨').count(), 0);
+    assert.equal(await modelsPanel.getByText('대화록 작성에 필요합니다.').count(), 0);
+    await modelsPanel.getByText('이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.locator('.status-pill').filter({ hasText: /메모리/ }).count(), 0);
     assert.equal(
       await modelsPanel.locator('button').filter({ hasText: /^받기$/ }).count(),
-      1,
+      2,
       'recommended model picker should not duplicate the download button',
     );
+    routeState.audioModelState.diarizationInstalled = false;
+    await page.getByRole('tab', { name: '일반' }).click();
+    await page.getByRole('tab', { name: '모델' }).click();
+    await modelsPanel.getByRole('button', { name: '참석자 구분 모델 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+
     await modelsPanel.getByLabel('다른 모델명 추가').fill('gemma4:4b');
+    await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 검색' }).click();
+    assert.equal(
+      (await page.evaluate(() => window.__openedUrls)).at(-1),
+      'https://ollama.com/search?q=gemma4%3Ae4b',
+      'custom model search should open Ollama search first',
+    );
     await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 받기' }).click();
     await expectDisabled(modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 받기' }), true, 'normalized alias pull should disable the custom download button');
     assert.deepEqual(routeState.pullRequests, ['gemma4:e4b'], 'custom alias pull should normalize before calling backend');
@@ -312,6 +351,26 @@ const run = async () => {
     assert.equal('processing' in firstPatch, false, 'general save should preserve hidden processing settings');
     assert.deepEqual(firstPatch.diarization, { generate_during_analysis: false }, 'general save should not rewrite diarization.enabled');
     assert.deepEqual(firstPatch.preprocessing, { enabled: true }, 'general save should not rewrite hidden preprocessing options');
+
+    routeState.settingsPatches.length = 0;
+    routeState.delayNextSettingsPatchMs = 900;
+    const autoSaveAudioCheckbox = page.getByLabel('음성 파일 자동 저장');
+    await autoSaveAudioCheckbox.check();
+    for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {
+      await sleep(100);
+    }
+    if (routeState.settingsPatches.length === 0) throw new Error('delayed audio auto-save patch was not sent');
+    await autoSaveAudioCheckbox.uncheck();
+    for (let attempt = 0; attempt < 60 && routeState.settingsPatches.length < 2; attempt += 1) {
+      await sleep(100);
+    }
+    assert.equal(routeState.settingsPatches.length >= 2, true, 'latest checkbox change should be saved after an in-flight save finishes');
+    assert.equal(
+      routeState.settingsPatches.at(-1)?.privacy?.auto_save_audio_copy,
+      false,
+      'latest audio auto-save value should win over the earlier delayed response',
+    );
+    assert.equal(await autoSaveAudioCheckbox.isChecked(), false, 'delayed save response should not re-check the audio auto-save box');
 
     console.log('ok - settings backend restart simulation');
   } catch (error) {

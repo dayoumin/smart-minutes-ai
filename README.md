@@ -5,7 +5,7 @@
 ## 폴더 구조
 
 ```text
-D:\Projects\smart-minutes-ai\
+<프로젝트 루트>\
   backend\                         # FastAPI 분석 서버 소스
   desktop-app\                     # React/Tauri 데스크탑 앱 소스
   docs\                            # 설계/테스트/배포 문서
@@ -22,7 +22,7 @@ D:\Projects\smart-minutes-ai\
 실행할 때는 루트의 portable 폴더를 사용합니다.
 
 ```text
-D:\Projects\smart-minutes-ai\releases\lmo_audio\lmo_audio.exe
+<프로젝트 루트>\releases\lmo_audio\lmo_audio.exe
 ```
 
 `lmo_audio.exe`만 따로 옮기면 안 됩니다. 아래 폴더들이 같은 위치에 있어야 합니다.
@@ -86,17 +86,24 @@ lmo_audio*.zip
 
 ## 회사 PC 이관
 
-회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 앱 안에서 사용자가 개별적으로 모델을 내려받는 흐름은 사용하지 않습니다.
+회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. `releases`는 커밋 제외 폴더이므로 `git push`로 실행 파일이 전달되지는 않습니다. 다른 PC 테스트용 실행본은 `releases\lmo_audio`를 별도 복사하거나 압축해서 전달합니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. STT와 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않습니다. Ollama 정리 모델은 외부망이 있고 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있습니다.
 
 자세한 내용은 [LMO 회의 인사이트 portable 회사 PC 사용법](docs/lmo-meeting-insight-company-pc-guide.md)을 봅니다.
 
 회사 PC에서 실행 파일을 다시 만들 때는 먼저 빌드 도구와 모델 원본 위치를 확인합니다.
 
+- 프로젝트 폴더명: 집 PC와 회사 PC의 폴더명이 달라도 됩니다. 빌드/검증 스크립트는 스크립트 위치 기준으로 프로젝트 루트를 계산합니다.
 - Python/venv: `backend\.venv-desktop\Scripts\python.exe` 또는 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 지정할 수 있는 Python
 - Python 패키지: `backend\requirements-desktop.txt` 기준 설치, `PyInstaller` 사용 가능
 - Node/Tauri: `corepack`, `pnpm`, Rust/Cargo, Tauri 빌드 도구 사용 가능
 - 모델 원본 위치: `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`
 - 최종 실행 위치: `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`
+
+`backend\.venv-desktop`는 PC 간에 복사해서 쓰는 폴더가 아닙니다. 집 PC와 회사 PC의 Python 설치 위치가 다르면 venv 내부 경로가 깨질 수 있으므로, 회사 PC에서 직접 재빌드할 때는 그 PC의 Python으로 빌드 venv를 새로 만듭니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure_backend_build_env.ps1 -Python <python.exe 경로> -RecreateBroken
+```
 
 Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 참석자 구분 모델만 사용합니다.
 

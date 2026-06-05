@@ -78,6 +78,7 @@ function Get-CheckPython {
     }
 
     $candidates = @(
+        (Join-Path $RepoRoot "backend\.venv\Scripts\python.exe"),
         (Join-Path $RepoRoot "backend\.venv-test312\Scripts\python.exe")
     )
 

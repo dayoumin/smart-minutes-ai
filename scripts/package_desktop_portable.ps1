@@ -62,7 +62,7 @@ $PortableModelsDir = Join-Path $PortableDir "models"
 New-Item -ItemType Directory -Force -Path $PortableModelsDir | Out-Null
 
 $ModelReadme = @"
-LMO Smart Meeting System model folder
+LMO Meeting Insight model folder
 
 Keep each model in its own folder under models.
 
@@ -134,7 +134,7 @@ foreach ($model in @($ModelLayout.models)) {
 }
 
 $TopLevelReadme = @"
-LMO Smart Meeting System - Portable Quick Start
+LMO Meeting Insight - Portable Quick Start
 
 1. Run
    - Run lmo_audio.exe in this folder.

@@ -5,7 +5,7 @@ description: Build, package, and verify this repository's Windows portable deskt
 
 # LMO Audio Release Build
 
-Use this skill only inside this repository, normally `D:\Projects\smart-minutes-ai`. Stay Windows-native.
+Use this skill only inside this repository. The repository folder name can differ between PCs; use the current repository root, not a hard-coded absolute path. Stay Windows-native.
 
 ## Default Meaning
 
@@ -62,7 +62,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File releases\updates\lmo_audio_u
 
 ## Failure Handling
 
-- If `backend\.venv-desktop\Scripts\python.exe` is missing or broken, stop and report the venv recovery command from the checklist.
+- Use `backend\.venv-desktop\Scripts\python.exe` as the normal repeated release build Python. If it is missing or broken, prefer stopping and reporting the venv recovery command from the checklist. A local one-off build may use an explicitly supplied Python path only when its backend build requirements pass; call this out in the final summary and restore `.venv-desktop` before treating the setup as the clean repeated release path.
 - If model markers are missing, stop and report the missing model folder or marker files.
 - If Windows process inspection fails with access denied, prefer the script fallback or `Get-Process` when executable path is enough. Rerun with escalation only when command-line inspection is required. Do not switch to WSL.
 - Treat a dirty manifest as a local test build unless the user explicitly accepts it. For a normal user-ready release, commit the release-script/docs changes first, rebuild without `-AllowDirty`, and verify that `manifest clean` passes.

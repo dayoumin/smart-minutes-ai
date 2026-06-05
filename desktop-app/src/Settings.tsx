@@ -1004,6 +1004,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             상태 확인 실패. 앱 안의 분석 프로그램 응답을 기다리고 있습니다.
                                         </div>
                                     )}
+                                    {lastModelStatusCheck && (
+                                        <div className="text-xs text-muted-foreground">
+                                            최근 확인: {lastModelStatusCheck}
+                                        </div>
+                                    )}
                                 </div>
 
                                 {isLoading && !models ? (

@@ -213,7 +213,8 @@ corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases
 
 운영 기준:
 
-- 현재 1차 배포 기준에서는 사용자가 앱 안에서 모델을 개별 다운로드하지 않는다. Ollama 정리 모델 설치 UX는 `todo.md`의 후속 설계로 다룬다.
+- STT와 참석자 구분 모델은 관리자가 준비해 `models` 폴더에 배치한다. 앱 안에서 이 모델들을 개별 다운로드하지 않는다.
+- Ollama 정리 모델은 외부망과 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있다. 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
 - 기본 STT 모델은 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 일반 사용자에게 전달할 배포본은 manifest의 `dirty`가 `false`여야 한다. dirty 배포본은 로컬 테스트용이며, 필요한 경우에만 `-AllowDirty`로 명시한다.

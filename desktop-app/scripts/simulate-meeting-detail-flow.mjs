@@ -1021,7 +1021,7 @@ const run = async () => {
     summaryReady = true;
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.getByRole('button', { name: '모델', exact: true }).click();
-    await page.getByText('사용 중').first().waitFor({ timeout: 12000 });
+    await page.getByText('선택됨').first().waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.getByRole('tab', { name: '전체 요약' }).click();
     await page.waitForFunction(() => {

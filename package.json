@@ -1,5 +1,5 @@
 {
-  "name": "smart-minutes-ai-release",
+  "name": "lmo-meeting-insight-release",
   "private": true,
   "scripts": {
     "check": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier quick",

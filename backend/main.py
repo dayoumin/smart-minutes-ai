@@ -3756,7 +3756,8 @@ async def save_export_record_copy(kind: str, request: Request, payload: dict = B
 def _build_analysis_storage_preflight(file_size_bytes: int | float | None, duration_seconds: float | int | None) -> dict:
     config = load_config()
     temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
-    return build_analysis_storage_preflight(temp_dir, file_size_bytes, duration_seconds)
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    return build_analysis_storage_preflight(temp_dir, file_size_bytes, duration_seconds, output_dir)
 
 
 @app.post("/api/analyze/preflight")

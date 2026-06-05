@@ -6,6 +6,7 @@ ANALYSIS_WAV_SAMPLE_RATE = 16000
 ANALYSIS_WAV_CHANNELS = 1
 ANALYSIS_WAV_BYTES_PER_SAMPLE = 2
 ANALYSIS_STORAGE_SAFETY_BYTES = 1024 * 1024 * 1024
+ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES = 256 * 1024 * 1024
 
 
 def format_storage_bytes(size_bytes: int | float | None) -> str:
@@ -48,11 +49,13 @@ def build_analysis_storage_preflight(
     temp_dir: str,
     file_size_bytes: int | float | None,
     duration_seconds: float | int | None,
+    output_dir: str | None = None,
     *,
     disk_usage=shutil.disk_usage,
     ensure_dir=os.makedirs,
 ) -> dict:
     target_dir = os.path.abspath(temp_dir)
+    output_target_dir = os.path.abspath(output_dir) if output_dir else None
     required_bytes = estimate_analysis_required_storage_bytes(file_size_bytes, duration_seconds)
 
     try:
@@ -83,14 +86,71 @@ def build_analysis_storage_preflight(
             "message": "저장 공간을 확인하지 못했습니다. 파일이 길다면 충분한 여유 공간을 확보한 뒤 진행해 주세요.",
         }
 
+    output_available_bytes = None
+    if output_target_dir:
+        try:
+            ensure_dir(output_target_dir, exist_ok=True)
+        except Exception:
+            logging.exception("Failed to prepare analysis output directory")
+            return {
+                "ok": False,
+                "level": "error",
+                "reason": "output_dir_unavailable",
+                "target_dir": target_dir,
+                "output_dir": output_target_dir,
+                "required_bytes": required_bytes,
+                "output_required_bytes": ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES,
+                "available_bytes": available_bytes,
+                "output_available_bytes": None,
+                "message": "결과 저장 폴더를 준비하지 못했습니다. 폴더 권한과 남은 저장 공간을 확인한 뒤 다시 시도해 주세요.",
+            }
+
+        try:
+            _, _, output_available_bytes = disk_usage(output_target_dir)
+        except Exception:
+            logging.exception("Failed to check analysis output storage space")
+            return {
+                "ok": True,
+                "level": "warning",
+                "reason": "storage_check_unavailable",
+                "target_dir": target_dir,
+                "output_dir": output_target_dir,
+                "required_bytes": required_bytes,
+                "output_required_bytes": ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES,
+                "available_bytes": available_bytes,
+                "output_available_bytes": None,
+                "message": "결과 저장 공간을 확인하지 못했습니다. 파일이 길다면 충분한 여유 공간을 확보한 뒤 진행해 주세요.",
+            }
+
+        if output_available_bytes < ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES:
+            return {
+                "ok": False,
+                "level": "error",
+                "reason": "not_enough_output_storage",
+                "target_dir": target_dir,
+                "output_dir": output_target_dir,
+                "required_bytes": required_bytes,
+                "output_required_bytes": ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES,
+                "available_bytes": available_bytes,
+                "output_available_bytes": output_available_bytes,
+                "message": (
+                    "결과 저장 공간이 부족합니다. 결과 폴더나 다운로드 폴더를 정리한 뒤 다시 시도해 주세요. "
+                    f"필요한 여유 공간: {format_storage_bytes(ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES)}, "
+                    f"현재 여유 공간: {format_storage_bytes(output_available_bytes)}."
+                ),
+            }
+
     ok = available_bytes >= required_bytes
     return {
         "ok": ok,
         "level": "ok" if ok else "error",
         "reason": "enough_storage" if ok else "not_enough_storage",
         "target_dir": target_dir,
+        "output_dir": output_target_dir,
         "required_bytes": required_bytes,
+        "output_required_bytes": ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES if output_target_dir else None,
         "available_bytes": available_bytes,
+        "output_available_bytes": output_available_bytes,
         "message": (
             "저장 공간을 확인했습니다."
             if ok

@@ -4,9 +4,10 @@
   - 최종 실행/검증 기준은 `releases\lmo_audio`이며, 루트 `lmo_audio`는 예전 산출물이므로 사용하지 않는다.
   - 이번 PC에서는 기존 `backend\models\...` 실모델을 복사하지 않기 위해 루트 `models\...`를 junction으로 연결했다. 회사 PC에서는 junction을 필수 절차로 보지 말고, 실제 모델 폴더를 루트 `models` 아래에 두거나 명시적으로 링크한 뒤 `release_portable.ps1`를 실행한다.
   - Qwen 모델은 회사 전달용 portable과 재빌드용 모델 원본에 넣지 않는다.
-- [ ] 2026-06-03 회사 PC 빌드 및 데스크탑앱 실제 검증
+- [ ] 2026-06-03 다른/회사 PC 데스크탑앱 실제 검증
   - 이번 집 PC 검증은 백엔드 단위 테스트, 프론트 typecheck/lint, 웹 기반 Playwright 시뮬레이션까지이며, `releases\lmo_audio\lmo_audio.exe`를 직접 실행한 데스크탑앱 검증은 아니다.
-  - 회사 PC에서는 먼저 최신 `origin/main`을 pull한 뒤, 기존 회사 PC 모델 폴더를 유지하고 코드/설정만 최신화한다.
+  - 단순 사용 테스트는 집 PC에서 clean portable 빌드를 만든 뒤 `releases\lmo_audio` 폴더 전체를 다른 PC로 옮겨 확인해도 된다.
+  - 회사 PC에서 직접 재빌드할 경우에만 최신 `origin/main`을 pull한 뒤, 기존 회사 PC 모델 폴더를 유지하고 코드/설정만 최신화한다.
   - 회사 PC에서 재빌드할 때는 루트에서 `corepack pnpm build`를 실행한다. 이 명령은 웹 빌드가 아니라 사용자용 portable 배포 빌드다.
   - 빌드 후 최종 실행 기준은 `releases\lmo_audio` 폴더 전체다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
   - 빌드 후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`로 manifest, sidecar, 모델, health, export smoke를 확인한다.
@@ -32,16 +33,12 @@
   - 요약 AI가 준비되지 않았으면 STT, 참석자 구분, 대화록 TXT/JSON은 완료하고 `generation_status.summary=skipped`로 남긴다.
   - UI에서는 `요약 AI 준비 필요`로 표시하고, Ollama가 준비된 PC에서 다시 전체 요약을 실행할 수 있게 둔다.
   - 주제별/참석자별 정리는 요약 AI 준비 후 실행하는 선택 정리로 본다.
-- [ ] 0-0-0-3순위: 데스크탑앱 Ollama 정리 모델 설치 UX 설계
-  - 바로 구현하지 않고, 먼저 설정 화면에서 `AI 정리 모델` 준비 흐름을 어떻게 보여줄지 설계한다.
-  - 기본 추천은 `gemma4:e2b`로 둔다. 회사 PC에서 처음 쓰기 좋은 기본 정리 모델로 안내한다.
-  - 상위 추천은 `gemma4:e4b`와 `qwen3.5:9b`를 우선 검토한다. `gemma4:e4b`는 8B급 품질 옵션으로 설명한다.
-  - 저사양/중간 사양 후보는 `qwen3.5:2b`, `qwen3.5:4b`를 제안 목록에 둔다.
-  - 고성능/고사양 후보는 기본 목록에서 강조하지 않고 고급 옵션으로 분리한다. 후보는 `gemma4:26b`, `qwen3.6:27b`, `qwen3.6:35b`처럼 용량이 큰 모델로 둔다.
-  - 모델 발전을 막지 않도록 추천 목록과 별도로 사용자가 Ollama 모델명을 직접 입력해 설치/선택할 수 있는 고급 입력을 둔다.
-  - 외부망 PC에서는 Ollama API 또는 CLI로 모델을 받을 수 있게 하고, 내부망/오프라인 PC에서는 이미 설치된 Ollama 모델만 감지해서 선택하게 한다.
-  - 설치 전 PC 성능과 여유 디스크를 확인해 추천/주의 문구를 보여준다. 단, 성능 판단은 다운로드 차단보다 안내 중심으로 둔다.
-  - 구현 전 `/api/models/status`, 설정 화면, 기록 정리 버튼 활성화 조건, 다운로드 진행률 표시, 실패/취소 UX를 함께 검토한다.
+- [x] 0-0-0-3순위: 데스크탑앱 Ollama 정리 모델 설치 UX 1차 구현
+  - 2026-06-05 원격 병합 기준: 설정 화면에서 추천 정리 모델, 직접 입력 모델, 설치된 Ollama 모델, 사용 중 모델 표시가 추가됐다.
+  - Ollama 모델 받기/상태 확인/삭제는 사용자 입력 모델명 검증, 받는 중 표시, 완료/실패 안내, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 포함한다.
+  - 자동 검증 기준은 `backend/test_api.py`와 `desktop-app/scripts/simulate-settings-model-management.mjs`다.
+  - 남은 일은 회사 PC에서 외부망/내부망 조건별 실제 확인이다. 외부망 PC에서는 설정 화면으로 모델 받기/선택이 되는지 보고, 내부망/오프라인 PC에서는 이미 설치된 Ollama 모델만 감지해서 선택되는지 확인한다.
+  - STT와 참석자 구분 모델은 여전히 관리자가 `models` 폴더에 준비한다. 이 모델들은 앱 안에서 개별 다운로드하지 않는다.
 - [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
   - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization on` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
@@ -62,9 +59,14 @@
 - [x] 2026-05-13 portable release 문서 단일화
   - build venv, sidecar packaging, portable release, deploy-folder 검증 절차의 상세 원본은 `docs/tauri-desktop-release-checklist.md` 하나로 둔다.
   - `AGENTS.md`에는 체크리스트를 먼저 읽으라는 짧은 운영 규칙만 남기고, 새 시행착오도 체크리스트에 추가한다.
-- [ ] 2026-05-13 clean manifest 재생성
-  - 현재 `releases\lmo_audio`는 빌드와 검증은 통과했지만, 작업 중 빌드라 `release-manifest.json`의 dirty 기록이 남았다.
-  - 외부 전달 직전에는 커밋 후 깨끗한 워크트리에서 `scripts\release_portable.ps1 -Python backend\.venv-desktop\Scripts\python.exe`를 다시 실행해 manifest dirty 상태를 정리한다.
+- [x] 2026-05-13 clean manifest 재생성
+  - 2026-06-05 확인: `releases\lmo_audio\release-manifest.json`은 현재 배포 커밋을 가리키고 `dirty=false`다.
+  - 이번 PC에는 `backend\.venv-desktop`이 없어 검증된 `backend\.venv\Scripts\python.exe`를 명시해 빌드했다.
+  - 다음 반복 배포 기준을 더 깔끔하게 맞추려면 `backend\.venv-desktop`를 복구한 뒤 `corepack pnpm check:portable`까지 통과시킨다.
+- [ ] 2026-06-05 release build venv 복구
+  - 정식 반복 배포 기본값은 `backend\.venv-desktop\Scripts\python.exe`다.
+  - 이 venv는 PC 간에 복사하지 말고 해당 PC의 Python으로 새로 만든다.
+  - 복구 명령: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure_backend_build_env.ps1 -Python <python.exe 경로> -RecreateBroken`.
 - [ ] 2026-06-01 속도 개선 후보 체계 검토
   - 1차 후보는 `/api/models/status` TTL 캐싱이다. 앱 시작/설정 진입 시 모델 폴더, Ollama, GPU 상태 확인 비용을 줄일 수 있는지 먼저 측정한다.
   - 측정 기준: cold start 후 `/api/health`, `/api/models/status` 5회 응답 시간, 캐시 TTL 3~10초 적용 전후 비교, 설정 저장/모델 상태 새로고침 시 캐시 무효화 확인.

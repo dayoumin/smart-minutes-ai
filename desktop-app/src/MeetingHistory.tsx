@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, CircleHelp, Edit3, FileAudio, Loader2, Pause, Play, Save, Search, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, Loader2, Pause, Play, Save, Search, Square, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -407,6 +407,37 @@ const normalizeTranscriptDrafts = (segments: MeetingSegment[]): MeetingSegment[]
         }))
         .filter(segment => Boolean(segment.text))
 );
+const formatEditableTranscript = (segments: MeetingSegment[]): string => (
+    normalizeTranscriptDrafts(segments)
+        .map(segment => {
+            const speaker = String(segment.displaySpeaker || segment.speaker || '참석자').trim() || '참석자';
+            return `${speaker}: ${segment.text}`;
+        })
+        .join('\n')
+);
+
+const copyTextToClipboard = async (text: string): Promise<void> => {
+    if (navigator.clipboard?.writeText) {
+        try {
+            await navigator.clipboard.writeText(text);
+            return;
+        } catch {
+            // Fall back below for desktop runtimes that block Clipboard API access.
+        }
+    }
+
+    const textArea = document.createElement('textarea');
+    textArea.value = text;
+    textArea.setAttribute('readonly', '');
+    textArea.style.position = 'fixed';
+    textArea.style.left = '-9999px';
+    textArea.style.top = '0';
+    document.body.appendChild(textArea);
+    textArea.select();
+    const copied = document.execCommand('copy');
+    document.body.removeChild(textArea);
+    if (!copied) throw new Error('Clipboard copy failed');
+};
 
 const resolveBaseDisplaySegments = (meeting: MeetingRecord | null): MeetingSegment[] => (
     meeting?.displaySegments?.length
@@ -2053,6 +2084,24 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         setIsTranscriptEditing(false);
         setNoticeMessage('');
     };
+    const handleCopyEditableTranscript = async () => {
+        const transcriptText = formatEditableTranscript(displaySegments);
+        if (!transcriptText) {
+            setNoticeMessage('');
+            setErrorMessage('복사할 대화록이 없습니다.');
+            return;
+        }
+
+        try {
+            setErrorMessage('');
+            setNoticeMessage('');
+            await copyTextToClipboard(transcriptText);
+            setNoticeMessage('편집용 대화록을 복사했습니다.');
+        } catch {
+            setNoticeMessage('');
+            setErrorMessage('대화록을 복사하지 못했습니다. 다시 시도해 주세요.');
+        }
+    };
 
     const handleRevertTranscript = async () => {
         if (!selectedMeeting?.editedDisplaySegments?.length) return;
@@ -3032,10 +3081,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 </Button>
                                             </>
                                         ) : !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
-                                            <Button variant="outline" onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
-                                                <Edit3 size={15} />
-                                                대화록 편집
-                                            </Button>
+                                            <>
+                                                <Button variant="outline" onClick={() => void handleCopyEditableTranscript()} disabled={!displaySegments.length}>
+                                                    <Copy size={15} />
+                                                    편집용 복사
+                                                </Button>
+                                                <Button variant="outline" onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
+                                                    <Edit3 size={15} />
+                                                    대화록 편집
+                                                </Button>
+                                            </>
                                         )}
                                         {!!speakersInTranscript.length && !isTranscriptEditing && (
                                             isSpeakerLabelPanelOpen || hasSpeakerLabelChanges ? (

@@ -39,6 +39,8 @@
   - 자동 검증 기준은 `backend/test_api.py`와 `desktop-app/scripts/simulate-settings-model-management.mjs`다.
   - 남은 일은 회사 PC에서 외부망/내부망 조건별 실제 확인이다. 외부망 PC에서는 설정 화면으로 모델 받기/선택이 되는지 보고, 내부망/오프라인 PC에서는 이미 설치된 Ollama 모델만 감지해서 선택되는지 확인한다.
   - STT와 참석자 구분 모델은 여전히 관리자가 `models` 폴더에 준비한다. 이 모델들은 앱 안에서 개별 다운로드하지 않는다.
+  - 2026-06-06 보완: STT/참석자 구분 모델은 설정 화면에서 `받기`가 아니라 준비 안내로 표시한다. Ollama가 없는 PC에서 정리 모델 받기를 누르면 즉시 실패 안내를 보여주고 진행 중 메시지를 남기지 않는다. 회의 요약 모델 영역에는 Ollama 설치 링크를 별도로 제공한다.
+  - 2026-06-06 보완: 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만든다. `speaker-diarization-community-1`은 포함하고, 큰 `faster-whisper-large-v3`만 제외한다. 자동 Whisper 다운로드는 별도 2단계 UX/네트워크 검증 대상으로 둔다.
 - [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
   - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization on` 기준으로 다시 실용 속도로 끝나는지로 잡는다.

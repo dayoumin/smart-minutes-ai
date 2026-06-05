@@ -51,7 +51,10 @@ MODEL_SPECS = [
         required=True,
         license_url="https://huggingface.co/Systran/faster-whisper-large-v3",
         install_url="https://huggingface.co/Systran/faster-whisper-large-v3",
-        manual_note="models\\faster-whisper-large-v3 폴더에 model.bin, tokenizer.json, config.json 등을 넣어 주세요.",
+        manual_note=(
+            "모델 페이지는 참고용입니다. 관리자가 준비한 faster-whisper-large-v3 전체 묶음을 "
+            "models\\faster-whisper-large-v3 폴더에 넣어 주세요."
+        ),
     ),
     ModelSpec(
         key="diarization",
@@ -70,8 +73,8 @@ MODEL_SPECS = [
         install_url="https://huggingface.co/pyannote/speaker-diarization-community-1",
         requires_token=True,
         manual_note=(
-            "참석자 구분을 사용할 때 필요합니다. 배포본에 포함되어 있으면 별도 작업이 필요 없고, "
-            "없으면 models\\speaker-diarization-community-1 폴더에 넣어 주세요."
+            "모델 페이지는 참고용입니다. 배포본에 포함되어 있으면 별도 작업이 필요 없고, "
+            "없으면 speaker-diarization-community-1 전체 묶음을 models\\speaker-diarization-community-1 폴더에 넣어 주세요."
         ),
     ),
 ]

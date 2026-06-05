@@ -804,6 +804,13 @@ def _validate_ollama_model_name(model_name: str) -> str:
     return model_name
 
 
+def _ollama_executable_available() -> bool:
+    executable = find_ollama_executable()
+    if executable == "ollama":
+        return shutil.which("ollama") is not None
+    return os.path.isfile(executable)
+
+
 def _ollama_pull_snapshot(model_name: str) -> dict:
     with OLLAMA_PULL_STATUS_LOCK:
         status = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
@@ -1043,6 +1050,15 @@ def _start_ollama_pull(model_name: str) -> dict:
 @app.post("/api/models/ollama/pull")
 async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
     model_name = _validate_ollama_model_name(str((payload or {}).get("model") or ""))
+    if not _ollama_executable_available():
+        return _set_ollama_pull_status(
+            model_name,
+            active=False,
+            status="failed",
+            message="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.",
+            exit_code=None,
+            error="ollama executable not found",
+        )
     _remember_summary_model(model_name, managed_by_app=True)
     return _start_ollama_pull(model_name)
 

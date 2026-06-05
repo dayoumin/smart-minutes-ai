@@ -8,6 +8,7 @@
     "check:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\run_release_checks.ps1 -Tier portable",
     "build": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
     "build:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\build_user_release.ps1",
+    "package:handoff": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\create_handoff_package.ps1",
     "package:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\create_update_package.ps1",
     "verify:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_update.ps1",
     "verify:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio",

@@ -1,9 +1,11 @@
 import hashlib
 import json
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 
 
@@ -45,6 +47,10 @@ class PortableReleaseScriptTest(unittest.TestCase):
         self.assertEqual(
             root_package["scripts"]["verify:portable"],
             "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio",
+        )
+        self.assertEqual(
+            root_package["scripts"]["package:handoff"],
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\create_handoff_package.ps1",
         )
         self.assertEqual(desktop_package["scripts"]["build"], "vite build")
         self.assertEqual(desktop_package["scripts"]["build:web"], "vite build")
@@ -163,6 +169,191 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
 
         for script in (release_script, verify_script, package_script):
             self.assertIn("portable_model_layout.json", script)
+
+    def test_handoff_package_excludes_only_default_stt_model(self):
+        package_name = f"test_no_whisper_{id(self)}"
+        handoff_root = ROOT / "releases" / "handoff"
+        package_zip = handoff_root / f"{package_name}.zip"
+        staging_root = handoff_root / ".staging" / package_name
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = Path(temp_dir) / "lmo_audio"
+            (portable / "backend").mkdir(parents=True)
+            (portable / "binaries").mkdir()
+            (portable / "models" / "faster-whisper-large-v3").mkdir(parents=True)
+            (portable / "models" / "speaker-diarization-community-1" / "embedding").mkdir(parents=True)
+            (portable / "models" / "speaker-diarization-community-1" / "segmentation").mkdir(parents=True)
+            (portable / "models" / "speaker-diarization-community-1" / "plda").mkdir(parents=True)
+
+            (portable / "lmo_audio.exe").write_text("app", encoding="utf-8")
+            (portable / "START_HERE.txt").write_text("full package", encoding="utf-8")
+            (portable / "backend" / "main.py").write_text("backend", encoding="utf-8")
+            (portable / "backend" / "config.json").write_text("{}", encoding="utf-8")
+            (portable / "binaries" / "meeting-backend-x86_64-pc-windows-msvc.exe").write_text("sidecar", encoding="utf-8")
+            for marker in ("model.bin", "tokenizer.json", "config.json"):
+                (portable / "models" / "faster-whisper-large-v3" / marker).write_text(marker, encoding="utf-8")
+            (portable / "models" / "speaker-diarization-community-1" / "config.yaml").write_text("config", encoding="utf-8")
+            (portable / "models" / "speaker-diarization-community-1" / "embedding" / "pytorch_model.bin").write_text("embedding", encoding="utf-8")
+            (portable / "models" / "speaker-diarization-community-1" / "segmentation" / "pytorch_model.bin").write_text("segmentation", encoding="utf-8")
+            (portable / "models" / "speaker-diarization-community-1" / "plda" / "plda.npz").write_text("plda", encoding="utf-8")
+
+            model_markers = []
+            for relative in (
+                "models\\faster-whisper-large-v3\\model.bin",
+                "models\\faster-whisper-large-v3\\tokenizer.json",
+                "models\\faster-whisper-large-v3\\config.json",
+                "models\\speaker-diarization-community-1\\config.yaml",
+                "models\\speaker-diarization-community-1\\embedding\\pytorch_model.bin",
+                "models\\speaker-diarization-community-1\\segmentation\\pytorch_model.bin",
+                "models\\speaker-diarization-community-1\\plda\\plda.npz",
+            ):
+                path = portable / relative
+                model_markers.append({"path": relative, "exists": True, "bytes": path.stat().st_size})
+
+            release_manifest = {
+                "app": "lmo_audio",
+                "commit": "abcdef1234567890",
+                "dirty": False,
+                "files": {
+                    "startHere": {
+                        "path": "START_HERE.txt",
+                        "sha256": _sha256(portable / "START_HERE.txt"),
+                    },
+                },
+                "modelMarkers": model_markers,
+            }
+            (portable / "release-manifest.json").write_text(json.dumps(release_manifest), encoding="utf-8")
+
+            try:
+                completed = subprocess.run(
+                    [
+                        "powershell",
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-File",
+                        str(ROOT / "scripts" / "create_handoff_package.ps1"),
+                        "-PortableDir",
+                        str(portable),
+                        "-PackageName",
+                        package_name,
+                        "-AllowStale",
+                        "-Force",
+                    ],
+                    cwd=ROOT,
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=60,
+                )
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                self.assertTrue(package_zip.exists())
+
+                with zipfile.ZipFile(package_zip) as archive:
+                    names = set(archive.namelist())
+                    self.assertIn(
+                        "lmo_audio/models/speaker-diarization-community-1/config.yaml",
+                        names,
+                    )
+                    self.assertIn(
+                        "lmo_audio/models/speaker-diarization-community-1/embedding/pytorch_model.bin",
+                        names,
+                    )
+                    self.assertNotIn(
+                        "lmo_audio/models/faster-whisper-large-v3/model.bin",
+                        names,
+                    )
+                    self.assertIn("lmo_audio/models/README.txt", names)
+                    self.assertIn("lmo_audio/START_HERE.txt", names)
+                    start_here = archive.read("lmo_audio/START_HERE.txt").decode("utf-8")
+                    self.assertIn("음성 인식 모델: models\\faster-whisper-large-v3", start_here)
+                    manifest = json.loads(archive.read("lmo_audio/release-manifest.json").decode("utf-8-sig"))
+                    self.assertEqual(manifest["handoff"]["packageFormat"], "lmo-audio-slim-handoff-v1")
+                    payload_by_path = {entry["path"]: entry for entry in manifest["portablePayloadFiles"]}
+                    self.assertEqual(
+                        payload_by_path["START_HERE.txt"]["sha256"],
+                        hashlib.sha256(archive.read("lmo_audio/START_HERE.txt")).hexdigest(),
+                    )
+                    marker_by_path = {marker["path"]: marker for marker in manifest["modelMarkers"]}
+                    self.assertFalse(marker_by_path["models\\faster-whisper-large-v3\\model.bin"]["exists"])
+                    self.assertTrue(marker_by_path["models\\faster-whisper-large-v3\\model.bin"]["excludedFromHandoff"])
+                    self.assertTrue(marker_by_path["models\\speaker-diarization-community-1\\config.yaml"]["exists"])
+            finally:
+                package_zip.unlink(missing_ok=True)
+                shutil.rmtree(staging_root, ignore_errors=True)
+
+    def test_handoff_package_rejects_unsafe_package_name(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = Path(temp_dir) / "lmo_audio"
+            (portable / "backend").mkdir(parents=True)
+            (portable / "binaries").mkdir()
+            (portable / "models").mkdir()
+            (portable / "release-manifest.json").write_text(
+                json.dumps({"app": "lmo_audio", "commit": "abcdef1", "dirty": False, "files": {}, "modelMarkers": []}),
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "scripts" / "create_handoff_package.ps1"),
+                    "-PortableDir",
+                    str(portable),
+                    "-PackageName",
+                    "..\\escape",
+                    "-Force",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("PackageName contains invalid path characters", completed.stdout + completed.stderr)
+
+    def test_handoff_package_rejects_stale_release_manifest(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = Path(temp_dir) / "lmo_audio"
+            (portable / "backend").mkdir(parents=True)
+            (portable / "binaries").mkdir()
+            (portable / "models").mkdir()
+            (portable / "release-manifest.json").write_text(
+                json.dumps({"app": "lmo_audio", "commit": "abcdef1", "dirty": False, "files": {}, "modelMarkers": []}),
+                encoding="utf-8",
+            )
+
+            completed = subprocess.run(
+                [
+                    "powershell",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                    str(ROOT / "scripts" / "create_handoff_package.ps1"),
+                    "-PortableDir",
+                    str(portable),
+                    "-PackageName",
+                    f"test_stale_{id(self)}",
+                    "-Force",
+                ],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+
+        self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+        self.assertIn("does not match current HEAD", completed.stdout + completed.stderr)
 
     def test_release_script_rejects_unsafe_deploy_paths(self):
         script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
@@ -298,6 +489,15 @@ if ($actual -notlike "18777|{temp_path}|real*") {{
 """
             completed = _run_powershell(command)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+    def test_verify_portable_has_handoff_mode_for_slim_packages(self):
+        script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
+
+        self.assertIn("[switch]$Handoff", script)
+        self.assertIn("[string]$_.role -eq \"diarization\"", script)
+        self.assertIn("[string]$_.role -eq \"default_stt\"", script)
+        self.assertIn("excluded from handoff", script)
+        self.assertIn("required handoff models ready", script)
 
     def test_release_and_diagnose_scripts_fallback_when_cim_is_unavailable(self):
         release_script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")

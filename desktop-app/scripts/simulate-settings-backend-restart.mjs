@@ -281,21 +281,24 @@ const run = async () => {
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('참석자 구분 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByRole('button', { name: '음성 인식 모델 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByRole('button', { name: '음성 인식 모델 준비 안내 열기' }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByLabel('참석자 구분 모델 있음').waitFor({ state: 'visible', timeout: 10000 });
+    const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
+    await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
     assert.equal(await modelsPanel.getByText('준비됨').count(), 0);
     assert.equal(await modelsPanel.getByText('대화록 작성에 필요합니다.').count(), 0);
     await modelsPanel.getByText('이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.locator('.status-pill').filter({ hasText: /메모리/ }).count(), 0);
     assert.equal(
       await modelsPanel.locator('button').filter({ hasText: /^받기$/ }).count(),
-      2,
-      'recommended model picker should not duplicate the download button',
+      1,
+      'only unavailable Ollama summary models should show download buttons',
     );
     routeState.audioModelState.diarizationInstalled = false;
     await page.getByRole('tab', { name: '일반' }).click();
     await page.getByRole('tab', { name: '모델' }).click();
-    await modelsPanel.getByRole('button', { name: '참석자 구분 모델 받기' }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByRole('button', { name: '참석자 구분 모델 준비 안내 열기' }).waitFor({ state: 'visible', timeout: 10000 });
 
     await modelsPanel.getByLabel('다른 모델명 추가').fill('gemma4:4b');
     await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 검색' }).click();

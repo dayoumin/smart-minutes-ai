@@ -11,6 +11,7 @@ import {
 import { getApiBase, isTauriRuntime, restartDesktopBackend } from './apiBase';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
+const OLLAMA_INSTALL_URL = 'https://ollama.com/download/windows';
 
 const DEFAULT_SUMMARY_MODEL_OPTIONS: SummaryModelOption[] = [
     {
@@ -384,6 +385,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     if (!isCurrentPullRequest(modelName, requestId)) return;
                     setMessage(status.message || '모델 받기가 완료되었습니다.');
                 } else if (status.status === 'failed') {
+                    setMessage('');
                     setErrorMessage(status.message || '모델을 받지 못했습니다.');
                 }
                 return;
@@ -431,10 +433,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 if (!isCurrentPullRequest(targetModel, requestId)) return;
                 setMessage(status.message || `${targetModel} 모델이 준비되었습니다.`);
             } else {
+                setMessage('');
                 setErrorMessage(status.message || `${targetModel} 모델을 받지 못했습니다.`);
             }
         } catch (error) {
             if (!isCurrentPullRequest(targetModel, requestId)) return;
+            setMessage('');
             setErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
         }
     }, [apiBase, isCurrentPullRequest, loadModelsStatus, pollOllamaPullStatus, summaryModelInput, updateOllamaPullStatus]);
@@ -798,6 +802,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             : gpuReason;
     const recommendedSummaryModel = models?.summary_model_recommendation?.model || summaryModelOptions[0]?.model || '';
     const recommendationMessage = models?.summary_model_recommendation?.message || '';
+    const errorHeading = errorMessage.includes('Ollama') ? 'Ollama 설치 필요' : '설정 확인 실패';
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[var(--bg-overlay)] p-4">
             <div
@@ -841,7 +846,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 {(errorMessage || message) && (
                     <div className="pointer-events-none absolute right-5 top-[8.5rem] z-20 flex w-[calc(100%-2.5rem)] max-w-xl flex-col gap-2">
                         {errorMessage && (
-                            <StatusBanner tone="error" heading="설정 확인 실패">
+                            <StatusBanner tone="error" heading={errorHeading}>
                                 {errorMessage}
                             </StatusBanner>
                         )}
@@ -1020,13 +1025,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         {analysisModels.map(model => {
                                             const modelUrl = model.install_url || model.license_url || '';
                                             const modelName = model.repo_id || model.label;
+                                            const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
                                             return (
                                                 <div key={model.key} className="rounded-md border border-border bg-background p-3 text-sm">
                                                     <div className="flex items-center justify-between gap-3">
                                                         <div className="min-w-0">
                                                             <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>
                                                             {!model.installed && (
-                                                                <span className="mt-1 block text-xs text-muted-foreground">모델이 없습니다.</span>
+                                                                <span className="mt-1 block text-xs text-muted-foreground">{manualNote}</span>
                                                             )}
                                                         </div>
                                                         {model.installed ? (
@@ -1041,12 +1047,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                         ) : modelUrl ? (
                                                             <button
                                                                 type="button"
-                                                                className="btn btn-primary h-8 shrink-0 px-3 text-xs"
-                                                                aria-label={`${getUserModelLabel(model)} 받기`}
-                                                                title={`${modelName} 받기`}
+                                                                className="btn btn-outline h-8 shrink-0 px-3 text-xs"
+                                                                aria-label={`${getUserModelLabel(model)} 준비 안내 열기`}
+                                                                title={`${modelName} 준비 안내`}
                                                                 onClick={() => window.open(modelUrl, '_blank', 'noopener,noreferrer')}
                                                             >
-                                                                받기
+                                                                안내
                                                             </button>
                                                         ) : null}
                                                     </div>
@@ -1064,10 +1070,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             </div>
 
                             <div className="rounded-md border border-border bg-muted/20 p-4">
-                                <div className="flex flex-col gap-1">
-                                    <div>
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="flex flex-col gap-1">
                                         <div className="text-base font-semibold text-foreground">회의 요약 모델</div>
+                                        <p className="text-xs text-muted-foreground">
+                                            Ollama를 설치한 뒤 정리 모델을 받을 수 있습니다.
+                                        </p>
                                     </div>
+                                    <a
+                                        href={OLLAMA_INSTALL_URL}
+                                        target="_blank"
+                                        rel="noreferrer"
+                                        className="btn btn-outline h-8 shrink-0 px-3 text-xs"
+                                        aria-label="Ollama 설치 페이지 열기"
+                                    >
+                                        Ollama 설치
+                                    </a>
                                 </div>
 
                                 {summaryModelOptions.length > 0 && (

@@ -412,6 +412,9 @@ const run = async () => {
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
+    await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
     await modelsPanel.getByText('이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('선택됨', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     const gemma4e4bInitialCard = modelsPanel

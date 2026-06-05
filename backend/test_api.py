@@ -757,6 +757,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
     def test_start_ollama_pull_accepts_manual_user_action(self) -> None:
         with (
+            patch.object(main, "_ollama_executable_available", return_value=True),
             patch.object(main, "_remember_summary_model") as remember_model,
             patch.object(main, "_start_ollama_pull", return_value={
                 "model": "llama3.2:3b",
@@ -783,6 +784,7 @@ class AnalyzeApiTest(unittest.TestCase):
             config_ref.update(copy.deepcopy(config))
 
         with (
+            patch.object(main, "_ollama_executable_available", return_value=True),
             patch("main.load_config", side_effect=lambda: copy.deepcopy(config_ref)),
             patch("main.save_config", side_effect=fake_save_config),
             patch.object(main, "_start_ollama_pull", return_value={
@@ -801,6 +803,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
     def test_start_ollama_pull_normalizes_legacy_gemma4_short_tag(self) -> None:
         with (
+            patch.object(main, "_ollama_executable_available", return_value=True),
             patch.object(main, "_remember_summary_model") as remember_model,
             patch.object(main, "_start_ollama_pull", return_value={
                 "model": "gemma4:e2b",
@@ -834,6 +837,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
     def test_start_ollama_pull_runs_pull_even_when_model_exists(self) -> None:
         with (
+            patch.object(main, "_ollama_executable_available", return_value=True),
             patch.object(main, "_remember_summary_model"),
             patch.object(main, "ollama_model_exists", return_value=True),
             patch.object(main.threading, "Thread") as thread_class,

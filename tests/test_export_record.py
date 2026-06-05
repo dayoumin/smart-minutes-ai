@@ -642,6 +642,19 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(payload["models"], [])
         self.assertIn("모델 상태를 확인하지 못했습니다.", payload["errors"][0])
 
+    def test_ollama_pull_returns_failed_when_ollama_is_missing(self):
+        with (
+            patch.object(main, "find_ollama_executable", return_value="ollama"),
+            patch.object(main.shutil, "which", return_value=None),
+        ):
+            response = self.client.post("/api/models/ollama/pull", json={"model": "gemma4:e2b"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse(payload["active"])
+        self.assertEqual(payload["status"], "failed")
+        self.assertIn("Ollama를 찾지 못했습니다", payload["message"])
+
 
 if __name__ == "__main__":
     unittest.main()

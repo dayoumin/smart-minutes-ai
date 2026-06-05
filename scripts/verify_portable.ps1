@@ -1,7 +1,8 @@
 param(
     [string]$PortableDir = "releases\lmo_audio",
     [int]$TimeoutSeconds = 240,
-    [switch]$AllowDirty
+    [switch]$AllowDirty,
+    [switch]$Handoff
 )
 
 $ErrorActionPreference = "Stop"
@@ -354,7 +355,13 @@ Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
 Test-CleanPortableSurface $portablePath
 Test-ReleaseManifest $portablePath $manifestFile ([bool]$AllowDirty)
-foreach ($model in @($ModelLayout.models)) {
+$modelsToVerify = if ($Handoff) {
+    @($ModelLayout.models | Where-Object { [string]$_.role -eq "diarization" })
+}
+else {
+    @($ModelLayout.models)
+}
+foreach ($model in @($modelsToVerify)) {
     $modelDir = Join-Path $modelsDir ([string]$model.portableDir)
     $missingMarkers = @(
         foreach ($marker in @($model.requiredMarkers)) {
@@ -365,6 +372,12 @@ foreach ($model in @($ModelLayout.models)) {
         }
     )
     Add-Result "$($model.label) model layout" ($missingMarkers.Count -eq 0) $(if ($missingMarkers.Count -eq 0) { $modelDir } else { "missing=$($missingMarkers -join ', ')" })
+}
+if ($Handoff) {
+    foreach ($model in @($ModelLayout.models | Where-Object { [string]$_.role -eq "default_stt" })) {
+        $modelDir = Join-Path $modelsDir ([string]$model.portableDir)
+        Add-Result "$($model.label) excluded from handoff" (-not (Test-Path -LiteralPath $modelDir)) $modelDir
+    }
 }
 
 if (Test-Path -LiteralPath $appExe) {
@@ -422,7 +435,17 @@ try {
         $models = Invoke-RestMethod -Uri "$baseUrl/api/models/status" -TimeoutSec $runtimeRequestTimeoutSeconds
         $missingRequired = @($models.models | Where-Object { $_.required -and -not $_.installed } | Select-Object -ExpandProperty label)
         Add-Result "models endpoint" ($null -ne $models.models) "ready=$($models.ready); missing=$($missingRequired -join ', ')"
-        Add-Result "required models ready" ($models.ready -eq $true) "selected=$($models.selected_stt_model); missing=$($missingRequired -join ', ')"
+        if ($Handoff) {
+            $missingExceptStt = @(
+                $models.models |
+                    Where-Object { $_.required -and -not $_.installed -and [string]$_.key -ne "stt_faster_whisper" } |
+                    Select-Object -ExpandProperty label
+            )
+            Add-Result "required handoff models ready" ($missingExceptStt.Count -eq 0) "selected=$($models.selected_stt_model); missing=$($missingExceptStt -join ', '); stt may be supplied after handoff"
+        }
+        else {
+            Add-Result "required models ready" ($models.ready -eq $true) "selected=$($models.selected_stt_model); missing=$($missingRequired -join ', ')"
+        }
 
         $previousSttModel = $settings.stt.selected_model
         if (-not $previousSttModel) {

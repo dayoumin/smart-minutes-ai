@@ -51,7 +51,7 @@
 - 모델 경로는 `실행 폴더/models/...` 기준으로 안내한다.
 - 현재 앱 설정 화면은 필수 모델 준비 상태와 `models` 폴더 기준 안내를 보여준다. 절대 경로 표시/복사 버튼은 후속 UX 개선으로 다루되, 배포 문서에는 실제 배치 위치를 반드시 명시한다.
 - 필수 모델이 없으면 분석 버튼 클릭 후 즉시 원인과 조치 방법을 보여준다.
-- 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다.
+- 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
 
 ## 4. 패키징 산출물
 
@@ -71,7 +71,7 @@
 - 설정은 `일반`과 `모델` 탭 기준으로 확인한다. 더 이상 일반 사용자 흐름에서 `분석 준비` 탭명을 기대하지 않는다.
 - 설정 `일반` 탭에서 참석자 구분 사용 여부와 분석 중 참석자 구분 실행 옵션이 저장되고 `/api/models/status`에 반영되는지 확인한다.
 - 설정 `모델` 탭에서 추천 모델, 직접 입력 모델, 설치된 Ollama 모델, 사용 중 모델 표시가 서로 일관되는지 확인한다.
-- Ollama 모델 받기/상태 확인/삭제 기능은 사용자 입력 모델명 검증, 받는 중 표시, 완료/실패 안내, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 함께 확인한다.
+- Ollama 모델 받기/상태 확인/삭제 기능은 사용자 입력 모델명 검증, 받는 중 표시, 완료/실패 안내, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 함께 확인한다. Ollama가 설치되어 있지 않은 PC에서는 받기 요청이 즉시 실패 안내로 끝나고, 진행 중 메시지가 남지 않아야 한다.
 - 결과 화면에서 요약 모델이 없을 때는 `모델 필요` 수준의 사용자 문구와 `모델` 탭 이동이 동작해야 한다.
 - 결과 화면에서 원본 음성이 없을 때 참석자 구분 상태를 구분한다. 기존 참석자 표식이 1명뿐이면 `표식 1명`, 표식 자체가 없으면 `재실행 불가` 안내가 나와야 한다.
 
@@ -191,6 +191,31 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\create_update_packag
 
 기본 산출물은 `releases\updates\lmo_audio_update_<commit>`이다. 이 폴더 안에는 `payload`, `update-manifest.json`, `update_lmo_audio.ps1`, `verify_update.ps1`가 들어간다. `payload\models`와 `payload\backend\config.json`이 있으면 잘못 만든 패키지로 본다.
 
+### 회사 전달용 슬림 zip
+
+새 PC에 전달하되 2GB 이상 Whisper 모델을 제외하려면 풀 portable 빌드가 끝난 뒤 아래 명령을 사용한다.
+
+```powershell
+corepack pnpm package:handoff
+```
+
+기본 산출물은 `releases\handoff\lmo_audio_no_whisper_<commit>.zip`이다. 이 zip은 앱, 백엔드, sidecar, 설정 파일, `models\speaker-diarization-community-1`을 포함하고, `models\faster-whisper-large-v3`만 제외한다. 예전처럼 `no_models`로 만들면 참석자 구분 모델까지 빠져 사용자가 다시 준비해야 하므로 피한다.
+
+슬림 zip 검수 기준:
+
+- zip 안에 `lmo_audio\models\speaker-diarization-community-1\config.yaml`이 있어야 한다.
+- zip 안에 `lmo_audio\models\faster-whisper-large-v3\model.bin`은 없어야 한다.
+- `START_HERE.txt`와 `models\README.txt`가 Whisper 모델을 넣을 위치를 안내해야 한다.
+- 회사 PC에서 Whisper 모델을 넣기 전에는 대화록 작성이 준비 필요 상태로 보일 수 있다.
+
+슬림 zip을 빈 폴더에 풀어 구조만 검증할 때는 `-Handoff` 모드를 사용한다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir <압축을 푼 경로>\lmo_audio -Handoff
+```
+
+Whisper 모델까지 넣은 뒤 최종 실행 검증을 할 때는 일반 `verify_portable.ps1`를 사용한다.
+
 사용자 PC에서 적용할 때는 업데이트 패키지 폴더에서 대상 `lmo_audio` 폴더를 지정한다. 이 작업은 일반 사용자가 앱 사용 중에 누르는 자동 업데이트가 아니라 관리자/운영자가 유지보수 시간에 실행하는 수동 절차다. 적용 전 앱을 닫고 분석 작업이 진행 중이 아닌지 확인한다. 중요한 결과물이 있으면 `backend\outputs`를 먼저 백업한다.
 
 ```powershell
@@ -213,8 +238,8 @@ corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases
 
 운영 기준:
 
-- STT와 참석자 구분 모델은 관리자가 준비해 `models` 폴더에 배치한다. 앱 안에서 이 모델들을 개별 다운로드하지 않는다.
-- Ollama 정리 모델은 외부망과 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있다. 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
+- STT와 참석자 구분 모델은 관리자가 준비해 `models` 폴더에 배치한다. 앱 안에서 이 모델들을 개별 다운로드하지 않는다. 설정 화면에서는 이 모델들에 대해 `받기`가 아니라 준비 안내만 보여야 한다. 단, 회사 전달용 슬림 zip에는 참석자 구분 모델을 포함하고 STT용 `faster-whisper-large-v3`만 제외한다.
+- Ollama 정리 모델은 외부망과 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있다. Ollama가 없는 PC에서는 설정 화면의 설치 링크로 `https://ollama.com/download/windows`를 열 수 있어야 하며, 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
 - 기본 STT 모델은 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 일반 사용자에게 전달할 배포본은 manifest의 `dirty`가 `false`여야 한다. dirty 배포본은 로컬 테스트용이며, 필요한 경우에만 `-AllowDirty`로 명시한다.

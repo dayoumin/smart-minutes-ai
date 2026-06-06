@@ -954,7 +954,7 @@ def _run_model_download(model_key: str) -> None:
             model_key,
             active=False,
             status="failed",
-            message=f"{spec.label} 모델을 받지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요.",
+            message=f"{spec.label} 모델을 받지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요. 계속 실패하면 ecomarin@naver.com으로 문의해 주세요.",
             target_path=target_path,
             error=str(exc),
         )
@@ -990,7 +990,7 @@ def _start_model_download(model_key: str) -> dict:
             "key": model_key,
             "active": True,
             "status": "starting",
-            "message": "모델 받기를 시작합니다.",
+            "message": "",
             "target_path": target_path,
             "started_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),

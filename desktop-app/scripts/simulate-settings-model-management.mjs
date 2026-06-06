@@ -503,6 +503,8 @@ const run = async () => {
     await page.getByRole('button', { name: '시스템 설정' }).click();
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
+    await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     const sttStatusChecksBeforeDownload = state.sttDownloadStatusRequests.length;
     const sttDownloadButton = modelsPanel.getByRole('button', { name: '음성 인식 모델 받기' });
@@ -516,11 +518,21 @@ const run = async () => {
       true,
       'download polling should continue after the initial start response',
     );
-    const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
+    const ollamaInstallLink = modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' });
     await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
-    await modelsPanel.getByText('권장: gemma4:e4b').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('선택됨', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await ollamaInstallLink.click();
+    assert.equal(
+      (await page.evaluate(() => window.__openedUrls)).at(-1),
+      'https://ollama.com/download/windows',
+      'Ollama install button should open the Windows install page',
+    );
+    const ollamaInstallOpenedNotice = modelsPanel.getByText('요약 프로그램 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+    await ollamaInstallOpenedNotice.waitFor({ state: 'visible', timeout: 10000 });
+    await ollamaInstallOpenedNotice.waitFor({ state: 'hidden', timeout: 10000 });
+    await modelsPanel.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('정리 모델은 Ollama가 필요합니다.').count(), 0, 'summary model section should not repeat the Ollama requirement copy');
+    assert.equal(await modelsPanel.getByText('선택됨', { exact: true }).count(), 0, 'selected summary model should not repeat a selected label');
     const gemma4e4bInitialCard = modelsPanel
       .getByRole('link', { name: 'gemma4:e4b 모델 페이지' })
       .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
@@ -532,7 +544,7 @@ const run = async () => {
     await page.keyboard.press('Escape');
 
     await modelsPanel.locator('select').selectOption('gemma4:e4b');
-    await modelsPanel.getByText('선택한 모델은 아래 목록에서 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('아래 목록에서 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     const gemma4e4bDownloadButton = modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' });
     assert.match(await gemma4e4bDownloadButton.getAttribute('class'), /btn-outline/, 'summary model download should use the weaker outline button style');
     await gemma4e4bDownloadButton.click();
@@ -559,18 +571,20 @@ const run = async () => {
     await modelsPanel.getByText('user-running:1b 모델을 받는 중입니다.').waitFor({ state: 'visible', timeout: 10000 });
     await page.keyboard.press('Escape');
 
-    await modelsPanel.getByLabel('다른 모델명 추가').fill('broken-model:1b');
+    await modelsPanel.getByLabel('고급: 직접 입력').fill('broken-model:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 검색' }).click();
     assert.equal(
       (await page.evaluate(() => window.__openedUrls)).at(-1),
       'https://ollama.com/search?q=broken-model%3A1b',
       'direct input should search before download',
     );
+    await modelsPanel.getByText('검색 결과에서 모델명을 확인한 뒤 받기를 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 받기' }).click();
-    await page.getByRole('alert').getByText('broken-model:1b 모델을 받지 못했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('broken-model:1b 모델을 받지 못했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await page.getByRole('alert').getByText('broken-model:1b 모델을 받지 못했습니다.').count(), 0, 'direct input pull failure should stay inside the model section');
     assert.equal(state.pullRequests.includes('broken-model:1b'), true, 'failed pull should call backend with the typed model');
 
-    await modelsPanel.getByLabel('다른 모델명 추가').fill('missing-ollama:1b');
+    await modelsPanel.getByLabel('고급: 직접 입력').fill('missing-ollama:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 missing-ollama:1b 모델 검색' }).click();
     await modelsPanel.getByRole('button', { name: '직접 입력 missing-ollama:1b 모델 받기' }).click();
     await page.waitForFunction(
@@ -583,10 +597,12 @@ const run = async () => {
       'https://ollama.com/download/windows',
       'missing Ollama should open the Windows install page after download is requested',
     );
-    await modelsPanel.getByText('Ollama 설치 후 다시 받기를 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
+    const missingOllamaNotice = modelsPanel.getByText('요약 프로그램 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+    await missingOllamaNotice.waitFor({ state: 'visible', timeout: 10000 });
+    await missingOllamaNotice.waitFor({ state: 'hidden', timeout: 10000 });
     assert.equal(state.pullRequests.includes('missing-ollama:1b'), true, 'missing Ollama pull should still call backend with the typed model');
 
-    await modelsPanel.getByLabel('다른 모델명 추가').fill('custom-ready:1b');
+    await modelsPanel.getByLabel('고급: 직접 입력').fill('custom-ready:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 custom-ready:1b 모델 사용' }).click();
     await modelsPanel.locator('select').selectOption('custom-ready:1b');
     await openModelMenu(modelsPanel, 'custom-ready:1b');

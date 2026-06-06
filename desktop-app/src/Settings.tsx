@@ -11,6 +11,7 @@ import {
 import { getApiBase, isTauriRuntime, restartDesktopBackend } from './apiBase';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
+const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
 const OLLAMA_INSTALL_URL = 'https://ollama.com/download/windows';
 
 const DEFAULT_SUMMARY_MODEL_OPTIONS: SummaryModelOption[] = [
@@ -244,6 +245,11 @@ const getModelDownloadProgressPercent = (status?: ModelDownloadStatus): number =
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
 };
 
+const getModelDownloadStatusMessage = (status?: ModelDownloadStatus): string => {
+    if (!status?.message || status.message === '모델 받기를 시작합니다.') return '';
+    return status.message;
+};
+
 const getModelStatusFailureMessage = (error: unknown): string => {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return isTimeout
@@ -280,6 +286,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [message, setMessage] = useState('');
     const [errorMessage, setErrorMessage] = useState('');
     const [ollamaInstallPrompted, setOllamaInstallPrompted] = useState(false);
+    const [ollamaInstallNoticeMessage, setOllamaInstallNoticeMessage] = useState('');
     const [modelStatusErrorMessage, setModelStatusErrorMessage] = useState('');
     const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
@@ -291,6 +298,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [summaryModelInput, setSummaryModelInput] = useState('');
     const [customSummaryModelInput, setCustomSummaryModelInput] = useState('');
     const [customSummaryCheckedModel, setCustomSummaryCheckedModel] = useState('');
+    const [customSummaryModelNotice, setCustomSummaryModelNotice] = useState('');
     const [ollamaPulls, setOllamaPulls] = useState<Record<string, OllamaPullStatus>>({});
     const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
@@ -462,6 +470,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         const requestId = (modelDownloadRequestIdsRef.current[model.key] || 0) + 1;
         modelDownloadRequestIdsRef.current[model.key] = requestId;
         try {
@@ -482,7 +491,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
             updateModelDownloadStatus(status);
             if (status.active) {
-                setMessage(status.message || `${getUserModelLabel(model)}을 받는 중입니다.`);
+                setMessage('');
                 void pollModelDownloadStatus(base, model.key, requestId).catch(error => {
                     if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
                     setMessage('');
@@ -535,16 +544,29 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         throw new Error('모델 받기 상태 확인 시간이 초과되었습니다.');
     }, [isCurrentPullRequest, loadModelsStatus, updateOllamaPullStatus]);
 
-    const handleDownloadOllamaModel = useCallback(async (modelName?: string) => {
+    const handleDownloadOllamaModel = useCallback(async (
+        modelName?: string,
+        options: { inlineCustomNotice?: boolean } = {},
+    ) => {
         const targetModel = normalizeSummaryModelName(modelName || summaryModelInput);
+        const useInlineCustomNotice = Boolean(options.inlineCustomNotice);
+        const setDownloadErrorMessage = (nextMessage: string) => {
+            if (useInlineCustomNotice) {
+                setCustomSummaryModelNotice(nextMessage);
+                return;
+            }
+            setErrorMessage(nextMessage);
+        };
         if (!targetModel) {
-            setErrorMessage('받을 모델명을 입력해 주세요.');
+            setDownloadErrorMessage('받을 모델명을 입력해 주세요.');
             return;
         }
 
         setErrorMessage('');
         setMessage('');
+        if (useInlineCustomNotice) setCustomSummaryModelNotice('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         const requestId = (pullRequestIdsRef.current[targetModel] || 0) + 1;
         pullRequestIdsRef.current[targetModel] = requestId;
         try {
@@ -568,14 +590,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage('');
                 window.open(OLLAMA_INSTALL_URL, '_blank', 'noopener,noreferrer');
                 setOllamaInstallPrompted(true);
-                setErrorMessage('Ollama가 설치되어 있지 않아 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                setOllamaInstallNoticeMessage('요약 프로그램 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                setErrorMessage('');
                 return;
             }
             if (status.active) {
                 setMessage(status.message || `${targetModel} 모델을 받는 중입니다.`);
                 void pollOllamaPullStatus(base, targetModel, requestId).catch(error => {
                     if (!isCurrentPullRequest(targetModel, requestId)) return;
-                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                    setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
                 });
             } else if (status.status === 'completed') {
                 await loadModelsStatus(base, { surfaceErrors: false });
@@ -583,12 +606,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage(status.message || `${targetModel} 모델이 준비되었습니다.`);
             } else {
                 setMessage('');
-                setErrorMessage(status.message || `${targetModel} 모델을 받지 못했습니다.`);
+                setDownloadErrorMessage(status.message || `${targetModel} 모델을 받지 못했습니다.`);
             }
         } catch (error) {
             if (!isCurrentPullRequest(targetModel, requestId)) return;
             setMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
+            setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
         }
     }, [apiBase, isCurrentPullRequest, loadModelsStatus, pollOllamaPullStatus, summaryModelInput, updateOllamaPullStatus]);
 
@@ -606,6 +629,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         setDeletingOllamaModels(previous => ({ ...previous, [targetModel]: true }));
         try {
             const base = apiBase || await getApiBase();
@@ -641,6 +665,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         try {
             const base = await getApiBase();
             setApiBase(base);
@@ -708,7 +733,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 const requestId = (modelDownloadRequestIdsRef.current[model.key] || 0) + 1;
                 modelDownloadRequestIdsRef.current[model.key] = requestId;
                 updateModelDownloadStatus(status);
-                setMessage(status.message || `${getUserModelLabel(model)}을 받는 중입니다.`);
+                setMessage('');
                 void pollModelDownloadStatus(apiBase, model.key, requestId).catch(error => {
                     if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
                     setMessage('');
@@ -735,6 +760,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }, 5000);
         return () => window.clearTimeout(timeoutId);
     }, [apiBase, loadModelsStatus, modelStatusErrorMessage]);
+
+    useEffect(() => {
+        if (!message) return;
+        const timeoutId = window.setTimeout(() => {
+            if (mountedRef.current) setMessage('');
+        }, SETTINGS_NOTICE_AUTO_DISMISS_MS);
+        return () => window.clearTimeout(timeoutId);
+    }, [message]);
+
+    useEffect(() => {
+        if (!ollamaInstallPrompted) return;
+        const timeoutId = window.setTimeout(() => {
+            if (!mountedRef.current) return;
+            setOllamaInstallPrompted(false);
+            setOllamaInstallNoticeMessage('');
+        }, SETTINGS_NOTICE_AUTO_DISMISS_MS);
+        return () => window.clearTimeout(timeoutId);
+    }, [ollamaInstallPrompted]);
 
     useEffect(() => {
         if (!openSummaryModelMenu) return;
@@ -789,6 +832,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         try {
             const base = apiBase || await getApiBase();
             const response = await fetchWithTimeout(`${base}/api/settings`, {
@@ -859,6 +903,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         try {
             const summaryModel = normalizeSummaryModelName(modelOverride ?? summaryModelInput);
             if (!summaryModel) {
@@ -937,6 +982,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
         try {
             const base = await restartDesktopBackend();
             setApiBase(base);
@@ -988,13 +1034,23 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             : gpuReason;
     const recommendedSummaryModel = models?.summary_model_recommendation?.model || summaryModelOptions[0]?.model || '';
     const summaryModelHint = selectedSummaryModel && !selectedSummaryInstalled
-        ? (selectedSummaryCanPull ? '선택한 모델은 아래 목록에서 받을 수 있습니다.' : '선택한 모델은 설치 안내가 필요합니다.')
-        : (recommendedSummaryModel ? `권장: ${recommendedSummaryModel}` : '정리 모델을 선택해 주세요.');
+        ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
+        : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const ollamaInstallNotice = ollamaInstallPrompted
-        ? 'Ollama 설치 후 다시 받기를 눌러 주세요.'
+        ? (ollamaInstallNoticeMessage || '요약 프로그램 설치 후 다시 받기를 눌러 주세요.')
         : '';
-    const errorHeading = errorMessage.includes('Ollama') ? 'Ollama 설치 필요' : '설정 확인 실패';
+    const errorHeading = errorMessage.includes('Ollama') ? '요약 프로그램 설치 필요' : '설정 확인 실패';
     const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
+    const renderDismissButton = (label: string, onClick: () => void) => (
+        <button
+            type="button"
+            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-current opacity-70 transition-opacity hover:opacity-100"
+            aria-label={label}
+            onClick={onClick}
+        >
+            <X size={14} aria-hidden="true" />
+        </button>
+    );
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[var(--bg-overlay)] p-4">
             <div
@@ -1036,14 +1092,21 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 </div>
 
                 {(showGlobalErrorMessage || message) && (
-                    <div className="pointer-events-none absolute right-5 top-[8.5rem] z-20 flex w-[calc(100%-2.5rem)] max-w-md flex-col gap-2">
+                    <div className="absolute right-5 top-[8.5rem] z-20 flex w-[calc(100%-2.5rem)] max-w-md flex-col gap-2">
                         {showGlobalErrorMessage && (
-                            <StatusBanner tone="error" heading={errorHeading}>
+                            <StatusBanner
+                                tone="error"
+                                heading={errorHeading}
+                                action={renderDismissButton('설정 오류 알림 닫기', () => setErrorMessage(''))}
+                            >
                                 {errorMessage}
                             </StatusBanner>
                         )}
                         {message && (
-                            <StatusBanner tone="neutral">
+                            <StatusBanner
+                                tone="neutral"
+                                action={renderDismissButton('설정 안내 닫기', () => setMessage(''))}
+                            >
                                 {message}
                             </StatusBanner>
                         )}
@@ -1193,6 +1256,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
                     {activeTab === 'models' && (
                         <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="flex flex-col gap-4">
+                            <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                                <span className="font-semibold text-foreground">처음 준비:</span>{' '}
+                                음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.
+                            </div>
+
                             <div className="rounded-md border border-border bg-muted/20 p-4">
                                 <div className="flex flex-col gap-1">
                                     <div className="text-base font-semibold text-foreground">음성 분석 모델</div>
@@ -1229,7 +1297,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>
                                                             {!model.installed && (
                                                                 <span className="mt-1 block text-xs text-muted-foreground">
-                                                                    {modelDownloadStatus?.message || (model.downloadable
+                                                                    {getModelDownloadStatusMessage(modelDownloadStatus) || (model.downloadable
                                                                         ? '앱에서 바로 받을 수 있습니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.'
                                                                         : manualNote)}
                                                                 </span>
@@ -1296,22 +1364,34 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="flex flex-col gap-1">
                                         <div className="text-base font-semibold text-foreground">회의 요약 모델</div>
-                                        <p className="text-xs text-muted-foreground">
-                                            정리 모델은 Ollama가 필요합니다.
-                                        </p>
                                     </div>
                                     <a
                                         href={OLLAMA_INSTALL_URL}
                                         target="_blank"
                                         rel="noreferrer"
                                         className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                        aria-label="Ollama 설치 페이지 열기"
+                                        aria-label="요약 프로그램 설치 페이지 열기"
+                                        onClick={event => {
+                                            event.preventDefault();
+                                            window.open(OLLAMA_INSTALL_URL, '_blank', 'noopener,noreferrer');
+                                            setErrorMessage('');
+                                            setMessage('');
+                                            setOllamaInstallPrompted(true);
+                                            setOllamaInstallNoticeMessage('요약 프로그램 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                                        }}
                                     >
-                                        Ollama 설치
+                                        요약 프로그램 설치
                                     </a>
                                 </div>
                                 {ollamaInstallNotice && (
-                                    <StatusBanner tone="warning" className="mt-3 py-2 text-xs shadow-none">
+                                    <StatusBanner
+                                        tone="warning"
+                                        className="mt-3 py-2 text-xs shadow-none"
+                                        action={renderDismissButton('요약 프로그램 설치 안내 닫기', () => {
+                                            setOllamaInstallPrompted(false);
+                                            setOllamaInstallNoticeMessage('');
+                                        })}
+                                    >
                                         {ollamaInstallNotice}
                                     </StatusBanner>
                                 )}
@@ -1363,14 +1443,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             const menuCanRefresh = Boolean(optionModel && optionCanPull && optionInstalled);
                                             const hasMenuActions = Boolean(menuCanRefresh || optionRemovable || optionFileDeletable);
                                             const optionSizeLabel = getSummaryModelSizeLabel(optionModel);
-                                            const optionMeta = optionSelected
-                                                ? '선택됨'
-                                                : optionRecommended
-                                                    ? '권장'
-                                                    : optionSizeLabel
-                                                        || (option.label && option.label !== optionName && option.source !== 'user'
-                                                            ? option.label
-                                                            : '');
+                                            const optionMeta = optionRecommended
+                                                ? '권장'
+                                                : optionSizeLabel
+                                                    || (option.label && option.label !== optionName && option.source !== 'user'
+                                                        ? option.label
+                                                        : '');
                                             return (
                                                 <div key={menuKey} className="rounded-md border border-border bg-background p-3 text-sm">
                                                     <div className="flex items-start justify-between gap-3">
@@ -1565,7 +1643,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     </div>
                                 )}
                                 <div className="mt-4 border-t border-border pt-4">
-                                    <label htmlFor="custom-summary-model" className="text-xs font-semibold text-muted-foreground">다른 모델명 추가</label>
+                                    <label htmlFor="custom-summary-model" className="text-xs font-semibold text-muted-foreground">고급: 직접 입력</label>
                                     <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
                                         <input
                                             id="custom-summary-model"
@@ -1573,6 +1651,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             onChange={event => {
                                                 setCustomSummaryModelInput(event.target.value);
                                                 setCustomSummaryCheckedModel('');
+                                                setCustomSummaryModelNotice('');
                                             }}
                                             placeholder="예: llama3.2:3b"
                                             className="w-full rounded-md border border-input bg-background px-3 py-2"
@@ -1585,21 +1664,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             onClick={() => {
                                                 if (!customSummaryModel) return;
                                                 if (customSummaryInstalled) {
+                                                    setCustomSummaryModelNotice('');
                                                     setSummaryModelInput(customSummaryModel);
                                                     void handleSaveSummaryModel(customSummaryModel);
                                                 } else if (customSummaryCheckedModel === customSummaryModel) {
-                                                    setSummaryModelInput(customSummaryModel);
-                                                    void handleDownloadOllamaModel(customSummaryModel);
+                                                    setCustomSummaryModelNotice('');
+                                                    void handleDownloadOllamaModel(customSummaryModel, { inlineCustomNotice: true });
                                                 } else {
                                                     setCustomSummaryCheckedModel(customSummaryModel);
                                                     window.open(getOllamaModelSearchUrl(customSummaryModel), '_blank', 'noopener,noreferrer');
-                                                    setMessage('Ollama 검색 결과에서 정확한 모델명을 확인한 뒤 받기를 눌러 주세요.');
+                                                    setCustomSummaryModelNotice('검색 결과에서 모델명을 확인한 뒤 받기를 눌러 주세요.');
                                                     void (async () => {
                                                         const base = apiBase || await getApiBase();
                                                         setApiBase(base);
                                                         await loadModelsStatus(base, { surfaceErrors: false });
                                                     })().catch(error => {
-                                                        setErrorMessage(error instanceof Error ? error.message : '모델 상태를 확인하지 못했습니다.');
+                                                        setCustomSummaryModelNotice(error instanceof Error
+                                                            ? '모델 상태를 확인하지 못했습니다. 모델명을 다시 확인해 주세요.'
+                                                            : '모델 상태를 확인하지 못했습니다. 모델명을 다시 확인해 주세요.');
                                                     });
                                                 }
                                             }}
@@ -1615,8 +1697,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             : '검색'}
                                         </Button>
                                     </div>
-                                    <span className="mt-2 block text-xs text-muted-foreground">Ollama에서 모델명을 검색한 뒤 받을 수 있습니다.</span>
-                                    {customSummaryPull?.message && (
+                                    {customSummaryModelNotice ? (
+                                        <span className="mt-2 block text-xs text-muted-foreground">{customSummaryModelNotice}</span>
+                                    ) : customSummaryPull?.message && (
                                         <span className="mt-2 block text-xs text-muted-foreground">{customSummaryPull.message}</span>
                                     )}
                                 </div>

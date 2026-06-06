@@ -803,7 +803,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "key": "stt_faster_whisper",
             "active": True,
             "status": "starting",
-            "message": "모델 받기를 시작합니다.",
+            "message": "",
         }) as start_download:
             response = self.client.post("/api/models/download", json={"key": "stt_faster_whisper"})
 

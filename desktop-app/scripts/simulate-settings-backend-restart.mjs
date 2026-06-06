@@ -322,6 +322,8 @@ const run = async () => {
     const modelDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));
     assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
     const modelsPanel = page.locator('#settings-models-panel');
+    await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
@@ -329,14 +331,19 @@ const run = async () => {
     await sttDownloadButton.waitFor({ state: 'visible', timeout: 10000 });
     await sttDownloadButton.click();
     await modelsPanel.getByLabel(new RegExp(`${STT_MODEL_LABEL}.*${RECEIVED_LABEL}`)).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('모델 받기를 시작합니다.').count(), 0, 'STT download start message should not be shown to users');
     assert.deepEqual(routeState.modelDownloadRequests, ['stt_faster_whisper'], 'STT download button should call the model download API');
-    assert.deepEqual(routeState.modelDownloadStatusRequests, ['stt_faster_whisper'], 'STT download button should poll the model download status API');
-    const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
+    assert.equal(
+      routeState.modelDownloadStatusRequests.includes('stt_faster_whisper'),
+      true,
+      'STT download button should poll the model download status API',
+    );
+    const ollamaInstallLink = modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' });
     await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
     assert.equal(await modelsPanel.getByText('준비됨').count(), 0);
     assert.equal(await modelsPanel.getByText('대화록 작성에 필요합니다.').count(), 0);
-    await modelsPanel.getByText('이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.locator('.status-pill').filter({ hasText: /메모리/ }).count(), 0);
     assert.equal(
       await modelsPanel.locator('button').filter({ hasText: /^받기$/ }).count(),
@@ -348,7 +355,7 @@ const run = async () => {
     await page.getByRole('tab', { name: '모델' }).click();
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'missing diarization model should still stay out of the user-facing download list');
 
-    await modelsPanel.getByLabel('다른 모델명 추가').fill('gemma4:4b');
+    await modelsPanel.getByLabel('고급: 직접 입력').fill('gemma4:4b');
     await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 검색' }).click();
     assert.equal(
       (await page.evaluate(() => window.__openedUrls)).at(-1),

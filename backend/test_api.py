@@ -20,7 +20,7 @@ import main
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from job_checkpoints import atomic_write_json, build_job_checkpoint_paths, load_json_checkpoint
 from main import app, make_analysis_heartbeat, normalize_stt_config, process_audio_pipeline, stream_real_analysis
-from model_manager import get_model_status, normalize_windows_path, resolve_backend_path
+from model_manager import MODEL_MARKER_MIN_BYTES, get_model_status, normalize_windows_path, resolve_backend_path
 from pipeline.audio_preprocess import resolve_preprocessing_plan
 import pipeline.transcribe as transcribe_module
 from pipeline.transcribe import transcribe_audio_fallback_whisper
@@ -832,6 +832,11 @@ class AnalyzeApiTest(unittest.TestCase):
             with (
                 patch.object(main, "BASE_DIR", backend_dir),
                 patch.object(main, "_download_huggingface_snapshot", side_effect=fake_snapshot_download),
+                patch.dict(MODEL_MARKER_MIN_BYTES["stt_faster_whisper"], {
+                    "model.bin": 1,
+                    "tokenizer.json": 1,
+                    "config.json": 1,
+                }),
             ):
                 with main.MODEL_DOWNLOAD_STATUS_LOCK:
                     main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
@@ -841,6 +846,112 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertFalse(status["active"])
             self.assertEqual(status["status"], "completed")
             self.assertTrue(os.path.exists(os.path.join(tmp, "models", "faster-whisper-large-v3", "model.bin")))
+
+    def test_model_download_snapshot_reports_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target_dir = os.path.join(tmp, "model")
+            os.makedirs(target_dir, exist_ok=True)
+            with open(os.path.join(target_dir, "partial.bin"), "wb") as handle:
+                handle.write(b"x" * 1024)
+
+            with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                main.MODEL_DOWNLOAD_STATUS["stt_faster_whisper"] = {
+                    "key": "stt_faster_whisper",
+                    "active": True,
+                    "status": "running",
+                    "message": "",
+                    "target_path": target_dir,
+                    "started_at": main.datetime.now().isoformat(),
+                    "updated_at": main.datetime.now().isoformat(),
+                    "error": "",
+                }
+
+            try:
+                with patch.dict(main.MODEL_DOWNLOAD_EXPECTED_BYTES, {"stt_faster_whisper": 2048}):
+                    status = main._model_download_snapshot("stt_faster_whisper")
+            finally:
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+            self.assertEqual(status["downloaded_bytes"], 1024)
+            self.assertEqual(status["expected_bytes"], 2048)
+            self.assertEqual(status["progress_percent"], 50.0)
+
+    def test_start_model_download_skips_when_markers_already_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            model_dir = os.path.join(tmp, "models", "faster-whisper-large-v3")
+            os.makedirs(backend_dir, exist_ok=True)
+            os.makedirs(model_dir, exist_ok=True)
+            for filename in ("model.bin", "tokenizer.json", "config.json"):
+                with open(os.path.join(model_dir, filename), "wb") as handle:
+                    handle.write(b"ok")
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.object(main.threading, "Thread") as thread_cls,
+                patch.dict(MODEL_MARKER_MIN_BYTES["stt_faster_whisper"], {
+                    "model.bin": 1,
+                    "tokenizer.json": 1,
+                    "config.json": 1,
+                }),
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+                status = main._start_model_download("stt_faster_whisper")
+
+            self.assertFalse(status["active"])
+            self.assertEqual(status["status"], "completed")
+            thread_cls.assert_not_called()
+
+    def test_tiny_stt_marker_files_do_not_count_as_installed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            model_dir = os.path.join(tmp, "models", "faster-whisper-large-v3")
+            os.makedirs(backend_dir, exist_ok=True)
+            os.makedirs(model_dir, exist_ok=True)
+            for filename in ("model.bin", "tokenizer.json", "config.json"):
+                with open(os.path.join(model_dir, filename), "wb") as handle:
+                    handle.write(b"ok")
+
+            status = get_model_status(backend_dir, main.normalize_app_config({}))
+            models = {model["key"]: model for model in status["models"]}
+            self.assertFalse(models["stt_faster_whisper"]["installed"])
+
+    def test_start_model_download_returns_progress_when_already_active(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            target_dir = os.path.join(tmp, "models", "faster-whisper-large-v3")
+            os.makedirs(backend_dir, exist_ok=True)
+            os.makedirs(target_dir, exist_ok=True)
+            with open(os.path.join(target_dir, "partial.bin"), "wb") as handle:
+                handle.write(b"x" * 1024)
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.dict(main.MODEL_DOWNLOAD_EXPECTED_BYTES, {"stt_faster_whisper": 2048}),
+                patch.object(main.threading, "Thread") as thread_cls,
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS["stt_faster_whisper"] = {
+                        "key": "stt_faster_whisper",
+                        "active": True,
+                        "status": "running",
+                        "message": "",
+                        "target_path": target_dir,
+                        "started_at": main.datetime.now().isoformat(),
+                        "updated_at": main.datetime.now().isoformat(),
+                        "error": "",
+                    }
+                try:
+                    status = main._start_model_download("stt_faster_whisper")
+                finally:
+                    with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                        main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+            self.assertTrue(status["active"])
+            self.assertEqual(status["progress_percent"], 50.0)
+            thread_cls.assert_not_called()
 
     def test_start_ollama_pull_registers_direct_model(self) -> None:
         config_ref = main.normalize_app_config({

@@ -81,6 +81,9 @@ GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
 GENERATION_STOP_REQUESTS: dict[tuple[str, str], dict] = {}
 OLLAMA_PULL_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_STATUS: dict[str, dict] = {}
+MODEL_DOWNLOAD_EXPECTED_BYTES = {
+    "stt_faster_whisper": 3_090_839_274,
+}
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
@@ -819,10 +822,70 @@ def _validate_downloadable_model_key(model_key: str) -> str:
     return model_key
 
 
+def _directory_size_bytes(path: str) -> int:
+    root = Path(path)
+    if not root.exists():
+        return 0
+    if root.is_file():
+        try:
+            return root.stat().st_size
+        except OSError:
+            return 0
+    total = 0
+    for child in root.rglob("*"):
+        if not child.is_file():
+            continue
+        try:
+            total += child.stat().st_size
+        except OSError:
+            continue
+    return total
+
+
+def _parse_iso_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def _model_download_progress(model_key: str, target_path: str, started_at: str | None, active: bool) -> dict:
+    expected_bytes = MODEL_DOWNLOAD_EXPECTED_BYTES.get(model_key, 0)
+    downloaded_bytes = _directory_size_bytes(target_path) if target_path else 0
+    progress_percent = None
+    eta_seconds = None
+    if expected_bytes > 0:
+        capped_bytes = min(downloaded_bytes, expected_bytes)
+        progress_percent = round((capped_bytes / expected_bytes) * 100, 1)
+        if active and progress_percent >= 100:
+            progress_percent = 99.9
+        started = _parse_iso_datetime(started_at)
+        if active and started and downloaded_bytes > 0:
+            elapsed_seconds = max((datetime.now() - started).total_seconds(), 1)
+            bytes_per_second = downloaded_bytes / elapsed_seconds
+            remaining_bytes = max(expected_bytes - downloaded_bytes, 0)
+            if bytes_per_second > 0 and remaining_bytes > 0:
+                eta_seconds = int(remaining_bytes / bytes_per_second)
+    return {
+        "downloaded_bytes": downloaded_bytes,
+        "expected_bytes": expected_bytes,
+        "progress_percent": progress_percent,
+        "eta_seconds": eta_seconds,
+    }
+
+
 def _model_download_snapshot(model_key: str) -> dict:
     with MODEL_DOWNLOAD_STATUS_LOCK:
         status = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
     if status:
+        status.update(_model_download_progress(
+            model_key,
+            str(status.get("target_path") or ""),
+            str(status.get("started_at") or ""),
+            bool(status.get("active")),
+        ))
         return status
     return {
         "key": model_key,
@@ -833,6 +896,10 @@ def _model_download_snapshot(model_key: str) -> dict:
         "started_at": "",
         "updated_at": "",
         "error": "",
+        "downloaded_bytes": 0,
+        "expected_bytes": MODEL_DOWNLOAD_EXPECTED_BYTES.get(model_key, 0),
+        "progress_percent": None,
+        "eta_seconds": None,
     }
 
 
@@ -895,16 +962,36 @@ def _run_model_download(model_key: str) -> None:
 
 def _start_model_download(model_key: str) -> dict:
     model_key = _validate_downloadable_model_key(model_key)
+    spec = get_model_spec(model_key)
+    target_path = resolve_model_path(BASE_DIR, spec)
+
     with MODEL_DOWNLOAD_STATUS_LOCK:
         current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
         if current.get("active"):
-            return current
+            return _model_download_snapshot(model_key)
+
+    if model_exists(BASE_DIR, spec):
+        _set_model_download_status(
+            model_key,
+            active=False,
+            status="completed",
+            message=f"{spec.label} 모델이 이미 준비되어 있습니다.",
+            target_path=target_path,
+            started_at=datetime.now().isoformat(),
+            error="",
+        )
+        return _model_download_snapshot(model_key)
+
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
+        if current.get("active"):
+            return _model_download_snapshot(model_key)
         MODEL_DOWNLOAD_STATUS[model_key] = {
             "key": model_key,
             "active": True,
             "status": "starting",
             "message": "모델 받기를 시작합니다.",
-            "target_path": "",
+            "target_path": target_path,
             "started_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "error": "",

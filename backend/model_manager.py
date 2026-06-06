@@ -40,6 +40,15 @@ class ModelSpec:
     install_options: tuple[dict[str, str], ...] = field(default_factory=tuple)
 
 
+MODEL_MARKER_MIN_BYTES = {
+    "stt_faster_whisper": {
+        "model.bin": 1_000_000_000,
+        "tokenizer.json": 100_000,
+        "config.json": 100,
+    },
+}
+
+
 MODEL_SPECS = [
     ModelSpec(
         key="stt_faster_whisper",
@@ -121,7 +130,15 @@ def path_has_model_payload(path: str, spec: Optional[ModelSpec] = None) -> bool:
         return os.path.getsize(path) > 0
     if os.path.isdir(path):
         if spec and spec.marker_files:
-            return all(os.path.exists(os.path.join(path, *marker.split("/"))) for marker in spec.marker_files)
+            marker_min_bytes = MODEL_MARKER_MIN_BYTES.get(spec.key, {})
+            for marker in spec.marker_files:
+                marker_path = os.path.join(path, *marker.split("/"))
+                if not os.path.isfile(marker_path):
+                    return False
+                min_bytes = marker_min_bytes.get(marker.replace("\\", "/"), 1)
+                if os.path.getsize(marker_path) < min_bytes:
+                    return False
+            return True
         return directory_has_model_payload(path)
     return False
 

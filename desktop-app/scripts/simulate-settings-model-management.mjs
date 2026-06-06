@@ -110,6 +110,10 @@ const startServer = async () => {
 
 const createRouteState = () => {
   const installedModels = new Set(['gemma4:e2b', 'user-ready:1b', 'custom-ready:1b']);
+  let sttInstalled = false;
+  let sttDownloadStarted = false;
+  const sttDownloadRequests = [];
+  const sttDownloadStatusRequests = [];
   const pullRequests = [];
   const pullStatusRequests = [];
   const deleteRequests = [];
@@ -167,6 +171,20 @@ const createRouteState = () => {
     get settingsState() {
       return settingsState;
     },
+    get sttInstalled() {
+      return sttInstalled;
+    },
+    setSttInstalled(value) {
+      sttInstalled = value;
+    },
+    get sttDownloadStarted() {
+      return sttDownloadStarted;
+    },
+    setSttDownloadStarted(value) {
+      sttDownloadStarted = value;
+    },
+    sttDownloadRequests,
+    sttDownloadStatusRequests,
     installedModels,
     pullRequests,
     pullStatusRequests,
@@ -216,21 +234,80 @@ const installRoutes = async (page, state) => {
     });
   });
 
+  await page.route('**/api/models/download', route => {
+    const body = route.request().postDataJSON();
+    state.sttDownloadRequests.push(body.key);
+    state.setSttDownloadStarted(true);
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        key: body.key,
+        active: true,
+        status: 'running',
+        message: '음성 인식 모델을 받는 중입니다.',
+        downloaded_bytes: 104857600,
+        expected_bytes: 3090839274,
+        progress_percent: 3.4,
+        eta_seconds: 3600,
+      }),
+    });
+  });
+
+  await page.route('**/api/models/download-status**', route => {
+    const url = new URL(route.request().url());
+    const key = url.searchParams.get('key') || '';
+    state.sttDownloadStatusRequests.push(key);
+    if (!state.sttDownloadStarted) {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          key,
+          active: false,
+          status: 'idle',
+          message: '',
+          downloaded_bytes: 0,
+          expected_bytes: 3090839274,
+          progress_percent: null,
+          eta_seconds: null,
+        }),
+      });
+      return;
+    }
+
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        key,
+        active: true,
+        status: 'running',
+        message: '음성 인식 모델을 받는 중입니다.',
+        downloaded_bytes: 524288000,
+        expected_bytes: 3090839274,
+        progress_percent: 17.0,
+        eta_seconds: 2400,
+      }),
+    });
+  });
+
   await page.route('**/api/models/status', route => {
     const configuredModel = state.settingsState.summary.model;
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        ready: true,
+        ready: state.sttInstalled,
         summary_ready: state.installedModels.has(configuredModel),
         models: [
           {
             key: 'stt_faster_whisper',
             label: 'STT',
             repo_id: 'Systran/faster-whisper-large-v3',
-            installed: true,
+            installed: state.sttInstalled,
             required: true,
+            downloadable: true,
             install_url: 'https://huggingface.co/Systran/faster-whisper-large-v3',
           },
           {
@@ -427,10 +504,22 @@ const run = async () => {
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    const sttStatusChecksBeforeDownload = state.sttDownloadStatusRequests.length;
+    const sttDownloadButton = modelsPanel.getByRole('button', { name: '음성 인식 모델 받기' });
+    assert.match(await sttDownloadButton.getAttribute('class'), /btn-outline/, 'STT download should use the weaker outline button style');
+    await sttDownloadButton.click();
+    await modelsPanel.getByText(/진행 · .* \/ 2\.9GB/).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText(/17\.0% 진행/).waitFor({ state: 'visible', timeout: 10000 });
+    assert.deepEqual(state.sttDownloadRequests, ['stt_faster_whisper']);
+    assert.equal(
+      state.sttDownloadStatusRequests.length > sttStatusChecksBeforeDownload,
+      true,
+      'download polling should continue after the initial start response',
+    );
     const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
     await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
-    await modelsPanel.getByText('이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('권장: gemma4:e4b').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('선택됨', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     const gemma4e4bInitialCard = modelsPanel
       .getByRole('link', { name: 'gemma4:e4b 모델 페이지' })
@@ -443,8 +532,10 @@ const run = async () => {
     await page.keyboard.press('Escape');
 
     await modelsPanel.locator('select').selectOption('gemma4:e4b');
-    await modelsPanel.getByText('선택한 모델은 아직 준비되지 않았습니다. 아래 카드에서 받기를 누르면 완료 후 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).click();
+    await modelsPanel.getByText('선택한 모델은 아래 목록에서 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    const gemma4e4bDownloadButton = modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' });
+    assert.match(await gemma4e4bDownloadButton.getAttribute('class'), /btn-outline/, 'summary model download should use the weaker outline button style');
+    await gemma4e4bDownloadButton.click();
     await modelsPanel.getByText('gemma4:e4b 모델 받기가 완료되었습니다.').first().waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 사용' }).waitFor({ state: 'visible', timeout: 10000 });
     assert.deepEqual(state.pullRequests, ['gemma4:e4b']);
@@ -492,7 +583,7 @@ const run = async () => {
       'https://ollama.com/download/windows',
       'missing Ollama should open the Windows install page after download is requested',
     );
-    await page.getByRole('alert').getByText('Ollama가 설치되어 있지 않아 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('Ollama 설치 후 다시 받기를 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(state.pullRequests.includes('missing-ollama:1b'), true, 'missing Ollama pull should still call backend with the typed model');
 
     await modelsPanel.getByLabel('다른 모델명 추가').fill('custom-ready:1b');

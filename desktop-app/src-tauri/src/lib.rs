@@ -5,6 +5,7 @@ use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
+use tauri_plugin_shell::ShellExt;
 
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
@@ -152,6 +153,18 @@ fn open_saved_file_location(saved_path: String) -> Result<(), String> {
     }
 }
 
+#[tauri::command]
+fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
+    if !url.starts_with("https://ollama.com/") {
+        return Err("Unsupported external URL.".to_string());
+    }
+
+    #[allow(deprecated)]
+    app.shell()
+        .open(url, None)
+        .map_err(|error| format!("Could not open external URL: {error}"))
+}
+
 #[cfg(target_os = "windows")]
 fn to_wide(value: &str) -> Vec<u16> {
     value.encode_utf16().chain(std::iter::once(0)).collect()
@@ -261,6 +274,7 @@ pub fn run() {
             restart_backend,
             set_close_guard_active,
             open_saved_file_location,
+            open_external_url,
             write_frontend_log
         ])
         .setup(move |app| {

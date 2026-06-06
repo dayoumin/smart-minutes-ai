@@ -293,8 +293,12 @@ const run = async () => {
       };
       window.__TAURI__ = {
         core: {
-          invoke: async (command) => {
+          invoke: async (command, args = {}) => {
             if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
+            if (command === 'open_external_url') {
+              window.__openedUrls.push(String(args.url));
+              return undefined;
+            }
             if (command === 'restart_backend') {
               window.__restartCalls += 1;
               return 'http://127.0.0.1:17863';
@@ -323,7 +327,7 @@ const run = async () => {
     assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 인식 준비 → Ollama 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
@@ -338,7 +342,8 @@ const run = async () => {
       true,
       'STT download button should poll the model download status API',
     );
-    const ollamaInstallLink = modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' });
+    await modelsPanel.getByText('Ollama는 회의 요약 모델을 PC에서 실행하는 프로그램입니다.').waitFor({ state: 'visible', timeout: 10000 });
+    const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
     await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
     assert.equal(await modelsPanel.getByText('준비됨').count(), 0);

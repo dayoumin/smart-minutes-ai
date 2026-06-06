@@ -47,6 +47,19 @@ export const openSavedFileLocation = async (savedPath: string): Promise<void> =>
     await invoke('open_saved_file_location', { savedPath });
 };
 
+export const openExternalUrl = async (url: string): Promise<void> => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (invoke) {
+        await invoke('open_external_url', { url });
+        return;
+    }
+
+    const opened = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!opened) {
+        window.location.href = url;
+    }
+};
+
 export const isTauriRuntime = (): boolean => {
     if (typeof window === 'undefined') return false;
     if (window.__TAURI__?.core?.invoke) return true;

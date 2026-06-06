@@ -8,7 +8,7 @@ import {
     getDownloadFormatPreference,
     setDownloadFormatPreference,
 } from './downloadPreferences';
-import { getApiBase, isTauriRuntime, restartDesktopBackend } from './apiBase';
+import { getApiBase, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
@@ -588,9 +588,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             updateOllamaPullStatus(status);
             if (!status.active && status.status === 'failed' && isOllamaMissingPullStatus(status)) {
                 setMessage('');
-                window.open(OLLAMA_INSTALL_URL, '_blank', 'noopener,noreferrer');
+                try {
+                    await openExternalUrl(OLLAMA_INSTALL_URL);
+                    setOllamaInstallNoticeMessage('Ollama 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                } catch {
+                    setOllamaInstallNoticeMessage('Ollama 설치 페이지를 열지 못했습니다. 설치 버튼을 다시 눌러 주세요.');
+                }
                 setOllamaInstallPrompted(true);
-                setOllamaInstallNoticeMessage('요약 프로그램 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
                 setErrorMessage('');
                 return;
             }
@@ -1037,9 +1041,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const ollamaInstallNotice = ollamaInstallPrompted
-        ? (ollamaInstallNoticeMessage || '요약 프로그램 설치 후 다시 받기를 눌러 주세요.')
+        ? (ollamaInstallNoticeMessage || 'Ollama 설치 후 다시 받기를 눌러 주세요.')
         : '';
-    const errorHeading = errorMessage.includes('Ollama') ? '요약 프로그램 설치 필요' : '설정 확인 실패';
+    const errorHeading = errorMessage.includes('Ollama') ? 'Ollama 설치 필요' : '설정 확인 실패';
     const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
     const renderDismissButton = (label: string, onClick: () => void) => (
         <button
@@ -1258,7 +1262,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                         <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="flex flex-col gap-4">
                             <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
                                 <span className="font-semibold text-foreground">처음 준비:</span>{' '}
-                                음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.
+                                음성 인식 준비 → Ollama 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.
                             </div>
 
                             <div className="rounded-md border border-border bg-muted/20 p-4">
@@ -1328,7 +1332,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                 className="btn btn-outline h-8 shrink-0 px-3 text-xs"
                                                                 aria-label={`${getUserModelLabel(model)} 준비 안내 열기`}
                                                                 title={`${modelName} 준비 안내`}
-                                                                onClick={() => window.open(modelUrl, '_blank', 'noopener,noreferrer')}
+                                                                onClick={() => {
+                                                                    void openExternalUrl(modelUrl).catch(() => {
+                                                                        setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                                                                    });
+                                                                }}
                                                             >
                                                                 안내
                                                             </button>
@@ -1364,30 +1372,36 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="flex flex-col gap-1">
                                         <div className="text-base font-semibold text-foreground">회의 요약 모델</div>
+                                        <p className="text-xs text-muted-foreground">
+                                            Ollama는 회의 요약 모델을 PC에서 실행하는 프로그램입니다.
+                                        </p>
                                     </div>
                                     <a
                                         href={OLLAMA_INSTALL_URL}
                                         target="_blank"
                                         rel="noreferrer"
                                         className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                        aria-label="요약 프로그램 설치 페이지 열기"
+                                        aria-label="Ollama 설치 페이지 열기"
                                         onClick={event => {
                                             event.preventDefault();
-                                            window.open(OLLAMA_INSTALL_URL, '_blank', 'noopener,noreferrer');
                                             setErrorMessage('');
                                             setMessage('');
-                                            setOllamaInstallPrompted(true);
-                                            setOllamaInstallNoticeMessage('요약 프로그램 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                                            setOllamaInstallPrompted(false);
+                                            setOllamaInstallNoticeMessage('');
+                                            void openExternalUrl(OLLAMA_INSTALL_URL).catch(() => {
+                                                setOllamaInstallPrompted(true);
+                                                setOllamaInstallNoticeMessage('Ollama 설치 페이지를 열지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.');
+                                            });
                                         }}
                                     >
-                                        요약 프로그램 설치
+                                        Ollama 설치
                                     </a>
                                 </div>
                                 {ollamaInstallNotice && (
                                     <StatusBanner
                                         tone="warning"
                                         className="mt-3 py-2 text-xs shadow-none"
-                                        action={renderDismissButton('요약 프로그램 설치 안내 닫기', () => {
+                                        action={renderDismissButton('Ollama 설치 안내 닫기', () => {
                                             setOllamaInstallPrompted(false);
                                             setOllamaInstallNoticeMessage('');
                                         })}
@@ -1461,6 +1475,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                         rel="noreferrer"
                                                                         aria-label={`${optionName} 모델 페이지`}
                                                                         className="block break-all text-sm font-semibold text-primary hover:underline"
+                                                                        onClick={event => {
+                                                                            event.preventDefault();
+                                                                            void openExternalUrl(option.url || '').catch(() => {
+                                                                                setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                                                                            });
+                                                                        }}
                                                                     >
                                                                         {optionName}
                                                                     </a>
@@ -1672,7 +1692,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     void handleDownloadOllamaModel(customSummaryModel, { inlineCustomNotice: true });
                                                 } else {
                                                     setCustomSummaryCheckedModel(customSummaryModel);
-                                                    window.open(getOllamaModelSearchUrl(customSummaryModel), '_blank', 'noopener,noreferrer');
+                                                    void openExternalUrl(getOllamaModelSearchUrl(customSummaryModel)).catch(() => {
+                                                        setCustomSummaryModelNotice('검색 페이지를 열지 못했습니다. 모델명을 다시 확인해 주세요.');
+                                                    });
                                                     setCustomSummaryModelNotice('검색 결과에서 모델명을 확인한 뒤 받기를 눌러 주세요.');
                                                     void (async () => {
                                                         const base = apiBase || await getApiBase();

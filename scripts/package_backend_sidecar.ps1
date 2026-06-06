@@ -79,7 +79,7 @@ function Assert-PythonBuildRequirements([string]$PythonCommand) {
 import importlib.util
 import sys
 
-required = ["PyInstaller", "fastapi", "faster_whisper", "torch"]
+required = ["PyInstaller", "fastapi", "faster_whisper", "huggingface_hub", "torch"]
 missing = [name for name in required if importlib.util.find_spec(name) is None]
 if missing:
     print("Missing backend build requirements: " + ", ".join(missing))
@@ -139,6 +139,8 @@ try {
         --collect-data "pyannote.audio" `
         --collect-submodules "faster_whisper" `
         --collect-data "faster_whisper" `
+        --collect-submodules "huggingface_hub" `
+        --collect-data "huggingface_hub" `
         --collect-submodules "av" `
         --collect-binaries "av" `
         --collect-data "av" `

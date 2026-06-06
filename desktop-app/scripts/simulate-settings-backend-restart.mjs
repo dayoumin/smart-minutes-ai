@@ -6,6 +6,10 @@ import { chromium } from 'playwright';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
+const STT_MODEL_LABEL = '\uC74C\uC131 \uC778\uC2DD \uBAA8\uB378';
+const DIARIZATION_MODEL_LABEL = '\uCC38\uC11D\uC790 \uAD6C\uBD84 \uBAA8\uB378';
+const RECEIVED_LABEL = '\uC788\uC74C';
+const DOWNLOAD_LABEL = '\uBC1B\uAE30';
 
 const waitForApp = async (url, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -92,9 +96,13 @@ const startServer = async () => {
 const installRoutes = async (page) => {
   const settingsPatches = [];
   const pullRequests = [];
+  const modelDownloadRequests = [];
+  const modelDownloadStatusRequests = [];
   const routeState = {
     settingsPatches,
     pullRequests,
+    modelDownloadRequests,
+    modelDownloadStatusRequests,
     audioModelState: {
       sttInstalled: false,
       diarizationInstalled: true,
@@ -135,6 +143,7 @@ const installRoutes = async (page) => {
           installed: routeState.audioModelState.sttInstalled,
           required: true,
           install_url: 'https://huggingface.co/Systran/faster-whisper-large-v3',
+          downloadable: true,
         },
         {
           key: 'diarization',
@@ -178,6 +187,41 @@ const installRoutes = async (page) => {
         active: true,
         status: 'starting',
         message: `${model} 모델 받기 또는 업데이트 확인을 시작합니다.`,
+      }),
+    });
+  });
+
+  await page.route('**/api/models/download', async route => {
+    const body = route.request().postDataJSON();
+    const key = body.key;
+    modelDownloadRequests.push(key);
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        key,
+        active: true,
+        status: 'starting',
+        message: '모델 받기를 시작합니다.',
+      }),
+    });
+  });
+
+  await page.route('**/api/models/download-status**', route => {
+    const url = new URL(route.request().url());
+    const key = url.searchParams.get('key') || '';
+    modelDownloadStatusRequests.push(key);
+    if (key === 'stt_faster_whisper') {
+      routeState.audioModelState.sttInstalled = true;
+    }
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        key,
+        active: false,
+        status: 'completed',
+        message: '음성 인식 모델 받기가 완료되었습니다.',
       }),
     });
   });
@@ -280,9 +324,13 @@ const run = async () => {
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('참석자 구분 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByRole('button', { name: '음성 인식 모델 준비 안내 열기' }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByLabel('참석자 구분 모델 있음').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
+    const sttDownloadButton = modelsPanel.getByRole('button', { name: new RegExp(`${STT_MODEL_LABEL}.*${DOWNLOAD_LABEL}`) });
+    await sttDownloadButton.waitFor({ state: 'visible', timeout: 10000 });
+    await sttDownloadButton.click();
+    await modelsPanel.getByLabel(new RegExp(`${STT_MODEL_LABEL}.*${RECEIVED_LABEL}`)).waitFor({ state: 'visible', timeout: 10000 });
+    assert.deepEqual(routeState.modelDownloadRequests, ['stt_faster_whisper'], 'STT download button should call the model download API');
+    assert.deepEqual(routeState.modelDownloadStatusRequests, ['stt_faster_whisper'], 'STT download button should poll the model download status API');
     const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
     await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
@@ -298,7 +346,7 @@ const run = async () => {
     routeState.audioModelState.diarizationInstalled = false;
     await page.getByRole('tab', { name: '일반' }).click();
     await page.getByRole('tab', { name: '모델' }).click();
-    await modelsPanel.getByRole('button', { name: '참석자 구분 모델 준비 안내 열기' }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'missing diarization model should still stay out of the user-facing download list');
 
     await modelsPanel.getByLabel('다른 모델명 추가').fill('gemma4:4b');
     await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 검색' }).click();

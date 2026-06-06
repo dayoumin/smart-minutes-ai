@@ -238,9 +238,9 @@ corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases
 
 운영 기준:
 
-- STT와 참석자 구분 모델은 관리자가 준비해 `models` 폴더에 배치한다. 앱 안에서 이 모델들을 개별 다운로드하지 않는다. 설정 화면에서는 이 모델들에 대해 `받기`가 아니라 준비 안내만 보여야 한다. 단, 회사 전달용 슬림 zip에는 참석자 구분 모델을 포함하고 STT용 `faster-whisper-large-v3`만 제외한다.
+- 기본 STT 모델은 외부망 PC에서 설정 화면의 `받기`로 앱이 다운로드를 시작할 수 있다. 내부망/실패 상황에서는 관리자가 준비해 `models\faster-whisper-large-v3`에 배치한다. 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않고, 회사 전달용 슬림 zip에 포함하거나 관리자가 `models\speaker-diarization-community-1`에 배치한다.
 - Ollama 정리 모델은 외부망과 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있다. Ollama가 없는 PC에서는 설정 화면의 설치 링크로 `https://ollama.com/download/windows`를 열 수 있어야 하며, 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
-- 기본 STT 모델은 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
+- 기본 STT 모델을 앱에서 받을 수 없는 PC는 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 일반 사용자에게 전달할 배포본은 manifest의 `dirty`가 `false`여야 한다. dirty 배포본은 로컬 테스트용이며, 필요한 경우에만 `-AllowDirty`로 명시한다.
 - 분석 결과와 임시 파일은 portable 실행 폴더 하위 `backend\outputs`, `backend\temp`에 생성된다.
@@ -291,13 +291,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_portable.ps1
 
 - `backend\.venv-desktop`가 존재해도 완성된 build venv라고 판단하지 않는다.
   - `pyvenv.cfg`가 현재 실행 가능한 Python을 가리키는지 확인한다.
-  - `PyInstaller`, `fastapi`, `faster_whisper`, `torch`가 설치되어 있는지 확인한다.
+  - `PyInstaller`, `fastapi`, `faster_whisper`, `huggingface_hub`, `torch`가 설치되어 있는지 확인한다.
   - venv 생성과 pip 업그레이드만 끝난 상태는 불완전한 venv다.
 - `ensure_backend_build_env.ps1 -RecreateBroken`를 실행하다가 중단했다면 다음 release를 바로 시작하지 않는다.
   - 먼저 아래 probe가 통과하는지 확인한다.
 
 ```powershell
-backend\.venv-desktop\Scripts\python.exe -c "import importlib.util; required=['PyInstaller','fastapi','faster_whisper','torch']; missing=[name for name in required if importlib.util.find_spec(name) is None]; print('missing=' + ','.join(missing)); raise SystemExit(1 if missing else 0)"
+backend\.venv-desktop\Scripts\python.exe -c "import importlib.util; required=['PyInstaller','fastapi','faster_whisper','huggingface_hub','torch']; missing=[name for name in required if importlib.util.find_spec(name) is None]; print('missing=' + ','.join(missing)); raise SystemExit(1 if missing else 0)"
 ```
 
 - `release_portable.ps1`와 `package_backend_sidecar.ps1`는 sidecar 빌드 전에 위 필수 패키지를 선검사한다.

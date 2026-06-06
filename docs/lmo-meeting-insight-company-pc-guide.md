@@ -15,18 +15,14 @@ lmo_audio\
       model.bin
       tokenizer.json
       config.json
-    speaker-diarization-community-1\ <- 기본 포함
-      config.yaml
-      embedding\
-      segmentation\
-      plda\
+    ...                            <- 앱 실행용 소형 모델은 전달본에 포함
   backend\
   binaries\
 ```
 
 ## 기본 음성 인식 모델 넣는 위치
 
-기본 음성 인식 모델은 관리자가 지정한 파일 묶음을 받아 실행 파일 옆 `models\faster-whisper-large-v3` 폴더 아래에 넣습니다. 슬림 전달본은 용량을 줄이기 위해 이 Whisper 모델만 제외할 수 있습니다. 설정 화면의 음성 분석 모델 영역은 모델 유무와 준비 안내를 보여주는 곳이며, 현재 STT 모델 파일을 앱 안에서 자동 다운로드하지 않습니다.
+기본 음성 인식 모델은 실행 파일 옆 `models\faster-whisper-large-v3` 폴더 아래에 있어야 합니다. 슬림 전달본은 용량을 줄이기 위해 이 Whisper 모델만 제외할 수 있습니다. 외부망 PC에서는 설정 화면의 음성 분석 모델 영역에서 `받기`를 눌러 앱이 `faster-whisper-large-v3` 다운로드를 시작할 수 있습니다. 내부망이거나 다운로드가 실패하면 관리자가 지정한 파일 묶음을 같은 위치에 넣습니다.
 
 Whisper 모델 링크는 참고용 출처일 뿐입니다. 현재 앱은 일반 Whisper 원본 파일이 아니라 `faster-whisper-large-v3` 전체 폴더 구조를 기대하므로, 모델 페이지에서 일부 파일만 받거나 다른 폴더명으로 풀면 앱이 모델을 찾지 못합니다. 회사 전달용은 관리자가 검증한 모델 묶음을 받아 아래 위치에 그대로 푸는 방식으로 맞춥니다.
 
@@ -58,18 +54,9 @@ models\
 
 Cohere는 과거 벤치마크/비교 후보로만 남기고, 새 배포 기준은 `models\faster-whisper-large-v3`입니다.
 
-## 참석자 구분 모델
+## 앱 포함 모델
 
-참석자 구분 모델은 `models\speaker-diarization-community-1` 아래에 둡니다. 용량이 작으므로 회사 전달용 슬림 zip에도 포함합니다. portable 패키지를 만들 때 현재 PC에 모델이 있으면 자동으로 아래 구조로 복사됩니다.
-
-```text
-lmo_audio\models\speaker-diarization-community-1\config.yaml
-lmo_audio\models\speaker-diarization-community-1\embedding\pytorch_model.bin
-lmo_audio\models\speaker-diarization-community-1\segmentation\pytorch_model.bin
-lmo_audio\models\speaker-diarization-community-1\plda\plda.npz
-```
-
-기존처럼 `models` 바로 아래에 참석자 구분 파일을 두는 방식도 당분간 함께 인식하지만, 새 배포 기준은 모델별 폴더입니다.
+기본 음성 인식 모델을 제외한 앱 실행용 소형 모델은 전달용 zip에 포함하는 것을 기본으로 합니다. 일반 사용자는 이 모델을 따로 받을 필요가 없습니다. 앱에서 모델 상태 오류가 계속 보이면 관리자만 릴리스 체크리스트 기준으로 전달본 구성을 확인하면 됩니다.
 
 ## 다른 STT 모델
 
@@ -85,13 +72,13 @@ lmo_audio\models\faster-whisper-large-v3\
 
 1. `lmo_audio.exe`를 실행합니다.
 2. 시스템 설정 > 모델에서 상태를 확인합니다.
-3. 기본 음성 인식 모델이 없으면 `models\faster-whisper-large-v3` 아래에 모델 파일을 복사합니다. 참석자 구분 모델은 슬림 전달본에도 포함되어 있어야 합니다.
+3. 기본 음성 인식 모델이 없으면 `models\faster-whisper-large-v3` 아래에 모델 파일을 복사합니다. 그 밖의 앱 실행용 소형 모델은 슬림 전달본에 포함되어 있어야 합니다.
 4. 상태 새로고침을 누르거나 앱을 다시 실행합니다.
 5. MP4, WAV, MP3 파일을 올리고 `AI 분석 시작`을 누릅니다.
 
 ## 정리 모델과 Ollama
 
-대화록 작성에 필요한 기본 음성 인식 모델과 참석자 구분 모델은 앱 안에서 다운로드하지 않습니다. 관리자가 준비한 파일을 `models` 폴더에 넣는 방식입니다. 설정 화면에서 `안내`가 보이면 모델 파일을 직접 받는 버튼이 아니라 준비 위치와 원본 페이지를 확인하는 안내로 보면 됩니다.
+대화록 작성에 필요한 기본 음성 인식 모델은 외부망 PC에서 앱 안의 `받기` 버튼으로 받을 수 있습니다. 앱 실행용 소형 모델은 회사 전달용 슬림 zip에 포함하는 것을 기본으로 하므로 사용자가 따로 받을 필요가 없습니다.
 
 전체 요약, 주제별 정리, 참석자별 정리에 쓰는 Ollama 정리 모델은 별도입니다. 외부망이 있고 Ollama가 설치된 PC에서는 시스템 설정 > 모델에서 추천 정리 모델을 받거나 직접 입력한 모델을 선택할 수 있습니다. Ollama가 설치되어 있지 않으면 앱이 정리 모델을 받을 수 없으므로 먼저 Ollama를 설치한 뒤 다시 시도합니다. 내부망 또는 오프라인 PC에서는 이미 설치된 Ollama 모델이 감지되는지 확인하고, 모델이 없으면 대화록 작성만 먼저 사용합니다.
 
@@ -108,7 +95,7 @@ lmo_audio\models\faster-whisper-large-v3\
 
 1. `lmo_audio` 폴더 전체를 쓰기 가능한 위치에 둡니다.
 2. `lmo_audio.exe` 실행 시 별도 콘솔 창 없이 앱이 열리는지 확인합니다.
-3. 시스템 설정 > 모델에서 기본 음성 인식 모델, 참석자 구분 모델, Ollama 정리 모델 상태를 확인합니다.
+3. 시스템 설정 > 모델에서 기본 음성 인식 모델과 Ollama 정리 모델 상태를 확인합니다.
 4. 외부망 PC라면 Ollama 정리 모델 받기를 실행하고, 완료 후 사용 중 모델로 선택되는지 확인합니다.
 5. 내부망/오프라인 PC라면 이미 설치된 Ollama 모델만 감지되는지 확인합니다.
 6. 짧은 MP4 또는 WAV 파일로 대화록 작성을 실행합니다.
@@ -120,8 +107,8 @@ lmo_audio\models\faster-whisper-large-v3\
 
 ## 주의 사항
 
-- 기본 음성 인식 모델은 구글 드라이브, 사내 공유 드라이브, 외장 SSD 등 관리자가 지정한 위치에서 받아 `models\faster-whisper-large-v3`에 복사하세요.
-- 회사 전달용 슬림 zip은 `corepack pnpm package:handoff`로 만듭니다. 이 zip은 `speaker-diarization-community-1`은 포함하고, 큰 `faster-whisper-large-v3`만 제외합니다.
+- 기본 음성 인식 모델은 외부망 PC에서는 설정 화면에서 받을 수 있습니다. 내부망이거나 다운로드가 실패하면 구글 드라이브, 사내 공유 드라이브, 외장 SSD 등 관리자가 지정한 위치에서 받아 `models\faster-whisper-large-v3`에 복사하세요.
+- 회사 전달용 슬림 zip은 `corepack pnpm package:handoff`로 만듭니다. 이 zip은 앱 실행용 소형 모델을 포함하고, 큰 `faster-whisper-large-v3`만 제외합니다.
 - 정상 배포본에서는 별도 PowerShell 창이 뜨지 않아야 합니다.
 - zip을 옮길 때는 `lmo_audio` 폴더 전체를 옮기세요.
 - 분석 결과와 임시 파일은 `lmo_audio\backend\outputs`, `lmo_audio\backend\temp`에 생성됩니다. 앱 폴더는 쓰기 가능한 D 드라이브 같은 위치에 두세요.

@@ -38,9 +38,9 @@
   - Ollama 모델 받기/상태 확인/삭제는 사용자 입력 모델명 검증, 받는 중 표시, 완료/실패 안내, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 포함한다.
   - 자동 검증 기준은 `backend/test_api.py`와 `desktop-app/scripts/simulate-settings-model-management.mjs`다.
   - 남은 일은 회사 PC에서 외부망/내부망 조건별 실제 확인이다. 외부망 PC에서는 설정 화면으로 모델 받기/선택이 되는지 보고, 내부망/오프라인 PC에서는 이미 설치된 Ollama 모델만 감지해서 선택되는지 확인한다.
-  - STT와 참석자 구분 모델은 여전히 관리자가 `models` 폴더에 준비한다. 이 모델들은 앱 안에서 개별 다운로드하지 않는다.
-  - 2026-06-06 보완: STT/참석자 구분 모델은 설정 화면에서 `받기`가 아니라 준비 안내로 표시한다. Ollama가 없는 PC에서 정리 모델 받기를 누르면 즉시 실패 안내를 보여주고 진행 중 메시지를 남기지 않는다. 회의 요약 모델 영역에는 Ollama 설치 링크를 별도로 제공한다.
-  - 2026-06-06 보완: 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만든다. `speaker-diarization-community-1`은 포함하고, 큰 `faster-whisper-large-v3`만 제외한다. 자동 Whisper 다운로드는 별도 2단계 UX/네트워크 검증 대상으로 둔다.
+  - STT 모델은 외부망 PC에서 앱 설정 화면의 `받기`로 다운로드를 시작할 수 있게 한다. 내부망/실패 시에는 관리자가 `models\faster-whisper-large-v3`에 준비한다.
+  - 2026-06-06 보완: 참석자 구분 모델은 전달본에 포함하고 설정 화면의 별도 받기 대상으로 노출하지 않는다. Ollama가 없는 PC에서 정리 모델 받기를 누르면 설치 페이지를 열고, 진행 중 메시지를 남기지 않는다. 회의 요약 모델 영역에는 Ollama 설치 링크를 별도로 제공한다.
+  - 2026-06-06 보완: 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만든다. `speaker-diarization-community-1`은 포함하고, 큰 `faster-whisper-large-v3`만 제외한다. 외부망 PC에서는 앱에서 STT 모델 다운로드를 시도할 수 있고, 실패하면 관리자 준비 절차를 따른다.
 - [x] 0-0순위: `faster-whisper` CPU 비정상 지연 원인 복구
   - 현재 15초 샘플이 600초대까지 늘어나는 현상은 정상 동작이 아니므로, 더 작은 모델로 우회하지 말고 원인을 먼저 복구한다.
   - 빌드 전 게이트는 `로컬 웹 /api/analyze`가 `faster-whisper-large-v3 + cpu + diarization on` 기준으로 다시 실용 속도로 끝나는지로 잡는다.
@@ -195,7 +195,7 @@
 
 # 0-1. 회사 PC에서 가장 먼저 할 일
 - [ ] 최종 배포본은 프로젝트 안에서는 `releases\lmo_audio`에 만든다. 회사 PC에는 이 `lmo_audio` 폴더 자체를 그대로 가져간다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
-- [ ] 기본 음성 인식 모델은 별도로 받아서 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
+- [ ] 기본 음성 인식 모델은 외부망 PC에서는 앱 설정 화면의 `받기`로 받는다. 내부망이거나 다운로드가 실패하면 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
 - [ ] 참석자 구분 모델은 portable zip에 포함되어 있으므로 별도 다운로드하지 않는다. `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
 - [x] 회사 전달용 portable 기본 묶음에서는 Qwen ASR와 Qwen ForcedAligner 모델을 제외한다. Qwen 비교/벤치 기록은 남기되 회사 PC 이동 패키지에는 `faster-whisper-large-v3`와 참석자 구분 모델만 포함한다.
@@ -209,7 +209,7 @@
 - [ ] 이미 만든 portable을 그대로 가져가서 실행 테스트만 할 경우에는 `releases\lmo_audio` 폴더 전체를 가져간다. 이때 모델 위치는 `releases\lmo_audio\models\faster-whisper-large-v3`, `releases\lmo_audio\models\speaker-diarization-community-1`이면 된다.
 - [ ] 모델만 따로 가져갈 경우에는 회사 PC에서 재빌드할지, 기존 portable에 넣을지만 먼저 정한다. 재빌드용이면 프로젝트 루트 `models\...`에 넣고, 기존 portable 실행용이면 `releases\lmo_audio\models\...`에 넣는다.
 - [ ] 앱 실행 후 시스템 설정 > 모델에서 누락 모델이 있는지 확인하고, 모델 복사 후 상태 새로고침을 누른다.
-- [x] 앱 안의 사용자용 모델 자동 다운로드 흐름을 제거하고, 관리자가 지정한 모델 파일을 `models`에 넣는 방식으로 정리한다.
+- [x] 참석자 구분 모델은 사용자용 자동 다운로드 흐름을 제거하고, zip 포함 또는 관리자가 지정한 모델 파일을 `models`에 넣는 방식으로 정리한다.
 - [ ] 루트 정리 기준을 유지한다: 실제 배포 폴더는 `releases\lmo_audio` 하나이고, `target`, `dist`, `build`, `dist-sidecar`, `outputs`, 테스트 MP4, 임시 zip은 빌드/테스트 후 삭제 가능하다.
 
 # 📝 스마트 회의록 시스템 TO-DO (Next Steps)

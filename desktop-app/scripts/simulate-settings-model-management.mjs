@@ -282,6 +282,21 @@ const installRoutes = async (page, state) => {
       return;
     }
 
+    if (model === 'missing-ollama:1b') {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          model,
+          active: false,
+          status: 'failed',
+          message: 'Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.',
+          error: 'ollama executable not found',
+        }),
+      });
+      return;
+    }
+
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -463,6 +478,22 @@ const run = async () => {
     await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 받기' }).click();
     await page.getByRole('alert').getByText('broken-model:1b 모델을 받지 못했습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(state.pullRequests.includes('broken-model:1b'), true, 'failed pull should call backend with the typed model');
+
+    await modelsPanel.getByLabel('다른 모델명 추가').fill('missing-ollama:1b');
+    await modelsPanel.getByRole('button', { name: '직접 입력 missing-ollama:1b 모델 검색' }).click();
+    await modelsPanel.getByRole('button', { name: '직접 입력 missing-ollama:1b 모델 받기' }).click();
+    await page.waitForFunction(
+      () => window.__openedUrls.at(-1) === 'https://ollama.com/download/windows',
+      null,
+      { timeout: 10000 },
+    );
+    assert.equal(
+      (await page.evaluate(() => window.__openedUrls)).at(-1),
+      'https://ollama.com/download/windows',
+      'missing Ollama should open the Windows install page after download is requested',
+    );
+    await page.getByRole('alert').getByText('Ollama가 설치되어 있지 않아 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(state.pullRequests.includes('missing-ollama:1b'), true, 'missing Ollama pull should still call backend with the typed model');
 
     await modelsPanel.getByLabel('다른 모델명 추가').fill('custom-ready:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 custom-ready:1b 모델 사용' }).click();

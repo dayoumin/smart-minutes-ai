@@ -773,6 +773,75 @@ class AnalyzeApiTest(unittest.TestCase):
         remember_model.assert_called_once_with("llama3.2:3b", managed_by_app=True)
         start_pull.assert_called_once_with("llama3.2:3b")
 
+    def test_start_ollama_pull_reports_missing_ollama_without_registering_model(self) -> None:
+        with (
+            patch.object(main, "_ollama_executable_available", return_value=False),
+            patch.object(main, "_remember_summary_model") as remember_model,
+            patch.object(main, "_start_ollama_pull") as start_pull,
+        ):
+            response = self.client.post("/api/models/ollama/pull", json={"model": "gemma4:e2b"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(payload["model"], "gemma4:e2b")
+        self.assertFalse(payload["active"])
+        self.assertEqual(payload["status"], "failed")
+        self.assertEqual(payload["error"], "ollama executable not found")
+        remember_model.assert_not_called()
+        start_pull.assert_not_called()
+
+    def test_model_status_marks_stt_downloadable_only(self) -> None:
+        response = self.client.get("/api/models/status")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        models = {model["key"]: model for model in response.json()["models"]}
+        self.assertTrue(models["stt_faster_whisper"]["downloadable"])
+        self.assertFalse(models["diarization"]["downloadable"])
+
+    def test_start_model_download_accepts_stt_only(self) -> None:
+        with patch.object(main, "_start_model_download", return_value={
+            "key": "stt_faster_whisper",
+            "active": True,
+            "status": "starting",
+            "message": "모델 받기를 시작합니다.",
+        }) as start_download:
+            response = self.client.post("/api/models/download", json={"key": "stt_faster_whisper"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "starting")
+        start_download.assert_called_once_with("stt_faster_whisper")
+
+    def test_start_model_download_rejects_diarization(self) -> None:
+        response = self.client.post("/api/models/download", json={"key": "diarization"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "이 모델은 앱에서 직접 받을 수 없습니다.")
+
+    def test_run_model_download_completes_when_markers_exist(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            os.makedirs(backend_dir, exist_ok=True)
+
+            def fake_snapshot_download(repo_id: str, target_dir: str) -> None:
+                self.assertEqual(repo_id, "Systran/faster-whisper-large-v3")
+                os.makedirs(target_dir, exist_ok=True)
+                for filename in ("model.bin", "tokenizer.json", "config.json"):
+                    with open(os.path.join(target_dir, filename), "wb") as handle:
+                        handle.write(b"ok")
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.object(main, "_download_huggingface_snapshot", side_effect=fake_snapshot_download),
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+                main._run_model_download("stt_faster_whisper")
+
+            status = main._model_download_snapshot("stt_faster_whisper")
+            self.assertFalse(status["active"])
+            self.assertEqual(status["status"], "completed")
+            self.assertTrue(os.path.exists(os.path.join(tmp, "models", "faster-whisper-large-v3", "model.bin")))
+
     def test_start_ollama_pull_registers_direct_model(self) -> None:
         config_ref = main.normalize_app_config({
             "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},

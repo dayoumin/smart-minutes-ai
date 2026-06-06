@@ -72,6 +72,7 @@ app = FastAPI(title="NIFS AI Meeting API")
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
 OLLAMA_PULL_STATUS_LOCK = threading.RLock()
+MODEL_DOWNLOAD_STATUS_LOCK = threading.RLock()
 CONFIG_LOCK = threading.RLock()
 JOB_STATE_LOCKS_LOCK = threading.Lock()
 JOB_STATE_LOCKS: dict[str, threading.RLock] = {}
@@ -79,6 +80,7 @@ ACTIVE_GENERATIONS: set[tuple[str, str]] = set()
 GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
 GENERATION_STOP_REQUESTS: dict[tuple[str, str], dict] = {}
 OLLAMA_PULL_STATUS: dict[str, dict] = {}
+MODEL_DOWNLOAD_STATUS: dict[str, dict] = {}
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
@@ -804,6 +806,115 @@ def _validate_ollama_model_name(model_name: str) -> str:
     return model_name
 
 
+DOWNLOADABLE_MODEL_KEYS = {"stt_faster_whisper"}
+
+
+def _validate_downloadable_model_key(model_key: str) -> str:
+    model_key = (model_key or "").strip()
+    if model_key not in DOWNLOADABLE_MODEL_KEYS:
+        raise HTTPException(status_code=400, detail="이 모델은 앱에서 직접 받을 수 없습니다.")
+    spec = get_model_spec(model_key)
+    if spec.gated or spec.requires_token or not spec.repo_id:
+        raise HTTPException(status_code=400, detail="이 모델은 관리자가 직접 준비해야 합니다.")
+    return model_key
+
+
+def _model_download_snapshot(model_key: str) -> dict:
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        status = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
+    if status:
+        return status
+    return {
+        "key": model_key,
+        "active": False,
+        "status": "idle",
+        "message": "",
+        "target_path": "",
+        "started_at": "",
+        "updated_at": "",
+        "error": "",
+    }
+
+
+def _set_model_download_status(model_key: str, **updates) -> dict:
+    now = datetime.now().isoformat()
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {"key": model_key})
+        current.update(updates)
+        current["key"] = model_key
+        current["updated_at"] = now
+        MODEL_DOWNLOAD_STATUS[model_key] = current
+        return dict(current)
+
+
+def _download_huggingface_snapshot(repo_id: str, target_dir: str) -> None:
+    from huggingface_hub import snapshot_download
+
+    snapshot_download(
+        repo_id=repo_id,
+        local_dir=target_dir,
+    )
+
+
+def _run_model_download(model_key: str) -> None:
+    spec = get_model_spec(model_key)
+    target_path = resolve_model_path(BASE_DIR, spec)
+    _set_model_download_status(
+        model_key,
+        active=True,
+        status="running",
+        message=f"{spec.label} 모델을 받는 중입니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.",
+        target_path=target_path,
+        started_at=datetime.now().isoformat(),
+        error="",
+    )
+    try:
+        Path(target_path).mkdir(parents=True, exist_ok=True)
+        _download_huggingface_snapshot(str(spec.repo_id), target_path)
+        if not model_exists(BASE_DIR, spec):
+            raise RuntimeError("Downloaded files did not include the required model markers.")
+        _set_model_download_status(
+            model_key,
+            active=False,
+            status="completed",
+            message=f"{spec.label} 모델 받기가 완료되었습니다.",
+            target_path=target_path,
+            error="",
+        )
+    except Exception as exc:
+        logging.exception("Failed to download model %s", model_key)
+        _set_model_download_status(
+            model_key,
+            active=False,
+            status="failed",
+            message=f"{spec.label} 모델을 받지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요.",
+            target_path=target_path,
+            error=str(exc),
+        )
+
+
+def _start_model_download(model_key: str) -> dict:
+    model_key = _validate_downloadable_model_key(model_key)
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
+        if current.get("active"):
+            return current
+        MODEL_DOWNLOAD_STATUS[model_key] = {
+            "key": model_key,
+            "active": True,
+            "status": "starting",
+            "message": "모델 받기를 시작합니다.",
+            "target_path": "",
+            "started_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "error": "",
+        }
+
+    worker = threading.Thread(target=_run_model_download, args=(model_key,), daemon=True)
+    worker.start()
+    return _model_download_snapshot(model_key)
+
+
 def _ollama_executable_available() -> bool:
     executable = find_ollama_executable()
     if executable == "ollama":
@@ -1067,6 +1178,18 @@ async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
 async def get_ollama_model_pull_status(model: str) -> dict:
     model_name = _validate_ollama_model_name(model)
     return _ollama_pull_snapshot(model_name)
+
+
+@app.post("/api/models/download")
+async def start_model_download(payload: dict = Body(...)) -> dict:
+    model_key = _validate_downloadable_model_key(str((payload or {}).get("key") or ""))
+    return _start_model_download(model_key)
+
+
+@app.get("/api/models/download-status")
+async def get_model_download_status(key: str) -> dict:
+    model_key = _validate_downloadable_model_key(key)
+    return _model_download_snapshot(model_key)
 
 
 @app.delete("/api/models/ollama/model")

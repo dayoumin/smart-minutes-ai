@@ -173,6 +173,21 @@ interface OllamaPullStatus {
     error?: string;
 }
 
+interface ModelDownloadStatus {
+    key: string;
+    active: boolean;
+    status: 'idle' | 'starting' | 'running' | 'completed' | 'failed';
+    message: string;
+    target_path?: string;
+    started_at?: string;
+    updated_at?: string;
+    error?: string;
+}
+
+const isOllamaMissingPullStatus = (status?: { error?: string; model?: string }): boolean => (
+    Boolean(status?.model) && status?.error === 'ollama executable not found'
+);
+
 interface SettingsProps {
     onClose: () => void;
     analysisActive?: boolean;
@@ -235,6 +250,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [customSummaryModelInput, setCustomSummaryModelInput] = useState('');
     const [customSummaryCheckedModel, setCustomSummaryCheckedModel] = useState('');
     const [ollamaPulls, setOllamaPulls] = useState<Record<string, OllamaPullStatus>>({});
+    const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
     const [lastModelStatusCheck, setLastModelStatusCheck] = useState('');
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
@@ -242,12 +258,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const mountedRef = useRef(true);
     const modelStatusRequestIdRef = useRef(0);
     const pullRequestIdsRef = useRef<Record<string, number>>({});
+    const modelDownloadRequestIdsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
     const currentGeneralKeyRef = useRef('');
 
     const analysisModels = useMemo(
         () => (models?.models || []).filter(
-            model => model.key === 'stt_faster_whisper' || model.key === 'diarization',
+            model => model.key === 'stt_faster_whisper',
         ),
         [models],
     );
@@ -362,6 +379,87 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
     }, []);
 
+    const updateModelDownloadStatus = useCallback((status: ModelDownloadStatus) => {
+        setModelDownloads(previous => ({ ...previous, [status.key]: status }));
+    }, []);
+
+    const isCurrentModelDownloadRequest = useCallback((modelKey: string, requestId: number) => (
+        mountedRef.current && modelDownloadRequestIdsRef.current[modelKey] === requestId
+    ), []);
+
+    const pollModelDownloadStatus = useCallback(async (base: string, modelKey: string, requestId: number) => {
+        for (let attempt = 0; attempt < 7200; attempt += 1) {
+            await new Promise(resolve => window.setTimeout(resolve, 2000));
+            if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
+            const response = await fetchWithTimeout(`${base}/api/models/download-status?key=${encodeURIComponent(modelKey)}`);
+            if (!response.ok) throw new Error(`download-status=${response.status}`);
+            const status = await response.json() as ModelDownloadStatus;
+            if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
+            updateModelDownloadStatus(status);
+            if (!status.active) {
+                if (status.status === 'completed') {
+                    await loadModelsStatus(base, { surfaceErrors: false });
+                    if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
+                    setMessage(status.message || '모델 받기가 완료되었습니다.');
+                } else if (status.status === 'failed') {
+                    setMessage('');
+                    setErrorMessage(status.message || '모델을 받지 못했습니다.');
+                }
+                return;
+            }
+        }
+        throw new Error('모델 받기 상태 확인 시간이 초과되었습니다.');
+    }, [isCurrentModelDownloadRequest, loadModelsStatus, updateModelDownloadStatus]);
+
+    const handleDownloadModel = useCallback(async (model: ModelStatus) => {
+        if (!model.downloadable) {
+            setErrorMessage('이 모델은 앱에서 직접 받을 수 없습니다.');
+            return;
+        }
+
+        setErrorMessage('');
+        setMessage('');
+        const requestId = (modelDownloadRequestIdsRef.current[model.key] || 0) + 1;
+        modelDownloadRequestIdsRef.current[model.key] = requestId;
+        try {
+            const base = apiBase || await getApiBase();
+            if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
+            setApiBase(base);
+            const response = await fetchWithTimeout(`${base}/api/models/download`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: model.key }),
+            });
+            if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                throw new Error(body?.detail || `모델 받기 시작 실패: ${response.status}`);
+            }
+            const status = await response.json() as ModelDownloadStatus;
+            if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
+            updateModelDownloadStatus(status);
+            if (status.active) {
+                setMessage(status.message || `${getUserModelLabel(model)}을 받는 중입니다.`);
+                void pollModelDownloadStatus(base, model.key, requestId).catch(error => {
+                    if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
+                    setMessage('');
+                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                });
+            } else if (status.status === 'completed') {
+                await loadModelsStatus(base, { surfaceErrors: false });
+                if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
+                setMessage(status.message || `${getUserModelLabel(model)}이 준비되었습니다.`);
+            } else {
+                setMessage('');
+                setErrorMessage(status.message || `${getUserModelLabel(model)}을 받지 못했습니다.`);
+            }
+        } catch (error) {
+            if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
+            setMessage('');
+            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
+        }
+    }, [apiBase, isCurrentModelDownloadRequest, loadModelsStatus, pollModelDownloadStatus, updateModelDownloadStatus]);
+
     const updateOllamaPullStatus = useCallback((status: OllamaPullStatus) => {
         setOllamaPulls(previous => ({ ...previous, [status.model]: status }));
     }, []);
@@ -422,6 +520,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const status = await response.json() as OllamaPullStatus;
             if (!isCurrentPullRequest(targetModel, requestId)) return;
             updateOllamaPullStatus(status);
+            if (!status.active && status.status === 'failed' && isOllamaMissingPullStatus(status)) {
+                setMessage('');
+                window.open(OLLAMA_INSTALL_URL, '_blank', 'noopener,noreferrer');
+                setErrorMessage('Ollama가 설치되어 있지 않아 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                return;
+            }
             if (status.active) {
                 setMessage(status.message || `${targetModel} 모델을 받는 중입니다.`);
                 void pollOllamaPullStatus(base, targetModel, requestId).catch(error => {
@@ -1025,6 +1129,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         {analysisModels.map(model => {
                                             const modelUrl = model.install_url || model.license_url || '';
                                             const modelName = model.repo_id || model.label;
+                                            const modelDownloadStatus = modelDownloads[model.key];
+                                            const modelDownloadActive = Boolean(modelDownloadStatus?.active);
                                             const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
                                             return (
                                                 <div key={model.key} className="rounded-md border border-border bg-background p-3 text-sm">
@@ -1032,7 +1138,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                         <div className="min-w-0">
                                                             <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>
                                                             {!model.installed && (
-                                                                <span className="mt-1 block text-xs text-muted-foreground">{manualNote}</span>
+                                                                <span className="mt-1 block text-xs text-muted-foreground">
+                                                                    {modelDownloadStatus?.message || (model.downloadable
+                                                                        ? '앱에서 바로 받을 수 있습니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.'
+                                                                        : manualNote)}
+                                                                </span>
                                                             )}
                                                         </div>
                                                         {model.installed ? (
@@ -1044,6 +1154,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             >
                                                                 <Check size={16} aria-hidden="true" />
                                                             </span>
+                                                        ) : model.downloadable ? (
+                                                            <Button
+                                                                className="h-8 shrink-0 px-3 text-xs"
+                                                                aria-label={`${getUserModelLabel(model)} 받기`}
+                                                                onClick={() => void handleDownloadModel(model)}
+                                                                disabled={modelDownloadActive}
+                                                            >
+                                                                {modelDownloadActive ? '받는 중' : '받기'}
+                                                            </Button>
                                                         ) : modelUrl ? (
                                                             <button
                                                                 type="button"

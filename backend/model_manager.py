@@ -262,7 +262,7 @@ def get_model_status(base_dir: str, config: Optional[dict] = None) -> Dict:
             "install_url": spec.install_url,
             "install_command": spec.install_command,
             "install_options": list(spec.install_options),
-            "downloadable": False,
+            "downloadable": spec.key == "stt_faster_whisper",
         })
     models.append(_summary_model_status(base_dir, config))
 

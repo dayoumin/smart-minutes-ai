@@ -35,7 +35,7 @@ releases\lmo_audio\
   models\
 ```
 
-`models`에는 기본 음성 인식 모델과 참석자 구분 모델 파일이 들어갑니다. 현재 기본 음성 인식 모델은 `faster-whisper-large-v3`이며, `models\faster-whisper-large-v3` 폴더 안에 `model.bin`, `tokenizer.json`, `config.json` 같은 파일 묶음이 있어야 합니다.
+`models`에는 기본 음성 인식 모델과 앱 실행에 필요한 모델 파일이 들어갑니다. 현재 기본 음성 인식 모델은 `faster-whisper-large-v3`이며, `models\faster-whisper-large-v3` 폴더 안에 `model.bin`, `tokenizer.json`, `config.json` 같은 파일 묶음이 있어야 합니다.
 
 ## 소스 폴더
 
@@ -86,7 +86,7 @@ lmo_audio*.zip
 
 ## 회사 PC 이관
 
-회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. `releases`는 커밋 제외 폴더이므로 `git push`로 실행 파일이 전달되지는 않습니다. 다른 PC 테스트용 실행본은 `releases\lmo_audio`를 별도 복사하거나 압축해서 전달합니다. 기본 음성 인식 모델은 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. STT와 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않습니다. Ollama 정리 모델은 외부망이 있고 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있습니다.
+회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. `releases`는 커밋 제외 폴더이므로 `git push`로 실행 파일이 전달되지는 않습니다. 다른 PC 테스트용 실행본은 `releases\lmo_audio`를 별도 복사하거나 압축해서 전달합니다. 기본 음성 인식 모델은 외부망 PC에서 설정 화면의 `받기`로 받을 수 있고, 실패하거나 내부망이면 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 그 밖의 앱 실행용 소형 모델은 전달용 묶음에 포함합니다. Ollama 정리 모델은 외부망이 있고 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있습니다.
 
 자세한 내용은 [LMO 회의 인사이트 portable 회사 PC 사용법](docs/lmo-meeting-insight-company-pc-guide.md)을 봅니다.
 
@@ -105,7 +105,7 @@ lmo_audio*.zip
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure_backend_build_env.ps1 -Python <python.exe 경로> -RecreateBroken
 ```
 
-Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 참석자 구분 모델만 사용합니다.
+Qwen/Cohere는 회사 PC 실행 경로의 STT 후보가 아닙니다. 관련 기록과 벤치마크 설정은 남기지만, 기본 앱 빌드와 portable 모델 묶음에는 `faster-whisper-large-v3`와 앱에 포함되는 기본 분석 모델만 사용합니다.
 
 ## 배포 정리 기준
 

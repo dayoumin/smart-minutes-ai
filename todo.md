@@ -1,3 +1,9 @@
+# 0. Immediate queue
+- [ ] 2026-09-07 Windows/Codex guidance review
+  - Re-check recurring Windows/Codex issues in `AGENTS.md`.
+  - Remove guidance that no longer reproduces.
+  - Add newly repeated issues around encoding, sandbox permissions, silent commands, or cache/write failures.
+
 # 0. 다음 우선순위
 - [x] 2026-05-16 모델 경로 혼동 방지 정리
   - 재빌드용 모델 원본 기준은 프로젝트 루트 `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`이다.

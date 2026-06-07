@@ -24,3 +24,10 @@ def find_ollama_executable() -> str:
             continue
 
     return "ollama"
+
+
+def ollama_executable_available() -> bool:
+    executable = find_ollama_executable()
+    if executable == "ollama":
+        return shutil.which("ollama") is not None
+    return os.path.isfile(executable)

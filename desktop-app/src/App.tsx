@@ -320,7 +320,7 @@ export const App: React.FC = () => {
             >
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
                     <MeetingWriter
-                        onOpenSettings={() => openSettings('general')}
+                        onOpenSettings={() => openSettings('models')}
                         resumeDraftSelectionRequest={resumeDraftSelectionRequest}
                         onRegisterLeaveGuard={(guard) => {
                             writerLeaveGuardRef.current = guard ?? (() => true);

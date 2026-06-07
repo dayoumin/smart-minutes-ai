@@ -160,6 +160,7 @@ const installRoutes = async (page) => {
           configured_model: settingsState.summary.model,
           installed_model: settingsState.summary.model,
           installed_models: [settingsState.summary.model],
+          ollama_available: true,
           required: false,
           install_options: settingsState.summary.model_options,
         },
@@ -327,7 +328,7 @@ const run = async () => {
     assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 인식 준비 → Ollama 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 인식 준비 → 요약 프로그램 확인 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
@@ -342,10 +343,12 @@ const run = async () => {
       true,
       'STT download button should poll the model download status API',
     );
-    await modelsPanel.getByText('Ollama는 회의 요약 모델을 PC에서 실행하는 프로그램입니다.').waitFor({ state: 'visible', timeout: 10000 });
-    const ollamaInstallLink = modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' });
-    await ollamaInstallLink.waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await ollamaInstallLink.getAttribute('href'), 'https://ollama.com/download/windows');
+    await modelsPanel.getByText('Ollama와 선택한 회의 요약 모델을 확인했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(
+      await modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' }).count(),
+      0,
+      'installed Ollama should not show the install page link again',
+    );
     assert.equal(await modelsPanel.getByText('준비됨').count(), 0);
     assert.equal(await modelsPanel.getByText('대화록 작성에 필요합니다.').count(), 0);
     await modelsPanel.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
@@ -373,7 +376,7 @@ const run = async () => {
 
     await page.getByRole('tab', { name: '일반' }).click();
 
-    const restartButton = page.getByRole('button', { name: '서버 재시작' });
+    const restartButton = page.getByRole('button', { name: '재시작' });
     await expectDisabled(restartButton, true, 'active analysis should disable backend restart');
 
     await page.evaluate(() => {
@@ -403,7 +406,7 @@ const run = async () => {
     }
     const restartCalls = await page.evaluate(() => window.__restartCalls);
     assert.equal(restartCalls, 1, 'restart command should run once');
-    await page.getByText(/분석 서버를 다시 시작/).waitFor({ state: 'visible', timeout: 10000 });
+    await page.getByText(/분석 기능을 다시 시작/).waitFor({ state: 'visible', timeout: 10000 });
 
     await page.getByLabel('다운로드 형식').selectOption('docx');
     for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {

@@ -9,7 +9,7 @@ from config_normalization import (
     get_summary_option_models,
     normalize_summary_model_name,
 )
-from ollama_utils import find_ollama_executable
+from ollama_utils import find_ollama_executable, ollama_executable_available
 from process_utils import run_hidden
 
 
@@ -195,6 +195,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
     uses_configured_option = configured_model in option_models
     visible_options = list(options) if uses_configured_option else []
     candidate_models = get_summary_candidate_models(config)
+    ollama_available = ollama_executable_available()
     ollama_models = []
     for model in list_ollama_models():
         normalized_model = normalize_summary_model_name(model)
@@ -244,6 +245,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
         "installed": bool(installed_model),
         "installed_model": installed_model,
         "installed_models": installed_models,
+        "ollama_available": ollama_available,
         "configured_model": configured_model,
         "required": False,
         "gated": False,

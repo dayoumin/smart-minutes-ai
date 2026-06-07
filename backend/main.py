@@ -54,7 +54,7 @@ from model_manager import (
     ollama_model_exists,
     resolve_model_path,
 )
-from ollama_utils import find_ollama_executable
+from ollama_utils import find_ollama_executable, ollama_executable_available
 from pipeline.transcribe import get_stt_device_status
 from process_utils import hidden_subprocess_kwargs
 from storage_preflight import build_analysis_storage_preflight
@@ -84,6 +84,7 @@ MODEL_DOWNLOAD_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_EXPECTED_BYTES = {
     "stt_faster_whisper": 3_090_839_274,
 }
+MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
@@ -923,6 +924,44 @@ def _download_huggingface_snapshot(repo_id: str, target_dir: str) -> None:
     )
 
 
+def _model_download_preflight(model_key: str, target_path: str) -> str:
+    target = Path(target_path)
+    try:
+        target.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"모델을 저장할 폴더를 만들지 못했습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+
+    probe_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=".download-check-", dir=target, delete=False) as handle:
+            probe_path = Path(handle.name)
+            handle.write(b"ok")
+    except OSError as exc:
+        return f"모델 폴더에 파일을 쓸 수 없습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+    finally:
+        if probe_path:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    expected_bytes = MODEL_DOWNLOAD_EXPECTED_BYTES.get(model_key, 0)
+    if expected_bytes <= 0:
+        return ""
+
+    try:
+        required_free_bytes = expected_bytes + MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES
+        free_bytes = shutil.disk_usage(str(target)).free
+    except OSError:
+        return ""
+
+    if free_bytes < required_free_bytes:
+        required_gb = required_free_bytes / (1024 ** 3)
+        free_gb = free_bytes / (1024 ** 3)
+        return f"저장 공간이 부족합니다. 모델을 받으려면 약 {required_gb:.1f}GB가 필요하고, 현재 여유 공간은 약 {free_gb:.1f}GB입니다."
+    return ""
+
+
 def _run_model_download(model_key: str) -> None:
     spec = get_model_spec(model_key)
     target_path = resolve_model_path(BASE_DIR, spec)
@@ -982,6 +1021,19 @@ def _start_model_download(model_key: str) -> dict:
         )
         return _model_download_snapshot(model_key)
 
+    preflight_error = _model_download_preflight(model_key, target_path)
+    if preflight_error:
+        _set_model_download_status(
+            model_key,
+            active=False,
+            status="failed",
+            message=preflight_error,
+            target_path=target_path,
+            started_at=datetime.now().isoformat(),
+            error=preflight_error,
+        )
+        return _model_download_snapshot(model_key)
+
     with MODEL_DOWNLOAD_STATUS_LOCK:
         current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
         if current.get("active"):
@@ -1003,10 +1055,7 @@ def _start_model_download(model_key: str) -> dict:
 
 
 def _ollama_executable_available() -> bool:
-    executable = find_ollama_executable()
-    if executable == "ollama":
-        return shutil.which("ollama") is not None
-    return os.path.isfile(executable)
+    return ollama_executable_available()
 
 
 def _ollama_pull_snapshot(model_name: str) -> dict:

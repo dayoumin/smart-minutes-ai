@@ -13,6 +13,8 @@ import { getApiBase, isTauriRuntime, openExternalUrl, restartDesktopBackend } fr
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
 const OLLAMA_INSTALL_URL = 'https://ollama.com/download/windows';
+const OLLAMA_INSTALL_OPENED_NOTICE = 'Ollama 설치 화면이 열렸습니다. 설치가 끝나면 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 상태 확인을 눌러 주세요.';
+const OLLAMA_INSTALL_FAILED_NOTICE = 'Ollama 설치 페이지를 열지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.';
 
 const DEFAULT_SUMMARY_MODEL_OPTIONS: SummaryModelOption[] = [
     {
@@ -88,6 +90,7 @@ interface ModelStatus {
     configured_model?: string;
     installed_model?: string;
     installed_models?: string[];
+    ollama_available?: boolean;
     installed: boolean;
     required: boolean;
     gated: boolean;
@@ -253,15 +256,19 @@ const getModelDownloadStatusMessage = (status?: ModelDownloadStatus): string => 
 const getModelStatusFailureMessage = (error: unknown): string => {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return isTimeout
-        ? '앱 안의 분석 프로그램이 모델과 GPU 상태 요청에 늦게 응답하고 있습니다. 잠시 후 자동으로 다시 확인합니다.'
-        : '앱 안의 분석 프로그램에서 모델과 GPU 상태를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다.';
+        ? '모델 상태 확인이 지연되고 있습니다. 잠시 후 자동으로 다시 확인합니다.'
+        : '모델 상태를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다.';
 };
+
+const isModelStatusCheckFailure = (message: string): boolean => (
+    message.includes('모델 상태') || message.includes('확인하지 못했습니다') || message.includes('지연')
+);
 
 const getSettingsFailureMessage = (error: unknown): string => {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return isTimeout
-        ? '앱 안의 분석 프로그램 응답이 지연되어 설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다.'
-        : '앱 안의 분석 프로그램에 연결하지 못해 설정을 불러오지 못했습니다. 데스크톱 앱이면 일반 탭의 서버 재시작을 사용해 주세요.';
+        ? '설정을 불러오는 중입니다. 잠시 후 자동으로 다시 확인합니다.'
+        : '설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. 계속 안 되면 재시작을 눌러 주세요.';
 };
 
 const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Response> => {
@@ -303,6 +310,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
     const [lastModelStatusCheck, setLastModelStatusCheck] = useState('');
+    const [isCheckingModels, setIsCheckingModels] = useState(false);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [openSummaryModelMenu, setOpenSummaryModelMenu] = useState('');
     const mountedRef = useRef(true);
@@ -311,6 +319,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const modelDownloadRequestIdsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
     const currentGeneralKeyRef = useRef('');
+
+    useEffect(() => {
+        setActiveTab(initialTab);
+    }, [initialTab]);
 
     const analysisModels = useMemo(
         () => (models?.models || []).filter(
@@ -395,6 +407,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const loadModelsStatus = useCallback(async (base: string, options: { surfaceErrors?: boolean } = {}): Promise<ModelsPayload | null> => {
         const requestId = modelStatusRequestIdRef.current + 1;
         modelStatusRequestIdRef.current = requestId;
+        setIsCheckingModels(true);
         try {
             const modelsResponse = await fetchWithTimeout(`${base}/api/models/status`);
             if (!modelsResponse.ok) {
@@ -426,8 +439,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
             setModelStatusErrorMessage(getModelStatusFailureMessage(error));
             return null;
+        } finally {
+            if (mountedRef.current && modelStatusRequestIdRef.current === requestId) {
+                setIsCheckingModels(false);
+            }
         }
     }, []);
+
+    const handleRefreshModelsStatus = useCallback(async () => {
+        setErrorMessage('');
+        setMessage('');
+        try {
+            const base = apiBase || await getApiBase();
+            setApiBase(base);
+            await loadModelsStatus(base, { surfaceErrors: false });
+        } catch {
+            setModelStatusErrorMessage('모델 상태를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다.');
+        }
+    }, [apiBase, loadModelsStatus]);
 
     const updateModelDownloadStatus = useCallback((status: ModelDownloadStatus) => {
         setModelDownloads(previous => ({ ...previous, [status.key]: status }));
@@ -453,7 +482,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     setMessage(status.message || '모델 받기가 완료되었습니다.');
                 } else if (status.status === 'failed') {
                     setMessage('');
-                    setErrorMessage(status.message || '모델을 받지 못했습니다.');
+                    setErrorMessage('');
                 }
                 return;
             }
@@ -503,7 +532,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage(status.message || `${getUserModelLabel(model)}이 준비되었습니다.`);
             } else {
                 setMessage('');
-                setErrorMessage(status.message || `${getUserModelLabel(model)}을 받지 못했습니다.`);
+                setErrorMessage('');
             }
         } catch (error) {
             if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
@@ -590,9 +619,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage('');
                 try {
                     await openExternalUrl(OLLAMA_INSTALL_URL);
-                    setOllamaInstallNoticeMessage('Ollama 설치 페이지를 열었습니다. 설치 후 다시 받기를 눌러 주세요.');
+                    setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
                 } catch {
-                    setOllamaInstallNoticeMessage('Ollama 설치 페이지를 열지 못했습니다. 설치 버튼을 다시 눌러 주세요.');
+                    setOllamaInstallNoticeMessage(OLLAMA_INSTALL_FAILED_NOTICE);
                 }
                 setOllamaInstallPrompted(true);
                 setErrorMessage('');
@@ -758,7 +787,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     ]);
 
     useEffect(() => {
-        if (!modelStatusErrorMessage || !apiBase) return;
+        if (!modelStatusErrorMessage || !apiBase || !isModelStatusCheckFailure(modelStatusErrorMessage)) return;
         const timeoutId = window.setTimeout(() => {
             void loadModelsStatus(apiBase, { surfaceErrors: false });
         }, 5000);
@@ -978,7 +1007,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     const handleRestartBackend = async () => {
         if (analysisActive) {
-            setErrorMessage('분석 중에는 분석 서버를 다시 시작할 수 없습니다. 진행 중인 분석을 중단하거나 완료한 뒤 다시 시도해 주세요.');
+            setErrorMessage('진행 중인 분석이 끝난 뒤 재시작할 수 있습니다.');
             return;
         }
 
@@ -993,11 +1022,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const ready = await loadSettings();
             setMessage(
                 ready
-                    ? '분석 서버를 다시 시작하고 상태를 확인했습니다.'
-                    : '분석 서버를 다시 시작했습니다. 모델 상태는 잠시 후 자동으로 다시 확인합니다.',
+                    ? '분석 기능을 다시 시작했습니다.'
+                    : '재시작했습니다. 모델 상태는 잠시 후 자동으로 다시 확인합니다.',
             );
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '분석 서버를 다시 시작하지 못했습니다.');
+        } catch {
+            setErrorMessage('재시작하지 못했습니다. 앱을 닫았다가 다시 열어 주세요.');
         } finally {
             setIsRestartingBackend(false);
         }
@@ -1023,6 +1052,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     : []
         ).map(normalizeSummaryModelName),
     );
+    const ollamaAvailable = Boolean(summaryModelStatus?.ollama_available || installedSummaryModels.size > 0);
     const configuredSummaryModel = normalizeSummaryModelName(settings?.summary?.model);
     const selectedSummaryInstalled = Boolean(selectedSummaryModel && installedSummaryModels.has(selectedSummaryModel));
     const isSummaryOptionInstalled = (modelName?: string) => Boolean(modelName && installedSummaryModels.has(modelName));
@@ -1040,9 +1070,23 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const summaryModelHint = selectedSummaryModel && !selectedSummaryInstalled
         ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
+    const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
+    const modelPreparationGuide = ollamaAvailable
+        ? '음성 인식 준비 → 요약 프로그램 확인 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.'
+        : '음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.';
+    const summaryModelOllamaHelp = modelStatusCanAutoRetry
+        ? (ollamaAvailable
+            ? '마지막 확인 기준으로 요약 프로그램은 준비되어 있습니다. 현재 상태를 다시 확인해 주세요.'
+            : '회의 요약 환경을 다시 확인해 주세요.')
+        : ollamaAvailable
+            ? (selectedSummaryInstalled
+                ? 'Ollama와 선택한 회의 요약 모델을 확인했습니다.'
+                : 'Ollama가 설치되어 있습니다. 선택한 회의 요약 모델만 받으면 됩니다.')
+            : 'Ollama 설치 후 회의 요약 모델을 받을 수 있습니다.';
     const ollamaInstallNotice = ollamaInstallPrompted
-        ? (ollamaInstallNoticeMessage || 'Ollama 설치 후 다시 받기를 눌러 주세요.')
+        ? (ollamaInstallNoticeMessage || OLLAMA_INSTALL_OPENED_NOTICE)
         : '';
+    const ollamaInstallNoticeTone: 'info' | 'warning' = ollamaInstallNotice.includes('열지 못했습니다') ? 'warning' : 'info';
     const errorHeading = errorMessage.includes('Ollama') ? 'Ollama 설치 필요' : '설정 확인 실패';
     const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
     const renderDismissButton = (label: string, onClick: () => void) => (
@@ -1152,7 +1196,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
                                     </select>
                                     <span className="mt-1 block text-xs text-muted-foreground">
-                                        {modelStatusErrorMessage || gpuStatusText}
+                                        {gpuStatusText}
                                     </span>
                                 </label>
                             </div>
@@ -1229,18 +1273,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             {isTauriRuntime() && (
                                 <div className="flex flex-col gap-3 rounded-md border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
                                     <div>
-                                        <div className="text-sm font-medium text-foreground">문제 해결</div>
+                                        <div className="text-sm font-medium text-foreground">분석 기능 재시작</div>
                                         <p className="mt-1 text-xs text-muted-foreground">
-                                            분석 기능이 응답하지 않을 때만 서버를 다시 시작하세요.
+                                            모델 상태가 계속 갱신되지 않을 때만 눌러 주세요. 보통은 자동으로 다시 확인합니다.
                                         </p>
                                         {analysisActive && (
                                             <p className="mt-2 text-xs text-muted-foreground">
                                                 진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.
-                                            </p>
-                                        )}
-                                        {apiBase && (
-                                            <p className="mt-2 text-xs text-muted-foreground">
-                                                연결 주소: {apiBase}
                                             </p>
                                         )}
                                     </div>
@@ -1248,10 +1287,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         variant="outline"
                                         onClick={() => void handleRestartBackend()}
                                         disabled={!canRestartBackend}
-                                        title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 서버를 다시 시작합니다.'}
+                                        title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 기능을 다시 시작합니다.'}
                                     >
                                         <RefreshCw size={16} className={isRestartingBackend ? 'animate-spin' : ''} />
-                                        {isRestartingBackend ? '재시작 중...' : '서버 재시작'}
+                                        {isRestartingBackend ? '재시작 중...' : '재시작'}
                                     </Button>
                                 </div>
                             )}
@@ -1262,26 +1301,58 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                         <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="flex flex-col gap-4">
                             <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
                                 <span className="font-semibold text-foreground">처음 준비:</span>{' '}
-                                음성 인식 준비 → Ollama 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.
+                                {modelPreparationGuide}
                             </div>
 
                             <div className="rounded-md border border-border bg-muted/20 p-4">
-                                <div className="flex flex-col gap-1">
-                                    <div className="text-base font-semibold text-foreground">음성 분석 모델</div>
-                                    {modelStatusErrorMessage && (
+                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                                    <div className="flex flex-col gap-1">
+                                        <div className="text-base font-semibold text-foreground">음성 분석 모델</div>
                                         <div className="text-xs text-muted-foreground">
-                                            상태 확인 실패. 앱 안의 분석 프로그램 응답을 기다리고 있습니다.
+                                            {isCheckingModels
+                                                ? '환경을 확인하고 있습니다.'
+                                                : lastModelStatusCheck
+                                                    ? `최근 확인: ${lastModelStatusCheck}`
+                                                    : '환경 확인을 기다리고 있습니다.'}
                                         </div>
-                                    )}
-                                    {lastModelStatusCheck && (
-                                        <div className="text-xs text-muted-foreground">
-                                            최근 확인: {lastModelStatusCheck}
-                                        </div>
-                                    )}
+                                    </div>
+                                    <Button
+                                        variant="outline"
+                                        className="h-8 shrink-0 px-3 text-xs"
+                                        onClick={() => void handleRefreshModelsStatus()}
+                                        disabled={isCheckingModels}
+                                        aria-label="모델 환경 다시 확인"
+                                    >
+                                        <RefreshCw size={14} className={isCheckingModels ? 'animate-spin text-primary' : ''} aria-hidden="true" />
+                                        {isCheckingModels ? '확인 중' : '상태 확인'}
+                                    </Button>
                                 </div>
+                                {modelStatusErrorMessage && !isLoading && (
+                                    <StatusBanner
+                                        tone={modelStatusCanAutoRetry ? 'warning' : 'info'}
+                                        className="mt-3 py-2 text-xs shadow-none"
+                                        action={(
+                                            <Button
+                                                variant="outline"
+                                                className="h-8 shrink-0 px-3 text-xs"
+                                                onClick={() => void handleRefreshModelsStatus()}
+                                                disabled={isCheckingModels}
+                                            >
+                                                다시 확인
+                                            </Button>
+                                        )}
+                                    >
+                                        {modelStatusErrorMessage}
+                                        {' '}
+                                        {modelStatusCanAutoRetry
+                                            ? '자동으로 다시 확인합니다. 계속 실패하면 재시작을 눌러 주세요.'
+                                            : '필요한 설정을 조정한 뒤 다시 확인해 주세요.'}
+                                    </StatusBanner>
+                                )}
 
                                 {isLoading && !models ? (
-                                    <div className="mt-3 rounded-md border border-border bg-background p-4 text-center text-sm text-muted-foreground">
+                                    <div className="mt-3 flex items-center justify-center gap-2 rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">
+                                        <RefreshCw size={16} className="animate-spin text-primary" aria-hidden="true" />
                                         모델 상태를 불러오는 중입니다.
                                     </div>
                                 ) : analysisModels.length > 0 ? (
@@ -1373,33 +1444,41 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     <div className="flex flex-col gap-1">
                                         <div className="text-base font-semibold text-foreground">회의 요약 모델</div>
                                         <p className="text-xs text-muted-foreground">
-                                            Ollama는 회의 요약 모델을 PC에서 실행하는 프로그램입니다.
+                                            {summaryModelOllamaHelp}
                                         </p>
                                     </div>
-                                    <a
-                                        href={OLLAMA_INSTALL_URL}
-                                        target="_blank"
-                                        rel="noreferrer"
-                                        className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                        aria-label="Ollama 설치 페이지 열기"
-                                        onClick={event => {
-                                            event.preventDefault();
-                                            setErrorMessage('');
-                                            setMessage('');
-                                            setOllamaInstallPrompted(false);
-                                            setOllamaInstallNoticeMessage('');
-                                            void openExternalUrl(OLLAMA_INSTALL_URL).catch(() => {
-                                                setOllamaInstallPrompted(true);
-                                                setOllamaInstallNoticeMessage('Ollama 설치 페이지를 열지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.');
-                                            });
-                                        }}
-                                    >
-                                        Ollama 설치
-                                    </a>
+                                    {!ollamaAvailable && (
+                                        <a
+                                            href={OLLAMA_INSTALL_URL}
+                                            target="_blank"
+                                            rel="noreferrer"
+                                            className="btn btn-outline h-8 shrink-0 px-3 text-xs"
+                                            aria-label="Ollama 설치 페이지 열기"
+                                            onClick={event => {
+                                                event.preventDefault();
+                                                setErrorMessage('');
+                                                setMessage('');
+                                                setOllamaInstallPrompted(false);
+                                                setOllamaInstallNoticeMessage('');
+                                                void openExternalUrl(OLLAMA_INSTALL_URL)
+                                                    .then(() => {
+                                                        if (!mountedRef.current) return;
+                                                        setOllamaInstallPrompted(true);
+                                                        setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
+                                                    })
+                                                    .catch(() => {
+                                                        setOllamaInstallPrompted(true);
+                                                        setOllamaInstallNoticeMessage(OLLAMA_INSTALL_FAILED_NOTICE);
+                                                    });
+                                            }}
+                                        >
+                                            Ollama 설치
+                                        </a>
+                                    )}
                                 </div>
                                 {ollamaInstallNotice && (
                                     <StatusBanner
-                                        tone="warning"
+                                        tone={ollamaInstallNoticeTone}
                                         className="mt-3 py-2 text-xs shadow-none"
                                         action={renderDismissButton('Ollama 설치 안내 닫기', () => {
                                             setOllamaInstallPrompted(false);

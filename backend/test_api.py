@@ -644,14 +644,34 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        with patch("model_manager.list_ollama_models", return_value=["llama3.2:3b"]):
+        with (
+            patch("model_manager.list_ollama_models", return_value=["llama3.2:3b"]),
+            patch("model_manager.ollama_executable_available", return_value=True),
+        ):
             status = get_model_status(main.BASE_DIR, config)
 
         llm_model = next(model for model in status["models"] if model["key"] == "llm")
         self.assertTrue(llm_model["installed"])
+        self.assertTrue(llm_model["ollama_available"])
         self.assertEqual(llm_model["installed_model"], "llama3.2:3b")
         self.assertIn("llama3.2:3b", llm_model["installed_models"])
         self.assertIn("llama3.2:3b", {option["model"] for option in llm_model["install_options"] if option.get("model")})
+
+    def test_model_status_reports_missing_ollama_runtime_separately(self) -> None:
+        config = main.normalize_app_config({
+            "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
+            "paths": {},
+        })
+
+        with (
+            patch("model_manager.list_ollama_models", return_value=[]),
+            patch("model_manager.ollama_executable_available", return_value=False),
+        ):
+            status = get_model_status(main.BASE_DIR, config)
+
+        llm_model = next(model for model in status["models"] if model["key"] == "llm")
+        self.assertFalse(llm_model["installed"])
+        self.assertFalse(llm_model["ollama_available"])
 
     def test_model_status_tracks_installed_ollama_models_without_showing_unregistered_cards(self) -> None:
         config = main.normalize_app_config({
@@ -902,6 +922,49 @@ class AnalyzeApiTest(unittest.TestCase):
 
             self.assertFalse(status["active"])
             self.assertEqual(status["status"], "completed")
+            thread_cls.assert_not_called()
+
+    def test_start_model_download_fails_before_thread_when_disk_space_is_low(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            os.makedirs(backend_dir, exist_ok=True)
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.object(main.shutil, "disk_usage", return_value=types.SimpleNamespace(free=128 * 1024 * 1024)),
+                patch.object(main.threading, "Thread") as thread_cls,
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+                status = main._start_model_download("stt_faster_whisper")
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+            self.assertFalse(status["active"])
+            self.assertEqual(status["status"], "failed")
+            self.assertIn("저장 공간이 부족합니다", status["message"])
+            thread_cls.assert_not_called()
+
+    def test_start_model_download_preflight_does_not_trust_partial_files_for_free_space(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            os.makedirs(backend_dir, exist_ok=True)
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.object(main, "_directory_size_bytes", return_value=3_000_000_000),
+                patch.object(main.shutil, "disk_usage", return_value=types.SimpleNamespace(free=900 * 1024 * 1024)),
+                patch.object(main.threading, "Thread") as thread_cls,
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+                status = main._start_model_download("stt_faster_whisper")
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+            self.assertFalse(status["active"])
+            self.assertEqual(status["status"], "failed")
+            self.assertIn("저장 공간이 부족합니다", status["message"])
             thread_cls.assert_not_called()
 
     def test_tiny_stt_marker_files_do_not_count_as_installed(self) -> None:

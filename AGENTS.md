@@ -41,12 +41,21 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 ## Windows Runtime Pitfalls
 
 - PowerShell 5.1 defaults to a legacy code page, so Korean/UTF-8 text can break when rewritten through shell output. Prefer `apply_patch` for edits and explicit UTF-8 .NET writes inside scripts.
+- If `Get-Content`, `cat`, or wrapped PowerShell output shows mojibake for Korean/UTF-8 text, do not treat that terminal output as source of truth. Re-check with `git diff`, targeted search, or another UTF-8-safe path before editing.
 - `Get-CimInstance Win32_Process` may fail with `Access denied` under Codex sandboxing even when ordinary file and process commands work. Use `Get-Process` when executable path is enough; request escalation only when command-line inspection is required.
 - `Get-FileHash` may be unavailable in some PowerShell hosts launched through Node/npm. Release scripts should use a .NET SHA256 fallback instead of relying only on the cmdlet.
 - Git may fail or misreport dirty state when the user's global ignore file is inaccessible. For release manifest checks, use `git -c core.excludesFile= status --short --untracked-files=all`.
 - `ProcessStartInfo.EnvironmentVariables[...]` can fail under Python-driven Windows PowerShell subprocesses. For sidecar smoke tests, fall back to temporarily setting process-level environment variables and let the child inherit them.
+- Windows sandboxing can surface `EPERM`, `Access denied`, or cache-write failures under folders such as `.next`, `.next\\cache`, `.next\\trace`, or other generated caches even when the app code is fine. Classify these as environment or permission boundary issues first, then decide whether escalation, cleanup, or a different cache path is the right fix.
+- A command that exits quietly or produces no output is not automatically a failure in Codex on Windows. Check the exit code, expected side effects, and the next observable state before retrying or rewriting code just because the console stayed silent.
 - After an interrupted build, check for leftover `corepack pnpm build`, `scripts\build_user_release.ps1`, Tauri, PyInstaller, or sidecar processes before retrying. Stop only processes whose command line or executable path clearly belongs to this project.
 - Keep release scripts resilient to process-inspection failures. They should warn and fall back when possible instead of failing before the actual build starts.
+
+## Agent Maintenance Rules
+
+- Revisit Windows/Codex-specific guidance in this file at least once every 3 months.
+- During that review, remove guidance that is no longer reproducible on the current toolchain, keep guidance that still reproduces, and add any newly repeated failure modes from recent work.
+- Record the outcome of that review in `todo.md` or the most relevant existing project log instead of creating a separate planning file unless the audit itself becomes a multi-surface project.
 
 ## Analysis Hang Debugging Rules
 

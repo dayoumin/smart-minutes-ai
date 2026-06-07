@@ -903,6 +903,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         || missingFields.length > 0;
 
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
+    const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
+    const readinessBannerTitle = readinessState === 'missing-models' ? '분석 준비가 필요합니다' : '분석을 시작할 수 없습니다';
 
     const refreshReadiness = async (options: ReadinessOptions = {}): Promise<ReadinessCheck> => {
         if (ANALYSIS_MODE !== 'real') {
@@ -947,7 +949,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 .filter(model => model.required && !model.installed)
                 .map(model => getUserModelLabel(model))
                 .join(', ');
-            const message = payload.errors?.[0] || `필수 모델이 없습니다: ${missing || '모델 파일'}`;
+            const message = payload.errors?.[0] || `분석을 시작하려면 ${missing || '필수 모델'} 준비가 필요합니다. 모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.`;
             setReadinessState('missing-models');
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
@@ -1001,10 +1003,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         if (check.state === 'missing-models') {
             const missingModels = (check.models?.models || []).filter(model => model.required && !model.installed);
             const missingList = missingModels.map(model => getUserModelLabel(model)).join(', ');
-            setErrorMessage(
-                `필수 모델이 없습니다${missingList ? `: ${missingList}` : ''}. 필요한 파일을 models 폴더에 넣은 뒤 설정에서 상태를 새로고침해 주세요.`,
+            setReadinessState('missing-models');
+            setReadinessMessage(
+                `분석을 시작하려면 ${missingList || '필수 모델'} 준비가 필요합니다. 모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.`,
             );
-            setAnalysisPhase('error');
+            setErrorMessage('');
+            setAnalysisPhase('idle');
             return false;
         }
 
@@ -2286,12 +2290,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             )}
 
             {hasBlockingReadinessIssue && (
-                <StatusBanner tone="error">
+                <StatusBanner tone={readinessBannerTone}>
                     <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                         <div className="flex gap-2">
                             <AlertCircle size={18} />
                             <div>
-                                <div className="font-semibold">분석을 시작할 수 없습니다</div>
+                                <div className="font-semibold">{readinessBannerTitle}</div>
                                 <div className="mt-1">{readinessMessage}</div>
                             </div>
                         </div>
@@ -2313,8 +2317,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         <div className="mt-3 space-y-2">
                             {missingRequiredModels.map(model => (
                                 <div key={model.key} className="status-detail-card">
-                                    <div className="font-semibold">{getUserModelLabel(model)} 필요</div>
-                                    <div className="mt-1 text-muted-foreground">필요한 파일을 models 폴더에 넣은 뒤 상태를 새로고침하세요.</div>
+                                    <div className="font-semibold">{getUserModelLabel(model)} 준비 필요</div>
+                                    <div className="mt-1 text-muted-foreground">모델 탭에서 받거나, 준비된 파일을 models 폴더에 넣은 뒤 상태를 새로고침하세요.</div>
                                     {onOpenSettings && (
                                         <div className="mt-2 flex flex-wrap gap-2">
                                             <button
@@ -2322,7 +2326,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                                 onClick={onOpenSettings}
                                                 className="status-action-button h-7 px-2"
                                             >
-                                                설정 열기
+                                                모델 준비
                                             </button>
                                         </div>
                                     )}

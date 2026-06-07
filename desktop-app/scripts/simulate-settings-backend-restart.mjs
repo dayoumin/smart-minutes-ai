@@ -328,7 +328,7 @@ const run = async () => {
     assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 인식 준비 → 요약 프로그램 확인 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
@@ -343,9 +343,9 @@ const run = async () => {
       true,
       'STT download button should poll the model download status API',
     );
-    await modelsPanel.getByText('Ollama와 선택한 회의 요약 모델을 확인했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('회의 요약을 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(
-      await modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' }).count(),
+      await modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' }).count(),
       0,
       'installed Ollama should not show the install page link again',
     );

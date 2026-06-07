@@ -798,6 +798,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch.object(main, "_ollama_executable_available", return_value=False),
             patch.object(main, "_remember_summary_model") as remember_model,
             patch.object(main, "_start_ollama_pull") as start_pull,
+            patch.object(main, "_support_contact_email", return_value="ecomarine@korea.kr"),
         ):
             response = self.client.post("/api/models/ollama/pull", json={"model": "gemma4:e2b"})
 
@@ -807,6 +808,8 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertFalse(payload["active"])
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["error"], "ollama executable not found")
+        self.assertIn("요약 프로그램(Ollama)", payload["message"])
+        self.assertIn("ecomarine@korea.kr", payload["message"])
         remember_model.assert_not_called()
         start_pull.assert_not_called()
 
@@ -866,6 +869,39 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertFalse(status["active"])
             self.assertEqual(status["status"], "completed")
             self.assertTrue(os.path.exists(os.path.join(tmp, "models", "faster-whisper-large-v3", "model.bin")))
+
+    def test_support_contact_email_switches_after_march_2027(self) -> None:
+        self.assertEqual(
+            main._support_contact_email(main.datetime(2027, 3, 31, 23, 59)),
+            "ecomarine@korea.kr",
+        )
+        self.assertEqual(
+            main._support_contact_email(main.datetime(2027, 4, 1, 0, 0)),
+            "ecomarin@naver.com",
+        )
+
+    def test_run_model_download_failure_mentions_security_and_current_contact(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            os.makedirs(backend_dir, exist_ok=True)
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.object(main, "_download_huggingface_snapshot", side_effect=RuntimeError("blocked")),
+                patch.object(main, "_support_contact_email", return_value="ecomarine@korea.kr"),
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+                main._run_model_download("stt_faster_whisper")
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    status = dict(main.MODEL_DOWNLOAD_STATUS.get("stt_faster_whisper") or {})
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+        self.assertFalse(status["active"])
+        self.assertEqual(status["status"], "failed")
+        self.assertIn("회사 보안 정책", status["message"])
+        self.assertIn("인터넷 연결", status["message"])
+        self.assertIn("ecomarine@korea.kr", status["message"])
 
     def test_model_download_snapshot_reports_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

@@ -372,7 +372,7 @@ const installRoutes = async (page, state) => {
           model,
           active: false,
           status: 'failed',
-          message: 'Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.',
+          message: '요약 프로그램(Ollama)을 찾지 못했습니다. 요약 프로그램을 설치한 뒤 준비 상태 확인을 눌러 주세요. 설치 페이지가 열리지 않으면 ecomarine@korea.kr으로 문의해 주세요.',
           error: 'ollama executable not found',
         }),
       });
@@ -517,7 +517,7 @@ const run = async () => {
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 인식 준비 → 요약 프로그램 확인 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     const sttStatusChecksBeforeDownload = state.sttDownloadStatusRequests.length;
     const sttDownloadButton = modelsPanel.getByRole('button', { name: '음성 인식 모델 받기' });
@@ -531,13 +531,13 @@ const run = async () => {
       true,
       'download polling should continue after the initial start response',
     );
-    await modelsPanel.getByText('Ollama와 선택한 회의 요약 모델을 확인했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('회의 요약을 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(
-      await modelsPanel.getByRole('link', { name: 'Ollama 설치 페이지 열기' }).count(),
+      await modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' }).count(),
       0,
       'installed Ollama should not show the install page link again',
     );
-    await modelsPanel.getByText('상태 확인', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('준비 상태 확인', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     state.modelStatusErrors.push('모델 상태를 확인하지 못했습니다.');
     await page.waitForTimeout(5200);
     await modelsPanel.getByText('모델 상태를 확인하지 못했습니다. 자동으로 다시 확인합니다. 계속 실패하면 재시작을 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
@@ -617,7 +617,7 @@ const run = async () => {
       'https://ollama.com/download/windows',
       'missing Ollama should open the Windows install page after download is requested',
     );
-    const missingOllamaNotice = modelsPanel.getByText('Ollama 설치 화면이 열렸습니다. 설치가 끝나면 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 상태 확인을 눌러 주세요.');
+    const missingOllamaNotice = modelsPanel.getByText('요약 프로그램(Ollama) 설치 화면이 열렸습니다. 설치가 끝나면 열린 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 준비 상태 확인을 눌러 주세요.');
     await missingOllamaNotice.waitFor({ state: 'visible', timeout: 10000 });
     await missingOllamaNotice.waitFor({ state: 'hidden', timeout: 10000 });
     assert.equal(state.pullRequests.includes('missing-ollama:1b'), true, 'missing Ollama pull should still call backend with the typed model');

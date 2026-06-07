@@ -85,6 +85,9 @@ MODEL_DOWNLOAD_EXPECTED_BYTES = {
     "stt_faster_whisper": 3_090_839_274,
 }
 MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
+SUPPORT_EMAIL_WORK = "ecomarine@korea.kr"
+SUPPORT_EMAIL_PERSONAL = "ecomarin@naver.com"
+SUPPORT_EMAIL_PERSONAL_FROM = datetime(2027, 4, 1).date()
 ANALYSIS_HEARTBEAT_SECONDS = 15
 ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
@@ -924,6 +927,22 @@ def _download_huggingface_snapshot(repo_id: str, target_dir: str) -> None:
     )
 
 
+def _support_contact_email(now: datetime | None = None) -> str:
+    today = (now or datetime.now()).date()
+    if today < SUPPORT_EMAIL_PERSONAL_FROM:
+        return SUPPORT_EMAIL_WORK
+    return SUPPORT_EMAIL_PERSONAL
+
+
+def _download_blocked_message(subject: str, recovery_action: str) -> str:
+    contact_email = _support_contact_email()
+    return (
+        f"{subject} 받지 못했습니다. 회사 보안 정책 또는 인터넷 연결 문제일 수 있습니다. "
+        f"사내망에서 계속 막히면 담당자에게 {recovery_action} 요청해 주세요. "
+        f"계속 실패하면 {contact_email}으로 문의해 주세요."
+    )
+
+
 def _model_download_preflight(model_key: str, target_path: str) -> str:
     target = Path(target_path)
     try:
@@ -993,7 +1012,7 @@ def _run_model_download(model_key: str) -> None:
             model_key,
             active=False,
             status="failed",
-            message=f"{spec.label} 모델을 받지 못했습니다. 네트워크 연결을 확인한 뒤 다시 시도해 주세요. 계속 실패하면 ecomarin@naver.com으로 문의해 주세요.",
+            message=_download_blocked_message(f"{spec.label} 모델을", "모델 파일 준비를"),
             target_path=target_path,
             error=str(exc),
         )
@@ -1127,7 +1146,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 model_name,
                 active=False,
                 status="failed",
-                message=f"{model_name} 모델을 받지 못했습니다. Ollama 설치와 네트워크 연결을 확인해 주세요.",
+                message=_download_blocked_message(f"{model_name} 모델을", "요약 프로그램 설치 또는 요약 모델 준비를"),
                 exit_code=completed.returncode,
                 error=output[-4000:],
             )
@@ -1136,7 +1155,10 @@ def _run_ollama_pull(model_name: str) -> None:
             model_name,
             active=False,
             status="failed",
-            message="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.",
+            message=(
+                "요약 프로그램(Ollama)을 찾지 못했습니다. 요약 프로그램을 설치한 뒤 준비 상태 확인을 눌러 주세요. "
+                f"설치 페이지가 열리지 않으면 {_support_contact_email()}으로 문의해 주세요."
+            ),
             exit_code=None,
             error="ollama executable not found",
         )
@@ -1146,7 +1168,7 @@ def _run_ollama_pull(model_name: str) -> None:
             model_name,
             active=False,
             status="failed",
-            message=f"{model_name} 모델을 받지 못했습니다.",
+            message=_download_blocked_message(f"{model_name} 모델을", "요약 프로그램 설치 또는 요약 모델 준비를"),
             exit_code=None,
             error=str(exc),
         )
@@ -1164,7 +1186,7 @@ def _ollama_model_exists_strict(model_name: str) -> bool:
             **hidden_subprocess_kwargs(),
         )
     except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.")
+        raise HTTPException(status_code=503, detail="요약 프로그램(Ollama)을 찾지 못했습니다. 요약 프로그램을 설치한 뒤 준비 상태 확인을 눌러 주세요.")
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Ollama 모델 상태를 확인하지 못했습니다: {exc}")
 
@@ -1223,7 +1245,7 @@ def _remove_ollama_model(model_name: str, replacement_model: str = "") -> dict:
                 **hidden_subprocess_kwargs(),
             )
         except FileNotFoundError:
-            raise HTTPException(status_code=503, detail="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.")
+            raise HTTPException(status_code=503, detail="요약 프로그램(Ollama)을 찾지 못했습니다. 요약 프로그램을 설치한 뒤 준비 상태 확인을 눌러 주세요.")
         output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part and part.strip())
         if completed.returncode != 0:
             raise HTTPException(
@@ -1302,7 +1324,10 @@ async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
             model_name,
             active=False,
             status="failed",
-            message="Ollama를 찾지 못했습니다. Ollama를 설치한 뒤 다시 시도해 주세요.",
+            message=(
+                "요약 프로그램(Ollama)을 찾지 못했습니다. 요약 프로그램을 설치한 뒤 준비 상태 확인을 눌러 주세요. "
+                f"설치 페이지가 열리지 않으면 {_support_contact_email()}으로 문의해 주세요."
+            ),
             exit_code=None,
             error="ollama executable not found",
         )

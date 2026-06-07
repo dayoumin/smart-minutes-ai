@@ -13,8 +13,18 @@ import { getApiBase, isTauriRuntime, openExternalUrl, restartDesktopBackend } fr
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
 const OLLAMA_INSTALL_URL = 'https://ollama.com/download/windows';
-const OLLAMA_INSTALL_OPENED_NOTICE = 'Ollama 설치 화면이 열렸습니다. 설치가 끝나면 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 상태 확인을 눌러 주세요.';
-const OLLAMA_INSTALL_FAILED_NOTICE = 'Ollama 설치 페이지를 열지 못했습니다. 인터넷 연결을 확인한 뒤 다시 눌러 주세요.';
+const OLLAMA_INSTALL_OPENED_NOTICE = '요약 프로그램(Ollama) 설치 화면이 열렸습니다. 설치가 끝나면 열린 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 준비 상태 확인을 눌러 주세요.';
+const SUPPORT_EMAIL_WORK = 'ecomarine@korea.kr';
+const SUPPORT_EMAIL_PERSONAL = 'ecomarin@naver.com';
+const SUPPORT_EMAIL_PERSONAL_FROM = new Date(2027, 3, 1);
+
+const getSupportContactEmail = (now = new Date()): string => (
+    now < SUPPORT_EMAIL_PERSONAL_FROM ? SUPPORT_EMAIL_WORK : SUPPORT_EMAIL_PERSONAL
+);
+
+const getOllamaInstallFailedNotice = (): string => (
+    `요약 프로그램 설치 페이지를 열지 못했습니다. 회사 보안 정책 또는 인터넷 연결 문제일 수 있습니다. 계속 실패하면 ${getSupportContactEmail()}으로 문의해 주세요.`
+);
 
 const DEFAULT_SUMMARY_MODEL_OPTIONS: SummaryModelOption[] = [
     {
@@ -621,7 +631,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     await openExternalUrl(OLLAMA_INSTALL_URL);
                     setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
                 } catch {
-                    setOllamaInstallNoticeMessage(OLLAMA_INSTALL_FAILED_NOTICE);
+                    setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
                 }
                 setOllamaInstallPrompted(true);
                 setErrorMessage('');
@@ -1072,22 +1082,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
     const modelPreparationGuide = ollamaAvailable
-        ? '음성 인식 준비 → 요약 프로그램 확인 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.'
-        : '음성 인식 준비 → 요약 프로그램 설치 → 회의 요약 준비 순서로 진행하세요. 이미 준비된 항목은 건너뛰어도 됩니다.';
+        ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
+        : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램(Ollama)을 설치합니다. 3. 회의 요약 모델을 받습니다.';
     const summaryModelOllamaHelp = modelStatusCanAutoRetry
         ? (ollamaAvailable
-            ? '마지막 확인 기준으로 요약 프로그램은 준비되어 있습니다. 현재 상태를 다시 확인해 주세요.'
-            : '회의 요약 환경을 다시 확인해 주세요.')
+            ? '마지막 확인 기준으로 요약 프로그램은 설치되어 있습니다. 준비 상태를 다시 확인해 주세요.'
+            : '요약 프로그램 설치 여부를 다시 확인해 주세요.')
         : ollamaAvailable
             ? (selectedSummaryInstalled
-                ? 'Ollama와 선택한 회의 요약 모델을 확인했습니다.'
-                : 'Ollama가 설치되어 있습니다. 선택한 회의 요약 모델만 받으면 됩니다.')
-            : 'Ollama 설치 후 회의 요약 모델을 받을 수 있습니다.';
+                ? '회의 요약을 사용할 수 있습니다.'
+                : '요약 프로그램은 설치되어 있습니다. 아래에서 회의 요약 모델을 받아 주세요.')
+            : '회의 요약을 사용하려면 요약 프로그램(Ollama)을 먼저 설치해 주세요.';
     const ollamaInstallNotice = ollamaInstallPrompted
         ? (ollamaInstallNoticeMessage || OLLAMA_INSTALL_OPENED_NOTICE)
         : '';
     const ollamaInstallNoticeTone: 'info' | 'warning' = ollamaInstallNotice.includes('열지 못했습니다') ? 'warning' : 'info';
-    const errorHeading = errorMessage.includes('Ollama') ? 'Ollama 설치 필요' : '설정 확인 실패';
+    const errorHeading = errorMessage.includes('Ollama') ? '요약 프로그램 설치 필요' : '설정 확인 실패';
     const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
     const renderDismissButton = (label: string, onClick: () => void) => (
         <button
@@ -1321,10 +1331,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         className="h-8 shrink-0 px-3 text-xs"
                                         onClick={() => void handleRefreshModelsStatus()}
                                         disabled={isCheckingModels}
-                                        aria-label="모델 환경 다시 확인"
+                                        aria-label="모델 준비 상태 다시 확인"
                                     >
                                         <RefreshCw size={14} className={isCheckingModels ? 'animate-spin text-primary' : ''} aria-hidden="true" />
-                                        {isCheckingModels ? '확인 중' : '상태 확인'}
+                                        {isCheckingModels ? '확인 중' : '준비 상태 확인'}
                                     </Button>
                                 </div>
                                 {modelStatusErrorMessage && !isLoading && (
@@ -1453,7 +1463,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             target="_blank"
                                             rel="noreferrer"
                                             className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                            aria-label="Ollama 설치 페이지 열기"
+                                            aria-label="요약 프로그램 설치 페이지 열기"
                                             onClick={event => {
                                                 event.preventDefault();
                                                 setErrorMessage('');
@@ -1468,11 +1478,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     })
                                                     .catch(() => {
                                                         setOllamaInstallPrompted(true);
-                                                        setOllamaInstallNoticeMessage(OLLAMA_INSTALL_FAILED_NOTICE);
+                                                        setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
                                                     });
                                             }}
                                         >
-                                            Ollama 설치
+                                            요약 프로그램 설치
                                         </a>
                                     )}
                                 </div>
@@ -1480,7 +1490,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     <StatusBanner
                                         tone={ollamaInstallNoticeTone}
                                         className="mt-3 py-2 text-xs shadow-none"
-                                        action={renderDismissButton('Ollama 설치 안내 닫기', () => {
+                                        action={renderDismissButton('요약 프로그램 설치 안내 닫기', () => {
                                             setOllamaInstallPrompted(false);
                                             setOllamaInstallNoticeMessage('');
                                         })}

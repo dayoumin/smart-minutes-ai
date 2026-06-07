@@ -25,6 +25,8 @@ backend/models/diarization/speaker-diarization-community-1/*
 backend/ffmpeg.exe
 backend/ffmpeg.zip
 backend/ffmpeg-extracted/
+runtime/ollama/*
+!runtime/ollama/README.txt
 *.gguf
 *.pt
 *.bin

@@ -9,6 +9,24 @@ let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
 
+const getLayoutMetrics = async (locator) => locator.evaluate(element => {
+  const rect = element.getBoundingClientRect();
+  return {
+    height: Math.round(rect.height),
+    scrollHeight: Math.round(element.scrollHeight),
+    clientHeight: Math.round(element.clientHeight),
+  };
+});
+
+const assertHeightDeltaAtMost = (before, after, maxDelta, message) => {
+  const delta = after.scrollHeight - before.scrollHeight;
+  assert.equal(
+    delta <= maxDelta,
+    true,
+    `${message}: expected delta <= ${maxDelta}, got ${delta}`,
+  );
+};
+
 const waitForApp = async (url, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -113,11 +131,14 @@ const createRouteState = () => {
   let sttInstalled = false;
   let sttDownloadStarted = false;
   const sttDownloadRequests = [];
+  const sttStopRequests = [];
   const sttDownloadStatusRequests = [];
   const pullRequests = [];
+  const pullStopRequests = [];
   const pullStatusRequests = [];
   const deleteRequests = [];
   const settingsPatches = [];
+  const modelStatusRequests = [];
   const modelStatusErrors = [];
   let settingsState = {
     processing: { long_audio_chunk_seconds: 30, enable_long_audio_chunking: true },
@@ -185,11 +206,14 @@ const createRouteState = () => {
       sttDownloadStarted = value;
     },
     sttDownloadRequests,
+    sttStopRequests,
     sttDownloadStatusRequests,
     installedModels,
     ollamaAvailable: true,
+    modelStatusRequests,
     modelStatusErrors,
     pullRequests,
+    pullStopRequests,
     pullStatusRequests,
     deleteRequests,
     settingsPatches,
@@ -257,6 +281,26 @@ const installRoutes = async (page, state) => {
     });
   });
 
+  await page.route('**/api/models/download/stop', route => {
+    const body = route.request().postDataJSON();
+    state.sttStopRequests.push(body.key);
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        key: body.key,
+        active: true,
+        status: 'cancelling',
+        message: '모델 받기를 중지하고 있습니다.',
+        downloaded_bytes: 524288000,
+        expected_bytes: 3090839274,
+        progress_percent: 17.0,
+        eta_seconds: 2400,
+        cancel_requested: true,
+      }),
+    });
+  });
+
   await page.route('**/api/models/download-status**', route => {
     const url = new URL(route.request().url());
     const key = url.searchParams.get('key') || '';
@@ -296,6 +340,7 @@ const installRoutes = async (page, state) => {
   });
 
   await page.route('**/api/models/status', route => {
+    state.modelStatusRequests.push(Date.now());
     const configuredModel = state.settingsState.summary.model;
     route.fulfill({
       status: 200,
@@ -387,6 +432,27 @@ const installRoutes = async (page, state) => {
         active: true,
         status: 'running',
         message: `${model} 모델을 받는 중입니다.`,
+        progress_percent: 8.5,
+        eta_seconds: 1800,
+      }),
+    });
+  });
+
+  await page.route('**/api/models/ollama/pull/stop', route => {
+    const body = route.request().postDataJSON();
+    const model = body.model;
+    state.pullStopRequests.push(model);
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        model,
+        active: true,
+        status: 'cancelling',
+        message: `${model} 모델 받기를 중지하고 있습니다.`,
+        progress_percent: 25,
+        eta_seconds: 900,
+        cancel_requested: true,
       }),
     });
   });
@@ -396,7 +462,8 @@ const installRoutes = async (page, state) => {
     const model = url.searchParams.get('model') || '';
     state.pullStatusRequests.push(model);
 
-    if (model === 'gemma4:e4b') {
+    const pullStarted = state.pullRequests.includes(model);
+    if (model === 'gemma4:e4b' && pullStarted) {
       state.installedModels.add(model);
       route.fulfill({
         status: 200,
@@ -411,14 +478,32 @@ const installRoutes = async (page, state) => {
       return;
     }
 
+    if (pullStarted) {
+      route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          model,
+          active: true,
+          status: 'running',
+          message: `${model} 모델을 받는 중입니다.`,
+          progress_percent: 25,
+          eta_seconds: 900,
+        }),
+      });
+      return;
+    }
+
     route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         model,
-        active: true,
-        status: 'running',
-        message: `${model} 모델을 받는 중입니다.`,
+        active: false,
+        status: 'idle',
+        message: '',
+        progress_percent: null,
+        eta_seconds: null,
       }),
     });
   });
@@ -519,18 +604,30 @@ const run = async () => {
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    const initialModelsPanelMetrics = await getLayoutMetrics(modelsPanel);
     const sttStatusChecksBeforeDownload = state.sttDownloadStatusRequests.length;
     const sttDownloadButton = modelsPanel.getByRole('button', { name: '음성 인식 모델 받기' });
     assert.match(await sttDownloadButton.getAttribute('class'), /btn-outline/, 'STT download should use the weaker outline button style');
     await sttDownloadButton.click();
     await modelsPanel.getByText(/진행 · .* \/ 2\.9GB/).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText(/17\.0% 진행/).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
+    assertHeightDeltaAtMost(
+      initialModelsPanelMetrics,
+      await getLayoutMetrics(modelsPanel),
+      80,
+      'STT download progress should not cause a large settings panel height jump',
+    );
     assert.deepEqual(state.sttDownloadRequests, ['stt_faster_whisper']);
     assert.equal(
       state.sttDownloadStatusRequests.length > sttStatusChecksBeforeDownload,
       true,
       'download polling should continue after the initial start response',
     );
+    await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지' }).click();
+    await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('모델 받기를 중지하고 있습니다.').count(), 0, 'STT stopping state should not add duplicate helper copy');
+    assert.deepEqual(state.sttStopRequests, ['stt_faster_whisper']);
     await modelsPanel.getByText('회의 요약을 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(
       await modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' }).count(),
@@ -538,8 +635,16 @@ const run = async () => {
       'installed Ollama should not show the install page link again',
     );
     await modelsPanel.getByText('준비 상태 확인', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    state.modelStatusErrors.push('모델 상태를 확인하지 못했습니다.');
+    assert.equal(await modelsPanel.getByText(/^최근 확인:/).count(), 0, 'model status check timestamp should not be shown');
+    const stableModelStatusRequestCount = state.modelStatusRequests.length;
     await page.waitForTimeout(5200);
+    assert.equal(
+      state.modelStatusRequests.length,
+      stableModelStatusRequestCount,
+      'ready model settings should not keep polling status in the background',
+    );
+    state.modelStatusErrors.push('모델 상태를 확인하지 못했습니다.');
+    await modelsPanel.getByRole('button', { name: '모델 준비 상태 다시 확인' }).click();
     await modelsPanel.getByText('모델 상태를 확인하지 못했습니다. 자동으로 다시 확인합니다. 계속 실패하면 재시작을 눌러 주세요.').waitFor({ state: 'visible', timeout: 10000 });
     state.modelStatusErrors.length = 0;
     await modelsPanel.getByRole('button', { name: '다시 확인', exact: true }).click();
@@ -559,19 +664,21 @@ const run = async () => {
     await gemma4e4bInitialCard.getByText('권장', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText('권장 2B', { exact: true }).count(), 0, '2B should not look recommended when memory recommends 4B');
 
-    await openModelMenu(modelsPanel, 'gemma4:e2b');
-    await modelsPanel.getByRole('menuitem', { name: 'gemma4:e2b PC에서 삭제' }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.keyboard.press('Escape');
+    const gemma4e2bReadyCard = modelsPanel
+      .getByRole('link', { name: 'gemma4:e2b 모델 페이지' })
+      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+    await gemma4e2bReadyCard.getByLabel('gemma4:e2b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await gemma4e2bReadyCard.getByRole('button', { name: 'gemma4:e2b 모델 작업' }).count(), 0, 'current ready summary model should not show a confusing overflow menu');
 
     await modelsPanel.locator('select').selectOption('gemma4:e4b');
     await modelsPanel.getByText('아래 목록에서 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     const gemma4e4bDownloadButton = modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' });
     assert.match(await gemma4e4bDownloadButton.getAttribute('class'), /btn-outline/, 'summary model download should use the weaker outline button style');
     await gemma4e4bDownloadButton.click();
-    await modelsPanel.getByText('gemma4:e4b 모델 받기가 완료되었습니다.').first().waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 사용' }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('gemma4:e4b 모델 받기가 완료되었습니다.').count(), 0, 'summary model completion should not reserve extra notice space');
     assert.deepEqual(state.pullRequests, ['gemma4:e4b']);
-    assert.deepEqual(state.pullStatusRequests.filter(model => model === 'gemma4:e4b'), ['gemma4:e4b']);
+    assert.equal(state.pullStatusRequests.includes('gemma4:e4b'), true, 'summary pull should poll the requested model status');
 
     await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 사용' }).click();
     const gemma4e4bCard = modelsPanel
@@ -580,15 +687,27 @@ const run = async () => {
     await gemma4e4bCard.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await gemma4e4bCard.getByText('사용 중', { exact: true }).count(), 0);
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'gemma4:e4b', 'using a completed model should save it as the configured summary model');
-    await openModelMenu(modelsPanel, 'gemma4:e4b');
-    await modelsPanel.getByRole('menuitem', { name: 'gemma4:e4b PC에서 삭제' }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.keyboard.press('Escape');
+    await gemma4e4bCard.getByLabel('gemma4:e4b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await gemma4e4bCard.getByRole('button', { name: 'gemma4:e4b 모델 작업' }).count(), 0, 'newly selected ready summary model should not show a confusing overflow menu');
 
+    const beforeRunningSummaryMetrics = await getLayoutMetrics(modelsPanel);
     const runningPullButton = modelsPanel.getByRole('button', { name: 'user-running:1b 모델 받기' });
     await runningPullButton.click();
     await openModelMenu(modelsPanel, 'user-running:1b');
     await expectDisabled(modelsPanel.getByRole('menuitem', { name: 'user-running:1b 등록 해제' }), true, 'running pull should block list removal');
-    await modelsPanel.getByText('user-running:1b 모델을 받는 중입니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('25.0% 진행 · 약 15분 남음').waitFor({ state: 'visible', timeout: 10000 });
+    assertHeightDeltaAtMost(
+      beforeRunningSummaryMetrics,
+      await getLayoutMetrics(modelsPanel),
+      80,
+      'Summary model progress should not cause a large settings panel height jump',
+    );
+    assert.equal(await modelsPanel.getByText('user-running:1b 모델을 받는 중입니다.').count(), 0, 'running summary model message should not duplicate progress UI');
+    assert.equal(await modelsPanel.getByText(/받거나 업데이트/).count(), 0, 'Ollama backend status text should not be exposed in the settings UI');
+    await modelsPanel.getByRole('button', { name: 'user-running:1b 모델 중지' }).click();
+    await modelsPanel.getByRole('button', { name: 'user-running:1b 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await modelsPanel.getByText('user-running:1b 모델 받기를 중지하고 있습니다.').count(), 0, 'summary stopping state should not add duplicate helper copy');
+    assert.deepEqual(state.pullStopRequests, ['user-running:1b']);
     await page.keyboard.press('Escape');
 
     await modelsPanel.getByLabel('고급: 직접 입력').fill('broken-model:1b');
@@ -625,12 +744,15 @@ const run = async () => {
     await modelsPanel.getByLabel('고급: 직접 입력').fill('custom-ready:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 custom-ready:1b 모델 사용' }).click();
     await modelsPanel.locator('select').selectOption('custom-ready:1b');
-    await openModelMenu(modelsPanel, 'custom-ready:1b');
-    await modelsPanel.getByRole('menuitem', { name: /^받기$/ }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.keyboard.press('Escape');
+    const customReadyCard = modelsPanel
+      .getByText('custom-ready:1b', { exact: true })
+      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+    await customReadyCard.getByLabel('custom-ready:1b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await customReadyCard.getByRole('button', { name: 'custom-ready:1b 모델 작업' }).count(), 0, 'current custom-ready model should not show a confusing overflow menu');
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'custom-ready:1b', 'direct input installed model should save as the configured summary model');
 
     await openModelMenu(modelsPanel, 'user-ready:1b');
+    await modelsPanel.getByRole('menuitem', { name: /^업데이트$/ }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByRole('menuitem', { name: 'user-ready:1b PC에서 삭제' }).click();
     await page.getByText('user-ready:1b 모델을 삭제했습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.deepEqual(state.deleteRequests.at(-1), { model: 'user-ready:1b', deleteFiles: true });

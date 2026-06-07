@@ -17,6 +17,8 @@ from starlette.datastructures import UploadFile
 sys.path.insert(0, os.path.dirname(__file__))
 
 import main
+import model_manager
+import ollama_utils
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from job_checkpoints import atomic_write_json, build_job_checkpoint_paths, load_json_checkpoint
 from main import app, make_analysis_heartbeat, normalize_stt_config, process_audio_pipeline, stream_real_analysis
@@ -40,6 +42,169 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(response.json()["ok"], True)
         self.assertIn("backend_dir", response.json())
         self.assertIn("python_executable", response.json())
+
+    def test_embedded_ollama_runtime_is_preferred_over_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = Path(tmp) / "lmo_audio" / "backend"
+            embedded_dir = backend_dir.parent / "runtime" / "ollama"
+            embedded_dir.mkdir(parents=True)
+            embedded_exe = embedded_dir / "ollama.exe"
+            embedded_exe.write_text("fake", encoding="utf-8")
+
+            with (
+                patch.dict(os.environ, {"MEETING_AI_BACKEND_DIR": str(backend_dir)}, clear=False),
+                patch.object(ollama_utils.shutil, "which", return_value=r"C:\Tools\ollama.exe"),
+            ):
+                os.environ.pop("OLLAMA_EXE", None)
+                self.assertEqual(ollama_utils.find_ollama_executable(), str(embedded_exe))
+                self.assertTrue(ollama_utils.using_embedded_ollama())
+
+    def test_embedded_ollama_runtime_is_preferred_over_explicit_ollama_exe(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = Path(tmp) / "lmo_audio" / "backend"
+            embedded_dir = backend_dir.parent / "runtime" / "ollama"
+            embedded_dir.mkdir(parents=True)
+            embedded_exe = embedded_dir / "ollama.exe"
+            embedded_exe.write_text("fake", encoding="utf-8")
+
+            external_exe = Path(tmp) / "external" / "ollama.exe"
+            external_exe.parent.mkdir(parents=True)
+            external_exe.write_text("fake", encoding="utf-8")
+
+            with patch.dict(os.environ, {
+                "MEETING_AI_BACKEND_DIR": str(backend_dir),
+                "OLLAMA_EXE": str(external_exe),
+            }, clear=False):
+                self.assertEqual(ollama_utils.find_ollama_executable(), str(embedded_exe))
+                self.assertTrue(ollama_utils.using_embedded_ollama())
+
+    def test_embedded_ollama_uses_portable_model_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = Path(tmp) / "lmo_audio" / "backend"
+            embedded_dir = backend_dir.parent / "runtime" / "ollama"
+            embedded_dir.mkdir(parents=True)
+            (embedded_dir / "ollama.exe").write_text("fake", encoding="utf-8")
+
+            with patch.dict(os.environ, {
+                "MEETING_AI_BACKEND_DIR": str(backend_dir),
+                "LMO_EMBEDDED_OLLAMA_HOST": "127.0.0.1:11435",
+            }, clear=False):
+                os.environ.pop("OLLAMA_EXE", None)
+                os.environ.pop("OLLAMA_HOST", None)
+                os.environ.pop("OLLAMA_MODELS", None)
+
+                env = ollama_utils.ollama_subprocess_env()
+
+        self.assertEqual(env["OLLAMA_HOST"], "127.0.0.1:11435")
+        self.assertTrue(env["OLLAMA_MODELS"].endswith(os.path.join("lmo_audio", "models", "ollama")))
+
+    def test_embedded_ollama_ignores_system_host_and_model_store(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = Path(tmp) / "lmo_audio" / "backend"
+            embedded_dir = backend_dir.parent / "runtime" / "ollama"
+            embedded_dir.mkdir(parents=True)
+            (embedded_dir / "ollama.exe").write_text("fake", encoding="utf-8")
+
+            with patch.dict(os.environ, {
+                "MEETING_AI_BACKEND_DIR": str(backend_dir),
+                "OLLAMA_HOST": "127.0.0.1:11434",
+                "OLLAMA_MODELS": r"C:\Users\someone\.ollama\models",
+            }, clear=False):
+                os.environ.pop("OLLAMA_EXE", None)
+                os.environ.pop("LMO_EMBEDDED_OLLAMA_HOST", None)
+                env = ollama_utils.ollama_subprocess_env()
+
+        self.assertRegex(env["OLLAMA_HOST"], r"^127\.0\.0\.1:\d+$")
+        self.assertNotEqual(env["OLLAMA_HOST"], "127.0.0.1:11434")
+        self.assertTrue(env["OLLAMA_MODELS"].endswith(os.path.join("lmo_audio", "models", "ollama")))
+
+    def test_embedded_ollama_serve_uses_internal_env(self) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.terminated = False
+                self.killed = False
+
+            def poll(self):
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def wait(self, timeout=None) -> None:
+                return None
+
+            def kill(self) -> None:
+                self.killed = True
+
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = Path(tmp) / "lmo_audio" / "backend"
+            embedded_dir = backend_dir.parent / "runtime" / "ollama"
+            embedded_dir.mkdir(parents=True)
+            embedded_exe = embedded_dir / "ollama.exe"
+            embedded_exe.write_text("fake", encoding="utf-8")
+            fake_process = FakeProcess()
+            ready_calls = {"count": 0}
+
+            def fake_ready() -> bool:
+                ready_calls["count"] += 1
+                return ready_calls["count"] >= 2
+
+            try:
+                with (
+                    patch.dict(os.environ, {"MEETING_AI_BACKEND_DIR": str(backend_dir)}, clear=False),
+                    patch.object(ollama_utils, "_ollama_api_ready", side_effect=fake_ready),
+                    patch.object(ollama_utils.subprocess, "Popen", return_value=fake_process) as popen_mock,
+                ):
+                    os.environ.pop("OLLAMA_EXE", None)
+                    os.environ.pop("OLLAMA_HOST", None)
+                    os.environ.pop("OLLAMA_MODELS", None)
+                    os.environ.pop("LMO_EMBEDDED_OLLAMA_HOST", None)
+                    os.environ.pop("LMO_EMBEDDED_OLLAMA_MODELS", None)
+                    ollama_utils._EMBEDDED_OLLAMA_PROCESS = None
+
+                    self.assertTrue(ollama_utils.ensure_ollama_server_running(timeout_seconds=1))
+
+                popen_mock.assert_called_once()
+                self.assertEqual(popen_mock.call_args.args[0], [str(embedded_exe), "serve"])
+                popen_env = popen_mock.call_args.kwargs["env"]
+                self.assertRegex(popen_env["OLLAMA_HOST"], r"^127\.0\.0\.1:\d+$")
+                self.assertTrue(popen_env["OLLAMA_MODELS"].endswith(os.path.join("lmo_audio", "models", "ollama")))
+            finally:
+                ollama_utils.stop_embedded_ollama_server(timeout_seconds=1)
+
+        self.assertTrue(fake_process.terminated)
+        self.assertFalse(fake_process.killed)
+
+    def test_stop_embedded_ollama_server_kills_process_after_terminate_timeout(self) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.terminated = False
+                self.killed = False
+
+            def poll(self):
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+            def wait(self, timeout=None) -> None:
+                raise TimeoutError("still running")
+
+            def kill(self) -> None:
+                self.killed = True
+
+        fake_process = FakeProcess()
+        ollama_utils._EMBEDDED_OLLAMA_PROCESS = fake_process
+
+        ollama_utils.stop_embedded_ollama_server(timeout_seconds=1)
+
+        self.assertTrue(fake_process.terminated)
+        self.assertTrue(fake_process.killed)
+        self.assertIsNone(ollama_utils._EMBEDDED_OLLAMA_PROCESS)
+
+    def test_list_ollama_models_returns_empty_when_server_start_fails(self) -> None:
+        with patch.object(model_manager, "ensure_ollama_server_running", side_effect=RuntimeError("blocked")):
+            self.assertEqual(model_manager.list_ollama_models(), [])
 
     def test_generation_progress_reports_active_generation(self) -> None:
         generation_key = ("unit_progress_job", "diarization")
@@ -933,6 +1098,59 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(status["expected_bytes"], 2048)
             self.assertEqual(status["progress_percent"], 50.0)
 
+    def test_model_download_stop_marks_active_download_as_cancelling(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                main.MODEL_DOWNLOAD_STATUS["stt_faster_whisper"] = {
+                    "key": "stt_faster_whisper",
+                    "active": True,
+                    "status": "running",
+                    "message": "",
+                    "target_path": tmp,
+                    "started_at": main.datetime.now().isoformat(),
+                    "updated_at": main.datetime.now().isoformat(),
+                    "error": "",
+                    "cancel_requested": False,
+                }
+
+            try:
+                response = self.client.post("/api/models/download/stop", json={"key": "stt_faster_whisper"})
+            finally:
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["active"])
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertTrue(payload["cancel_requested"])
+
+    def test_model_download_worker_honors_cancel_request_after_snapshot_returns(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = os.path.join(tmp, "backend")
+            os.makedirs(backend_dir, exist_ok=True)
+
+            def fake_snapshot_download(repo_id: str, target_dir: str) -> None:
+                self.assertEqual(repo_id, "Systran/faster-whisper-large-v3")
+                main._request_model_download_stop("stt_faster_whisper")
+
+            with (
+                patch.object(main, "BASE_DIR", backend_dir),
+                patch.object(main, "_download_huggingface_snapshot", side_effect=fake_snapshot_download),
+            ):
+                with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                    main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+                try:
+                    main._run_model_download("stt_faster_whisper")
+                    status = main._model_download_snapshot("stt_faster_whisper")
+                finally:
+                    with main.MODEL_DOWNLOAD_STATUS_LOCK:
+                        main.MODEL_DOWNLOAD_STATUS.pop("stt_faster_whisper", None)
+
+        self.assertFalse(status["active"])
+        self.assertEqual(status["status"], "cancelled")
+        self.assertIn("중지", status["message"])
+
     def test_start_model_download_skips_when_markers_already_exist(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             backend_dir = os.path.join(tmp, "backend")
@@ -1113,6 +1331,130 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(payload["model"], "llama3.2:3b")
         self.assertFalse(payload["active"])
         self.assertEqual(payload["status"], "idle")
+
+    def test_ollama_pull_progress_is_parsed_from_output(self) -> None:
+        with main.OLLAMA_PULL_STATUS_LOCK:
+            main.OLLAMA_PULL_STATUS["llama3.2:3b"] = {
+                "model": "llama3.2:3b",
+                "active": True,
+                "status": "running",
+                "message": "",
+                "started_at": main.datetime.now().isoformat(),
+                "updated_at": main.datetime.now().isoformat(),
+                "exit_code": None,
+            }
+
+        try:
+            main._update_ollama_pull_progress_from_output("llama3.2:3b", "pulling layer 42.5%")
+            status = main._ollama_pull_snapshot("llama3.2:3b")
+        finally:
+            with main.OLLAMA_PULL_STATUS_LOCK:
+                main.OLLAMA_PULL_STATUS.pop("llama3.2:3b", None)
+
+        self.assertEqual(status["progress_percent"], 42.5)
+        self.assertIsInstance(status["eta_seconds"], int)
+
+    def test_ollama_pull_stop_terminates_active_process(self) -> None:
+        class FakeProcess:
+            def __init__(self) -> None:
+                self.terminated = False
+
+            def poll(self):
+                return None
+
+            def terminate(self) -> None:
+                self.terminated = True
+
+        fake_process = FakeProcess()
+        with main.OLLAMA_PULL_STATUS_LOCK:
+            main.OLLAMA_PULL_STATUS["llama3.2:3b"] = {
+                "model": "llama3.2:3b",
+                "active": True,
+                "status": "running",
+                "message": "",
+                "started_at": main.datetime.now().isoformat(),
+                "updated_at": main.datetime.now().isoformat(),
+                "exit_code": None,
+                "cancel_requested": False,
+            }
+            main.OLLAMA_PULL_PROCESSES["llama3.2:3b"] = fake_process
+
+        try:
+            response = self.client.post("/api/models/ollama/pull/stop", json={"model": "llama3.2:3b"})
+        finally:
+            with main.OLLAMA_PULL_STATUS_LOCK:
+                main.OLLAMA_PULL_STATUS.pop("llama3.2:3b", None)
+                main.OLLAMA_PULL_PROCESSES.pop("llama3.2:3b", None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["active"])
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertTrue(payload["cancel_requested"])
+        self.assertTrue(fake_process.terminated)
+
+    def test_ollama_pull_worker_honors_cancel_before_process_starts(self) -> None:
+        with main.OLLAMA_PULL_STATUS_LOCK:
+            main.OLLAMA_PULL_STATUS["llama3.2:3b"] = {
+                "model": "llama3.2:3b",
+                "active": True,
+                "status": "cancelling",
+                "message": "",
+                "started_at": main.datetime.now().isoformat(),
+                "updated_at": main.datetime.now().isoformat(),
+                "exit_code": None,
+                "cancel_requested": True,
+            }
+
+        try:
+            with patch.object(main.subprocess, "Popen") as popen_mock:
+                main._run_ollama_pull("llama3.2:3b")
+                popen_mock.assert_not_called()
+            status = main._ollama_pull_snapshot("llama3.2:3b")
+        finally:
+            with main.OLLAMA_PULL_STATUS_LOCK:
+                main.OLLAMA_PULL_STATUS.pop("llama3.2:3b", None)
+
+        self.assertFalse(status["active"])
+        self.assertEqual(status["status"], "cancelled")
+        self.assertFalse(status["cancel_requested"])
+
+    def test_ollama_pull_worker_honors_cancel_after_server_start_wait(self) -> None:
+        with main.OLLAMA_PULL_STATUS_LOCK:
+            main.OLLAMA_PULL_STATUS["llama3.2:3b"] = {
+                "model": "llama3.2:3b",
+                "active": True,
+                "status": "running",
+                "message": "",
+                "started_at": main.datetime.now().isoformat(),
+                "updated_at": main.datetime.now().isoformat(),
+                "exit_code": None,
+                "cancel_requested": False,
+            }
+
+        def cancel_during_server_start(*args, **kwargs) -> bool:
+            with main.OLLAMA_PULL_STATUS_LOCK:
+                current = dict(main.OLLAMA_PULL_STATUS["llama3.2:3b"])
+                current["cancel_requested"] = True
+                current["status"] = "cancelling"
+                main.OLLAMA_PULL_STATUS["llama3.2:3b"] = current
+            return True
+
+        try:
+            with (
+                patch.object(main, "ensure_ollama_server_running", side_effect=cancel_during_server_start),
+                patch.object(main.subprocess, "Popen") as popen_mock,
+            ):
+                main._run_ollama_pull("llama3.2:3b")
+                popen_mock.assert_not_called()
+            status = main._ollama_pull_snapshot("llama3.2:3b")
+        finally:
+            with main.OLLAMA_PULL_STATUS_LOCK:
+                main.OLLAMA_PULL_STATUS.pop("llama3.2:3b", None)
+
+        self.assertFalse(status["active"])
+        self.assertEqual(status["status"], "cancelled")
+        self.assertFalse(status["cancel_requested"])
 
     def test_start_ollama_pull_runs_pull_even_when_model_exists(self) -> None:
         with (

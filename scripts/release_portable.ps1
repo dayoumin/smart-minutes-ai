@@ -5,7 +5,8 @@ param(
     [switch]$SkipSidecarBuild,
     [switch]$SkipTauriBuild,
     [switch]$ClearWebViewCache,
-    [switch]$AllowDirty
+    [switch]$AllowDirty,
+    [switch]$AllowMissingEmbeddedOllama
 )
 
 $ErrorActionPreference = "Stop"
@@ -273,7 +274,7 @@ function Get-PortablePayloadFiles([string]$PortableDir) {
         }
     }
 
-    foreach ($folder in @("binaries", "backend")) {
+    foreach ($folder in @("binaries", "backend", "runtime")) {
         $root = Join-Path $PortableDir $folder
         if (-not (Test-Path -LiteralPath $root)) {
             continue
@@ -379,7 +380,7 @@ function Write-ReleaseManifest([string]$PortableDir) {
 function Clear-DeployResidue([string]$DestinationDir) {
     $destinationFullPath = Normalize-FullPath $DestinationDir
     $allowedRootNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models")) {
+    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models", "runtime")) {
         $null = $allowedRootNames.Add($name)
     }
 
@@ -424,6 +425,11 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
         throw "robocopy failed while syncing binaries with exit code $LASTEXITCODE"
     }
 
+    robocopy (Join-Path $SourceDir "runtime") (Join-Path $DestinationDir "runtime") /MIR /R:2 /W:2 /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+        throw "robocopy failed while syncing runtime with exit code $LASTEXITCODE"
+    }
+
     robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /MIR /XD outputs temp logs __pycache__ /XF *.pyc /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing backend with exit code $LASTEXITCODE"
@@ -465,7 +471,7 @@ if (-not $SkipTauriBuild) {
     & corepack pnpm --dir (Join-Path $RepoRoot "desktop-app") run desktop:build:exe
 }
 
-& (Join-Path $PSScriptRoot "package_desktop_portable.ps1") -Configuration $Configuration
+& (Join-Path $PSScriptRoot "package_desktop_portable.ps1") -Configuration $Configuration -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
 
 $targetManifest = Write-ReleaseManifest $TargetPortableDir
 Write-Host "Wrote target manifest: $targetManifest"
@@ -474,7 +480,7 @@ Sync-PortableToDeploy $TargetPortableDir $DeployPath
 $deployManifest = Write-ReleaseManifest $DeployPath
 Write-Host "Wrote deploy manifest: $deployManifest"
 
-& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -AllowDirty:$AllowDirty
+& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -AllowDirty:$AllowDirty -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
 
 Write-Host "Portable release is ready:" -ForegroundColor Green
 Write-Host $DeployPath

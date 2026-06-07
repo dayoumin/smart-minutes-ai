@@ -2,7 +2,8 @@ param(
     [string]$PortableDir = "releases\lmo_audio",
     [int]$TimeoutSeconds = 240,
     [switch]$AllowDirty,
-    [switch]$Handoff
+    [switch]$Handoff,
+    [switch]$AllowMissingEmbeddedOllama
 )
 
 $ErrorActionPreference = "Stop"
@@ -166,6 +167,24 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
         }
     }
 
+    if ($manifest.portablePayloadFiles) {
+        foreach ($entry in @($manifest.portablePayloadFiles)) {
+            $relativePath = [string]$entry.path
+            $expectedHash = [string]$entry.sha256
+            if (-not $relativePath) {
+                continue
+            }
+            $fullPath = Join-Path $PortableRoot $relativePath
+            $actualHash = Get-FileHashValue $fullPath
+            if (-not $actualHash) {
+                $mismatches += "$relativePath missing"
+            }
+            elseif ($expectedHash -and $actualHash -ne $expectedHash) {
+                $mismatches += "$relativePath hash mismatch"
+            }
+        }
+    }
+
     if ($manifest.modelMarkers) {
         foreach ($marker in $manifest.modelMarkers) {
             $fullPath = Join-Path $PortableRoot ([string]$marker.path)
@@ -188,7 +207,7 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
 
 function Test-CleanPortableSurface([string]$PortableRoot) {
     $allowedRootNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models")) {
+    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models", "runtime")) {
         $null = $allowedRootNames.Add($name)
     }
 
@@ -344,6 +363,8 @@ $backendDir = Join-Path $portablePath "backend"
 $backendConfigFile = Join-Path $backendDir "config.json"
 $ffmpegExe = Join-Path $backendDir "ffmpeg.exe"
 $modelsDir = Join-Path $portablePath "models"
+$ollamaRuntimeDir = Join-Path $portablePath "runtime\ollama"
+$ollamaRuntimeExe = Join-Path $ollamaRuntimeDir "ollama.exe"
 $manifestFile = Join-Path $portablePath "release-manifest.json"
 
 Add-Result "portable folder exists" (Test-Path -LiteralPath $portablePath) $portablePath
@@ -351,6 +372,10 @@ Add-Result "app exe exists" (Test-Path -LiteralPath $appExe) $appExe
 Add-Result "sidecar exe exists" (Test-Path -LiteralPath $sidecarExe) $sidecarExe
 Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backendDir
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
+Add-Result "embedded Ollama runtime folder exists" (Test-Path -LiteralPath $ollamaRuntimeDir) $ollamaRuntimeDir
+if (Test-Path -LiteralPath $ollamaRuntimeDir) {
+    Add-Result "embedded Ollama executable exists" ((Test-Path -LiteralPath $ollamaRuntimeExe) -or [bool]$AllowMissingEmbeddedOllama) $(if (Test-Path -LiteralPath $ollamaRuntimeExe) { $ollamaRuntimeExe } else { "missing; pass -AllowMissingEmbeddedOllama only for development fallback builds" })
+}
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
 Test-CleanPortableSurface $portablePath

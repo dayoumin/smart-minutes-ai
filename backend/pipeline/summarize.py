@@ -4,7 +4,7 @@ import re
 import urllib.error
 import urllib.request
 
-from ollama_utils import find_ollama_executable
+from ollama_utils import ensure_ollama_server_running, find_ollama_executable, get_ollama_base_url, ollama_subprocess_env
 from process_utils import run_hidden
 
 
@@ -160,6 +160,7 @@ def _fallback_extract_summary(transcript_text: str) -> dict:
 
 
 def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
+    ensure_ollama_server_running(timeout_seconds=15)
     payload = json.dumps({
         "model": model_name,
         "prompt": prompt,
@@ -167,7 +168,7 @@ def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
         "format": "json",
     }).encode("utf-8")
     request = urllib.request.Request(
-        "http://127.0.0.1:11434/api/generate",
+        f"{get_ollama_base_url()}/api/generate",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -178,6 +179,7 @@ def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
 
 
 def _generate_with_ollama_cli(model_name: str, prompt: str) -> str:
+    ensure_ollama_server_running(timeout_seconds=15)
     response = run_hidden(
         [find_ollama_executable(), "run", model_name],
         input=prompt,
@@ -186,6 +188,7 @@ def _generate_with_ollama_cli(model_name: str, prompt: str) -> str:
         text=True,
         encoding="utf-8",
         errors="replace",
+        env=ollama_subprocess_env(),
         timeout=600,
     )
     return response.stdout

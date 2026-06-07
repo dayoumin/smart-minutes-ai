@@ -9,7 +9,7 @@ from config_normalization import (
     get_summary_option_models,
     normalize_summary_model_name,
 )
-from ollama_utils import find_ollama_executable, ollama_executable_available
+from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env
 from process_utils import run_hidden
 
 
@@ -166,6 +166,7 @@ def ollama_model_exists(model_name: str) -> bool:
 
 def list_ollama_models() -> list[str]:
     try:
+        ensure_ollama_server_running(timeout_seconds=10)
         result = run_hidden(
             [find_ollama_executable(), "list"],
             check=True,
@@ -173,6 +174,7 @@ def list_ollama_models() -> list[str]:
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=ollama_subprocess_env(),
             timeout=5,
         )
     except Exception:

@@ -1,6 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, MoreVertical, RefreshCw, Trash2, X } from 'lucide-react';
+import { Check, Loader2, MoreVertical, RefreshCw, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
+import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
@@ -179,18 +180,21 @@ interface ModelsPayload {
 interface OllamaPullStatus {
     model: string;
     active: boolean;
-    status: 'idle' | 'starting' | 'running' | 'completed' | 'failed';
+    status: 'idle' | 'starting' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
     message: string;
     started_at?: string;
     updated_at?: string;
     exit_code?: number | null;
     error?: string;
+    progress_percent?: number | null;
+    eta_seconds?: number | null;
+    cancel_requested?: boolean;
 }
 
 interface ModelDownloadStatus {
     key: string;
     active: boolean;
-    status: 'idle' | 'starting' | 'running' | 'completed' | 'failed';
+    status: 'idle' | 'starting' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
     message: string;
     target_path?: string;
     started_at?: string;
@@ -200,6 +204,7 @@ interface ModelDownloadStatus {
     expected_bytes?: number;
     progress_percent?: number | null;
     eta_seconds?: number | null;
+    cancel_requested?: boolean;
 }
 
 const isOllamaMissingPullStatus = (status?: { error?: string; model?: string }): boolean => (
@@ -239,6 +244,7 @@ const formatModelDownloadEta = (seconds?: number | null): string => {
 
 const getModelDownloadProgressText = (status?: ModelDownloadStatus): string => {
     if (!status?.active) return '';
+    if (status.status === 'cancelling') return '';
     const downloaded = formatModelDownloadBytes(status.downloaded_bytes);
     const expected = formatModelDownloadBytes(status.expected_bytes);
     const percent = typeof status.progress_percent === 'number' && Number.isFinite(status.progress_percent)
@@ -250,7 +256,7 @@ const getModelDownloadProgressText = (status?: ModelDownloadStatus): string => {
         downloaded && expected ? `${downloaded} / ${expected}` : downloaded,
         eta,
     ].filter(Boolean);
-    return parts.length > 0 ? parts.join(' · ') : '진행률 계산 중입니다.';
+    return parts.length > 0 ? parts.join(' · ') : '계산 중';
 };
 
 const getModelDownloadProgressPercent = (status?: ModelDownloadStatus): number => {
@@ -259,8 +265,25 @@ const getModelDownloadProgressPercent = (status?: ModelDownloadStatus): number =
 };
 
 const getModelDownloadStatusMessage = (status?: ModelDownloadStatus): string => {
+    if (status?.active) return '';
     if (!status?.message || status.message === '모델 받기를 시작합니다.') return '';
     return status.message;
+};
+
+const getOllamaPullProgressPercent = (status?: OllamaPullStatus): number => {
+    if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
+    return Math.max(0, Math.min(100, Number(status.progress_percent)));
+};
+
+const getOllamaPullProgressText = (status?: OllamaPullStatus): string => {
+    if (!status?.active) return '';
+    if (status.status === 'cancelling') return '';
+    const percent = typeof status.progress_percent === 'number' && Number.isFinite(status.progress_percent)
+        ? `${Math.max(0, Math.min(100, Number(status.progress_percent))).toFixed(1)}% 진행`
+        : '';
+    const eta = formatModelDownloadEta(status.eta_seconds);
+    const parts = [percent, eta].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : '계산 중';
 };
 
 const getModelStatusFailureMessage = (error: unknown): string => {
@@ -319,7 +342,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [ollamaPulls, setOllamaPulls] = useState<Record<string, OllamaPullStatus>>({});
     const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
-    const [lastModelStatusCheck, setLastModelStatusCheck] = useState('');
     const [isCheckingModels, setIsCheckingModels] = useState(false);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [openSummaryModelMenu, setOpenSummaryModelMenu] = useState('');
@@ -327,6 +349,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const modelStatusRequestIdRef = useRef(0);
     const pullRequestIdsRef = useRef<Record<string, number>>({});
     const modelDownloadRequestIdsRef = useRef<Record<string, number>>({});
+    const restoredOllamaPullsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
     const currentGeneralKeyRef = useRef('');
 
@@ -414,10 +437,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         };
     }, []);
 
-    const loadModelsStatus = useCallback(async (base: string, options: { surfaceErrors?: boolean } = {}): Promise<ModelsPayload | null> => {
+    const loadModelsStatus = useCallback(async (base: string, options: { surfaceErrors?: boolean; showChecking?: boolean } = {}): Promise<ModelsPayload | null> => {
         const requestId = modelStatusRequestIdRef.current + 1;
         modelStatusRequestIdRef.current = requestId;
-        setIsCheckingModels(true);
+        const showChecking = options.showChecking === true;
+        if (showChecking) setIsCheckingModels(true);
         try {
             const modelsResponse = await fetchWithTimeout(`${base}/api/models/status`);
             if (!modelsResponse.ok) {
@@ -437,7 +461,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     ? ''
                     : previous
             ));
-            setLastModelStatusCheck(new Date().toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' }));
             window.dispatchEvent(new Event('analysis:settings-updated'));
             return nextModels;
         } catch (error) {
@@ -450,7 +473,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setModelStatusErrorMessage(getModelStatusFailureMessage(error));
             return null;
         } finally {
-            if (mountedRef.current && modelStatusRequestIdRef.current === requestId) {
+            if (showChecking && mountedRef.current) {
                 setIsCheckingModels(false);
             }
         }
@@ -462,7 +485,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         try {
             const base = apiBase || await getApiBase();
             setApiBase(base);
-            await loadModelsStatus(base, { surfaceErrors: false });
+            await loadModelsStatus(base, { surfaceErrors: false, showChecking: true });
         } catch {
             setModelStatusErrorMessage('모델 상태를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다.');
         }
@@ -489,8 +512,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 if (status.status === 'completed') {
                     await loadModelsStatus(base, { surfaceErrors: false });
                     if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
-                    setMessage(status.message || '모델 받기가 완료되었습니다.');
+                    setMessage('');
                 } else if (status.status === 'failed') {
+                    setMessage('');
+                    setErrorMessage('');
+                } else if (status.status === 'cancelled') {
                     setMessage('');
                     setErrorMessage('');
                 }
@@ -539,7 +565,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             } else if (status.status === 'completed') {
                 await loadModelsStatus(base, { surfaceErrors: false });
                 if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
-                setMessage(status.message || `${getUserModelLabel(model)}이 준비되었습니다.`);
+                setMessage('');
             } else {
                 setMessage('');
                 setErrorMessage('');
@@ -551,6 +577,36 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
     }, [apiBase, isCurrentModelDownloadRequest, loadModelsStatus, pollModelDownloadStatus, updateModelDownloadStatus]);
 
+    const handleStopModelDownload = useCallback(async (modelKey: string) => {
+        const requestId = modelDownloadRequestIdsRef.current[modelKey] || 1;
+        modelDownloadRequestIdsRef.current[modelKey] = requestId;
+        setErrorMessage('');
+        setMessage('');
+        try {
+            const base = apiBase || await getApiBase();
+            setApiBase(base);
+            const response = await fetchWithTimeout(`${base}/api/models/download/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ key: modelKey }),
+            });
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                throw new Error(body?.detail || `모델 받기 중지 실패: ${response.status}`);
+            }
+            const status = await response.json() as ModelDownloadStatus;
+            updateModelDownloadStatus(status);
+            if (status.active) {
+                void pollModelDownloadStatus(base, modelKey, requestId).catch(error => {
+                    if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
+                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                });
+            }
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 중지하지 못했습니다.');
+        }
+    }, [apiBase, isCurrentModelDownloadRequest, pollModelDownloadStatus, updateModelDownloadStatus]);
+
     const updateOllamaPullStatus = useCallback((status: OllamaPullStatus) => {
         setOllamaPulls(previous => ({ ...previous, [status.model]: status }));
     }, []);
@@ -560,7 +616,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     ), []);
 
     const pollOllamaPullStatus = useCallback(async (base: string, modelName: string, requestId: number) => {
-        for (let attempt = 0; attempt < 600; attempt += 1) {
+        for (let attempt = 0; attempt < 7200; attempt += 1) {
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             if (!isCurrentPullRequest(modelName, requestId)) return;
             const response = await fetchWithTimeout(`${base}/api/models/ollama/pull-status?model=${encodeURIComponent(modelName)}`);
@@ -572,10 +628,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 if (status.status === 'completed') {
                     await loadModelsStatus(base, { surfaceErrors: false });
                     if (!isCurrentPullRequest(modelName, requestId)) return;
-                    setMessage(status.message || '모델 받기가 완료되었습니다.');
+                    setMessage('');
                 } else if (status.status === 'failed') {
                     setMessage('');
                     setErrorMessage(status.message || '모델을 받지 못했습니다.');
+                } else if (status.status === 'cancelled') {
+                    setMessage('');
+                    setErrorMessage('');
                 }
                 return;
             }
@@ -638,7 +697,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 return;
             }
             if (status.active) {
-                setMessage(status.message || `${targetModel} 모델을 받는 중입니다.`);
+                setMessage('');
                 void pollOllamaPullStatus(base, targetModel, requestId).catch(error => {
                     if (!isCurrentPullRequest(targetModel, requestId)) return;
                     setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
@@ -646,7 +705,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             } else if (status.status === 'completed') {
                 await loadModelsStatus(base, { surfaceErrors: false });
                 if (!isCurrentPullRequest(targetModel, requestId)) return;
-                setMessage(status.message || `${targetModel} 모델이 준비되었습니다.`);
+                setMessage('');
             } else {
                 setMessage('');
                 setDownloadErrorMessage(status.message || `${targetModel} 모델을 받지 못했습니다.`);
@@ -657,6 +716,39 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
         }
     }, [apiBase, isCurrentPullRequest, loadModelsStatus, pollOllamaPullStatus, summaryModelInput, updateOllamaPullStatus]);
+
+    const handleStopOllamaModelDownload = useCallback(async (modelName: string) => {
+        const targetModel = normalizeSummaryModelName(modelName);
+        if (!targetModel) return;
+        const requestId = pullRequestIdsRef.current[targetModel] || 1;
+        pullRequestIdsRef.current[targetModel] = requestId;
+        setErrorMessage('');
+        setMessage('');
+        setCustomSummaryModelNotice('');
+        try {
+            const base = apiBase || await getApiBase();
+            setApiBase(base);
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/pull/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ model: targetModel }),
+            });
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                throw new Error(body?.detail || `모델 받기 중지 실패: ${response.status}`);
+            }
+            const status = await response.json() as OllamaPullStatus;
+            updateOllamaPullStatus(status);
+            if (status.active) {
+                void pollOllamaPullStatus(base, targetModel, requestId).catch(error => {
+                    if (!isCurrentPullRequest(targetModel, requestId)) return;
+                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                });
+            }
+        } catch (error) {
+            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 중지하지 못했습니다.');
+        }
+    }, [apiBase, isCurrentPullRequest, pollOllamaPullStatus, updateOllamaPullStatus]);
 
     const handleDeleteOllamaModel = useCallback(async (modelName: string, deleteFiles = false, replacementModel = '') => {
         const targetModel = normalizeSummaryModelName(modelName);
@@ -757,14 +849,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [errorMessage, isLoading, loadSettings, settings]);
 
     useEffect(() => {
-        if (activeTab !== 'models' || !apiBase) return;
-        const intervalId = window.setInterval(() => {
-            void loadModelsStatus(apiBase, { surfaceErrors: false });
-        }, 5000);
-        return () => window.clearInterval(intervalId);
-    }, [activeTab, apiBase, loadModelsStatus]);
-
-    useEffect(() => {
         if (activeTab !== 'models' || !apiBase || analysisModels.length === 0) return;
         analysisModels.forEach(model => {
             if (!model.downloadable || model.installed || modelDownloads[model.key]?.active) return;
@@ -794,6 +878,46 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         modelDownloads,
         pollModelDownloadStatus,
         updateModelDownloadStatus,
+    ]);
+
+    useEffect(() => {
+        if (activeTab !== 'models' || !apiBase) return;
+        const candidateModels = Array.from(new Set([
+            normalizeSummaryModelName(settings?.summary?.model),
+            ...summaryModelOptions.map(option => normalizeSummaryModelName(option.model)),
+            normalizeSummaryModelName(customSummaryModelInput),
+        ].filter(Boolean)));
+        candidateModels.forEach(modelName => {
+            if (!isOllamaSummaryModel(modelName) || ollamaPulls[modelName]?.active || restoredOllamaPullsRef.current[modelName]) return;
+            restoredOllamaPullsRef.current[modelName] = Date.now();
+            void (async () => {
+                const response = await fetchWithTimeout(`${apiBase}/api/models/ollama/pull-status?model=${encodeURIComponent(modelName)}`);
+                if (!response.ok) return;
+                const status = await response.json() as OllamaPullStatus;
+                if (!mountedRef.current || !status.active) return;
+                const requestId = (pullRequestIdsRef.current[modelName] || 0) + 1;
+                pullRequestIdsRef.current[modelName] = requestId;
+                updateOllamaPullStatus(status);
+                setMessage('');
+                void pollOllamaPullStatus(apiBase, modelName, requestId).catch(error => {
+                    if (!isCurrentPullRequest(modelName, requestId)) return;
+                    setMessage('');
+                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                });
+            })().catch(() => {
+                // Status refresh is best-effort; the normal model status refresh still runs.
+            });
+        });
+    }, [
+        activeTab,
+        apiBase,
+        customSummaryModelInput,
+        isCurrentPullRequest,
+        ollamaPulls,
+        pollOllamaPullStatus,
+        settings?.summary?.model,
+        summaryModelOptions,
+        updateOllamaPullStatus,
     ]);
 
     useEffect(() => {
@@ -1051,7 +1175,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const gpuDetected = Boolean(models?.stt_device_status?.gpu_detected);
     const gpuReason = models?.stt_device_status?.gpu_reason || 'CPU를 기본으로 사용합니다.';
     const selectedSummaryModel = normalizeSummaryModelName(summaryModelInput);
-    const selectedSummaryPull = selectedSummaryModel ? ollamaPulls[selectedSummaryModel] : undefined;
     const installedSummaryModels = new Set(
         (summaryModelStatus?.installed_models?.length
             ? summaryModelStatus.installed_models
@@ -1071,6 +1194,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const customSummaryInstalled = Boolean(customSummaryModel && installedSummaryModels.has(customSummaryModel));
     const customSummaryPull = customSummaryModel ? ollamaPulls[customSummaryModel] : undefined;
     const customSummaryPullActive = Boolean(customSummaryPull?.active);
+    const customSummaryModelInOptions = Boolean(customSummaryModel && summaryModelOptions.some(option => normalizeSummaryModelName(option.model) === customSummaryModel));
     const gpuStatusText = gpuUsable
         ? '이 PC는 GPU 가속을 사용할 수 있습니다.'
         : gpuDetected
@@ -1320,10 +1444,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <div className="text-base font-semibold text-foreground">음성 분석 모델</div>
                                         <div className="text-xs text-muted-foreground">
                                             {isCheckingModels
-                                                ? '환경을 확인하고 있습니다.'
-                                                : lastModelStatusCheck
-                                                    ? `최근 확인: ${lastModelStatusCheck}`
-                                                    : '환경 확인을 기다리고 있습니다.'}
+                                                ? '환경 확인 중'
+                                                : '음성 인식 모델 상태를 확인합니다.'}
                                         </div>
                                     </div>
                                     <Button
@@ -1372,6 +1494,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             const modelName = model.repo_id || model.label;
                                             const modelDownloadStatus = modelDownloads[model.key];
                                             const modelDownloadActive = Boolean(modelDownloadStatus?.active);
+                                            const modelDownloadStopping = modelDownloadStatus?.status === 'cancelling';
                                             const progressText = getModelDownloadProgressText(modelDownloadStatus);
                                             const progressPercent = getModelDownloadProgressPercent(modelDownloadStatus);
                                             const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
@@ -1401,11 +1524,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             <Button
                                                                 variant="outline"
                                                                 className="h-8 shrink-0 px-3 text-xs"
-                                                                aria-label={`${getUserModelLabel(model)} 받기`}
-                                                                onClick={() => void handleDownloadModel(model)}
-                                                                disabled={modelDownloadActive}
+                                                                aria-label={`${getUserModelLabel(model)} ${modelDownloadActive ? '중지' : '받기'}`}
+                                                                onClick={() => {
+                                                                    if (modelDownloadActive) {
+                                                                        void handleStopModelDownload(model.key);
+                                                                        return;
+                                                                    }
+                                                                    void handleDownloadModel(model);
+                                                                }}
+                                                                disabled={modelDownloadStopping}
                                                             >
-                                                                {modelDownloadActive ? '받는 중' : '받기'}
+                                                                {modelDownloadActive
+                                                                    ? (
+                                                                        <>
+                                                                            {modelDownloadStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                                                            {modelDownloadStopping ? '중지 중' : '중지'}
+                                                                        </>
+                                                                    )
+                                                                    : '받기'}
                                                             </Button>
                                                         ) : modelUrl ? (
                                                             <button
@@ -1425,14 +1561,18 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     </div>
                                                     {modelDownloadActive && (
                                                         <div className="mt-3 space-y-1.5">
-                                                            <div className="h-2 overflow-hidden rounded-full bg-muted">
-                                                                <div
-                                                                    className="h-full rounded-full bg-primary transition-[width] duration-300"
-                                                                    style={{ width: `${progressPercent}%` }}
-                                                                />
-                                                            </div>
-                                                            <div className="text-xs text-muted-foreground">
-                                                                {progressText}
+                                                            <ProgressBar
+                                                                value={progressPercent}
+                                                                size="sm"
+                                                                label={`${getUserModelLabel(model)} 받기 진행률`}
+                                                            />
+                                                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                                {progressText && (
+                                                                    <>
+                                                                        <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
+                                                                        <span>{progressText}</span>
+                                                                    </>
+                                                                )}
                                                             </div>
                                                         </div>
                                                     )}
@@ -1518,15 +1658,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <span className="mt-2 block truncate text-xs text-muted-foreground">{summaryModelHint}</span>
                                     </label>
                                 )}
-                                {selectedSummaryPull?.message && (
-                                    <div className="mt-2 text-xs text-muted-foreground">{selectedSummaryPull.message}</div>
-                                )}
                                 {summaryModelOptions.length > 0 && (
                                     <div className="mt-4 grid gap-2 sm:grid-cols-2">
                                         {summaryModelOptions.map((option, index) => {
                                             const optionModel = normalizeSummaryModelName(option.model);
                                             const pullStatus = optionModel ? ollamaPulls[optionModel] : undefined;
                                             const pullActive = Boolean(pullStatus?.active);
+                                            const pullStopping = pullStatus?.status === 'cancelling';
+                                            const pullProgressText = getOllamaPullProgressText(pullStatus);
+                                            const pullProgressPercent = getOllamaPullProgressPercent(pullStatus);
                                             const optionCanPull = isOllamaSummaryModel(optionModel);
                                             const optionInstalled = isSummaryOptionInstalled(optionModel);
                                             const optionName = option.model || option.label || '모델';
@@ -1581,69 +1721,52 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                         </div>
                                                         {optionSelected && optionInstalled ? (
                                                             <div className="relative flex shrink-0 items-center justify-end gap-2" data-summary-model-menu-root>
-                                                                {hasMenuActions && (
-                                                                    <>
-                                                                        <button
-                                                                            type="button"
-                                                                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                                                            aria-label={`${optionName} 모델 작업`}
-                                                                            aria-haspopup="menu"
-                                                                            aria-expanded={openSummaryModelMenu === menuKey}
-                                                                            aria-controls={`summary-model-menu-${index}`}
-                                                                            onClick={() => setOpenSummaryModelMenu(previous => (previous === menuKey ? '' : menuKey))}
-                                                                        >
-                                                                            <MoreVertical size={14} />
-                                                                        </button>
-                                                                        {openSummaryModelMenu === menuKey && (
-                                                                            <div id={`summary-model-menu-${index}`} role="menu" className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
-                                                                                {menuCanRefresh && (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        role="menuitem"
-                                                                                        className="menu-item px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                                        onClick={() => {
-                                                                                            setOpenSummaryModelMenu('');
-                                                                                            void handleDownloadOllamaModel(optionModel);
-                                                                                        }}
-                                                                                        disabled={pullActive}
-                                                                                    >
-                                                                                        <RefreshCw size={13} />
-                                                                                        {pullActive ? '확인 중' : '받기'}
-                                                                                    </button>
-                                                                                )}
-                                                                                {optionFileDeletable && (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        role="menuitem"
-                                                                                        className="menu-item menu-item-danger px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                                        aria-label={`${optionName} PC에서 삭제`}
-                                                                                        onClick={() => {
-                                                                                            setOpenSummaryModelMenu('');
-                                                                                            void handleDeleteOllamaModel(optionModel, true, replacementModel);
-                                                                                        }}
-                                                                                        disabled={optionDeleting || pullActive || (optionSelected && !replacementModel)}
-                                                                                    >
-                                                                                        <Trash2 size={13} />
-                                                                                        {optionDeleting ? '처리 중' : '삭제'}
-                                                                                    </button>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-                                                                    </>
+                                                                {pullActive && (
+                                                                    <Button
+                                                                        variant="outline"
+                                                                        className="h-8 shrink-0 px-3 text-xs"
+                                                                        aria-label={`${optionName} 모델 중지`}
+                                                                        onClick={() => void handleStopOllamaModelDownload(optionModel)}
+                                                                        disabled={pullStopping}
+                                                                    >
+                                                                        {pullStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                                                        {pullStopping ? '중지 중' : '중지'}
+                                                                    </Button>
+                                                                )}
+                                                                {!pullActive && (
+                                                                    <span
+                                                                        role="status"
+                                                                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-fg)]"
+                                                                        aria-label={`${optionName} 모델 준비됨`}
+                                                                        title="준비됨"
+                                                                    >
+                                                                        <Check size={16} aria-hidden="true" />
+                                                                    </span>
                                                                 )}
                                                             </div>
                                                         ) : optionInstalled ? (
                                                             <div className="relative flex shrink-0 items-center justify-end gap-2" data-summary-model-menu-root>
                                                                 <Button
                                                                     className="h-8 shrink-0 px-3 text-xs"
-                                                                    aria-label={`${optionName} 모델 사용`}
+                                                                    aria-label={`${optionName} 모델 ${pullActive ? '중지' : '사용'}`}
                                                                     onClick={() => {
+                                                                        if (pullActive) {
+                                                                            void handleStopOllamaModelDownload(optionModel);
+                                                                            return;
+                                                                        }
                                                                         setSummaryModelInput(optionModel);
                                                                         void handleSaveSummaryModel(optionModel);
                                                                     }}
-                                                                    disabled={optionDeleting || pullActive || isSaving}
+                                                                    disabled={pullActive ? (optionDeleting || pullStopping) : (optionDeleting || isSaving)}
                                                                 >
-                                                                    사용
+                                                                    {pullActive
+                                                                        ? (
+                                                                            <>
+                                                                                {pullStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                                                                {pullStopping ? '중지 중' : '중지'}
+                                                                            </>
+                                                                        )
+                                                                        : '사용'}
                                                                 </Button>
                                                                 {hasMenuActions && (
                                                                     <>
@@ -1672,7 +1795,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                                         disabled={pullActive || optionDeleting}
                                                                                     >
                                                                                         <RefreshCw size={13} />
-                                                                                        {pullActive ? '확인 중' : '받기'}
+                                                                                        {pullActive ? '확인 중' : '업데이트'}
                                                                                     </button>
                                                                                 )}
                                                                                 {(optionRemovable || optionFileDeletable) && (
@@ -1701,11 +1824,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                 <Button
                                                                     variant="outline"
                                                                     className="h-8 shrink-0 px-3 text-xs"
-                                                                    aria-label={`${optionName} 모델 받기`}
-                                                                    onClick={() => void handleDownloadOllamaModel(optionModel)}
-                                                                    disabled={pullActive}
+                                                                    aria-label={`${optionName} 모델 ${pullActive ? '중지' : '받기'}`}
+                                                                    onClick={() => {
+                                                                        if (pullActive) {
+                                                                            void handleStopOllamaModelDownload(optionModel);
+                                                                            return;
+                                                                        }
+                                                                        void handleDownloadOllamaModel(optionModel);
+                                                                    }}
+                                                                    disabled={pullStopping}
                                                                 >
-                                                                    {pullActive ? '받는 중' : '받기'}
+                                                                    {pullActive
+                                                                        ? (
+                                                                            <>
+                                                                                {pullStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                                                                {pullStopping ? '중지 중' : '중지'}
+                                                                            </>
+                                                                        )
+                                                                        : '받기'}
                                                                 </Button>
                                                                 {hasMenuActions && (
                                                                     <>
@@ -1745,7 +1881,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             </div>
                                                         )}
                                                     </div>
-                                                    {pullStatus?.message && <span className="mt-2 block text-[11px] text-muted-foreground">{pullStatus.message}</span>}
+                                                    {pullActive ? (
+                                                        <div className="mt-3 space-y-1.5">
+                                                            <ProgressBar
+                                                                value={pullProgressPercent}
+                                                                size="sm"
+                                                                tone="info"
+                                                                label={`${optionName} 모델 받기 진행률`}
+                                                            />
+                                                            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                                                                {pullProgressText && (
+                                                                    <>
+                                                                        <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
+                                                                        <span>{pullProgressText}</span>
+                                                                    </>
+                                                                )}
+                                                            </div>
+                                                        </div>
+                                                    ) : null}
                                                 </div>
                                             );
                                         })}
@@ -1768,11 +1921,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <Button
                                             variant={customSummaryInstalled ? 'primary' : 'outline'}
                                             className="h-9 w-16 shrink-0 px-2"
-                                            disabled={!customSummaryModel || customSummaryPullActive || (customSummaryInstalled && isSaving)}
-                                            aria-label={`${customSummaryModel ? `직접 입력 ${customSummaryModel}` : '직접 입력 요약'} 모델 ${customSummaryInstalled ? '사용' : customSummaryCheckedModel === customSummaryModel ? '받기' : '검색'}`}
+                                            disabled={!customSummaryModel || (customSummaryPull?.status === 'cancelling') || (customSummaryInstalled && isSaving)}
+                                            aria-label={`${customSummaryModel ? `직접 입력 ${customSummaryModel}` : '직접 입력 요약'} 모델 ${customSummaryPullActive ? '중지' : customSummaryInstalled ? '사용' : customSummaryCheckedModel === customSummaryModel ? '받기' : '검색'}`}
                                             onClick={() => {
                                                 if (!customSummaryModel) return;
-                                                if (customSummaryInstalled) {
+                                                if (customSummaryPullActive) {
+                                                    void handleStopOllamaModelDownload(customSummaryModel);
+                                                } else if (customSummaryInstalled) {
                                                     setCustomSummaryModelNotice('');
                                                     setSummaryModelInput(customSummaryModel);
                                                     void handleSaveSummaryModel(customSummaryModel);
@@ -1800,7 +1955,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             {!customSummaryModel
                                                 ? '추가'
                                                 : customSummaryPullActive
-                                                    ? '받는 중'
+                                                    ? customSummaryPull?.status === 'cancelling' ? '중지 중' : '중지'
                                                     : customSummaryInstalled
                                                         ? '사용'
                                                         : customSummaryCheckedModel === customSummaryModel
@@ -1808,11 +1963,26 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             : '검색'}
                                         </Button>
                                     </div>
-                                    {customSummaryModelNotice ? (
+                                    {customSummaryPullActive && !customSummaryModelInOptions ? (
+                                        <div className="mt-3 space-y-1.5">
+                                            <ProgressBar
+                                                value={getOllamaPullProgressPercent(customSummaryPull)}
+                                                size="sm"
+                                                tone="info"
+                                                label={`${customSummaryModel} 모델 받기 진행률`}
+                                            />
+                                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                {getOllamaPullProgressText(customSummaryPull) && (
+                                                    <>
+                                                        <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
+                                                        <span>{getOllamaPullProgressText(customSummaryPull)}</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                    ) : customSummaryModelNotice ? (
                                         <span className="mt-2 block text-xs text-muted-foreground">{customSummaryModelNotice}</span>
-                                    ) : customSummaryPull?.message && (
-                                        <span className="mt-2 block text-xs text-muted-foreground">{customSummaryPull.message}</span>
-                                    )}
+                                    ) : null}
                                 </div>
                             </div>
                         </section>

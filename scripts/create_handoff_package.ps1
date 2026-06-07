@@ -120,7 +120,7 @@ function Get-HandoffPayloadFiles([string]$PortableRoot) {
         }
     }
 
-    foreach ($folder in @("binaries", "backend")) {
+    foreach ($folder in @("binaries", "backend", "runtime")) {
         $root = Join-Path $PortableRoot $folder
         if (-not (Test-Path -LiteralPath $root)) {
             continue

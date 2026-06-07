@@ -188,6 +188,8 @@ const installRoutes = async (page) => {
         active: true,
         status: 'starting',
         message: `${model} 모델 받기 또는 업데이트 확인을 시작합니다.`,
+        progress_percent: 4,
+        eta_seconds: 1800,
       }),
     });
   });
@@ -230,6 +232,20 @@ const installRoutes = async (page) => {
   await page.route('**/api/models/ollama/pull-status**', route => {
     const url = new URL(route.request().url());
     const model = url.searchParams.get('model') || '';
+    if (!pullRequests.includes(model)) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          model,
+          active: false,
+          status: 'idle',
+          message: '',
+          progress_percent: null,
+          eta_seconds: null,
+        }),
+      });
+    }
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -238,6 +254,8 @@ const installRoutes = async (page) => {
         active: true,
         status: 'running',
         message: `${model} 모델을 받는 중입니다.`,
+        progress_percent: 20,
+        eta_seconds: 1200,
       }),
     });
   });
@@ -371,7 +389,8 @@ const run = async () => {
       'custom model search should open Ollama search first',
     );
     await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 받기' }).click();
-    await expectDisabled(modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 받기' }), true, 'normalized alias pull should disable the custom download button');
+    await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('20.0% 진행 · 약 20분 남음').waitFor({ state: 'visible', timeout: 10000 });
     assert.deepEqual(routeState.pullRequests, ['gemma4:e4b'], 'custom alias pull should normalize before calling backend');
 
     await page.getByRole('tab', { name: '일반' }).click();

@@ -52,6 +52,8 @@
 - 현재 앱 설정 화면은 필수 모델 준비 상태와 `models` 폴더 기준 안내를 보여준다. 절대 경로 표시/복사 버튼은 후속 UX 개선으로 다루되, 배포 문서에는 실제 배치 위치를 반드시 명시한다.
 - 필수 모델이 없으면 분석 버튼 클릭 후 즉시 원인과 조치 방법을 보여준다.
 - 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
+- 내장 Ollama를 배포할 때는 공식 standalone Windows CLI 압축을 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다. 사용자용 빌드는 이 파일이 없으면 실패해야 하며, 개발/예비 확인용 fallback 빌드에서만 `-AllowMissingEmbeddedOllama`를 명시한다. 앱은 내장 Ollama가 있으면 시스템 설치본보다 이 실행 파일을 우선 사용하고, 요약 모델 저장소는 `models\ollama`를 사용한다. 이때 runtime 폴더 용량과 최종 zip 용량을 기록해서 사용자 전달 가능성을 확인한다.
+- Ollama 요약 모델은 임의의 단일 파일 링크 다운로드가 아니라 앱 내부에서 `ollama pull <model>` 흐름으로 받는다. 그래야 manifest/blob 저장 구조와 설치 여부 확인이 Ollama 기준과 맞는다.
 
 ## 4. 패키징 산출물
 
@@ -71,7 +73,10 @@
 - 설정은 `일반`과 `모델` 탭 기준으로 확인한다. 더 이상 일반 사용자 흐름에서 `분석 준비` 탭명을 기대하지 않는다.
 - 설정 `일반` 탭에서 참석자 구분 사용 여부와 분석 중 참석자 구분 실행 옵션이 저장되고 `/api/models/status`에 반영되는지 확인한다.
 - 설정 `모델` 탭에서 추천 모델, 직접 입력 모델, 설치된 Ollama 모델, 사용 중 모델 표시가 서로 일관되는지 확인한다.
-- Ollama 모델 받기/상태 확인/삭제 기능은 사용자 입력 모델명 검증, 받는 중 표시, 완료/실패 안내, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 함께 확인한다. Ollama가 설치되어 있지 않은 PC에서는 받기 요청이 즉시 실패 안내로 끝나고, 진행 중 메시지가 남지 않아야 한다.
+- 설정 `모델` 탭의 음성 인식 모델은 없는 상태의 `받기`, 받는 중 진행률/남은 시간/중지, 완료 후 준비 체크 표시를 함께 확인한다. 완료 응답만으로 준비됨 처리하지 말고 `/api/models/status`에서 실제 모델 파일이 확인된 뒤 체크 표시가 떠야 한다.
+- Ollama 모델 받기/상태 확인/삭제 기능은 사용자 입력 모델명 검증, 받는 중 진행률/남은 시간/중지, 완료 후 준비 체크 표시, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 함께 확인한다. Ollama가 설치되어 있지 않은 PC에서는 받기 요청이 즉시 실패 안내로 끝나고, 진행 중 메시지가 남지 않아야 한다. 완료 응답만으로 준비됨 처리하지 말고 `/api/models/status`에서 Ollama 설치 목록이 확인된 뒤 체크 표시가 떠야 한다.
+- 내장 Ollama가 있는 배포본에서는 별도 Ollama 설치 없이 모델 받기가 시작되는지, `models\ollama` 아래에 모델 데이터가 생기는지 확인한다. 외부 Ollama 설치본이 이미 있어도 앱은 배포 폴더 기준 내부 포트와 내장 모델 저장소를 우선 사용해야 한다.
+- 모델 탭은 사용자가 직접 누른 `준비 상태 확인` 때만 확인 중 상태를 보여준다. 탭을 열어 둔 것만으로 반복 상태 점검, `최근 확인` 시간, 긴 백엔드 상태 문구, 완료 배너가 계속 표시되어 레이아웃을 흔들면 안 된다.
 - 결과 화면에서 요약 모델이 없을 때는 `모델 필요` 수준의 사용자 문구와 `모델` 탭 이동이 동작해야 한다.
 - 결과 화면에서 원본 음성이 없을 때 참석자 구분 상태를 구분한다. 기존 참석자 표식이 1명뿐이면 `표식 1명`, 표식 자체가 없으면 `재실행 불가` 안내가 나와야 한다.
 
@@ -82,10 +87,12 @@
 - portable 폴더 존재 여부
 - 앱 exe와 sidecar exe 존재 여부
 - 앱 exe와 sidecar exe의 PE Subsystem
+- 내장 Ollama runtime 폴더와 `runtime\ollama\ollama.exe` 포함 여부
 - 백엔드 모델/ffmpeg 폴더 구조
 - 앱 실행 후 sidecar listen 포트 탐지
 - `/api/health`, `/api/settings`, `/api/models/status` 응답 확인
-- `/api/models/ollama/pull`, `/api/models/ollama/pull-status`, `/api/models/ollama/model` 응답 확인
+- `/api/models/download`, `/api/models/download-status`, `/api/models/download/stop` 응답 확인
+- `/api/models/ollama/pull`, `/api/models/ollama/pull-status`, `/api/models/ollama/pull/stop`, `/api/models/ollama/model` 응답 확인
 - 필수 모델 누락 목록 출력
 - 테스트 후 앱/sidecar 프로세스 종료
 
@@ -164,7 +171,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.p
 - 필요 시 WebView 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
 - Tauri 리소스와 portable 폴더를 다시 구성한다.
 - `releases\lmo_audio` 폴더로 동기화한다.
-- `release-manifest.json`에 exe, sidecar, backend 파일 해시를 기록한다.
+- `release-manifest.json`에 exe, sidecar, backend, runtime 파일 해시를 기록한다.
 - `scripts\verify_portable.ps1`로 manifest 해시와 실행 smoke test를 확인한다.
 
 문제가 반복될 때는 먼저 진단 스크립트로 실제 실행 파일, 프로세스, 포트, 모델, manifest를 확인한다.
@@ -239,7 +246,7 @@ corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases
 운영 기준:
 
 - 기본 STT 모델은 외부망 PC에서 설정 화면의 `받기`로 앱이 다운로드를 시작할 수 있다. 내부망/실패 상황에서는 관리자가 준비해 `models\faster-whisper-large-v3`에 배치한다. 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않고, 회사 전달용 슬림 zip에 포함하거나 관리자가 `models\speaker-diarization-community-1`에 배치한다.
-- Ollama 정리 모델은 외부망과 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있다. Ollama가 없는 PC에서는 설정 화면의 설치 링크로 `https://ollama.com/download/windows`를 열 수 있어야 하며, 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
+- Ollama 정리 모델은 외부망 PC에서 설정 화면으로 받거나 선택할 수 있다. 내장 Ollama runtime이 있는 배포본은 별도 설치 없이 앱 내부 `runtime\ollama\ollama.exe`와 `models\ollama`를 사용한다. 내장 runtime이 없는 개발/예비 배포본에서는 설정 화면의 설치 링크로 `https://ollama.com/download/windows`를 열 수 있어야 하며, 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
 - 기본 STT 모델을 앱에서 받을 수 없는 PC는 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 일반 사용자에게 전달할 배포본은 manifest의 `dirty`가 `false`여야 한다. dirty 배포본은 로컬 테스트용이며, 필요한 경우에만 `-AllowDirty`로 명시한다.

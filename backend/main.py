@@ -5,6 +5,7 @@ import hashlib
 import os
 import json
 import logging
+import queue
 import re
 import shutil
 import subprocess
@@ -54,7 +55,7 @@ from model_manager import (
     ollama_model_exists,
     resolve_model_path,
 )
-from ollama_utils import find_ollama_executable, ollama_executable_available
+from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env
 from pipeline.transcribe import get_stt_device_status
 from process_utils import hidden_subprocess_kwargs
 from storage_preflight import build_analysis_storage_preflight
@@ -80,6 +81,7 @@ ACTIVE_GENERATIONS: set[tuple[str, str]] = set()
 GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
 GENERATION_STOP_REQUESTS: dict[tuple[str, str], dict] = {}
 OLLAMA_PULL_STATUS: dict[str, dict] = {}
+OLLAMA_PULL_PROCESSES: dict[str, subprocess.Popen] = {}
 MODEL_DOWNLOAD_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_EXPECTED_BYTES = {
     "stt_faster_whisper": 3_090_839_274,
@@ -918,6 +920,41 @@ def _set_model_download_status(model_key: str, **updates) -> dict:
         return dict(current)
 
 
+def _model_download_cancel_requested(model_key: str) -> bool:
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
+    return bool(current.get("cancel_requested"))
+
+
+def _mark_model_download_cancelled(model_key: str, target_path: str, message: str = "모델 받기를 중지했습니다.") -> dict:
+    return _set_model_download_status(
+        model_key,
+        active=False,
+        status="cancelled",
+        message=message,
+        target_path=target_path,
+        error="",
+        cancel_requested=False,
+    )
+
+
+def _request_model_download_stop(model_key: str) -> dict:
+    model_key = _validate_downloadable_model_key(model_key)
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        current = dict(MODEL_DOWNLOAD_STATUS.get(model_key) or {})
+        if not current.get("active"):
+            return _model_download_snapshot(model_key)
+        current.update({
+            "active": True,
+            "status": "cancelling",
+            "message": "모델 받기를 중지하고 있습니다. 진행 중인 파일 작업이 끝나면 멈춥니다.",
+            "cancel_requested": True,
+            "updated_at": datetime.now().isoformat(),
+        })
+        MODEL_DOWNLOAD_STATUS[model_key] = current
+    return _model_download_snapshot(model_key)
+
+
 def _download_huggingface_snapshot(repo_id: str, target_dir: str) -> None:
     from huggingface_hub import snapshot_download
 
@@ -984,6 +1021,9 @@ def _model_download_preflight(model_key: str, target_path: str) -> str:
 def _run_model_download(model_key: str) -> None:
     spec = get_model_spec(model_key)
     target_path = resolve_model_path(BASE_DIR, spec)
+    if _model_download_cancel_requested(model_key):
+        _mark_model_download_cancelled(model_key, target_path)
+        return
     _set_model_download_status(
         model_key,
         active=True,
@@ -992,10 +1032,17 @@ def _run_model_download(model_key: str) -> None:
         target_path=target_path,
         started_at=datetime.now().isoformat(),
         error="",
+        cancel_requested=False,
     )
     try:
         Path(target_path).mkdir(parents=True, exist_ok=True)
+        if _model_download_cancel_requested(model_key):
+            _mark_model_download_cancelled(model_key, target_path)
+            return
         _download_huggingface_snapshot(str(spec.repo_id), target_path)
+        if _model_download_cancel_requested(model_key):
+            _mark_model_download_cancelled(model_key, target_path)
+            return
         if not model_exists(BASE_DIR, spec):
             raise RuntimeError("Downloaded files did not include the required model markers.")
         _set_model_download_status(
@@ -1005,8 +1052,12 @@ def _run_model_download(model_key: str) -> None:
             message=f"{spec.label} 모델 받기가 완료되었습니다.",
             target_path=target_path,
             error="",
+            cancel_requested=False,
         )
     except Exception as exc:
+        if _model_download_cancel_requested(model_key):
+            _mark_model_download_cancelled(model_key, target_path)
+            return
         logging.exception("Failed to download model %s", model_key)
         _set_model_download_status(
             model_key,
@@ -1015,6 +1066,7 @@ def _run_model_download(model_key: str) -> None:
             message=_download_blocked_message(f"{spec.label} 모델을", "모델 파일 준비를"),
             target_path=target_path,
             error=str(exc),
+            cancel_requested=False,
         )
 
 
@@ -1037,6 +1089,7 @@ def _start_model_download(model_key: str) -> dict:
             target_path=target_path,
             started_at=datetime.now().isoformat(),
             error="",
+            cancel_requested=False,
         )
         return _model_download_snapshot(model_key)
 
@@ -1050,6 +1103,7 @@ def _start_model_download(model_key: str) -> dict:
             target_path=target_path,
             started_at=datetime.now().isoformat(),
             error=preflight_error,
+            cancel_requested=False,
         )
         return _model_download_snapshot(model_key)
 
@@ -1066,6 +1120,7 @@ def _start_model_download(model_key: str) -> dict:
             "started_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "error": "",
+            "cancel_requested": False,
         }
 
     worker = threading.Thread(target=_run_model_download, args=(model_key,), daemon=True)
@@ -1090,6 +1145,8 @@ def _ollama_pull_snapshot(model_name: str) -> dict:
         "started_at": "",
         "updated_at": "",
         "exit_code": None,
+        "progress_percent": None,
+        "eta_seconds": None,
     }
 
 
@@ -1104,6 +1161,86 @@ def _set_ollama_pull_status(model_name: str, **updates) -> dict:
         return dict(current)
 
 
+def _ollama_pull_cancel_requested(model_name: str) -> bool:
+    with OLLAMA_PULL_STATUS_LOCK:
+        current = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
+    return bool(current.get("cancel_requested"))
+
+
+def _parse_ollama_progress_percent(text: str) -> float | None:
+    matches = re.findall(r"(\d+(?:\.\d+)?)\s*%", text or "")
+    if not matches:
+        return None
+    try:
+        return max(0.0, min(100.0, float(matches[-1])))
+    except ValueError:
+        return None
+
+
+def _estimate_pull_eta_seconds(started_at: str | None, progress_percent: float | None) -> int | None:
+    if progress_percent is None or progress_percent <= 0 or progress_percent >= 100:
+        return None
+    started = _parse_iso_datetime(started_at)
+    if not started:
+        return None
+    elapsed_seconds = max((datetime.now() - started).total_seconds(), 1)
+    estimated_total_seconds = elapsed_seconds / (progress_percent / 100)
+    remaining_seconds = max(estimated_total_seconds - elapsed_seconds, 0)
+    return int(remaining_seconds) if remaining_seconds > 0 else None
+
+
+def _update_ollama_pull_progress_from_output(model_name: str, text: str) -> None:
+    progress_percent = _parse_ollama_progress_percent(text)
+    if progress_percent is None:
+        return
+    with OLLAMA_PULL_STATUS_LOCK:
+        current = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
+    eta_seconds = _estimate_pull_eta_seconds(str(current.get("started_at") or ""), progress_percent)
+    _set_ollama_pull_status(
+        model_name,
+        progress_percent=round(progress_percent, 1),
+        eta_seconds=eta_seconds,
+    )
+
+
+def _read_process_output(pipe, output_queue: "queue.Queue[str]") -> None:
+    try:
+        while True:
+            chunk = pipe.read(1)
+            if not chunk:
+                break
+            output_queue.put(chunk)
+    finally:
+        try:
+            pipe.close()
+        except Exception:
+            pass
+
+
+def _request_ollama_pull_stop(model_name: str) -> dict:
+    model_name = _validate_ollama_model_name(model_name)
+    process = None
+    with OLLAMA_PULL_STATUS_LOCK:
+        current = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
+        if not current.get("active"):
+            return _ollama_pull_snapshot(model_name)
+        current.update({
+            "active": True,
+            "status": "cancelling",
+            "message": f"{model_name} 모델 받기를 중지하고 있습니다.",
+            "cancel_requested": True,
+            "updated_at": datetime.now().isoformat(),
+        })
+        OLLAMA_PULL_STATUS[model_name] = current
+        process = OLLAMA_PULL_PROCESSES.get(model_name)
+    if process and process.poll() is None:
+        try:
+            process.terminate()
+        except Exception:
+            logging.exception("Failed to terminate Ollama pull process for %s", model_name)
+    return _ollama_pull_snapshot(model_name)
+
+
 def _remember_summary_model(model_name: str, *, managed_by_app: bool = False) -> None:
     with CONFIG_LOCK:
         config = load_config()
@@ -1112,34 +1249,146 @@ def _remember_summary_model(model_name: str, *, managed_by_app: bool = False) ->
 
 
 def _run_ollama_pull(model_name: str) -> None:
-    _set_ollama_pull_status(
-        model_name,
-        active=True,
-        status="running",
-        message=f"{model_name} 모델을 받거나 업데이트를 확인하는 중입니다.",
-        started_at=datetime.now().isoformat(),
-        exit_code=None,
-        error="",
-    )
+    started_at = datetime.now().isoformat()
+    with OLLAMA_PULL_STATUS_LOCK:
+        current = dict(OLLAMA_PULL_STATUS.get(model_name) or {"model": model_name})
+        if current.get("cancel_requested"):
+            current.update({
+                "model": model_name,
+                "active": False,
+                "status": "cancelled",
+                "message": f"{model_name} 모델 받기를 중지했습니다.",
+                "started_at": current.get("started_at") or started_at,
+                "updated_at": started_at,
+                "exit_code": None,
+                "error": "",
+                "cancel_requested": False,
+                "eta_seconds": None,
+            })
+            OLLAMA_PULL_STATUS[model_name] = current
+            return
+        current.update({
+            "model": model_name,
+            "active": True,
+            "status": "running",
+            "message": f"{model_name} 모델을 받거나 업데이트를 확인하는 중입니다.",
+            "started_at": current.get("started_at") or started_at,
+            "updated_at": started_at,
+            "exit_code": None,
+            "error": "",
+            "cancel_requested": False,
+            "progress_percent": None,
+            "eta_seconds": None,
+        })
+        OLLAMA_PULL_STATUS[model_name] = current
+    process = None
     try:
-        completed = subprocess.run(
+        ensure_ollama_server_running(timeout_seconds=15)
+        if _ollama_pull_cancel_requested(model_name):
+            _set_ollama_pull_status(
+                model_name,
+                active=False,
+                status="cancelled",
+                message=f"{model_name} 모델 받기를 중지했습니다.",
+                updated_at=datetime.now().isoformat(),
+                exit_code=None,
+                error="",
+                cancel_requested=False,
+                eta_seconds=None,
+            )
+            return
+        process = subprocess.Popen(
             [find_ollama_executable(), "pull", model_name],
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
             text=True,
             encoding="utf-8",
             errors="replace",
-            timeout=None,
+            bufsize=1,
+            env=ollama_subprocess_env(),
             **hidden_subprocess_kwargs(),
         )
-        output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part and part.strip())
-        if completed.returncode == 0:
+        with OLLAMA_PULL_STATUS_LOCK:
+            OLLAMA_PULL_PROCESSES[model_name] = process
+
+        output_queue: "queue.Queue[str]" = queue.Queue()
+        reader_thread = None
+        if process.stdout is not None:
+            reader_thread = threading.Thread(target=_read_process_output, args=(process.stdout, output_queue), daemon=True)
+            reader_thread.start()
+
+        output_parts: list[str] = []
+        current_line = ""
+        terminate_requested_at: float | None = None
+        while True:
+            try:
+                chunk = output_queue.get(timeout=0.2)
+                output_parts.append(chunk)
+                if chunk in {"\r", "\n"}:
+                    line = current_line.strip()
+                    current_line = ""
+                    if line:
+                        _update_ollama_pull_progress_from_output(model_name, line)
+                else:
+                    current_line += chunk
+            except queue.Empty:
+                pass
+
+            if _ollama_pull_cancel_requested(model_name) and process.poll() is None:
+                if terminate_requested_at is None:
+                    terminate_requested_at = time.monotonic()
+                    try:
+                        process.terminate()
+                    except Exception:
+                        logging.exception("Failed to terminate Ollama pull process for %s", model_name)
+                elif time.monotonic() - terminate_requested_at > 5:
+                    try:
+                        process.kill()
+                    except Exception:
+                        logging.exception("Failed to kill Ollama pull process for %s", model_name)
+
+            if process.poll() is not None and output_queue.empty():
+                break
+
+        if reader_thread is not None:
+            reader_thread.join(timeout=1)
+            while not output_queue.empty():
+                chunk = output_queue.get_nowait()
+                output_parts.append(chunk)
+                if chunk in {"\r", "\n"}:
+                    line = current_line.strip()
+                    current_line = ""
+                    if line:
+                        _update_ollama_pull_progress_from_output(model_name, line)
+                else:
+                    current_line += chunk
+
+        if current_line.strip():
+            _update_ollama_pull_progress_from_output(model_name, current_line.strip())
+        return_code = process.wait()
+        output = "".join(output_parts).strip()
+        if _ollama_pull_cancel_requested(model_name):
+            _set_ollama_pull_status(
+                model_name,
+                active=False,
+                status="cancelled",
+                message=f"{model_name} 모델 받기를 중지했습니다.",
+                exit_code=return_code,
+                error="",
+                output=output[-4000:],
+                cancel_requested=False,
+            )
+        elif return_code == 0:
             _set_ollama_pull_status(
                 model_name,
                 active=False,
                 status="completed",
                 message=f"{model_name} 모델 받기가 완료되었습니다.",
-                exit_code=completed.returncode,
+                exit_code=return_code,
                 output=output[-4000:],
+                progress_percent=100,
+                eta_seconds=0,
+                cancel_requested=False,
             )
         else:
             _set_ollama_pull_status(
@@ -1147,8 +1396,9 @@ def _run_ollama_pull(model_name: str) -> None:
                 active=False,
                 status="failed",
                 message=_download_blocked_message(f"{model_name} 모델을", "요약 프로그램 설치 또는 요약 모델 준비를"),
-                exit_code=completed.returncode,
+                exit_code=return_code,
                 error=output[-4000:],
+                cancel_requested=False,
             )
     except FileNotFoundError:
         _set_ollama_pull_status(
@@ -1161,8 +1411,20 @@ def _run_ollama_pull(model_name: str) -> None:
             ),
             exit_code=None,
             error="ollama executable not found",
+            cancel_requested=False,
         )
     except Exception as exc:
+        if _ollama_pull_cancel_requested(model_name):
+            _set_ollama_pull_status(
+                model_name,
+                active=False,
+                status="cancelled",
+                message=f"{model_name} 모델 받기를 중지했습니다.",
+                exit_code=None,
+                error="",
+                cancel_requested=False,
+            )
+            return
         logging.exception("Failed to pull Ollama model %s", model_name)
         _set_ollama_pull_status(
             model_name,
@@ -1171,17 +1433,24 @@ def _run_ollama_pull(model_name: str) -> None:
             message=_download_blocked_message(f"{model_name} 모델을", "요약 프로그램 설치 또는 요약 모델 준비를"),
             exit_code=None,
             error=str(exc),
+            cancel_requested=False,
         )
+    finally:
+        with OLLAMA_PULL_STATUS_LOCK:
+            if OLLAMA_PULL_PROCESSES.get(model_name) is process:
+                OLLAMA_PULL_PROCESSES.pop(model_name, None)
 
 
 def _ollama_model_exists_strict(model_name: str) -> bool:
     try:
+        ensure_ollama_server_running(timeout_seconds=10)
         completed = subprocess.run(
             [find_ollama_executable(), "list"],
             capture_output=True,
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=ollama_subprocess_env(),
             timeout=15,
             **hidden_subprocess_kwargs(),
         )
@@ -1235,12 +1504,14 @@ def _remove_ollama_model(model_name: str, replacement_model: str = "") -> dict:
     output = ""
     if was_installed:
         try:
+            ensure_ollama_server_running(timeout_seconds=10)
             completed = subprocess.run(
                 [find_ollama_executable(), "rm", model_name],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 errors="replace",
+                env=ollama_subprocess_env(),
                 timeout=120,
                 **hidden_subprocess_kwargs(),
             )
@@ -1309,6 +1580,9 @@ def _start_ollama_pull(model_name: str) -> dict:
             "updated_at": datetime.now().isoformat(),
             "exit_code": None,
             "error": "",
+            "cancel_requested": False,
+            "progress_percent": None,
+            "eta_seconds": None,
         }
 
     worker = threading.Thread(target=_run_ollama_pull, args=(model_name,), daemon=True)
@@ -1335,6 +1609,12 @@ async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
     return _start_ollama_pull(model_name)
 
 
+@app.post("/api/models/ollama/pull/stop")
+async def stop_ollama_model_pull(payload: dict = Body(...)) -> dict:
+    model_name = _validate_ollama_model_name(str((payload or {}).get("model") or ""))
+    return _request_ollama_pull_stop(model_name)
+
+
 @app.get("/api/models/ollama/pull-status")
 async def get_ollama_model_pull_status(model: str) -> dict:
     model_name = _validate_ollama_model_name(model)
@@ -1345,6 +1625,12 @@ async def get_ollama_model_pull_status(model: str) -> dict:
 async def start_model_download(payload: dict = Body(...)) -> dict:
     model_key = _validate_downloadable_model_key(str((payload or {}).get("key") or ""))
     return _start_model_download(model_key)
+
+
+@app.post("/api/models/download/stop")
+async def stop_model_download(payload: dict = Body(...)) -> dict:
+    model_key = _validate_downloadable_model_key(str((payload or {}).get("key") or ""))
+    return _request_model_download_stop(model_key)
 
 
 @app.get("/api/models/download-status")

@@ -3,7 +3,8 @@ param(
     [switch]$NoClearWebViewCache,
     [switch]$SkipSidecarBuild,
     [switch]$SkipTauriBuild,
-    [switch]$AllowDirty
+    [switch]$AllowDirty,
+    [switch]$AllowMissingEmbeddedOllama
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,4 +16,5 @@ $releaseScript = Join-Path $PSScriptRoot "release_portable.ps1"
     -ClearWebViewCache:(!$NoClearWebViewCache) `
     -SkipSidecarBuild:$SkipSidecarBuild `
     -SkipTauriBuild:$SkipTauriBuild `
-    -AllowDirty:$AllowDirty
+    -AllowDirty:$AllowDirty `
+    -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama

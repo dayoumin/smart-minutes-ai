@@ -1,5 +1,6 @@
 param(
-    [string]$Configuration = "release"
+    [string]$Configuration = "release",
+    [switch]$AllowMissingEmbeddedOllama
 )
 
 $ErrorActionPreference = "Stop"
@@ -15,6 +16,7 @@ $SidecarExe = Join-Path $TauriDir "binaries\meeting-backend-x86_64-pc-windows-ms
 $SidecarDepsDir = Join-Path $TauriDir "binaries\_internal"
 $ResourceBackendDir = Join-Path $TauriDir "resources\backend"
 $ModelSourceRoot = Join-Path $RepoRoot "models"
+$OllamaRuntimeSource = Join-Path $RepoRoot "runtime\ollama"
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
 $ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 
@@ -52,11 +54,31 @@ if (Test-Path $PortableDir) {
 
 New-Item -ItemType Directory -Force -Path $PortableDir | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $PortableDir "binaries") | Out-Null
+New-Item -ItemType Directory -Force -Path (Join-Path $PortableDir "runtime") | Out-Null
 
 Copy-Item -Force $AppExe (Join-Path $PortableDir $PortableAppExeName)
 Copy-Item -Force $SidecarExe (Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe")
 Copy-Item -Recurse -Force $SidecarDepsDir (Join-Path $PortableDir "binaries\_internal")
 Copy-Item -Recurse -Force $ResourceBackendDir (Join-Path $PortableDir "backend")
+
+$PortableOllamaRuntime = Join-Path $PortableDir "runtime\ollama"
+if (Test-Path -LiteralPath (Join-Path $OllamaRuntimeSource "ollama.exe")) {
+    robocopy $OllamaRuntimeSource $PortableOllamaRuntime /MIR /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+        throw "robocopy failed while copying embedded Ollama runtime with exit code $LASTEXITCODE`: $OllamaRuntimeSource"
+    }
+}
+else {
+    if (-not $AllowMissingEmbeddedOllama) {
+        throw "Embedded Ollama runtime is missing. Put the official standalone Windows CLI at runtime\ollama\ollama.exe before creating a user-ready portable build, or pass -AllowMissingEmbeddedOllama for a development-only fallback build."
+    }
+    New-Item -ItemType Directory -Force -Path $PortableOllamaRuntime | Out-Null
+    [System.IO.File]::WriteAllText(
+        (Join-Path $PortableOllamaRuntime "README.txt"),
+        "Put the official Ollama standalone Windows CLI files here. Expected executable: runtime\ollama\ollama.exe`r`n",
+        [System.Text.UTF8Encoding]::new($false)
+    )
+}
 
 $PortableModelsDir = Join-Path $PortableDir "models"
 New-Item -ItemType Directory -Force -Path $PortableModelsDir | Out-Null
@@ -155,6 +177,7 @@ LMO Meeting Insight - Portable Quick Start
    - models: speech recognition and speaker diarization models
    - backend: local analysis server files
    - binaries: local analysis server executable and dependencies
+   - runtime\ollama: embedded Ollama runtime, if bundled
    - release-manifest.json: release verification manifest
 
 5. If something is wrong

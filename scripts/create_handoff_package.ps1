@@ -265,9 +265,11 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
 
     $manifest | Add-Member -NotePropertyName handoff -NotePropertyValue ([ordered]@{
         packageFormat = "lmo-audio-slim-handoff-v1"
+        includedRuntime = "runtime\ollama"
+        excludedSummaryModelStore = "models\ollama"
         excludedModels = @($ExcludedModels | ForEach-Object { $_.portableDir })
         includedModels = @($IncludedModels | ForEach-Object { $_.portableDir })
-        note = "This handoff zip excludes the large speech recognition model but includes the speaker diarization model."
+        note = "This handoff zip includes the embedded Ollama runtime and speaker diarization model, but excludes Whisper STT files and Ollama summary model data."
     }) -Force
 
     if ($manifest.files -and ($manifest.files.PSObject.Properties.Name -contains "startHere")) {
@@ -285,6 +287,16 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
 }
 
 function Test-HandoffPackage([string]$PortableRoot, [string]$ZipPath, [object[]]$IncludedModels, [object[]]$ExcludedModels) {
+    $embeddedOllama = Join-Path $PortableRoot "runtime\ollama\ollama.exe"
+    if (-not (Test-Path -LiteralPath $embeddedOllama)) {
+        throw "Handoff package must include embedded Ollama runtime: $embeddedOllama"
+    }
+
+    $summaryModelStore = Join-Path (Join-Path $PortableRoot "models") "ollama"
+    if (Test-Path -LiteralPath $summaryModelStore) {
+        throw "Handoff package must not include Ollama summary model data: $summaryModelStore"
+    }
+
     foreach ($model in @($IncludedModels)) {
         $modelDir = Join-Path (Join-Path $PortableRoot "models") ([string]$model.portableDir)
         Test-RequiredMarkers $modelDir @($model.requiredMarkers) ([string]$model.label)
@@ -303,6 +315,15 @@ function Test-HandoffPackage([string]$PortableRoot, [string]$ZipPath, [object[]]
         foreach ($entry in $zip.Entries) {
             [void]$entries.Add($entry.FullName.Replace("/", "\"))
         }
+        $ollamaEntry = "lmo_audio\runtime\ollama\ollama.exe"
+        if (-not $entries.Contains($ollamaEntry)) {
+            throw "Handoff zip is missing embedded Ollama runtime: $ollamaEntry"
+        }
+        foreach ($entryPath in $entries) {
+            if ($entryPath.StartsWith("lmo_audio\models\ollama\", [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Handoff zip must not include Ollama summary model data: $entryPath"
+            }
+        }
         foreach ($model in @($IncludedModels)) {
             foreach ($marker in @($model.requiredMarkers)) {
                 $entryPath = "lmo_audio\models\$($model.portableDir)\$($marker.Replace('/', '\'))"
@@ -312,6 +333,12 @@ function Test-HandoffPackage([string]$PortableRoot, [string]$ZipPath, [object[]]
             }
         }
         foreach ($model in @($ExcludedModels)) {
+            $excludedPrefix = "lmo_audio\models\$($model.portableDir)\"
+            foreach ($entryPath in $entries) {
+                if ($entryPath.StartsWith($excludedPrefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+                    throw "Handoff zip includes excluded model content: $entryPath"
+                }
+            }
             foreach ($marker in @($model.requiredMarkers)) {
                 $entryPath = "lmo_audio\models\$($model.portableDir)\$($marker.Replace('/', '\'))"
                 if ($entries.Contains($entryPath)) {
@@ -356,7 +383,7 @@ if (Test-Path -LiteralPath $manifestPath) {
 }
 
 if (-not $PackageName) {
-    $PackageName = "lmo_audio_no_whisper_$commitLabel"
+    $PackageName = "lmo_audio_with_ollama_no_whisper_$commitLabel"
 }
 $PackageName = $PackageName.Trim()
 if ([string]::IsNullOrWhiteSpace($PackageName) -or $PackageName -in @(".", "..")) {

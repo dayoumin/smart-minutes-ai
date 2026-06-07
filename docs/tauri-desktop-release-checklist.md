@@ -51,8 +51,8 @@
 - 모델 경로는 `실행 폴더/models/...` 기준으로 안내한다.
 - 현재 앱 설정 화면은 필수 모델 준비 상태와 `models` 폴더 기준 안내를 보여준다. 절대 경로 표시/복사 버튼은 후속 UX 개선으로 다루되, 배포 문서에는 실제 배치 위치를 반드시 명시한다.
 - 필수 모델이 없으면 분석 버튼 클릭 후 즉시 원인과 조치 방법을 보여준다.
-- 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
-- 내장 Ollama를 배포할 때는 공식 standalone Windows CLI 압축을 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다. 사용자용 빌드는 이 파일이 없으면 실패해야 하며, 개발/예비 확인용 fallback 빌드에서만 `-AllowMissingEmbeddedOllama`를 명시한다. 앱은 내장 Ollama가 있으면 시스템 설치본보다 이 실행 파일을 우선 사용하고, 요약 모델 저장소는 `models\ollama`를 사용한다. 이때 runtime 폴더 용량과 최종 zip 용량을 기록해서 사용자 전달 가능성을 확인한다.
+- 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_models`가 아니라 `with_ollama_no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
+- 내장 Ollama를 배포할 때는 공식 standalone Windows CLI 압축을 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다. 사용자용 빌드는 이 파일이 없으면 실패해야 하며, 개발/예비 확인용 fallback 빌드에서만 `-AllowMissingEmbeddedOllama`를 명시한다. 앱은 내장 Ollama가 있으면 시스템 설치본보다 이 실행 파일을 우선 사용하고, 요약 모델 저장소는 `models\ollama`를 사용한다. 이때 전체 `releases\lmo_audio` 폴더 크기와 회사 전달용 handoff zip 크기를 구분해서 기록한다. 회사 전달 zip에는 Ollama runtime만 포함하고, Whisper 모델과 Gemma 등 Ollama 요약 모델 데이터는 넣지 않는다.
 - Ollama 요약 모델은 임의의 단일 파일 링크 다운로드가 아니라 앱 내부에서 `ollama pull <model>` 흐름으로 받는다. 그래야 manifest/blob 저장 구조와 설치 여부 확인이 Ollama 기준과 맞는다.
 
 ## 4. 패키징 산출물
@@ -200,18 +200,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\create_update_packag
 
 ### 회사 전달용 슬림 zip
 
-새 PC에 전달하되 2GB 이상 Whisper 모델을 제외하려면 풀 portable 빌드가 끝난 뒤 아래 명령을 사용한다.
+새 PC에 전달하되 2GB 이상 Whisper 모델과 Gemma 등 Ollama 요약 모델 데이터를 제외하려면 풀 portable 빌드가 끝난 뒤 아래 명령을 사용한다. 이 zip은 내장 Ollama 실행 환경만 포함하고, 요약 모델 자체는 대상 PC에서 앱 설정 화면으로 받는다.
 
 ```powershell
 corepack pnpm package:handoff
 ```
 
-기본 산출물은 `releases\handoff\lmo_audio_no_whisper_<commit>.zip`이다. 이 zip은 앱, 백엔드, sidecar, 설정 파일, `models\speaker-diarization-community-1`을 포함하고, `models\faster-whisper-large-v3`만 제외한다. 예전처럼 `no_models`로 만들면 참석자 구분 모델까지 빠져 사용자가 다시 준비해야 하므로 피한다.
+기본 산출물은 `releases\handoff\lmo_audio_with_ollama_no_whisper_<commit>.zip`이다. 이 zip은 앱, 백엔드, sidecar, 설정 파일, `runtime\ollama`, `models\speaker-diarization-community-1`을 포함하고, `models\faster-whisper-large-v3`와 `models\ollama`의 실제 요약 모델 데이터는 제외한다. 예전처럼 `no_models`로 만들면 참석자 구분 모델까지 빠져 사용자가 다시 준비해야 하므로 피한다.
 
 슬림 zip 검수 기준:
 
 - zip 안에 `lmo_audio\models\speaker-diarization-community-1\config.yaml`이 있어야 한다.
+- zip 안에 `lmo_audio\runtime\ollama\ollama.exe`가 있어야 한다.
 - zip 안에 `lmo_audio\models\faster-whisper-large-v3\model.bin`은 없어야 한다.
+- zip 안에 `lmo_audio\models\ollama` 모델 데이터는 없어야 한다.
 - `START_HERE.txt`와 `models\README.txt`가 Whisper 모델을 넣을 위치를 안내해야 한다.
 - 회사 PC에서 Whisper 모델을 넣기 전에는 대화록 작성이 준비 필요 상태로 보일 수 있다.
 

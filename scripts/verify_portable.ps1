@@ -372,9 +372,9 @@ Add-Result "app exe exists" (Test-Path -LiteralPath $appExe) $appExe
 Add-Result "sidecar exe exists" (Test-Path -LiteralPath $sidecarExe) $sidecarExe
 Add-Result "backend folder exists" (Test-Path -LiteralPath $backendDir) $backendDir
 Add-Result "root models folder exists" (Test-Path -LiteralPath $modelsDir) $modelsDir
-Add-Result "embedded Ollama runtime folder exists" (Test-Path -LiteralPath $ollamaRuntimeDir) $ollamaRuntimeDir
+Add-Result "app-managed Ollama runtime folder exists" (Test-Path -LiteralPath $ollamaRuntimeDir) $ollamaRuntimeDir
 if (Test-Path -LiteralPath $ollamaRuntimeDir) {
-    Add-Result "embedded Ollama executable exists" ((Test-Path -LiteralPath $ollamaRuntimeExe) -or [bool]$AllowMissingEmbeddedOllama) $(if (Test-Path -LiteralPath $ollamaRuntimeExe) { $ollamaRuntimeExe } else { "missing; pass -AllowMissingEmbeddedOllama only for development fallback builds" })
+    Add-Result "app-managed Ollama executable optional" $true $(if (Test-Path -LiteralPath $ollamaRuntimeExe) { $ollamaRuntimeExe } else { "missing; app downloads the standalone CLI on first use" })
 }
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile

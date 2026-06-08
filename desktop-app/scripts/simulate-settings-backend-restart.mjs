@@ -135,6 +135,19 @@ const installRoutes = async (page) => {
     contentType: 'application/json',
     body: JSON.stringify({
       ready: true,
+      ollama_runtime_status: {
+        key: 'ollama_runtime',
+        available: true,
+        active: false,
+        status: 'completed',
+        message: '요약 프로그램이 준비되어 있습니다.',
+        target_path: 'runtime\\ollama',
+        executable_path: 'runtime\\ollama\\ollama.exe',
+        downloaded_bytes: 0,
+        expected_bytes: 1600000000,
+        progress_percent: null,
+        eta_seconds: null,
+      },
       models: [
         {
           key: 'stt_faster_whisper',
@@ -172,6 +185,24 @@ const installRoutes = async (page) => {
         basis: 'memory',
         message: '이 PC 메모리는 약 16GB입니다. 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.',
       },
+    }),
+  }));
+
+  await page.route('**/api/models/ollama/runtime-status', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      key: 'ollama_runtime',
+      available: true,
+      active: false,
+      status: 'completed',
+      message: '요약 프로그램이 준비되어 있습니다.',
+      target_path: 'runtime\\ollama',
+      executable_path: 'runtime\\ollama\\ollama.exe',
+      downloaded_bytes: 0,
+      expected_bytes: 1600000000,
+      progress_percent: null,
+      eta_seconds: null,
     }),
   }));
 
@@ -346,7 +377,7 @@ const run = async () => {
     assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');

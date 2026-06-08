@@ -2,6 +2,7 @@ import argparse
 import asyncio
 import copy
 import hashlib
+import hmac
 import os
 import json
 import logging
@@ -13,6 +14,7 @@ import sys
 import tempfile
 import threading
 import time
+import urllib.request
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -55,7 +57,15 @@ from model_manager import (
     ollama_model_exists,
     resolve_model_path,
 )
-from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env
+from ollama_utils import (
+    ensure_ollama_server_running,
+    find_embedded_ollama_executable,
+    find_ollama_executable,
+    get_local_ollama_runtime_dir,
+    get_portable_ollama_runtime_dir,
+    ollama_executable_available,
+    ollama_subprocess_env,
+)
 from pipeline.transcribe import get_stt_device_status
 from process_utils import hidden_subprocess_kwargs
 from storage_preflight import build_analysis_storage_preflight
@@ -73,6 +83,7 @@ app = FastAPI(title="NIFS AI Meeting API")
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
 OLLAMA_PULL_STATUS_LOCK = threading.RLock()
+OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK = threading.RLock()
 MODEL_DOWNLOAD_STATUS_LOCK = threading.RLock()
 CONFIG_LOCK = threading.RLock()
 JOB_STATE_LOCKS_LOCK = threading.Lock()
@@ -82,11 +93,35 @@ GENERATION_PROGRESS: dict[tuple[str, str], dict] = {}
 GENERATION_STOP_REQUESTS: dict[tuple[str, str], dict] = {}
 OLLAMA_PULL_STATUS: dict[str, dict] = {}
 OLLAMA_PULL_PROCESSES: dict[str, subprocess.Popen] = {}
+OLLAMA_RUNTIME_DOWNLOAD_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_EXPECTED_BYTES = {
     "stt_faster_whisper": 3_090_839_274,
 }
 MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
+OLLAMA_RUNTIME_DOWNLOAD_KEY = "ollama_runtime"
+OLLAMA_RUNTIME_DEFAULT_VERSION = os.environ.get("LMO_OLLAMA_RUNTIME_VERSION", "v0.30.6")
+OLLAMA_RUNTIME_DOWNLOAD_URL = os.environ.get(
+    "LMO_OLLAMA_RUNTIME_DOWNLOAD_URL",
+    f"https://github.com/ollama/ollama/releases/download/{OLLAMA_RUNTIME_DEFAULT_VERSION}/ollama-windows-amd64.zip",
+)
+OLLAMA_RUNTIME_SHA256 = os.environ.get("LMO_OLLAMA_RUNTIME_SHA256", "").strip().lower()
+try:
+    OLLAMA_RUNTIME_EXPECTED_BYTES = int(os.environ.get("LMO_OLLAMA_RUNTIME_EXPECTED_BYTES", "1600000000"))
+except ValueError:
+    OLLAMA_RUNTIME_EXPECTED_BYTES = 1600000000
+OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
+OLLAMA_RUNTIME_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
+try:
+    OLLAMA_RUNTIME_MAX_ZIP_MEMBERS = int(os.environ.get("LMO_OLLAMA_RUNTIME_MAX_ZIP_MEMBERS", "5000"))
+except ValueError:
+    OLLAMA_RUNTIME_MAX_ZIP_MEMBERS = 5000
+try:
+    OLLAMA_RUNTIME_MAX_EXTRACTED_BYTES = int(os.environ.get("LMO_OLLAMA_RUNTIME_MAX_EXTRACTED_BYTES", str(8 * 1024 * 1024 * 1024)))
+except ValueError:
+    OLLAMA_RUNTIME_MAX_EXTRACTED_BYTES = 8 * 1024 * 1024 * 1024
+DESKTOP_ACTION_TOKEN = os.environ.get("LMO_DESKTOP_ACTION_TOKEN", "").strip()
+DESKTOP_ACTION_TOKEN_HEADER = "X-LMO-Desktop-Action-Token"
 SUPPORT_EMAIL_WORK = "ecomarine@korea.kr"
 SUPPORT_EMAIL_PERSONAL = "ecomarin@naver.com"
 SUPPORT_EMAIL_PERSONAL_FROM = datetime(2027, 4, 1).date()
@@ -727,6 +762,7 @@ async def models_status() -> dict:
         status["system_profile"] = {"memory_gb": memory_gb}
         status["summary_model_recommendation"] = _summary_model_recommendation(config, memory_gb)
         status["stt_device_status"] = stt_device_status
+        status["ollama_runtime_status"] = _ollama_runtime_snapshot()
         if selected_device == "cuda" and not stt_device_status.get("gpu_usable"):
             status["ready"] = False
             errors = list(status.get("errors") or [])
@@ -1126,6 +1162,438 @@ def _start_model_download(model_key: str) -> dict:
     worker = threading.Thread(target=_run_model_download, args=(model_key,), daemon=True)
     worker.start()
     return _model_download_snapshot(model_key)
+
+
+def _ollama_runtime_target_candidates() -> list[Path]:
+    return [
+        get_portable_ollama_runtime_dir(),
+        get_local_ollama_runtime_dir(),
+    ]
+
+
+def _ollama_runtime_default_target() -> Path:
+    candidates = _ollama_runtime_target_candidates()
+    return candidates[0] if candidates else Path(BASE_DIR) / "runtime" / "ollama"
+
+
+def _ollama_runtime_download_progress(
+    downloaded_bytes: int,
+    expected_bytes: int,
+    started_at: str | None,
+    active: bool,
+) -> dict:
+    progress_percent = None
+    eta_seconds = None
+    if expected_bytes > 0:
+        progress_percent = round((min(downloaded_bytes, expected_bytes) / expected_bytes) * 100, 1)
+        if active and progress_percent >= 100:
+            progress_percent = 99.9
+        started = _parse_iso_datetime(started_at)
+        if active and started and downloaded_bytes > 0:
+            elapsed_seconds = max((datetime.now() - started).total_seconds(), 1)
+            bytes_per_second = downloaded_bytes / elapsed_seconds
+            remaining_bytes = max(expected_bytes - downloaded_bytes, 0)
+            if bytes_per_second > 0 and remaining_bytes > 0:
+                eta_seconds = int(remaining_bytes / bytes_per_second)
+    return {
+        "downloaded_bytes": downloaded_bytes,
+        "expected_bytes": expected_bytes,
+        "progress_percent": progress_percent,
+        "eta_seconds": eta_seconds,
+    }
+
+
+def _ollama_runtime_snapshot() -> dict:
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        status = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {})
+    if status:
+        status.update(_ollama_runtime_download_progress(
+            int(status.get("downloaded_bytes") or 0),
+            int(status.get("expected_bytes") or OLLAMA_RUNTIME_EXPECTED_BYTES),
+            str(status.get("started_at") or ""),
+            bool(status.get("active")),
+        ))
+        status["available"] = bool(find_embedded_ollama_executable())
+        status["executable_path"] = find_embedded_ollama_executable()
+        return status
+
+    embedded_executable = find_embedded_ollama_executable()
+    if embedded_executable:
+        return {
+            "key": OLLAMA_RUNTIME_DOWNLOAD_KEY,
+            "available": True,
+            "active": False,
+            "status": "completed",
+            "message": "요약 프로그램이 준비되어 있습니다.",
+            "target_path": str(Path(embedded_executable).parent),
+            "executable_path": embedded_executable,
+            "download_url": OLLAMA_RUNTIME_DOWNLOAD_URL,
+            "started_at": "",
+            "updated_at": "",
+            "error": "",
+            "downloaded_bytes": 0,
+            "expected_bytes": OLLAMA_RUNTIME_EXPECTED_BYTES,
+            "progress_percent": None,
+            "eta_seconds": None,
+            "cancel_requested": False,
+        }
+
+    return {
+        "key": OLLAMA_RUNTIME_DOWNLOAD_KEY,
+        "available": False,
+        "active": False,
+        "status": "idle",
+        "message": "",
+        "target_path": str(_ollama_runtime_default_target()),
+        "executable_path": "",
+        "download_url": OLLAMA_RUNTIME_DOWNLOAD_URL,
+        "started_at": "",
+        "updated_at": "",
+        "error": "",
+        "downloaded_bytes": 0,
+        "expected_bytes": OLLAMA_RUNTIME_EXPECTED_BYTES,
+        "progress_percent": None,
+        "eta_seconds": None,
+        "cancel_requested": False,
+    }
+
+
+def _set_ollama_runtime_download_status(**updates) -> dict:
+    now = datetime.now().isoformat()
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {"key": OLLAMA_RUNTIME_DOWNLOAD_KEY})
+        current.update(updates)
+        current["key"] = OLLAMA_RUNTIME_DOWNLOAD_KEY
+        current["updated_at"] = now
+        current.setdefault("download_url", OLLAMA_RUNTIME_DOWNLOAD_URL)
+        OLLAMA_RUNTIME_DOWNLOAD_STATUS[OLLAMA_RUNTIME_DOWNLOAD_KEY] = current
+        return dict(current)
+
+
+def _ollama_runtime_cancel_requested() -> bool:
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {})
+    return bool(current.get("cancel_requested"))
+
+
+def _mark_ollama_runtime_cancelled(target_path: str, message: str = "요약 프로그램 받기를 중지했습니다.") -> dict:
+    return _set_ollama_runtime_download_status(
+        available=bool(find_embedded_ollama_executable()),
+        active=False,
+        status="cancelled",
+        message=message,
+        target_path=target_path,
+        executable_path=find_embedded_ollama_executable(),
+        error="",
+        cancel_requested=False,
+    )
+
+
+def _request_ollama_runtime_download_stop() -> dict:
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {})
+        if not current.get("active"):
+            return _ollama_runtime_snapshot()
+        current.update({
+            "active": True,
+            "status": "cancelling",
+            "message": "요약 프로그램 받기를 중지하고 있습니다. 진행 중인 파일 작업이 끝나면 멈춥니다.",
+            "cancel_requested": True,
+            "updated_at": datetime.now().isoformat(),
+        })
+        OLLAMA_RUNTIME_DOWNLOAD_STATUS[OLLAMA_RUNTIME_DOWNLOAD_KEY] = current
+    return _ollama_runtime_snapshot()
+
+
+def _ollama_runtime_download_preflight(target_path: Path) -> str:
+    try:
+        target_path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        return f"요약 프로그램 저장 폴더를 만들지 못했습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+
+    probe_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix=".download-check-", dir=target_path, delete=False) as handle:
+            probe_path = Path(handle.name)
+            handle.write(b"ok")
+    except OSError as exc:
+        return f"요약 프로그램 저장 폴더에 파일을 쓸 수 없습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+    finally:
+        if probe_path:
+            try:
+                probe_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    try:
+        required_free_bytes = max(
+            OLLAMA_RUNTIME_EXPECTED_BYTES + OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES,
+            (OLLAMA_RUNTIME_EXPECTED_BYTES * 3) + OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES,
+        )
+        free_bytes = shutil.disk_usage(str(target_path)).free
+    except OSError:
+        return ""
+
+    if free_bytes < required_free_bytes:
+        required_gb = required_free_bytes / (1024 ** 3)
+        free_gb = free_bytes / (1024 ** 3)
+        return f"저장 공간이 부족합니다. 요약 프로그램을 받으려면 약 {required_gb:.1f}GB가 필요하고, 현재 여유 공간은 약 {free_gb:.1f}GB입니다."
+    return ""
+
+
+def _resolve_ollama_runtime_download_target() -> tuple[Path, str]:
+    errors: list[str] = []
+    for target_path in _ollama_runtime_target_candidates():
+        error = _ollama_runtime_download_preflight(target_path)
+        if not error:
+            return target_path, ""
+        errors.append(f"{target_path}: {error}")
+    fallback = _ollama_runtime_default_target()
+    detail = " / ".join(errors)
+    return fallback, f"요약 프로그램을 저장할 위치를 준비하지 못했습니다. {detail}"
+
+
+def _clear_ollama_runtime_dir(target_dir: Path, skip_dir: Path) -> None:
+    resolved_skip = skip_dir.resolve()
+    for child in target_dir.iterdir():
+        try:
+            if child.resolve() == resolved_skip:
+                continue
+        except OSError:
+            pass
+        if child.is_dir():
+            shutil.rmtree(child)
+        else:
+            child.unlink()
+
+
+def _install_extracted_ollama_runtime(extract_dir: Path, target_dir: Path, download_dir: Path) -> str:
+    executable_candidates = [candidate for candidate in extract_dir.rglob("ollama.exe") if candidate.is_file()]
+    if not executable_candidates:
+        raise RuntimeError("Downloaded archive did not include ollama.exe.")
+
+    source_dir = executable_candidates[0].parent
+    _clear_ollama_runtime_dir(target_dir, download_dir)
+    for child in source_dir.iterdir():
+        destination = target_dir / child.name
+        if child.is_dir():
+            shutil.copytree(child, destination, dirs_exist_ok=True)
+        else:
+            shutil.copy2(child, destination)
+
+    installed_executable = target_dir / "ollama.exe"
+    if not installed_executable.is_file():
+        raise RuntimeError("Downloaded files did not include runtime\\ollama\\ollama.exe.")
+    return str(installed_executable)
+
+
+def _safe_extract_zip(archive: zipfile.ZipFile, extract_dir: Path) -> None:
+    extract_root = extract_dir.resolve()
+    members = archive.infolist()
+    if len(members) > OLLAMA_RUNTIME_MAX_ZIP_MEMBERS:
+        raise RuntimeError("Downloaded archive contains too many files.")
+    total_uncompressed_bytes = 0
+    for member in members:
+        total_uncompressed_bytes += max(0, int(member.file_size))
+        if total_uncompressed_bytes > OLLAMA_RUNTIME_MAX_EXTRACTED_BYTES:
+            raise RuntimeError("Downloaded archive is too large after extraction.")
+        target_path = (extract_dir / member.filename).resolve()
+        if target_path != extract_root and not str(target_path).lower().startswith(str(extract_root).lower() + os.sep):
+            raise RuntimeError("Downloaded archive contains an unsafe path.")
+    archive.extractall(extract_dir)
+
+
+def _download_ollama_runtime_zip(target_path: Path, zip_part_path: Path) -> None:
+    request = urllib.request.Request(
+        OLLAMA_RUNTIME_DOWNLOAD_URL,
+        headers={"User-Agent": "LMO-audio-runtime-downloader"},
+    )
+    downloaded_bytes = 0
+    expected_bytes = OLLAMA_RUNTIME_EXPECTED_BYTES
+    digest = hashlib.sha256()
+    with urllib.request.urlopen(request, timeout=30) as response:
+        content_length = response.headers.get("Content-Length")
+        if content_length:
+            try:
+                expected_bytes = max(1, int(content_length))
+            except ValueError:
+                expected_bytes = OLLAMA_RUNTIME_EXPECTED_BYTES
+        _set_ollama_runtime_download_status(
+            active=True,
+            status="running",
+            message="요약 프로그램을 받는 중입니다. 파일이 커서 시간이 오래 걸릴 수 있습니다.",
+            target_path=str(target_path),
+            executable_path="",
+            error="",
+            expected_bytes=expected_bytes,
+            downloaded_bytes=0,
+        )
+        with zip_part_path.open("wb") as handle:
+            while True:
+                if _ollama_runtime_cancel_requested():
+                    raise InterruptedError("cancelled")
+                chunk = response.read(OLLAMA_RUNTIME_DOWNLOAD_CHUNK_BYTES)
+                if not chunk:
+                    break
+                handle.write(chunk)
+                digest.update(chunk)
+                downloaded_bytes += len(chunk)
+                _set_ollama_runtime_download_status(
+                    active=True,
+                    status="running",
+                    message="요약 프로그램을 받는 중입니다. 파일이 커서 시간이 오래 걸릴 수 있습니다.",
+                    target_path=str(target_path),
+                    executable_path="",
+                    error="",
+                    expected_bytes=expected_bytes,
+                    downloaded_bytes=downloaded_bytes,
+                )
+    if OLLAMA_RUNTIME_SHA256:
+        actual_hash = digest.hexdigest().lower()
+        if not hmac.compare_digest(actual_hash, OLLAMA_RUNTIME_SHA256):
+            raise RuntimeError("Downloaded Ollama runtime checksum did not match.")
+
+
+def _run_ollama_runtime_download(target_path: Path) -> None:
+    download_dir = target_path / ".download"
+    zip_part_path = download_dir / "ollama-windows-amd64.zip.part"
+    zip_path = download_dir / "ollama-windows-amd64.zip"
+    extract_dir = download_dir / "extracted"
+    try:
+        if _ollama_runtime_cancel_requested():
+            _mark_ollama_runtime_cancelled(str(target_path))
+            return
+
+        if download_dir.exists():
+            shutil.rmtree(download_dir)
+        download_dir.mkdir(parents=True, exist_ok=True)
+
+        _download_ollama_runtime_zip(target_path, zip_part_path)
+        if _ollama_runtime_cancel_requested():
+            _mark_ollama_runtime_cancelled(str(target_path))
+            return
+
+        zip_part_path.replace(zip_path)
+        _set_ollama_runtime_download_status(
+            active=True,
+            status="extracting",
+            message="요약 프로그램 파일을 설치하는 중입니다.",
+            target_path=str(target_path),
+            error="",
+        )
+        with zipfile.ZipFile(zip_path) as archive:
+            _safe_extract_zip(archive, extract_dir)
+
+        if _ollama_runtime_cancel_requested():
+            _mark_ollama_runtime_cancelled(str(target_path))
+            return
+
+        executable_path = _install_extracted_ollama_runtime(extract_dir, target_path, download_dir)
+        if _ollama_runtime_cancel_requested():
+            _mark_ollama_runtime_cancelled(str(target_path))
+            return
+        _set_ollama_runtime_download_status(
+            available=True,
+            active=False,
+            status="completed",
+            message="요약 프로그램 받기가 완료되었습니다. 준비 상태 확인을 눌러 모델 상태를 다시 확인해 주세요.",
+            target_path=str(target_path),
+            executable_path=executable_path,
+            error="",
+            cancel_requested=False,
+        )
+    except InterruptedError:
+        _mark_ollama_runtime_cancelled(str(target_path))
+    except Exception as exc:
+        if _ollama_runtime_cancel_requested():
+            _mark_ollama_runtime_cancelled(str(target_path))
+            return
+        logging.exception("Failed to download Ollama runtime")
+        _set_ollama_runtime_download_status(
+            available=bool(find_embedded_ollama_executable()),
+            active=False,
+            status="failed",
+            message=_download_blocked_message("요약 프로그램을", "요약 프로그램 파일 준비를"),
+            target_path=str(target_path),
+            executable_path=find_embedded_ollama_executable(),
+            error=str(exc),
+            cancel_requested=False,
+        )
+    finally:
+        try:
+            if zip_part_path.exists():
+                zip_part_path.unlink()
+        except OSError:
+            pass
+        try:
+            if download_dir.exists():
+                shutil.rmtree(download_dir)
+        except OSError:
+            pass
+
+
+def _start_ollama_runtime_download() -> dict:
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {})
+        if current.get("active"):
+            return _ollama_runtime_snapshot()
+
+    embedded_executable = find_embedded_ollama_executable()
+    if embedded_executable:
+        _set_ollama_runtime_download_status(
+            available=True,
+            active=False,
+            status="completed",
+            message="요약 프로그램이 이미 준비되어 있습니다.",
+            target_path=str(Path(embedded_executable).parent),
+            executable_path=embedded_executable,
+            started_at=datetime.now().isoformat(),
+            error="",
+            cancel_requested=False,
+        )
+        return _ollama_runtime_snapshot()
+
+    target_path, preflight_error = _resolve_ollama_runtime_download_target()
+    if preflight_error:
+        _set_ollama_runtime_download_status(
+            available=False,
+            active=False,
+            status="failed",
+            message=preflight_error,
+            target_path=str(target_path),
+            executable_path="",
+            started_at=datetime.now().isoformat(),
+            error=preflight_error,
+            cancel_requested=False,
+        )
+        return _ollama_runtime_snapshot()
+
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {})
+        if current.get("active"):
+            return _ollama_runtime_snapshot()
+        OLLAMA_RUNTIME_DOWNLOAD_STATUS[OLLAMA_RUNTIME_DOWNLOAD_KEY] = {
+            "key": OLLAMA_RUNTIME_DOWNLOAD_KEY,
+            "available": False,
+            "active": True,
+            "status": "starting",
+            "message": "요약 프로그램 받기를 시작합니다.",
+            "target_path": str(target_path),
+            "executable_path": "",
+            "download_url": OLLAMA_RUNTIME_DOWNLOAD_URL,
+            "started_at": datetime.now().isoformat(),
+            "updated_at": datetime.now().isoformat(),
+            "error": "",
+            "downloaded_bytes": 0,
+            "expected_bytes": OLLAMA_RUNTIME_EXPECTED_BYTES,
+            "progress_percent": None,
+            "eta_seconds": None,
+            "cancel_requested": False,
+        }
+
+    worker = threading.Thread(target=_run_ollama_runtime_download, args=(target_path,), daemon=True)
+    worker.start()
+    return _ollama_runtime_snapshot()
 
 
 def _ollama_executable_available() -> bool:
@@ -1607,6 +2075,31 @@ async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
         )
     _remember_summary_model(model_name, managed_by_app=True)
     return _start_ollama_pull(model_name)
+
+
+def _require_desktop_action_token(request: Request) -> None:
+    if not DESKTOP_ACTION_TOKEN:
+        return
+    provided = (request.headers.get(DESKTOP_ACTION_TOKEN_HEADER) or "").strip()
+    if not hmac.compare_digest(provided, DESKTOP_ACTION_TOKEN):
+        raise HTTPException(status_code=403, detail="desktop action token required")
+
+
+@app.post("/api/models/ollama/runtime/download")
+async def start_ollama_runtime_download(request: Request) -> dict:
+    _require_desktop_action_token(request)
+    return _start_ollama_runtime_download()
+
+
+@app.post("/api/models/ollama/runtime/stop")
+async def stop_ollama_runtime_download(request: Request) -> dict:
+    _require_desktop_action_token(request)
+    return _request_ollama_runtime_download_stop()
+
+
+@app.get("/api/models/ollama/runtime-status")
+async def get_ollama_runtime_download_status() -> dict:
+    return _ollama_runtime_snapshot()
 
 
 @app.post("/api/models/ollama/pull/stop")

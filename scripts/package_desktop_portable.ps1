@@ -65,17 +65,14 @@ $PortableOllamaRuntime = Join-Path $PortableDir "runtime\ollama"
 if (Test-Path -LiteralPath (Join-Path $OllamaRuntimeSource "ollama.exe")) {
     robocopy $OllamaRuntimeSource $PortableOllamaRuntime /MIR /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
-        throw "robocopy failed while copying embedded Ollama runtime with exit code $LASTEXITCODE`: $OllamaRuntimeSource"
+        throw "robocopy failed while copying app-managed Ollama runtime with exit code $LASTEXITCODE`: $OllamaRuntimeSource"
     }
 }
 else {
-    if (-not $AllowMissingEmbeddedOllama) {
-        throw "Embedded Ollama runtime is missing. Put the official standalone Windows CLI at runtime\ollama\ollama.exe before creating a user-ready portable build, or pass -AllowMissingEmbeddedOllama for a development-only fallback build."
-    }
     New-Item -ItemType Directory -Force -Path $PortableOllamaRuntime | Out-Null
     [System.IO.File]::WriteAllText(
         (Join-Path $PortableOllamaRuntime "README.txt"),
-        "Put the official Ollama standalone Windows CLI files here. Expected executable: runtime\ollama\ollama.exe`r`n",
+        "Ollama runtime is not bundled by default. The desktop app can download the pinned official standalone Windows CLI release into this folder on first use. For offline bundling, place ollama.exe and its DLLs here before packaging.`r`nExpected executable when bundled: runtime\ollama\ollama.exe`r`n",
         [System.Text.UTF8Encoding]::new($false)
     )
 }
@@ -177,7 +174,7 @@ LMO Meeting Insight - Portable Quick Start
    - models: speech recognition and speaker diarization models
    - backend: local analysis server files
    - binaries: local analysis server executable and dependencies
-   - runtime\ollama: embedded Ollama runtime, if bundled
+   - runtime\ollama: app-managed Ollama runtime placeholder or pre-bundled runtime
    - release-manifest.json: release verification manifest
 
 5. If something is wrong

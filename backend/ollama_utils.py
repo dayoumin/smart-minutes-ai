@@ -31,6 +31,25 @@ def _portable_root() -> Path:
     return backend_dir
 
 
+def _local_app_data_root() -> Path:
+    configured = os.environ.get("LOCALAPPDATA")
+    if configured:
+        return Path(configured)
+    return Path.home() / "AppData" / "Local"
+
+
+def get_portable_ollama_runtime_dir() -> Path:
+    return _portable_root() / "runtime" / "ollama"
+
+
+def get_local_ollama_runtime_dir() -> Path:
+    return _local_app_data_root() / "LMO_audio" / "runtime" / "ollama"
+
+
+def get_local_ollama_models_dir() -> Path:
+    return _local_app_data_root() / "LMO_audio" / "models" / "ollama"
+
+
 def _embedded_ollama_candidates() -> list[Path]:
     configured_dir = os.environ.get("LMO_EMBEDDED_OLLAMA_DIR")
     portable_root = _portable_root()
@@ -38,8 +57,9 @@ def _embedded_ollama_candidates() -> list[Path]:
     if configured_dir:
         candidates.append(Path(configured_dir) / "ollama.exe")
     candidates.extend([
-        portable_root / "runtime" / "ollama" / "ollama.exe",
+        get_portable_ollama_runtime_dir() / "ollama.exe",
         portable_root / "ollama" / "ollama.exe",
+        get_local_ollama_runtime_dir() / "ollama.exe",
         Path(__file__).resolve().parent / "runtime" / "ollama" / "ollama.exe",
     ])
     return candidates
@@ -103,6 +123,15 @@ def get_ollama_models_dir() -> str:
         configured = os.environ.get("LMO_EMBEDDED_OLLAMA_MODELS")
         if configured:
             return configured
+        embedded = find_embedded_ollama_executable()
+        if embedded:
+            try:
+                embedded_parent = Path(embedded).resolve().parent
+                local_runtime = get_local_ollama_runtime_dir().resolve()
+                if str(embedded_parent).lower().startswith(str(local_runtime).lower()):
+                    return str(get_local_ollama_models_dir())
+            except OSError:
+                pass
         return str(_portable_root() / "models" / "ollama")
 
     configured = os.environ.get("OLLAMA_MODELS")

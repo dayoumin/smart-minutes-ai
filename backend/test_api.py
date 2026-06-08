@@ -6,6 +6,7 @@ import sys
 import types
 import tempfile
 import unittest
+import zipfile
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -97,6 +98,30 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertEqual(env["OLLAMA_HOST"], "127.0.0.1:11435")
         self.assertTrue(env["OLLAMA_MODELS"].endswith(os.path.join("lmo_audio", "models", "ollama")))
+
+    def test_local_appdata_ollama_runtime_is_app_managed_fallback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            backend_dir = Path(tmp) / "lmo_audio" / "backend"
+            local_app_data = Path(tmp) / "local-app-data"
+            local_runtime_dir = local_app_data / "LMO_audio" / "runtime" / "ollama"
+            local_runtime_dir.mkdir(parents=True)
+            local_exe = local_runtime_dir / "ollama.exe"
+            local_exe.write_text("fake", encoding="utf-8")
+
+            with (
+                patch.dict(os.environ, {
+                    "MEETING_AI_BACKEND_DIR": str(backend_dir),
+                    "LOCALAPPDATA": str(local_app_data),
+                }, clear=False),
+                patch.object(ollama_utils.shutil, "which", return_value=r"C:\Tools\ollama.exe"),
+            ):
+                os.environ.pop("OLLAMA_EXE", None)
+                os.environ.pop("OLLAMA_MODELS", None)
+                self.assertEqual(ollama_utils.find_ollama_executable(), str(local_exe))
+                self.assertTrue(ollama_utils.using_embedded_ollama())
+                env = ollama_utils.ollama_subprocess_env()
+
+        self.assertTrue(env["OLLAMA_MODELS"].endswith(os.path.join("LMO_audio", "models", "ollama")))
 
     def test_embedded_ollama_ignores_system_host_and_model_store(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -977,6 +1002,265 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("ecomarine@korea.kr", payload["message"])
         remember_model.assert_not_called()
         start_pull.assert_not_called()
+
+    def test_ollama_runtime_status_reports_idle_download_target(self) -> None:
+        with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+            main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
+
+        with patch.object(main, "find_embedded_ollama_executable", return_value=""):
+            response = self.client.get("/api/models/ollama/runtime-status")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertFalse(payload["available"])
+        self.assertFalse(payload["active"])
+        self.assertEqual(payload["status"], "idle")
+        self.assertIn("ollama-windows-amd64.zip", payload["download_url"])
+        self.assertTrue(payload["target_path"].endswith(os.path.join("runtime", "ollama")))
+
+    def test_start_ollama_runtime_download_endpoint_uses_runtime_worker(self) -> None:
+        with patch.object(main, "_start_ollama_runtime_download", return_value={
+            "key": main.OLLAMA_RUNTIME_DOWNLOAD_KEY,
+            "available": False,
+            "active": True,
+            "status": "starting",
+            "message": "요약 프로그램 받기를 시작합니다.",
+        }) as start_download:
+            response = self.client.post("/api/models/ollama/runtime/download")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "starting")
+        start_download.assert_called_once_with()
+
+    def test_start_ollama_runtime_download_requires_desktop_token_when_configured(self) -> None:
+        with (
+            patch.object(main, "DESKTOP_ACTION_TOKEN", "secret"),
+            patch.object(main, "_start_ollama_runtime_download", return_value={"status": "starting"}) as start_download,
+        ):
+            response = self.client.post("/api/models/ollama/runtime/download")
+
+        self.assertEqual(response.status_code, 403, response.text)
+        start_download.assert_not_called()
+
+    def test_start_ollama_runtime_download_accepts_desktop_token(self) -> None:
+        with (
+            patch.object(main, "DESKTOP_ACTION_TOKEN", "secret"),
+            patch.object(main, "_start_ollama_runtime_download", return_value={"status": "starting"}) as start_download,
+        ):
+            response = self.client.post(
+                "/api/models/ollama/runtime/download",
+                headers={main.DESKTOP_ACTION_TOKEN_HEADER: "secret"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json()["status"], "starting")
+        start_download.assert_called_once_with()
+
+    def test_stop_ollama_runtime_download_marks_cancelling(self) -> None:
+        with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+            main.OLLAMA_RUNTIME_DOWNLOAD_STATUS[main.OLLAMA_RUNTIME_DOWNLOAD_KEY] = {
+                "key": main.OLLAMA_RUNTIME_DOWNLOAD_KEY,
+                "available": False,
+                "active": True,
+                "status": "running",
+                "message": "요약 프로그램을 받는 중입니다.",
+                "target_path": r"C:\temp\lmo_audio\runtime\ollama",
+                "executable_path": "",
+                "started_at": "",
+                "updated_at": "",
+                "error": "",
+                "downloaded_bytes": 1,
+                "expected_bytes": 10,
+                "cancel_requested": False,
+            }
+        try:
+            with patch.object(main, "find_embedded_ollama_executable", return_value=""):
+                response = self.client.post("/api/models/ollama/runtime/stop")
+        finally:
+            with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+                main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertTrue(payload["active"])
+        self.assertEqual(payload["status"], "cancelling")
+        self.assertTrue(payload["cancel_requested"])
+
+    def test_ollama_runtime_download_target_falls_back_to_local_appdata(self) -> None:
+        portable_target = Path(r"C:\blocked\lmo_audio\runtime\ollama")
+        local_target = Path(r"C:\Users\User\AppData\Local\LMO_audio\runtime\ollama")
+
+        def fake_preflight(target: Path) -> str:
+            if target == portable_target:
+                return "portable blocked"
+            if target == local_target:
+                return ""
+            return "unexpected target"
+
+        with (
+            patch.object(main, "_ollama_runtime_target_candidates", return_value=[portable_target, local_target]),
+            patch.object(main, "_ollama_runtime_download_preflight", side_effect=fake_preflight),
+        ):
+            target, error = main._resolve_ollama_runtime_download_target()
+
+        self.assertEqual(target, local_target)
+        self.assertEqual(error, "")
+
+    def test_safe_extract_ollama_runtime_zip_rejects_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "unsafe.zip"
+            extract_dir = Path(tmp) / "extract"
+            outside_path = Path(tmp) / "evil.txt"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("../evil.txt", "escape")
+
+            with zipfile.ZipFile(zip_path) as archive:
+                with self.assertRaisesRegex(RuntimeError, "unsafe path"):
+                    main._safe_extract_zip(archive, extract_dir)
+
+            self.assertFalse(outside_path.exists())
+
+    def test_safe_extract_ollama_runtime_zip_rejects_too_many_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "too_many.zip"
+            extract_dir = Path(tmp) / "extract"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("ollama/ollama.exe", "fake")
+                archive.writestr("ollama/ollama.dll", "fake")
+
+            with (
+                patch.object(main, "OLLAMA_RUNTIME_MAX_ZIP_MEMBERS", 1),
+                zipfile.ZipFile(zip_path) as archive,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "too many files"):
+                    main._safe_extract_zip(archive, extract_dir)
+
+    def test_safe_extract_ollama_runtime_zip_rejects_large_uncompressed_size(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            zip_path = Path(tmp) / "too_large.zip"
+            extract_dir = Path(tmp) / "extract"
+            with zipfile.ZipFile(zip_path, "w") as archive:
+                archive.writestr("ollama/ollama.exe", "fake exe")
+
+            with (
+                patch.object(main, "OLLAMA_RUNTIME_MAX_EXTRACTED_BYTES", 3),
+                zipfile.ZipFile(zip_path) as archive,
+            ):
+                with self.assertRaisesRegex(RuntimeError, "too large"):
+                    main._safe_extract_zip(archive, extract_dir)
+
+    def test_download_ollama_runtime_zip_rejects_checksum_mismatch(self) -> None:
+        class FakeResponse:
+            def __init__(self, payload: bytes) -> None:
+                self.payload = payload
+                self.offset = 0
+                self.headers = {"Content-Length": str(len(payload))}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, _exc_type, _exc, _traceback) -> None:
+                return None
+
+            def read(self, size: int) -> bytes:
+                if self.offset >= len(self.payload):
+                    return b""
+                chunk = self.payload[self.offset:self.offset + size]
+                self.offset += len(chunk)
+                return chunk
+
+        with tempfile.TemporaryDirectory() as tmp:
+            target_dir = Path(tmp) / "runtime" / "ollama"
+            zip_part_path = Path(tmp) / "ollama.zip.part"
+            with (
+                patch.object(main, "OLLAMA_RUNTIME_SHA256", "0" * 64),
+                patch.object(main.urllib.request, "urlopen", return_value=FakeResponse(b"not expected")),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "checksum"):
+                    main._download_ollama_runtime_zip(target_dir, zip_part_path)
+
+    def test_run_ollama_runtime_download_extracts_cli_zip(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target_dir = Path(tmp) / "runtime" / "ollama"
+            target_dir.mkdir(parents=True)
+
+            def fake_download_runtime_zip(target_path: Path, zip_part_path: Path) -> None:
+                self.assertEqual(target_path, target_dir)
+                with zipfile.ZipFile(zip_part_path, "w") as archive:
+                    archive.writestr("ollama/ollama.exe", "fake exe")
+                    archive.writestr("ollama/ollama.dll", "fake dll")
+                main._set_ollama_runtime_download_status(
+                    available=False,
+                    active=True,
+                    status="running",
+                    message="요약 프로그램을 받는 중입니다.",
+                    target_path=str(target_path),
+                    executable_path="",
+                    downloaded_bytes=20,
+                    expected_bytes=20,
+                    error="",
+                )
+
+            with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+                main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
+            try:
+                with (
+                    patch.object(main, "_download_ollama_runtime_zip", side_effect=fake_download_runtime_zip),
+                    patch.object(
+                        main,
+                        "find_embedded_ollama_executable",
+                        side_effect=lambda: str(target_dir / "ollama.exe") if (target_dir / "ollama.exe").exists() else "",
+                    ),
+                ):
+                    main._run_ollama_runtime_download(target_dir)
+                    status = main._ollama_runtime_snapshot()
+            finally:
+                with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+                    main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
+
+            self.assertTrue((target_dir / "ollama.exe").is_file())
+            self.assertTrue((target_dir / "ollama.dll").is_file())
+            self.assertFalse((target_dir / ".download").exists())
+            self.assertFalse(status["active"])
+            self.assertTrue(status["available"])
+            self.assertEqual(status["status"], "completed")
+
+    def test_run_ollama_runtime_download_honors_cancel_after_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target_dir = Path(tmp) / "runtime" / "ollama"
+            target_dir.mkdir(parents=True)
+
+            def fake_download_runtime_zip(_target_path: Path, zip_part_path: Path) -> None:
+                with zipfile.ZipFile(zip_part_path, "w") as archive:
+                    archive.writestr("ollama/ollama.exe", "fake exe")
+
+            def fake_install_runtime(_extract_dir: Path, target_path: Path, _download_dir: Path) -> str:
+                executable_path = target_path / "ollama.exe"
+                executable_path.write_text("fake exe", encoding="utf-8")
+                main._set_ollama_runtime_download_status(cancel_requested=True, status="cancelling")
+                return str(executable_path)
+
+            with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+                main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
+            try:
+                with (
+                    patch.object(main, "_download_ollama_runtime_zip", side_effect=fake_download_runtime_zip),
+                    patch.object(main, "_install_extracted_ollama_runtime", side_effect=fake_install_runtime),
+                    patch.object(
+                        main,
+                        "find_embedded_ollama_executable",
+                        side_effect=lambda: str(target_dir / "ollama.exe") if (target_dir / "ollama.exe").exists() else "",
+                    ),
+                ):
+                    main._set_ollama_runtime_download_status(active=True, status="running", cancel_requested=False)
+                    main._run_ollama_runtime_download(target_dir)
+                    status = main._ollama_runtime_snapshot()
+            finally:
+                with main.OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+                    main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
+
+            self.assertFalse(status["active"])
+            self.assertEqual(status["status"], "cancelled")
 
     def test_model_status_marks_stt_downloadable_only(self) -> None:
         response = self.client.get("/api/models/status")

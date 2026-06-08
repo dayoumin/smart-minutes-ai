@@ -9,7 +9,7 @@ import {
     getDownloadFormatPreference,
     setDownloadFormatPreference,
 } from './downloadPreferences';
-import { getApiBase, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
+import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
@@ -159,6 +159,7 @@ interface ModelsPayload {
     ready: boolean;
     models: ModelStatus[];
     selected_stt_device?: 'cpu' | 'cuda';
+    ollama_runtime_status?: OllamaRuntimeDownloadStatus;
     system_profile?: {
         memory_gb?: number | null;
     };
@@ -197,6 +198,25 @@ interface ModelDownloadStatus {
     status: 'idle' | 'starting' | 'running' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
     message: string;
     target_path?: string;
+    started_at?: string;
+    updated_at?: string;
+    error?: string;
+    downloaded_bytes?: number;
+    expected_bytes?: number;
+    progress_percent?: number | null;
+    eta_seconds?: number | null;
+    cancel_requested?: boolean;
+}
+
+interface OllamaRuntimeDownloadStatus {
+    key: string;
+    available: boolean;
+    active: boolean;
+    status: 'idle' | 'starting' | 'running' | 'extracting' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+    message: string;
+    target_path?: string;
+    executable_path?: string;
+    download_url?: string;
     started_at?: string;
     updated_at?: string;
     error?: string;
@@ -270,6 +290,35 @@ const getModelDownloadStatusMessage = (status?: ModelDownloadStatus): string => 
     return status.message;
 };
 
+const getOllamaRuntimeProgressText = (status?: OllamaRuntimeDownloadStatus | null): string => {
+    if (!status?.active) return '';
+    if (status.status === 'cancelling') return '';
+    if (status.status === 'extracting') return '설치하는 중';
+    const downloaded = formatModelDownloadBytes(status.downloaded_bytes);
+    const expected = formatModelDownloadBytes(status.expected_bytes);
+    const percent = typeof status.progress_percent === 'number' && Number.isFinite(status.progress_percent)
+        ? `${Math.max(0, Math.min(100, Number(status.progress_percent))).toFixed(1)}% 진행`
+        : '';
+    const eta = formatModelDownloadEta(status.eta_seconds);
+    const parts = [
+        percent,
+        downloaded && expected ? `${downloaded} / ${expected}` : downloaded,
+        eta,
+    ].filter(Boolean);
+    return parts.length > 0 ? parts.join(' · ') : '계산 중';
+};
+
+const getOllamaRuntimeProgressPercent = (status?: OllamaRuntimeDownloadStatus | null): number => {
+    if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
+    return Math.max(0, Math.min(100, Number(status.progress_percent)));
+};
+
+const getOllamaRuntimeStatusMessage = (status?: OllamaRuntimeDownloadStatus | null): string => {
+    if (status?.active) return '';
+    if (!status?.message || status.message === '요약 프로그램 받기를 시작합니다.') return '';
+    return status.message;
+};
+
 const getOllamaPullProgressPercent = (status?: OllamaPullStatus): number => {
     if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
@@ -340,6 +389,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [customSummaryCheckedModel, setCustomSummaryCheckedModel] = useState('');
     const [customSummaryModelNotice, setCustomSummaryModelNotice] = useState('');
     const [ollamaPulls, setOllamaPulls] = useState<Record<string, OllamaPullStatus>>({});
+    const [ollamaRuntimeDownload, setOllamaRuntimeDownload] = useState<OllamaRuntimeDownloadStatus | null>(null);
     const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
     const [isCheckingModels, setIsCheckingModels] = useState(false);
@@ -348,6 +398,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const mountedRef = useRef(true);
     const modelStatusRequestIdRef = useRef(0);
     const pullRequestIdsRef = useRef<Record<string, number>>({});
+    const ollamaRuntimeRequestIdRef = useRef(0);
+    const ollamaRuntimePollingRequestIdRef = useRef<number | null>(null);
     const modelDownloadRequestIdsRef = useRef<Record<string, number>>({});
     const restoredOllamaPullsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
@@ -433,6 +485,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         return () => {
             mountedRef.current = false;
             modelStatusRequestIdRef.current += 1;
+            ollamaRuntimeRequestIdRef.current += 1;
+            ollamaRuntimePollingRequestIdRef.current = null;
             pullRequestIdsRef.current = {};
         };
     }, []);
@@ -452,6 +506,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 return null;
             }
             setModels(nextModels);
+            if (nextModels.ollama_runtime_status) {
+                setOllamaRuntimeDownload(nextModels.ollama_runtime_status);
+            }
             const payloadError = nextModels.errors?.find(Boolean) || '';
             setModelStatusErrorMessage(payloadError);
             setErrorMessage(previous => (
@@ -607,6 +664,132 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
     }, [apiBase, isCurrentModelDownloadRequest, pollModelDownloadStatus, updateModelDownloadStatus]);
 
+    const updateOllamaRuntimeDownloadStatus = useCallback((status: OllamaRuntimeDownloadStatus) => {
+        setOllamaRuntimeDownload(status);
+    }, []);
+
+    const isCurrentOllamaRuntimeRequest = useCallback((requestId: number) => (
+        mountedRef.current && ollamaRuntimeRequestIdRef.current === requestId
+    ), []);
+
+    const pollOllamaRuntimeDownloadStatus = useCallback(async (base: string, requestId: number) => {
+        for (let attempt = 0; attempt < 7200; attempt += 1) {
+            await new Promise(resolve => window.setTimeout(resolve, 2000));
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/runtime-status`);
+            if (!response.ok) throw new Error(`ollama-runtime-status=${response.status}`);
+            const status = await response.json() as OllamaRuntimeDownloadStatus;
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            updateOllamaRuntimeDownloadStatus(status);
+            if (!status.active) {
+                if (status.status === 'completed') {
+                    await loadModelsStatus(base, { surfaceErrors: false });
+                    if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+                    setMessage('');
+                    setErrorMessage('');
+                } else if (status.status === 'failed') {
+                    setMessage('');
+                    setErrorMessage(status.message || '요약 프로그램을 받지 못했습니다.');
+                } else if (status.status === 'cancelled') {
+                    setMessage('');
+                    setErrorMessage('');
+                }
+                return;
+            }
+        }
+        throw new Error('요약 프로그램 받기 상태 확인 시간이 초과되었습니다.');
+    }, [isCurrentOllamaRuntimeRequest, loadModelsStatus, updateOllamaRuntimeDownloadStatus]);
+
+    const beginOllamaRuntimePolling = useCallback((base: string, requestId: number) => {
+        if (ollamaRuntimePollingRequestIdRef.current === requestId) return;
+        ollamaRuntimePollingRequestIdRef.current = requestId;
+        void pollOllamaRuntimeDownloadStatus(base, requestId).catch(error => {
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            setMessage('');
+            setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기 상태를 확인하지 못했습니다.');
+        }).finally(() => {
+            if (ollamaRuntimePollingRequestIdRef.current === requestId) {
+                ollamaRuntimePollingRequestIdRef.current = null;
+            }
+        });
+    }, [isCurrentOllamaRuntimeRequest, pollOllamaRuntimeDownloadStatus]);
+
+    const handleDownloadOllamaRuntime = useCallback(async () => {
+        setErrorMessage('');
+        setMessage('');
+        setOllamaInstallPrompted(false);
+        setOllamaInstallNoticeMessage('');
+        const requestId = ollamaRuntimeRequestIdRef.current + 1;
+        ollamaRuntimeRequestIdRef.current = requestId;
+        try {
+            const base = apiBase || await getApiBase();
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            setApiBase(base);
+            const desktopActionHeaders = await getDesktopActionHeaders();
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/runtime/download`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...desktopActionHeaders },
+            });
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+                throw new Error(body?.detail || `요약 프로그램 받기 시작 실패: ${response.status}`);
+            }
+            const status = await response.json() as OllamaRuntimeDownloadStatus;
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            updateOllamaRuntimeDownloadStatus(status);
+            if (status.active) {
+                beginOllamaRuntimePolling(base, requestId);
+            } else if (status.status === 'completed') {
+                await loadModelsStatus(base, { surfaceErrors: false });
+                if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+                setMessage('');
+                setErrorMessage('');
+            } else if (status.status === 'failed') {
+                setErrorMessage(status.message || '요약 프로그램을 받지 못했습니다.');
+            }
+        } catch (error) {
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            setMessage('');
+            setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기를 시작하지 못했습니다.');
+        }
+    }, [apiBase, beginOllamaRuntimePolling, isCurrentOllamaRuntimeRequest, loadModelsStatus, updateOllamaRuntimeDownloadStatus]);
+
+    const handleStopOllamaRuntimeDownload = useCallback(async () => {
+        const requestId = ollamaRuntimeRequestIdRef.current + 1;
+        ollamaRuntimeRequestIdRef.current = requestId;
+        setErrorMessage('');
+        setMessage('');
+        try {
+            const base = apiBase || await getApiBase();
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            setApiBase(base);
+            const desktopActionHeaders = await getDesktopActionHeaders();
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/runtime/stop`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', ...desktopActionHeaders },
+            });
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            if (!response.ok) {
+                const body = await response.json().catch(() => null);
+                if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+                throw new Error(body?.detail || `요약 프로그램 받기 중지 실패: ${response.status}`);
+            }
+            const status = await response.json() as OllamaRuntimeDownloadStatus;
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            updateOllamaRuntimeDownloadStatus(status);
+            if (status.active) {
+                beginOllamaRuntimePolling(base, requestId);
+            }
+        } catch (error) {
+            if (!isCurrentOllamaRuntimeRequest(requestId)) return;
+            setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기를 중지하지 못했습니다.');
+        }
+    }, [apiBase, beginOllamaRuntimePolling, isCurrentOllamaRuntimeRequest, updateOllamaRuntimeDownloadStatus]);
+
     const updateOllamaPullStatus = useCallback((status: OllamaPullStatus) => {
         setOllamaPulls(previous => ({ ...previous, [status.model]: status }));
     }, []);
@@ -686,12 +869,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             updateOllamaPullStatus(status);
             if (!status.active && status.status === 'failed' && isOllamaMissingPullStatus(status)) {
                 setMessage('');
-                try {
-                    await openExternalUrl(OLLAMA_INSTALL_URL);
-                    setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
-                } catch {
-                    setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
-                }
+                setOllamaInstallNoticeMessage('요약 프로그램을 먼저 받은 뒤 회의 요약 모델을 받을 수 있습니다.');
                 setOllamaInstallPrompted(true);
                 setErrorMessage('');
                 return;
@@ -878,6 +1056,30 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         modelDownloads,
         pollModelDownloadStatus,
         updateModelDownloadStatus,
+    ]);
+
+    useEffect(() => {
+        if (activeTab !== 'models' || !apiBase) return;
+        void (async () => {
+            const response = await fetchWithTimeout(`${apiBase}/api/models/ollama/runtime-status`);
+            if (!response.ok) return;
+            const status = await response.json() as OllamaRuntimeDownloadStatus;
+            if (!mountedRef.current) return;
+            updateOllamaRuntimeDownloadStatus(status);
+            if (!status.active) return;
+            const requestId = ollamaRuntimeRequestIdRef.current + 1;
+            ollamaRuntimeRequestIdRef.current = requestId;
+            setMessage('');
+            beginOllamaRuntimePolling(apiBase, requestId);
+        })().catch(() => {
+            // Status refresh is best-effort; the normal model status refresh still runs.
+        });
+    }, [
+        activeTab,
+        apiBase,
+        beginOllamaRuntimePolling,
+        ollamaRuntimeDownload?.active,
+        updateOllamaRuntimeDownloadStatus,
     ]);
 
     useEffect(() => {
@@ -1185,7 +1387,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     : []
         ).map(normalizeSummaryModelName),
     );
-    const ollamaAvailable = Boolean(summaryModelStatus?.ollama_available || installedSummaryModels.size > 0);
+    const ollamaRuntimeStatus = ollamaRuntimeDownload || models?.ollama_runtime_status || null;
+    const ollamaRuntimeAvailable = Boolean(ollamaRuntimeStatus?.available);
+    const ollamaRuntimeActive = Boolean(ollamaRuntimeStatus?.active);
+    const ollamaRuntimeStopping = ollamaRuntimeStatus?.status === 'cancelling';
+    const ollamaRuntimeProgressText = getOllamaRuntimeProgressText(ollamaRuntimeStatus);
+    const ollamaRuntimeProgressPercent = getOllamaRuntimeProgressPercent(ollamaRuntimeStatus);
+    const ollamaRuntimeStatusMessage = getOllamaRuntimeStatusMessage(ollamaRuntimeStatus);
+    const ollamaAvailable = Boolean(summaryModelStatus?.ollama_available || ollamaRuntimeAvailable || installedSummaryModels.size > 0);
     const configuredSummaryModel = normalizeSummaryModelName(settings?.summary?.model);
     const selectedSummaryInstalled = Boolean(selectedSummaryModel && installedSummaryModels.has(selectedSummaryModel));
     const isSummaryOptionInstalled = (modelName?: string) => Boolean(modelName && installedSummaryModels.has(modelName));
@@ -1206,17 +1415,17 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
     const modelPreparationGuide = ollamaAvailable
-        ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
-        : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램(Ollama)을 설치합니다. 3. 회의 요약 모델을 받습니다.';
+        ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
+        : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램을 받습니다. 3. 회의 요약 모델을 받습니다.';
     const summaryModelOllamaHelp = modelStatusCanAutoRetry
         ? (ollamaAvailable
             ? '마지막 확인 기준으로 요약 프로그램은 설치되어 있습니다. 준비 상태를 다시 확인해 주세요.'
-            : '요약 프로그램 설치 여부를 다시 확인해 주세요.')
+            : '요약 프로그램 준비 상태를 다시 확인해 주세요.')
         : ollamaAvailable
             ? (selectedSummaryInstalled
                 ? '회의 요약을 사용할 수 있습니다.'
                 : '요약 프로그램은 설치되어 있습니다. 아래에서 회의 요약 모델을 받아 주세요.')
-            : '회의 요약을 사용하려면 요약 프로그램(Ollama)을 먼저 설치해 주세요.';
+            : (ollamaRuntimeStatusMessage || '회의 요약을 사용하려면 요약 프로그램을 먼저 받아 주세요.');
     const ollamaInstallNotice = ollamaInstallPrompted
         ? (ollamaInstallNoticeMessage || OLLAMA_INSTALL_OPENED_NOTICE)
         : '';
@@ -1598,32 +1807,55 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         </p>
                                     </div>
                                     {!ollamaAvailable && (
-                                        <a
-                                            href={OLLAMA_INSTALL_URL}
-                                            target="_blank"
-                                            rel="noreferrer"
-                                            className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                            aria-label="요약 프로그램 설치 페이지 열기"
-                                            onClick={event => {
-                                                event.preventDefault();
-                                                setErrorMessage('');
-                                                setMessage('');
-                                                setOllamaInstallPrompted(false);
-                                                setOllamaInstallNoticeMessage('');
-                                                void openExternalUrl(OLLAMA_INSTALL_URL)
-                                                    .then(() => {
-                                                        if (!mountedRef.current) return;
-                                                        setOllamaInstallPrompted(true);
-                                                        setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
-                                                    })
-                                                    .catch(() => {
-                                                        setOllamaInstallPrompted(true);
-                                                        setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
-                                                    });
-                                            }}
-                                        >
-                                            요약 프로그램 설치
-                                        </a>
+                                        <div className="flex shrink-0 items-center gap-2">
+                                            <Button
+                                                variant="outline"
+                                                className="h-8 px-3 text-xs"
+                                                aria-label={`요약 프로그램 ${ollamaRuntimeActive ? '중지' : '받기'}`}
+                                                onClick={() => {
+                                                    if (ollamaRuntimeActive) {
+                                                        void handleStopOllamaRuntimeDownload();
+                                                        return;
+                                                    }
+                                                    void handleDownloadOllamaRuntime();
+                                                }}
+                                                disabled={ollamaRuntimeStopping}
+                                            >
+                                                {ollamaRuntimeActive
+                                                    ? (
+                                                        <>
+                                                            {ollamaRuntimeStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                                            {ollamaRuntimeStopping ? '중지 중' : '중지'}
+                                                        </>
+                                                    )
+                                                    : '요약 프로그램 받기'}
+                                            </Button>
+                                            {!ollamaRuntimeActive && (
+                                                <button
+                                                    type="button"
+                                                    className="btn btn-outline h-8 px-2 text-xs"
+                                                    aria-label="요약 프로그램 설치 페이지 열기"
+                                                    onClick={() => {
+                                                        setErrorMessage('');
+                                                        setMessage('');
+                                                        setOllamaInstallPrompted(false);
+                                                        setOllamaInstallNoticeMessage('');
+                                                        void openExternalUrl(OLLAMA_INSTALL_URL)
+                                                            .then(() => {
+                                                                if (!mountedRef.current) return;
+                                                                setOllamaInstallPrompted(true);
+                                                                setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
+                                                            })
+                                                            .catch(() => {
+                                                                setOllamaInstallPrompted(true);
+                                                                setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
+                                                            });
+                                                    }}
+                                                >
+                                                    설치 페이지
+                                                </button>
+                                            )}
+                                        </div>
                                     )}
                                 </div>
                                 {ollamaInstallNotice && (
@@ -1637,6 +1869,23 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     >
                                         {ollamaInstallNotice}
                                     </StatusBanner>
+                                )}
+                                {ollamaRuntimeActive && (
+                                    <div className="mt-3 space-y-1.5">
+                                        <ProgressBar
+                                            value={ollamaRuntimeProgressPercent}
+                                            size="sm"
+                                            label="요약 프로그램 받기 진행률"
+                                        />
+                                        <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                            {ollamaRuntimeProgressText && (
+                                                <>
+                                                    <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
+                                                    <span>{ollamaRuntimeProgressText}</span>
+                                                </>
+                                            )}
+                                        </div>
+                                    </div>
                                 )}
 
                                 {summaryModelOptions.length > 0 && (

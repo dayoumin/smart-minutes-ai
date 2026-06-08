@@ -180,6 +180,7 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
             portable = Path(temp_dir) / "lmo_audio"
             (portable / "backend").mkdir(parents=True)
             (portable / "binaries").mkdir()
+            (portable / "runtime" / "ollama").mkdir(parents=True)
             (portable / "models" / "faster-whisper-large-v3").mkdir(parents=True)
             (portable / "models" / "speaker-diarization-community-1" / "embedding").mkdir(parents=True)
             (portable / "models" / "speaker-diarization-community-1" / "segmentation").mkdir(parents=True)
@@ -190,6 +191,9 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
             (portable / "backend" / "main.py").write_text("backend", encoding="utf-8")
             (portable / "backend" / "config.json").write_text("{}", encoding="utf-8")
             (portable / "binaries" / "meeting-backend-x86_64-pc-windows-msvc.exe").write_text("sidecar", encoding="utf-8")
+            (portable / "runtime" / "ollama" / "README.txt").write_text("placeholder", encoding="utf-8")
+            (portable / "runtime" / "ollama" / "ollama.exe").write_text("large runtime", encoding="utf-8")
+            (portable / "runtime" / "ollama" / "ollama.dll").write_text("large runtime dependency", encoding="utf-8")
             for marker in ("model.bin", "tokenizer.json", "config.json"):
                 (portable / "models" / "faster-whisper-large-v3" / marker).write_text(marker, encoding="utf-8")
             (portable / "models" / "speaker-diarization-community-1" / "config.yaml").write_text("config", encoding="utf-8")
@@ -268,6 +272,9 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
                     self.assertIn("lmo_audio/START_HERE.txt", names)
                     start_here = archive.read("lmo_audio/START_HERE.txt").decode("utf-8")
                     self.assertIn("음성 인식 모델: models\\faster-whisper-large-v3", start_here)
+                    self.assertIn("lmo_audio/runtime/ollama/README.txt", names)
+                    self.assertNotIn("lmo_audio/runtime/ollama/ollama.exe", names)
+                    self.assertNotIn("lmo_audio/runtime/ollama/ollama.dll", names)
                     manifest = json.loads(archive.read("lmo_audio/release-manifest.json").decode("utf-8-sig"))
                     self.assertEqual(manifest["handoff"]["packageFormat"], "lmo-audio-slim-handoff-v1")
                     payload_by_path = {entry["path"]: entry for entry in manifest["portablePayloadFiles"]}

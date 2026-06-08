@@ -205,6 +205,18 @@ function Copy-HandoffTree([string]$Source, [string]$Destination, [string[]]$Incl
         if ($relativeParts.Length -eq 2 -and $relativeParts[0].Equals("models", [System.StringComparison]::OrdinalIgnoreCase) -and $_.Name.Equals("README.txt", [System.StringComparison]::OrdinalIgnoreCase)) {
             return
         }
+        if (
+            $relativeParts.Length -ge 2 `
+                -and $relativeParts[0].Equals("runtime", [System.StringComparison]::OrdinalIgnoreCase) `
+                -and $relativeParts[1].Equals("ollama", [System.StringComparison]::OrdinalIgnoreCase)
+        ) {
+            if ($_.PSIsContainer) {
+                return
+            }
+            if (-not $_.Name.Equals("README.txt", [System.StringComparison]::OrdinalIgnoreCase)) {
+                return
+            }
+        }
 
         $targetPath = Join-Path $Destination $relativePath
         if ($_.PSIsContainer) {
@@ -223,17 +235,15 @@ function Write-HandoffReadmes([string]$PortableRoot, [object[]]$IncludedModels, 
 
     $includedLines = @($IncludedModels | ForEach-Object { "- models\$($_.portableDir)" }) -join "`r`n"
     $excludedLines = @($ExcludedModels | ForEach-Object { "- models\$($_.portableDir)" }) -join "`r`n"
-    $modelsReadme = ConvertFrom-Utf8Base64 "TE1PIO2ajOydmCDsnbjsgqzsnbTtirgg66qo6424IO2PtOuNlAoK7J20IOyKrOumvCDsoITri6zrs7jsl5DripQg7J6R7J2AIOywuOyEneyekCDqtazrtoQg66qo64247J20IOydtOuvuCDtj6ztlajrkJjslrQg7J6I7Iq164uI64ukOgokaW5jbHVkZWRMaW5lcwoK7YGwIOydjOyEsSDsnbjsi50g66qo64247J2AIOyaqeufiSDrlYzrrLjsl5Ag7KCc7Jm465CY7Ja0IOyeiOyKteuLiOuLpDoKJGV4Y2x1ZGVkTGluZXMKCuyLpOygnCDrjIDtmZTroZ0g7J6R7ISx7J2EIOyLpO2Wie2VmOq4sCDsoITsl5Ag6rSA66as7J6Q6rCAIOykgOu5hO2VnCBmYXN0ZXItd2hpc3Blci1sYXJnZS12MyDrqqjrjbgg66y27J2M7J2EIOyVhOuemCDsnITsuZjsl5Ag64Sj7Ja0IOyjvOyEuOyalDoKbW9kZWxzXGZhc3Rlci13aGlzcGVyLWxhcmdlLXYzCgrtmZXsnbjtlaAg7YyM7J28OgotIG1vZGVsc1xmYXN0ZXItd2hpc3Blci1sYXJnZS12M1xtb2RlbC5iaW4KLSBtb2RlbHNcZmFzdGVyLXdoaXNwZXItbGFyZ2UtdjNcdG9rZW5pemVyLmpzb24KLSBtb2RlbHNcZmFzdGVyLXdoaXNwZXItbGFyZ2UtdjNcY29uZmlnLmpzb24KCk9sbGFtYSDsoJXrpqwg66qo64247J2AIOyVseydmCDsi5zsiqTthZwg7ISk7KCVID4g66qo6424IO2ZlOuptOyXkOyEnCBPbGxhbWEg7ISk7LmYIO2bhCDrsJvsnYQg7IiYIOyeiOyKteuLiOuLpC4K"
+    $modelsReadme = ConvertFrom-Utf8Base64 "TE1PIO2ajOydmCDsnbjsgqzsnbTtirgg66qo6424IO2PtOuNlAoK7J20IOyghOuLrCB6aXDsl5Ag7Y+s7ZWo65CcIOuqqOuNuDoKJGluY2x1ZGVkTGluZXMKCu2BsCDsnYzshLEg7J247IudIOuqqOuNuOydgCDsmqnrn4kg65WM66y47JeQIOygnOyZuO2WiOyKteuLiOuLpDoKJGV4Y2x1ZGVkTGluZXMKCuyLpOygnCDrjIDtmZTroZ0g7J6R7ISx7J2EIOyLpO2Wie2VmOq4sCDsoIQsIOq0gOumrOyekOqwgCBmYXN0ZXItd2hpc3Blci1sYXJnZS12MyDrqqjrjbgg7YyM7J287J2EIOyVhOuemCDsnITsuZjsl5Ag64Sj7Ja0IOyjvOyEuOyalC4KbW9kZWxzXGZhc3Rlci13aGlzcGVyLWxhcmdlLXYzCgrtlYTsiJgg7YyM7J28OgotIG1vZGVsc1xmYXN0ZXItd2hpc3Blci1sYXJnZS12M1xtb2RlbC5iaW4KLSBtb2RlbHNcZmFzdGVyLXdoaXNwZXItbGFyZ2UtdjNcdG9rZW5pemVyLmpzb24KLSBtb2RlbHNcZmFzdGVyLXdoaXNwZXItbGFyZ2UtdjNcY29uZmlnLmpzb24KCk9sbGFtYSDsi6Ttlokg7YyM7J286rO8IO2ajOydmCDsmpTslb0g66qo6424IOuNsOydtO2EsOuKlCDsnbQgemlw7JeQIO2PrO2VqO2VmOyngCDslYrsirXri4jri6QuIOyVsSDshKTsoJXsnZgg66qo6424IO2DreyXkOyEnCDsmpTslb0g7ZSE66Gc6re4656o6rO8IO2ajOydmCDsmpTslb0g66qo64247J2EIOuwm+ydhCDsiJgg7J6I7Iq164uI64ukLgoK7ZqM7IKsIOuztOyViCDrmJDripQg7J247YSw64S3IOywqOuLqOycvOuhnCDrqqjrjbgg67Cb6riw6rCAIOyLpO2MqO2VmOuptCDsgqzrgrQg64u064u57J6Q7JeQ6rKMIOuqqOuNuCDtjIzsnbwg7KSA67mE66W8IOyalOyyre2VtCDso7zshLjsmpQuCuyXsOudveyymDogMjAyNy0wMy0zMeq5jOyngCBlY29tYXJpbmVAa29yZWEua3IsIDIwMjctMDQtMDHrtoDthLAgZWNvbWFyaW5AbmF2ZXIuY29tCg=="
     $modelsReadme = $modelsReadme.Replace('$includedLines', $includedLines).Replace('$excludedLines', $excludedLines)
-    $modelsReadme += ConvertFrom-Utf8Base64 "DQrtmozsgqwg67O07JWIIOuYkOuKlCDsnbjthLDrhLcg7LCo64uo7Jy866GcIOuqqOuNuCDrsJvquLDqsIAg7Iuk7Yyo7ZWY66m0IOyCrOuCtCDri7Tri7nsnpDsl5Dqsowg66qo6424IO2MjOydvCDspIDruYTrpbwg7JqU7LKt7ZW0IOyjvOyEuOyalC4NCuyXsOudveyymDogMjAyNy0wMy0zMeq5jOyngCBlY29tYXJpbmVAa29yZWEua3IsIDIwMjctMDQtMDHrtoDthLAgZWNvbWFyaW5AbmF2ZXIuY29tDQo="
     [System.IO.File]::WriteAllText(
         (Join-Path $modelsDir "README.txt"),
         $modelsReadme,
         [System.Text.UTF8Encoding]::new($false)
     )
 
-    $topLevelReadme = ConvertFrom-Utf8Base64 "TE1PIO2ajOydmCDsnbjsgqzsnbTtirggLSDsiqzrprwg7KCE64us67O4CgoxLiDsi6TtlokKICAgLSDsnbQg7Y+0642UIOyViOydmCBsbW9fYXVkaW8uZXhl66W8IOyLpO2Wie2VqeuLiOuLpC4KICAgLSBleGXrp4wg65Sw66GcIOyYruq4sOyngCDrp5Dqs6AgbG1vX2F1ZGlvIO2PtOuNlCDsoITssrTrpbwg7ZWo6ruYIOyYruq4sOyEuOyalC4KCjIuIOydtOuvuCDtj6ztlajrkJwg6rKDCiAgIC0g7JWxIOyLpO2WiSDtjIzsnbwsIOu2hOyEnSDrsLHsl5Trk5wsIOyLpO2WiSDsnZjsobQg7YyM7J28CiAgIC0g7LC47ISd7J6QIOq1rOu2hCDrqqjrjbg6IG1vZGVsc1xzcGVha2VyLWRpYXJpemF0aW9uLWNvbW11bml0eS0xCgozLiDstpTqsIDroZwg7ZWE7JqU7ZWcIOqygwogICAtIOydjOyEsSDsnbjsi50g66qo6424OiBtb2RlbHNcZmFzdGVyLXdoaXNwZXItbGFyZ2UtdjMKICAgLSDsnbQg7YGwIOuqqOuNuOydgCB6aXAg7Jqp65+J7J2EIOykhOydtOq4sCDsnITtlbQg7J2867aA65+sIOygnOyZuO2WiOyKteuLiOuLpC4KICAgLSDsi6TsoJwg64yA7ZmU66GdIOyekeyEsSDsoITsl5Ag6rSA66as7J6Q6rCAIOykgOu5hO2VnCDrqqjrjbgg66y27J2M7J2EIO2VtOuLuSDtj7TrjZTsl5Ag64Sj7Ja0IOyjvOyEuOyalC4KCjQuIO2ajOydmCDsmpTslb0g66qo6424CiAgIC0g7JWx7J2YIOyLnOyKpO2FnCDshKTsoJUgPiDrqqjrjbgg7ZmU66m07JeQ7IScIE9sbGFtYSDshKTsuZgg66eB7YGs66W8IOyXtOqzoCDshKTsuZjtlanri4jri6QuCiAgIC0g7ISk7LmYIO2bhCDqtozsnqUg7JqU7JW9IOuqqOuNuOydhCDslbHsl5DshJwg67Cb7Iq164uI64ukLgoKNS4g66y47KCc6rCAIOyeiOycvOuptAogICAtIOuovOyggCDslbEg7ISk7KCV7JeQ7IScIOuqqOuNuCDsg4Htg5zrpbwg7ZmV7J247ZWp64uI64ukLgogICAtIOydjOyEsSDsnbjsi50g66qo64247J2EIOuzteyCrO2VnCDrkqTsl5DripQg7IOB7YOcIOyDiOuhnOqzoOy5qOydhCDriITrpbTqsbDrgpgg7JWx7J2EIOuLpOyLnCDsi6Ttlontlanri4jri6QuCg=="
-    $topLevelReadme += ConvertFrom-Utf8Base64 "DQrtmozsgqwg67O07JWIIOuYkOuKlCDsnbjthLDrhLcg7LCo64uo7Jy866GcIOyEpOy5mCDtjpjsnbTsp4Drgpgg66qo6424IOuwm+q4sOqwgCDsi6TtjKjtlZjrqbQg7IKs64K0IOuLtOuLueyekOyXkOqyjCDrqqjrjbgg7KSA67mE66W8IOyalOyyre2VtCDso7zshLjsmpQuDQrsl7Drnb3sspg6IDIwMjctMDMtMzHquYzsp4AgZWNvbWFyaW5lQGtvcmVhLmtyLCAyMDI3LTA0LTAx67aA7YSwIGVjb21hcmluQG5hdmVyLmNvbQ0K"
+    $topLevelReadme = ConvertFrom-Utf8Base64 "TE1PIO2ajOydmCDsnbjsgqzsnbTtirggLSDsiqzrprwg7KCE64us67O4CgoxLiDsi6TtlokKICAgLSDsnbQg7Y+0642UIOyViOydmCBsbW9fYXVkaW8uZXhl66W8IOyLpO2Wie2VqeuLiOuLpC4KICAgLSBleGXrp4wg65Sw66GcIOyYruq4sOyngCDrp5Dqs6AgbG1vX2F1ZGlvIO2PtOuNlCDsoITssrTrpbwg7ZWo6ruYIOyYruqyqCDso7zshLjsmpQuCgoyLiDsnbQgemlw7JeQIO2PrO2VqOuQnCDqsoMKICAgLSDslbEg7Iuk7ZaJIO2MjOydvCwg67aE7ISdIOq4sOuKpSwg7Iuk7ZaJIOydmOyhtCDtjIzsnbwKICAgLSDssLjshJ3snpAg6rWs67aEIOuqqOuNuDogbW9kZWxzXHNwZWFrZXItZGlhcml6YXRpb24tY29tbXVuaXR5LTEKCjMuIOy2lOqwgOuhnCDtlYTsmpTtlZwg6rKDCiAgIC0g7J2M7ISxIOyduOyLnSDrqqjrjbg6IG1vZGVsc1xmYXN0ZXItd2hpc3Blci1sYXJnZS12MwogICAtIOydtCDtgbAg66qo64247J2AIHppcCDsmqnrn4nsnYQg7KSE7J206riwIOychO2VtCDsoJzsmbjtlojsirXri4jri6QuCiAgIC0g7Iuk7KCcIOuMgO2ZlOuhnSDsnpHshLHsnYQg7Iuk7ZaJ7ZWY6riwIOyghCwg6rSA66as7J6Q6rCAIOykgOu5hO2VnCDrqqjrjbgg7YyM7J287J2EIO2VtOuLuSDtj7TrjZTsl5Ag64Sj7Ja0IOyjvOyEuOyalC4KCjQuIO2ajOydmCDsmpTslb0KICAgLSBPbGxhbWEg7Iuk7ZaJIO2MjOydvOqzvCDsmpTslb0g66qo6424IOuNsOydtO2EsOuKlCDsnbQgemlw7JeQIO2PrO2VqO2VmOyngCDslYrsirXri4jri6QuCiAgIC0g7JWxIOyEpOygleydmCDrqqjrjbgg7YOt7JeQ7IScIOyalOyVvSDtlITroZzqt7jrnqgg67Cb6riw66W8IOuIhOuluCDrkqQg7ZqM7J2YIOyalOyVvSDrqqjrjbjsnYQg67Cb7J2EIOyImCDsnojsirXri4jri6QuCgo1LiDrrLjsoJzqsIAg7J6I7Jy866m0CiAgIC0g66i87KCAIOyVsSDshKTsoJXsl5DshJwg66qo6424IOyDge2DnOulvCDtmZXsnbjtlanri4jri6QuCiAgIC0g7J2M7ISxIOyduOyLnSDrqqjrjbjsnYQg67O17IKs7ZWcIOuSpOyXkOuKlCDsg4Htg5wg7IOI66Gc6rOg7Lmo7J2EIOuIhOultOqxsOuCmCDslbHsnYQg64uk7IucIOyLpO2Wie2VqeuLiOuLpC4KCu2ajOyCrCDrs7TslYgg65iQ64qUIOyduO2EsOuEtyDssKjri6jsnLzroZwg67Cb6riw6rCAIOyLpO2MqO2VmOuptCDsgqzrgrQg64u064u57J6Q7JeQ6rKMIOuqqOuNuCDspIDruYTrpbwg7JqU7LKt7ZW0IOyjvOyEuOyalC4K7Jew65297LKYOiAyMDI3LTAzLTMx6rmM7KeAIGVjb21hcmluZUBrb3JlYS5rciwgMjAyNy0wNC0wMeu2gO2EsCBlY29tYXJpbkBuYXZlci5jb20K"
     [System.IO.File]::WriteAllText(
         (Join-Path $PortableRoot "START_HERE.txt"),
         $topLevelReadme,
@@ -265,11 +275,11 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
 
     $manifest | Add-Member -NotePropertyName handoff -NotePropertyValue ([ordered]@{
         packageFormat = "lmo-audio-slim-handoff-v1"
-        includedRuntime = "runtime\ollama"
+        runtimeStrategy = "ollama-runtime-download-on-first-use"
         excludedSummaryModelStore = "models\ollama"
         excludedModels = @($ExcludedModels | ForEach-Object { $_.portableDir })
         includedModels = @($IncludedModels | ForEach-Object { $_.portableDir })
-        note = "This handoff zip includes the embedded Ollama runtime and speaker diarization model, but excludes Whisper STT files and Ollama summary model data."
+        note = "This handoff zip includes the speaker diarization model, but excludes the Ollama runtime, Whisper STT files, and Ollama summary model data. The app can download the standalone Ollama runtime on first use."
     }) -Force
 
     if ($manifest.files -and ($manifest.files.PSObject.Properties.Name -contains "startHere")) {
@@ -287,14 +297,13 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
 }
 
 function Test-HandoffPackage([string]$PortableRoot, [string]$ZipPath, [object[]]$IncludedModels, [object[]]$ExcludedModels) {
-    $embeddedOllama = Join-Path $PortableRoot "runtime\ollama\ollama.exe"
-    if (-not (Test-Path -LiteralPath $embeddedOllama)) {
-        throw "Handoff package must include embedded Ollama runtime: $embeddedOllama"
-    }
-
     $summaryModelStore = Join-Path (Join-Path $PortableRoot "models") "ollama"
     if (Test-Path -LiteralPath $summaryModelStore) {
         throw "Handoff package must not include Ollama summary model data: $summaryModelStore"
+    }
+    $ollamaRuntimeExe = Join-Path $PortableRoot "runtime\ollama\ollama.exe"
+    if (Test-Path -LiteralPath $ollamaRuntimeExe) {
+        throw "Handoff package must not include Ollama runtime executable: $ollamaRuntimeExe"
     }
 
     foreach ($model in @($IncludedModels)) {
@@ -315,11 +324,10 @@ function Test-HandoffPackage([string]$PortableRoot, [string]$ZipPath, [object[]]
         foreach ($entry in $zip.Entries) {
             [void]$entries.Add($entry.FullName.Replace("/", "\"))
         }
-        $ollamaEntry = "lmo_audio\runtime\ollama\ollama.exe"
-        if (-not $entries.Contains($ollamaEntry)) {
-            throw "Handoff zip is missing embedded Ollama runtime: $ollamaEntry"
-        }
         foreach ($entryPath in $entries) {
+            if ($entryPath.StartsWith("lmo_audio\runtime\ollama\", [System.StringComparison]::OrdinalIgnoreCase) -and -not $entryPath.EndsWith("\README.txt", [System.StringComparison]::OrdinalIgnoreCase)) {
+                throw "Handoff zip must not include Ollama runtime files: $entryPath"
+            }
             if ($entryPath.StartsWith("lmo_audio\models\ollama\", [System.StringComparison]::OrdinalIgnoreCase)) {
                 throw "Handoff zip must not include Ollama summary model data: $entryPath"
             }
@@ -383,7 +391,7 @@ if (Test-Path -LiteralPath $manifestPath) {
 }
 
 if (-not $PackageName) {
-    $PackageName = "lmo_audio_with_ollama_no_whisper_$commitLabel"
+    $PackageName = "lmo_audio_no_ollama_no_whisper_$commitLabel"
 }
 $PackageName = $PackageName.Trim()
 if ([string]::IsNullOrWhiteSpace($PackageName) -or $PackageName -in @(".", "..")) {

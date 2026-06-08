@@ -1,4 +1,5 @@
 let cachedApiBase: Promise<string> | null = null;
+let cachedDesktopActionToken: Promise<string> | null = null;
 
 declare global {
     interface Window {
@@ -64,6 +65,25 @@ export const isTauriRuntime = (): boolean => {
     if (typeof window === 'undefined') return false;
     if (window.__TAURI__?.core?.invoke) return true;
     return window.location.hostname === 'tauri.localhost' || window.location.protocol === 'tauri:';
+};
+
+const getDesktopActionToken = async (): Promise<string> => {
+    const invoke = window.__TAURI__?.core?.invoke;
+    if (!invoke) return '';
+    try {
+        return await invoke<string>('get_desktop_action_token');
+    } catch {
+        return '';
+    }
+};
+
+export const getDesktopActionHeaders = async (): Promise<Record<string, string>> => {
+    if (!isTauriRuntime()) return {};
+    if (!cachedDesktopActionToken) {
+        cachedDesktopActionToken = getDesktopActionToken();
+    }
+    const token = await cachedDesktopActionToken;
+    return token ? { 'X-LMO-Desktop-Action-Token': token } : {};
 };
 
 const getTauriApiBase = async (attempts = 5): Promise<string | null> => {

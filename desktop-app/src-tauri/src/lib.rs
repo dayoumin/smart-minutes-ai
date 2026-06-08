@@ -31,9 +31,17 @@ extern "system" {
     fn MessageBoxW(hwnd: *mut c_void, text: *const u16, caption: *const u16, u_type: u32) -> i32;
 }
 
+#[cfg(target_os = "windows")]
+#[link(name = "advapi32")]
+extern "system" {
+    #[link_name = "SystemFunction036"]
+    fn rtl_gen_random(random_buffer: *mut c_void, random_buffer_length: u32) -> u8;
+}
+
 #[derive(Clone)]
 struct BackendConfig {
     base_url: String,
+    desktop_action_token: String,
 }
 
 struct BackendProcess {
@@ -50,6 +58,37 @@ fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
     config.base_url.clone()
 }
 
+#[tauri::command]
+fn get_desktop_action_token(config: State<'_, BackendConfig>) -> String {
+    config.desktop_action_token.clone()
+}
+
+fn bytes_to_hex(bytes: &[u8]) -> String {
+    let mut output = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        output.push_str(&format!("{byte:02x}"));
+    }
+    output
+}
+
+fn make_desktop_action_token() -> String {
+    let mut bytes = [0u8; 32];
+
+    #[cfg(target_os = "windows")]
+    {
+        let filled = unsafe { rtl_gen_random(bytes.as_mut_ptr() as *mut c_void, bytes.len() as u32) } != 0;
+        if filled {
+            return bytes_to_hex(&bytes);
+        }
+    }
+
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("{:032x}{:08x}", now, std::process::id())
+}
+
 fn write_backend_error_log(app: &AppHandle, filename: &str, message: &str) {
     if let Ok(resource_dir) = app.path().resource_dir() {
         let log_dir = resource_dir.join("logs");
@@ -59,7 +98,11 @@ fn write_backend_error_log(app: &AppHandle, filename: &str, message: &str) {
 }
 
 #[tauri::command]
-fn restart_backend(app: AppHandle, backend: State<'_, BackendProcess>) -> Result<String, String> {
+fn restart_backend(
+    app: AppHandle,
+    backend: State<'_, BackendProcess>,
+    config: State<'_, BackendConfig>,
+) -> Result<String, String> {
     let mut slot = backend
         .child
         .lock()
@@ -70,7 +113,7 @@ fn restart_backend(app: AppHandle, backend: State<'_, BackendProcess>) -> Result
         let _ = child.wait();
     }
 
-    let child = match spawn_backend(&app, backend.port) {
+    let child = match spawn_backend(&app, backend.port, &config.desktop_action_token) {
         Ok(child) => child,
         Err(error) => {
             write_backend_error_log(&app, "restart-error.log", &error);
@@ -210,7 +253,7 @@ fn find_available_port() -> Result<u16, String> {
     Ok(port)
 }
 
-fn spawn_backend(app: &AppHandle, port: u16) -> Result<Child, String> {
+fn spawn_backend(app: &AppHandle, port: u16, desktop_action_token: &str) -> Result<Child, String> {
     let resource_dir = app
         .path()
         .resource_dir()
@@ -239,6 +282,7 @@ fn spawn_backend(app: &AppHandle, port: u16) -> Result<Child, String> {
         .env("MEETING_AI_BACKEND_DIR", backend_dir)
         .env("ANALYSIS_MODE", "real")
         .env("PORT", port.to_string())
+        .env("LMO_DESKTOP_ACTION_TOKEN", desktop_action_token)
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout_log))
         .stderr(Stdio::from(stderr_log));
@@ -256,11 +300,13 @@ fn spawn_backend(app: &AppHandle, port: u16) -> Result<Child, String> {
 pub fn run() {
     let backend_port = find_available_port().unwrap_or(PREFERRED_BACKEND_PORT);
     let backend_base_url = format!("http://127.0.0.1:{backend_port}");
+    let backend_config = BackendConfig {
+        base_url: backend_base_url,
+        desktop_action_token: make_desktop_action_token(),
+    };
 
     tauri::Builder::default()
-        .manage(BackendConfig {
-            base_url: backend_base_url,
-        })
+        .manage(backend_config.clone())
         .manage(BackendProcess {
             child: Mutex::new(None),
             port: backend_port,
@@ -271,6 +317,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_backend_base_url,
+            get_desktop_action_token,
             restart_backend,
             set_close_guard_active,
             open_saved_file_location,
@@ -279,7 +326,7 @@ pub fn run() {
         ])
         .setup(move |app| {
             let app_handle = app.handle().clone();
-            match spawn_backend(&app_handle, backend_port) {
+            match spawn_backend(&app_handle, backend_port, &backend_config.desktop_action_token) {
                 Ok(child) => {
                     let backend = app.state::<BackendProcess>();
                     if let Ok(mut slot) = backend.child.lock() {

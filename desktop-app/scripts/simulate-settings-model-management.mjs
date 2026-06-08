@@ -349,6 +349,19 @@ const installRoutes = async (page, state) => {
         ready: state.sttInstalled,
         summary_ready: state.installedModels.has(configuredModel),
         errors: state.modelStatusErrors,
+        ollama_runtime_status: {
+          key: 'ollama_runtime',
+          available: state.ollamaAvailable,
+          active: false,
+          status: state.ollamaAvailable ? 'completed' : 'idle',
+          message: state.ollamaAvailable ? '요약 프로그램이 준비되어 있습니다.' : '',
+          target_path: 'runtime\\ollama',
+          executable_path: state.ollamaAvailable ? 'runtime\\ollama\\ollama.exe' : '',
+          downloaded_bytes: 0,
+          expected_bytes: 1600000000,
+          progress_percent: null,
+          eta_seconds: null,
+        },
         models: [
           {
             key: 'stt_faster_whisper',
@@ -386,6 +399,26 @@ const installRoutes = async (page, state) => {
           basis: 'memory',
           message: '이 PC 메모리는 약 16GB입니다. 4B를 권장합니다.',
         },
+      }),
+    });
+  });
+
+  await page.route('**/api/models/ollama/runtime-status', route => {
+    route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        key: 'ollama_runtime',
+        available: state.ollamaAvailable,
+        active: false,
+        status: state.ollamaAvailable ? 'completed' : 'idle',
+        message: state.ollamaAvailable ? '요약 프로그램이 준비되어 있습니다.' : '',
+        target_path: 'runtime\\ollama',
+        executable_path: state.ollamaAvailable ? 'runtime\\ollama\\ollama.exe' : '',
+        downloaded_bytes: 0,
+        expected_bytes: 1600000000,
+        progress_percent: null,
+        eta_seconds: null,
       }),
     });
   });
@@ -602,7 +635,7 @@ const run = async () => {
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 설치 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('회의 요약 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     const initialModelsPanelMetrics = await getLayoutMetrics(modelsPanel);
     const sttStatusChecksBeforeDownload = state.sttDownloadStatusRequests.length;
@@ -725,19 +758,15 @@ const run = async () => {
 
     await modelsPanel.getByLabel('고급: 직접 입력').fill('missing-ollama:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 missing-ollama:1b 모델 검색' }).click();
+    const openedUrlsBeforeMissingOllamaDownload = await page.evaluate(() => window.__openedUrls.slice());
     await modelsPanel.getByRole('button', { name: '직접 입력 missing-ollama:1b 모델 받기' }).click();
-    await page.waitForFunction(
-      () => window.__openedUrls.at(-1) === 'https://ollama.com/download/windows',
-      null,
-      { timeout: 10000 },
-    );
+    const missingOllamaNotice = modelsPanel.getByText('요약 프로그램을 먼저 받은 뒤 회의 요약 모델을 받을 수 있습니다.');
+    await missingOllamaNotice.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(
       (await page.evaluate(() => window.__openedUrls)).at(-1),
-      'https://ollama.com/download/windows',
-      'missing Ollama should open the Windows install page after download is requested',
+      openedUrlsBeforeMissingOllamaDownload.at(-1),
+      'missing Ollama should not open the Windows install page automatically',
     );
-    const missingOllamaNotice = modelsPanel.getByText('요약 프로그램(Ollama) 설치 화면이 열렸습니다. 설치가 끝나면 열린 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 준비 상태 확인을 눌러 주세요.');
-    await missingOllamaNotice.waitFor({ state: 'visible', timeout: 10000 });
     await missingOllamaNotice.waitFor({ state: 'hidden', timeout: 10000 });
     assert.equal(state.pullRequests.includes('missing-ollama:1b'), true, 'missing Ollama pull should still call backend with the typed model');
 

@@ -1270,6 +1270,69 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertTrue(models["stt_faster_whisper"]["downloadable"])
         self.assertFalse(models["diarization"]["downloadable"])
 
+    def test_ollama_connection_status_reports_missing_runtime(self) -> None:
+        with (
+            patch.object(main, "ollama_executable_available", return_value=False),
+            patch.object(main, "ensure_ollama_server_running") as ensure_server,
+        ):
+            status = main._ollama_connection_status()
+
+        self.assertEqual(status["status"], "missing")
+        self.assertEqual(status["source"], "none")
+        self.assertFalse(status["executable_available"])
+        self.assertFalse(status["server_ready"])
+        ensure_server.assert_not_called()
+
+    def test_ollama_connection_status_reports_system_install_not_running(self) -> None:
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "find_embedded_ollama_executable", return_value=""),
+            patch.object(main, "find_ollama_executable", return_value=r"C:\Users\User\AppData\Local\Programs\Ollama\ollama.exe"),
+            patch.object(main, "using_embedded_ollama", return_value=False),
+            patch.object(main, "ensure_ollama_server_running", return_value=False),
+        ):
+            status = main._ollama_connection_status()
+
+        self.assertEqual(status["status"], "system_stopped")
+        self.assertEqual(status["source"], "system")
+        self.assertTrue(status["executable_available"])
+        self.assertFalse(status["server_ready"])
+        self.assertFalse(status["can_auto_start"])
+
+    def test_ollama_connection_status_reports_managed_runtime_ready(self) -> None:
+        executable = r"D:\Apps\lmo_audio\runtime\ollama\ollama.exe"
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "find_embedded_ollama_executable", return_value=executable),
+            patch.object(main, "find_ollama_executable", return_value=executable),
+            patch.object(main, "using_embedded_ollama", return_value=True),
+            patch.object(main, "ensure_ollama_server_running", return_value=True),
+        ):
+            status = main._ollama_connection_status()
+
+        self.assertEqual(status["status"], "managed_ready")
+        self.assertEqual(status["source"], "managed")
+        self.assertTrue(status["server_ready"])
+        self.assertTrue(status["can_auto_start"])
+        self.assertTrue(status["managed_runtime_available"])
+
+    def test_ollama_connection_status_reports_managed_runtime_start_failure(self) -> None:
+        executable = r"D:\Apps\lmo_audio\runtime\ollama\ollama.exe"
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "find_embedded_ollama_executable", return_value=executable),
+            patch.object(main, "find_ollama_executable", return_value=executable),
+            patch.object(main, "using_embedded_ollama", return_value=True),
+            patch.object(main, "ensure_ollama_server_running", return_value=False),
+        ):
+            status = main._ollama_connection_status()
+
+        self.assertEqual(status["status"], "managed_stopped")
+        self.assertEqual(status["source"], "managed")
+        self.assertFalse(status["server_ready"])
+        self.assertFalse(status["can_auto_start"])
+        self.assertTrue(status["managed_runtime_available"])
+
     def test_start_model_download_accepts_stt_only(self) -> None:
         with patch.object(main, "_start_model_download", return_value={
             "key": "stt_faster_whisper",

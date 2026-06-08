@@ -52,7 +52,7 @@
 - 현재 앱 설정 화면은 필수 모델 준비 상태와 `models` 폴더 기준 안내를 보여준다. 절대 경로 표시/복사 버튼은 후속 UX 개선으로 다루되, 배포 문서에는 실제 배치 위치를 반드시 명시한다.
 - 필수 모델이 없으면 분석 버튼 클릭 후 즉시 원인과 조치 방법을 보여준다.
 - 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_ollama_no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
-- Ollama runtime은 기본 배포 zip에 포함하지 않는다. 앱 설정의 모델 탭에서 고정된 공식 standalone Windows CLI release zip을 받아 `runtime\ollama\ollama.exe`로 풀고, portable 폴더에 쓸 수 없으면 `%LOCALAPPDATA%\LMO_audio\runtime\ollama`를 사용한다. 앱은 앱 관리 runtime이 있으면 시스템 설치본보다 우선 사용한다. 앱 관리 runtime의 요약 모델 저장소는 같은 앱 관리 경계의 `models\ollama`를 사용한다. release 운영 시 `LMO_OLLAMA_RUNTIME_VERSION`과 `LMO_OLLAMA_RUNTIME_SHA256`을 기록해 다운로드 URL과 해시가 의도한 릴리스인지 확인한다.
+- Ollama runtime은 기본 배포 zip에 포함하지 않는다. 앱 설정의 모델 탭에서 고정된 공식 standalone Windows CLI release zip을 받아 `runtime\ollama\ollama.exe`로 풀고, portable 폴더에 쓸 수 없으면 `%LOCALAPPDATA%\LMO_audio\runtime\ollama`를 사용한다. 앱은 앱 관리 runtime이 있으면 시스템 설치본보다 우선 사용하고, 앱 관리 runtime이 없으면 `OLLAMA_EXE`, PATH의 `ollama`, 일반 설치 경로의 시스템 Ollama 순서로 fallback한다. 앱 관리 runtime의 요약 모델 저장소는 같은 앱 관리 경계의 `models\ollama`를 사용한다. release 운영 시 `LMO_OLLAMA_RUNTIME_VERSION`과 `LMO_OLLAMA_RUNTIME_SHA256`을 기록해 다운로드 URL과 해시가 의도한 릴리스인지 확인한다.
 - 오프라인 또는 사전 내장 배포가 필요할 때만 공식 standalone Windows CLI 압축을 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다. 이때 전체 `releases\lmo_audio` 폴더 크기와 회사 전달용 handoff zip 크기를 구분해서 기록한다.
 - Ollama 요약 모델은 임의의 단일 파일 링크 다운로드가 아니라 앱 내부에서 `ollama pull <model>` 흐름으로 받는다. 그래야 manifest/blob 저장 구조와 설치 여부 확인이 Ollama 기준과 맞는다.
 
@@ -77,7 +77,7 @@
 - 설정 `모델` 탭의 음성 인식 모델은 없는 상태의 `받기`, 받는 중 진행률/남은 시간/중지, 완료 후 준비 체크 표시를 함께 확인한다. 완료 응답만으로 준비됨 처리하지 말고 `/api/models/status`에서 실제 모델 파일이 확인된 뒤 체크 표시가 떠야 한다.
 - Ollama runtime 받기는 받는 중 진행률/남은 시간/중지, 완료 후 준비 상태 확인, portable 폴더 쓰기 불가 시 `%LOCALAPPDATA%\LMO_audio\runtime\ollama` fallback을 함께 확인한다.
 - Ollama 모델 받기/상태 확인/삭제 기능은 사용자 입력 모델명 검증, 받는 중 진행률/남은 시간/중지, 완료 후 준비 체크 표시, 사용 중 모델 삭제 차단, 받는 중 모델 삭제 차단을 함께 확인한다. Ollama runtime이 아직 없으면 모델 받기 요청은 먼저 요약 프로그램을 받으라는 안내로 끝나고, 진행 중 메시지가 남지 않아야 한다. 완료 응답만으로 준비됨 처리하지 말고 `/api/models/status`에서 Ollama 설치 목록이 확인된 뒤 체크 표시가 떠야 한다.
-- 앱 관리 Ollama가 있는 배포본이나 첫 실행 후 다운로드된 상태에서는 별도 Ollama 설치 없이 모델 받기가 시작되는지, 앱 관리 `models\ollama` 아래에 모델 데이터가 생기는지 확인한다. 외부 Ollama 설치본이 이미 있어도 앱은 앱 관리 runtime과 내부 포트를 우선 사용해야 한다.
+- 앱 관리 Ollama가 있는 배포본이나 첫 실행 후 다운로드된 상태에서는 별도 Ollama 설치 없이 모델 받기가 시작되는지, 앱 관리 `models\ollama` 아래에 모델 데이터가 생기는지 확인한다. 외부 Ollama 설치본이 이미 있어도 앱은 앱 관리 runtime과 내부 포트를 우선 사용해야 한다. 외부 Ollama 설치본은 있으나 실행 중이 아니면 사용자가 먼저 기존 Ollama를 실행한 뒤 다시 확인하도록 안내한다. 계속 실행되지 않으면 회사 보안 정책이나 설치 상태 문제로 보고 관리자 확인을 안내한다. 회사 보안 정책이 앱 관리 runtime 실행을 막으면 다운로드만으로 해결되지 않으므로 관리자에게 `runtime\ollama\ollama.exe` 또는 `%LOCALAPPDATA%\LMO_audio\runtime\ollama\ollama.exe` 실행 허용을 요청하도록 안내한다.
 - 모델 탭은 사용자가 직접 누른 `준비 상태 확인` 때만 확인 중 상태를 보여준다. 탭을 열어 둔 것만으로 반복 상태 점검, `최근 확인` 시간, 긴 백엔드 상태 문구, 완료 배너가 계속 표시되어 레이아웃을 흔들면 안 된다.
 - 결과 화면에서 요약 모델이 없을 때는 `모델 필요` 수준의 사용자 문구와 `모델` 탭 이동이 동작해야 한다.
 - 결과 화면에서 원본 음성이 없을 때 참석자 구분 상태를 구분한다. 기존 참석자 표식이 1명뿐이면 `표식 1명`, 표식 자체가 없으면 `재실행 불가` 안내가 나와야 한다.
@@ -250,7 +250,7 @@ corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases
 운영 기준:
 
 - 기본 STT 모델은 외부망 PC에서 설정 화면의 `받기`로 앱이 다운로드를 시작할 수 있다. 내부망/실패 상황에서는 관리자가 준비해 `models\faster-whisper-large-v3`에 배치한다. 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않고, 회사 전달용 슬림 zip에 포함하거나 관리자가 `models\speaker-diarization-community-1`에 배치한다.
-- Ollama 정리 모델은 외부망 PC에서 설정 화면으로 받거나 선택할 수 있다. 기본 배포본은 Ollama runtime을 함께 묶지 않고 설정 화면에서 고정된 standalone Windows CLI release zip을 내려받아 앱 관리 runtime으로 설치한다. 오프라인 배포나 사전 내장 배포가 필요할 때만 공식 zip을 미리 풀어 앱 내부 `runtime\ollama\ollama.exe`와 `models\ollama`를 사용한다. 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
+- Ollama 정리 모델은 외부망 PC에서 설정 화면으로 받거나 선택할 수 있다. 기본 배포본은 Ollama runtime을 함께 묶지 않고 설정 화면에서 고정된 standalone Windows CLI release zip을 내려받아 앱 관리 runtime으로 설치한다. 앱 관리 runtime이 없고 대상 PC에 Ollama가 이미 설치되어 실행 중이면 시스템 설치본을 사용해 상태 확인과 모델 받기를 시도한다. 시스템 설치본이 실행되지 않으면 사용자가 먼저 Ollama를 실행한 뒤 다시 확인하도록 안내한다. 오프라인 배포나 사전 내장 배포가 필요할 때만 공식 zip을 미리 풀어 앱 내부 `runtime\ollama\ollama.exe`와 `models\ollama`를 사용한다. 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
 - 기본 STT 모델을 앱에서 받을 수 없는 PC는 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.
 - 일반 사용자에게 전달할 배포본은 manifest의 `dirty`가 `false`여야 한다. dirty 배포본은 로컬 테스트용이며, 필요한 경우에만 `-AllowDirty`로 명시한다.

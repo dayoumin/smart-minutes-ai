@@ -17,6 +17,9 @@ For offline or pre-bundled builds, extract the official Windows standalone CLI
 package here before packaging. The app prefers this managed runtime over a
 separately installed system Ollama.
 
+If this managed runtime is missing, the app falls back to OLLAMA_EXE, PATH
+ollama, and the common Windows system install locations.
+
 Release operators can override the pinned runtime with LMO_OLLAMA_RUNTIME_VERSION
 or LMO_OLLAMA_RUNTIME_DOWNLOAD_URL, and should set LMO_OLLAMA_RUNTIME_SHA256 when
 shipping a release that allows in-app runtime downloads.

@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Loader2, MoreVertical, RefreshCw, Trash2, X } from 'lucide-react';
+import { Check, Loader2, Mail, MoreVertical, RefreshCw, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
@@ -160,6 +160,7 @@ interface ModelsPayload {
     models: ModelStatus[];
     selected_stt_device?: 'cpu' | 'cuda';
     ollama_runtime_status?: OllamaRuntimeDownloadStatus;
+    ollama_connection?: OllamaConnectionStatus;
     system_profile?: {
         memory_gb?: number | null;
     };
@@ -225,6 +226,16 @@ interface OllamaRuntimeDownloadStatus {
     progress_percent?: number | null;
     eta_seconds?: number | null;
     cancel_requested?: boolean;
+}
+
+interface OllamaConnectionStatus {
+    status?: 'missing' | 'managed_ready' | 'managed_stopped' | 'system_ready' | 'system_stopped';
+    source?: 'none' | 'managed' | 'system';
+    executable_available?: boolean;
+    server_ready?: boolean;
+    can_auto_start?: boolean;
+    managed_runtime_available?: boolean;
+    executable_path?: string;
 }
 
 const isOllamaMissingPullStatus = (status?: { error?: string; model?: string }): boolean => (
@@ -319,6 +330,36 @@ const getOllamaRuntimeStatusMessage = (status?: OllamaRuntimeDownloadStatus | nu
     return status.message;
 };
 
+const getOllamaConnectionNotice = (connection?: OllamaConnectionStatus | null): {
+    tone: 'info' | 'warning';
+    heading: string;
+    message: string;
+} | null => {
+    if (!connection) return null;
+    if (connection.status === 'system_stopped') {
+        return {
+            tone: 'warning',
+            heading: '기존 요약 프로그램이 실행되지 않습니다',
+            message: 'Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인하세요. 계속 같으면 회사 보안 정책이나 설치 상태 확인이 필요합니다.',
+        };
+    }
+    if (connection.status === 'missing') {
+        return {
+            tone: 'info',
+            heading: '요약 프로그램이 필요합니다',
+            message: '앱에서 받으면 보통은 별도 설치 없이 회의 요약 모델을 준비할 수 있습니다.',
+        };
+    }
+    if (connection.status === 'managed_stopped') {
+        return {
+            tone: 'warning',
+            heading: '요약 프로그램을 시작하지 못했습니다',
+            message: '앱을 다시 열어도 같으면 회사 보안 정책으로 막혔을 수 있습니다. 관리자에게 요약 프로그램 실행 허용을 요청해 주세요.',
+        };
+    }
+    return null;
+};
+
 const getOllamaPullProgressPercent = (status?: OllamaPullStatus): number => {
     if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
@@ -376,6 +417,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [errorMessage, setErrorMessage] = useState('');
     const [ollamaInstallPrompted, setOllamaInstallPrompted] = useState(false);
     const [ollamaInstallNoticeMessage, setOllamaInstallNoticeMessage] = useState('');
+    const [supportContactVisible, setSupportContactVisible] = useState(false);
     const [modelStatusErrorMessage, setModelStatusErrorMessage] = useState('');
     const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
@@ -1388,21 +1430,39 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         ).map(normalizeSummaryModelName),
     );
     const ollamaRuntimeStatus = ollamaRuntimeDownload || models?.ollama_runtime_status || null;
+    const ollamaConnection = models?.ollama_connection || null;
     const ollamaRuntimeAvailable = Boolean(ollamaRuntimeStatus?.available);
     const ollamaRuntimeActive = Boolean(ollamaRuntimeStatus?.active);
     const ollamaRuntimeStopping = ollamaRuntimeStatus?.status === 'cancelling';
     const ollamaRuntimeProgressText = getOllamaRuntimeProgressText(ollamaRuntimeStatus);
     const ollamaRuntimeProgressPercent = getOllamaRuntimeProgressPercent(ollamaRuntimeStatus);
     const ollamaRuntimeStatusMessage = getOllamaRuntimeStatusMessage(ollamaRuntimeStatus);
-    const ollamaAvailable = Boolean(summaryModelStatus?.ollama_available || ollamaRuntimeAvailable || installedSummaryModels.size > 0);
+    const ollamaExecutableAvailable = Boolean(
+        ollamaConnection?.executable_available
+        ?? summaryModelStatus?.ollama_available
+        ?? ollamaRuntimeAvailable,
+    );
+    const ollamaUsingManagedRuntime = Boolean(ollamaConnection?.source === 'managed' || ollamaRuntimeAvailable);
+    const ollamaServerReady = Boolean(
+        ollamaConnection ? ollamaConnection.server_ready : installedSummaryModels.size > 0,
+    );
+    const ollamaCanAutoStart = Boolean(ollamaConnection?.can_auto_start || ollamaRuntimeAvailable);
+    const ollamaSystemStopped = ollamaConnection?.status === 'system_stopped';
+    const ollamaManagedStopped = ollamaConnection?.status === 'managed_stopped';
+    const ollamaMissing = ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable);
+    const ollamaAvailable = Boolean(ollamaExecutableAvailable || ollamaRuntimeAvailable || installedSummaryModels.size > 0);
+    const ollamaModelActionsReady = Boolean(ollamaServerReady || (!ollamaManagedStopped && ollamaCanAutoStart));
+    const showOllamaRuntimeAction = Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
+    const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection);
     const configuredSummaryModel = normalizeSummaryModelName(settings?.summary?.model);
     const selectedSummaryInstalled = Boolean(selectedSummaryModel && installedSummaryModels.has(selectedSummaryModel));
     const isSummaryOptionInstalled = (modelName?: string) => Boolean(modelName && installedSummaryModels.has(modelName));
-    const selectedSummaryCanPull = summaryModelOptions.some(option => normalizeSummaryModelName(option.model) === selectedSummaryModel && isOllamaSummaryModel(option.model));
+    const selectedSummaryCanPull = summaryModelOptions.some(option => normalizeSummaryModelName(option.model) === selectedSummaryModel && isOllamaSummaryModel(option.model) && ollamaModelActionsReady);
     const customSummaryModel = normalizeSummaryModelName(customSummaryModelInput);
     const customSummaryInstalled = Boolean(customSummaryModel && installedSummaryModels.has(customSummaryModel));
     const customSummaryPull = customSummaryModel ? ollamaPulls[customSummaryModel] : undefined;
     const customSummaryPullActive = Boolean(customSummaryPull?.active);
+    const customSummaryReadyToPull = Boolean(customSummaryModel && customSummaryCheckedModel === customSummaryModel && !customSummaryInstalled && !customSummaryPullActive);
     const customSummaryModelInOptions = Boolean(customSummaryModel && summaryModelOptions.some(option => normalizeSummaryModelName(option.model) === customSummaryModel));
     const gpuStatusText = gpuUsable
         ? '이 PC는 GPU 가속을 사용할 수 있습니다.'
@@ -1414,17 +1474,25 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
-    const modelPreparationGuide = ollamaAvailable
+    const modelPreparationGuide = ollamaModelActionsReady
         ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
+        : ollamaSystemStopped
+            ? '1. 음성 인식 모델을 준비합니다. 2. Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인합니다. 3. 회의 요약 모델을 받습니다.'
+        : ollamaManagedStopped
+            ? '1. 음성 인식 모델을 준비합니다. 2. 앱을 다시 열고 준비 상태를 확인합니다. 3. 계속 같으면 관리자에게 실행 허용을 요청합니다.'
         : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램을 받습니다. 3. 회의 요약 모델을 받습니다.';
     const summaryModelOllamaHelp = modelStatusCanAutoRetry
         ? (ollamaAvailable
             ? '마지막 확인 기준으로 요약 프로그램은 설치되어 있습니다. 준비 상태를 다시 확인해 주세요.'
             : '요약 프로그램 준비 상태를 다시 확인해 주세요.')
-        : ollamaAvailable
+        : ollamaModelActionsReady
             ? (selectedSummaryInstalled
                 ? '회의 요약을 사용할 수 있습니다.'
                 : '요약 프로그램은 설치되어 있습니다. 아래에서 회의 요약 모델을 받아 주세요.')
+            : ollamaSystemStopped
+                ? 'Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인해 주세요.'
+            : ollamaManagedStopped
+                ? '요약 프로그램을 시작하지 못했습니다. 앱을 다시 열어도 같으면 관리자 확인이 필요합니다.'
             : (ollamaRuntimeStatusMessage || '회의 요약을 사용하려면 요약 프로그램을 먼저 받아 주세요.');
     const ollamaInstallNotice = ollamaInstallPrompted
         ? (ollamaInstallNoticeMessage || OLLAMA_INSTALL_OPENED_NOTICE)
@@ -1454,15 +1522,54 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     <div>
                         <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">시스템 설정</h2>
                     </div>
-                    <button
-                        type="button"
-                        onClick={onClose}
-                        className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
-                        aria-label="설정 닫기"
-                        title="닫기"
-                    >
-                        <X size={18} />
-                    </button>
+                    <div className="relative flex items-center gap-2">
+                        <div className="relative">
+                            <button
+                                type="button"
+                                onClick={() => setSupportContactVisible(previous => !previous)}
+                                className="btn btn-outline h-8 px-3 text-xs"
+                                aria-label="문의 연락처 보기"
+                                aria-expanded={supportContactVisible}
+                                title="문의"
+                            >
+                                <Mail size={13} aria-hidden="true" />
+                                문의
+                            </button>
+                            {supportContactVisible && (
+                                <div
+                                    role="status"
+                                    className="absolute right-0 top-[calc(100%+0.5rem)] z-30 w-60 rounded-md border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] px-3 py-2 text-xs text-[var(--color-neutral-900)] shadow-sm"
+                                >
+                                    <div className="flex items-start justify-between gap-2">
+                                        <div className="min-w-0">
+                                            <p className="text-[var(--color-neutral-700)]">문의사항은 아래 이메일로 연락주세요.</p>
+                                            <div className="mt-2 flex items-center gap-2 font-semibold text-[var(--color-neutral-900)]">
+                                                <Mail size={15} className="shrink-0 text-[var(--color-neutral-700)]" aria-hidden="true" />
+                                                <span className="truncate">{getSupportContactEmail()}</span>
+                                            </div>
+                                        </div>
+                                        <button
+                                            type="button"
+                                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
+                                            aria-label="문의 연락처 닫기"
+                                            onClick={() => setSupportContactVisible(false)}
+                                        >
+                                            <X size={12} aria-hidden="true" />
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                            aria-label="설정 닫기"
+                            title="닫기"
+                        >
+                            <X size={18} />
+                        </button>
+                    </div>
                 </div>
 
                 <div className="tab-list px-5" role="tablist" aria-label="시스템 설정">
@@ -1806,7 +1913,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             {summaryModelOllamaHelp}
                                         </p>
                                     </div>
-                                    {!ollamaAvailable && (
+                                    {showOllamaRuntimeAction && (
                                         <div className="flex shrink-0 items-center gap-2">
                                             <Button
                                                 variant="outline"
@@ -1830,7 +1937,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     )
                                                     : '요약 프로그램 받기'}
                                             </Button>
-                                            {!ollamaRuntimeActive && (
+                                            {!ollamaRuntimeActive && ollamaMissing && (
                                                 <button
                                                     type="button"
                                                     className="btn btn-outline h-8 px-2 text-xs"
@@ -1858,6 +1965,25 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         </div>
                                     )}
                                 </div>
+                                {ollamaConnectionNotice && (
+                                    <StatusBanner
+                                        tone={ollamaConnectionNotice.tone}
+                                        heading={ollamaConnectionNotice.heading}
+                                        className="mt-3 py-2 text-xs shadow-none"
+                                        action={(ollamaSystemStopped || ollamaManagedStopped) && (
+                                            <Button
+                                                variant="outline"
+                                                className="h-8 shrink-0 px-3 text-xs"
+                                                onClick={() => void handleRefreshModelsStatus()}
+                                                disabled={isCheckingModels}
+                                            >
+                                                {isCheckingModels ? '확인 중' : '다시 확인'}
+                                            </Button>
+                                        )}
+                                    >
+                                        {ollamaConnectionNotice.message}
+                                    </StatusBanner>
+                                )}
                                 {ollamaInstallNotice && (
                                     <StatusBanner
                                         tone={ollamaInstallNoticeTone}
@@ -1916,7 +2042,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             const pullStopping = pullStatus?.status === 'cancelling';
                                             const pullProgressText = getOllamaPullProgressText(pullStatus);
                                             const pullProgressPercent = getOllamaPullProgressPercent(pullStatus);
-                                            const optionCanPull = isOllamaSummaryModel(optionModel);
+                                            const optionCanPull = isOllamaSummaryModel(optionModel) && ollamaModelActionsReady;
                                             const optionInstalled = isSummaryOptionInstalled(optionModel);
                                             const optionName = option.model || option.label || '모델';
                                             const optionSelected = Boolean(optionModel && optionModel === configuredSummaryModel);
@@ -2170,7 +2296,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <Button
                                             variant={customSummaryInstalled ? 'primary' : 'outline'}
                                             className="h-9 w-16 shrink-0 px-2"
-                                            disabled={!customSummaryModel || (customSummaryPull?.status === 'cancelling') || (customSummaryInstalled && isSaving)}
+                                            disabled={
+                                                !customSummaryModel
+                                                || (customSummaryPull?.status === 'cancelling')
+                                                || (customSummaryInstalled && isSaving)
+                                                || (customSummaryReadyToPull && !ollamaModelActionsReady)
+                                            }
                                             aria-label={`${customSummaryModel ? `직접 입력 ${customSummaryModel}` : '직접 입력 요약'} 모델 ${customSummaryPullActive ? '중지' : customSummaryInstalled ? '사용' : customSummaryCheckedModel === customSummaryModel ? '받기' : '검색'}`}
                                             onClick={() => {
                                                 if (!customSummaryModel) return;
@@ -2181,6 +2312,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     setSummaryModelInput(customSummaryModel);
                                                     void handleSaveSummaryModel(customSummaryModel);
                                                 } else if (customSummaryCheckedModel === customSummaryModel) {
+                                                    if (!ollamaModelActionsReady) {
+                                                        setCustomSummaryModelNotice('요약 프로그램을 먼저 준비해 주세요.');
+                                                        return;
+                                                    }
                                                     setCustomSummaryModelNotice('');
                                                     void handleDownloadOllamaModel(customSummaryModel, { inlineCustomNotice: true });
                                                 } else {

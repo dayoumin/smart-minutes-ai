@@ -65,6 +65,7 @@ from ollama_utils import (
     get_portable_ollama_runtime_dir,
     ollama_executable_available,
     ollama_subprocess_env,
+    using_embedded_ollama,
 )
 from pipeline.transcribe import get_stt_device_status
 from process_utils import hidden_subprocess_kwargs
@@ -763,6 +764,7 @@ async def models_status() -> dict:
         status["summary_model_recommendation"] = _summary_model_recommendation(config, memory_gb)
         status["stt_device_status"] = stt_device_status
         status["ollama_runtime_status"] = _ollama_runtime_snapshot()
+        status["ollama_connection"] = _ollama_connection_status()
         if selected_device == "cuda" and not stt_device_status.get("gpu_usable"):
             status["ready"] = False
             errors = list(status.get("errors") or [])
@@ -811,6 +813,43 @@ def _system_memory_gb() -> float | None:
     except Exception:
         return None
     return None
+
+
+def _ollama_connection_status(timeout_seconds: int = 3) -> dict:
+    executable_available = ollama_executable_available()
+    embedded_executable = find_embedded_ollama_executable()
+    executable_path = find_ollama_executable() if executable_available else ""
+    source = "none"
+    if executable_available:
+        source = "managed" if using_embedded_ollama() else "system"
+
+    server_ready = False
+    if executable_available:
+        try:
+            server_ready = bool(ensure_ollama_server_running(timeout_seconds=timeout_seconds))
+        except Exception:
+            server_ready = False
+
+    if not executable_available:
+        status = "missing"
+    elif source == "managed" and server_ready:
+        status = "managed_ready"
+    elif source == "managed":
+        status = "managed_stopped"
+    elif server_ready:
+        status = "system_ready"
+    else:
+        status = "system_stopped"
+
+    return {
+        "status": status,
+        "source": source,
+        "executable_available": executable_available,
+        "server_ready": server_ready,
+        "can_auto_start": source == "managed" and status != "managed_stopped",
+        "managed_runtime_available": bool(embedded_executable),
+        "executable_path": executable_path,
+    }
 
 
 def _summary_model_recommendation(config: dict, memory_gb: float | None) -> dict:

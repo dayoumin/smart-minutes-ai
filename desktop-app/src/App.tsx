@@ -55,6 +55,11 @@ const toMeetingSegments = (segments: Array<Record<string, unknown>> = []): Meeti
     speaker: String(segment.speaker_name || segment.speaker || '참석자'),
     text: String(segment.text || ''),
     timingApproximate: Boolean(segment.timing_approximate),
+    speakerNeedsReview: Boolean(segment.speakerNeedsReview ?? segment.speaker_needs_review),
+    speakerSplitCoverageGap: Boolean(segment.speakerSplitCoverageGap ?? segment.speaker_split_coverage_gap),
+    speakerSplitCoverageOverlap: Boolean(segment.speakerSplitCoverageOverlap ?? segment.speaker_split_coverage_overlap),
+    shortSpeakerOverlap: Boolean(segment.shortSpeakerOverlap ?? segment.short_speaker_overlap),
+    mixedSpeakerSplit: Boolean(segment.mixedSpeakerSplit ?? segment.mixed_speaker_split),
 }));
 
 const fetchBenchmarkPayload = async (apiBase: string, id: string): Promise<BenchmarkPayload> => {

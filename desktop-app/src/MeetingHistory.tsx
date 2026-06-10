@@ -489,6 +489,32 @@ const getSegmentSpeakerTone = (segment: MeetingSegment, index: number): string =
     getSpeakerTone(segment.displaySpeaker || segment.speaker || '', index)
 );
 
+const segmentNeedsSpeakerReview = (segment: MeetingSegment): boolean => Boolean(
+    segment.speakerNeedsReview
+    || segment.speaker_needs_review
+    || segment.speakerSplitCoverageGap
+    || segment.speaker_split_coverage_gap
+    || segment.speakerSplitCoverageOverlap
+    || segment.speaker_split_coverage_overlap
+    || segment.shortSpeakerOverlap
+    || segment.short_speaker_overlap
+    || segment.mixedSpeakerSplit
+    || segment.mixed_speaker_split
+);
+
+const mergeSegmentReviewFlags = (target: MeetingSegment, source: MeetingSegment): void => {
+    target.speakerNeedsReview = Boolean(target.speakerNeedsReview || source.speakerNeedsReview || source.speaker_needs_review);
+    target.speaker_needs_review = Boolean(target.speaker_needs_review || source.speaker_needs_review || source.speakerNeedsReview);
+    target.speakerSplitCoverageGap = Boolean(target.speakerSplitCoverageGap || source.speakerSplitCoverageGap || source.speaker_split_coverage_gap);
+    target.speaker_split_coverage_gap = Boolean(target.speaker_split_coverage_gap || source.speaker_split_coverage_gap || source.speakerSplitCoverageGap);
+    target.speakerSplitCoverageOverlap = Boolean(target.speakerSplitCoverageOverlap || source.speakerSplitCoverageOverlap || source.speaker_split_coverage_overlap);
+    target.speaker_split_coverage_overlap = Boolean(target.speaker_split_coverage_overlap || source.speaker_split_coverage_overlap || source.speakerSplitCoverageOverlap);
+    target.shortSpeakerOverlap = Boolean(target.shortSpeakerOverlap || source.shortSpeakerOverlap || source.short_speaker_overlap);
+    target.short_speaker_overlap = Boolean(target.short_speaker_overlap || source.short_speaker_overlap || source.shortSpeakerOverlap);
+    target.mixedSpeakerSplit = Boolean(target.mixedSpeakerSplit || source.mixedSpeakerSplit || source.mixed_speaker_split);
+    target.mixed_speaker_split = Boolean(target.mixed_speaker_split || source.mixed_speaker_split || source.mixedSpeakerSplit);
+};
+
 const looksLikeKoreanMisrecognition = (text: string): boolean => {
     const compact = text.replace(/\s/g, '');
     if (compact.length < 20) return false;
@@ -551,6 +577,7 @@ const mergeDisplaySegments = (segments: MeetingSegment[]): MeetingSegment[] => {
         if (previous && canMerge) {
             previous.end = segment.end;
             previous.text = combinedText;
+            mergeSegmentReviewFlags(previous, segment);
             continue;
         }
 
@@ -3282,6 +3309,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 <div className="space-y-2">
                                     {(isTranscriptEditing ? transcriptSegmentDrafts : visibleSegments).map((segment, index) => {
                                         const warning = looksLikeKoreanMisrecognition(segment.text);
+                                        const needsSpeakerReview = segmentNeedsSpeakerReview(segment);
                                         return (
                                             <article key={`${segment.start}-${index}`} className={`script-row ${warning ? 'script-row-warning' : ''}`}>
                                                 <div className="script-meta flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
@@ -3289,6 +3317,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     <span className="font-semibold text-foreground">{renderSearchText(segment.displaySpeaker || segment.speaker || '참석자')}</span>
                                                     <span>{segment.start} - {segment.end}</span>
                                                     {segment.timingApproximate && <span className="script-badge">시간 추정</span>}
+                                                    {needsSpeakerReview && <span className="script-badge">참석자 확인 필요</span>}
                                                 </div>
                                                 {isTranscriptEditing ? (
                                                     <textarea

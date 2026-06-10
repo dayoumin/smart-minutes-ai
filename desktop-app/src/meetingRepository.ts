@@ -5,6 +5,16 @@ export interface MeetingSegment {
     displaySpeaker?: string;
     text: string;
     timingApproximate?: boolean;
+    speakerNeedsReview?: boolean;
+    speaker_needs_review?: boolean;
+    speakerSplitCoverageGap?: boolean;
+    speaker_split_coverage_gap?: boolean;
+    speakerSplitCoverageOverlap?: boolean;
+    speaker_split_coverage_overlap?: boolean;
+    shortSpeakerOverlap?: boolean;
+    short_speaker_overlap?: boolean;
+    mixedSpeakerSplit?: boolean;
+    mixed_speaker_split?: boolean;
     displayOnly?: boolean;
 }
 

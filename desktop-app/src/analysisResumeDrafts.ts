@@ -16,6 +16,7 @@ export interface AnalysisResumeDraft {
     stage?: string;
     lastMessage?: string;
     lastProgress?: number;
+    lastEtaSeconds?: number | null;
     transcriptReady?: boolean;
     errorMessage?: string;
     resumeEligible?: boolean;

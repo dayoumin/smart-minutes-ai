@@ -4121,53 +4121,154 @@ class AnalyzeApiTest(unittest.TestCase):
 
     def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
         progress_events = []
-        config = {
-            "paths": {
-                "ffmpeg": "ffmpeg",
-                "stt_model": "faster-whisper-large-v3",
-                "diarization_model": "pyannote-model",
-                "output_dir": "./outputs",
-                "temp_dir": "./temp",
-                "llm_model": "",
-            },
-            "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
-            "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
-            "preprocessing": {"enabled": False},
-            "diarization": {"enabled": True, "generate_during_analysis": True},
-            "summary": {"enabled": True, "generate_during_analysis": True},
-            "privacy": {"auto_delete_temp_audio": True},
-        }
+        progress_payloads = []
 
-        def report(step, progress):
+        def report(step, progress, extra=None):
             progress_events.append((step, progress))
+            progress_payloads.append((step, progress, extra or {}))
 
-        with (
-            patch("main.resolve_model_path", return_value="resolved-model"),
-            patch("main.model_exists", return_value=False),
-            patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
-            patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
-                {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
-                {"path": TEST_AUDIO_PATH, "offset": 1.0, "duration": 1.0, "index": 1},
-            ]),
-            patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
-            patch("pipeline.diarize.diarize_audio", return_value=[]),
-            patch("pipeline.align_speakers.align_segments_with_speakers", side_effect=lambda segments, speakers: segments),
-            patch("pipeline.summarize.summarize_meeting", return_value={"overview": "요약"}),
-            patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
-            patch("pipeline.export_txt.export_txt"),
-            patch("pipeline.export_markdown.export_markdown"),
-            patch("pipeline.export_docx.export_docx"),
-            patch("pipeline.export_hwpx.export_hwpx"),
-        ):
-            result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_post_transcription_progress", config, progress_callback=report)
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": True, "generate_during_analysis": True},
+                "summary": {"enabled": True, "generate_during_analysis": True},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            with (
+                patch("main.resolve_model_path", return_value="resolved-model"),
+                patch("main.model_exists", return_value=False),
+                patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                    {"path": TEST_AUDIO_PATH, "offset": 1.0, "duration": 1.0, "index": 1},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.diarize.diarize_audio", return_value=[]),
+                patch("pipeline.align_speakers.align_segments_with_speakers", side_effect=lambda segments, speakers: segments),
+                patch("pipeline.summarize.summarize_meeting", return_value={"overview": "요약"}),
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.export_markdown.export_markdown"),
+                patch("pipeline.export_docx.export_docx"),
+                patch("pipeline.export_hwpx.export_hwpx"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_post_transcription_progress", config, progress_callback=report)
 
         self.assertIn(("음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다.", 65), progress_events)
         self.assertIn(("Speaker Diarization & Alignment...", 70), progress_events)
         self.assertIn(("Summarizing with Local LLM...", 85), progress_events)
         self.assertIn(("Saving results...", 95), progress_events)
+        first_transcribe_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "Transcribing chunk 1/2..."
+        )
+        second_transcribe_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "Transcribing chunk 2/2..."
+        )
+        self.assertEqual(first_transcribe_payload["total_chunk_count"], 2)
+        self.assertEqual(first_transcribe_payload["total_audio_seconds"], 2.0)
+        self.assertEqual(second_transcribe_payload["completed_chunk_count"], 1)
+        self.assertGreater(second_transcribe_payload["completed_audio_seconds"], 0)
         self.assertEqual(len(result["result_data"]["raw_stt_segments"]), 2)
         self.assertEqual(len(result["result_data"]["aligned_segments"]), 2)
         self.assertIn("display_segments", result["result_data"])
+
+    def test_pipeline_estimates_stt_progress_when_chunk_durations_are_missing(self) -> None:
+        progress_payloads = []
+
+        def report(step, progress, extra=None):
+            progress_payloads.append((step, progress, extra or {}))
+
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False, "generate_during_analysis": False},
+                "summary": {"enabled": False, "generate_during_analysis": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+
+            with (
+                patch("main.resolve_model_path", return_value="resolved-model"),
+                patch("main.model_exists", return_value=False),
+                patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=2.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "index": 0},
+                    {"path": TEST_AUDIO_PATH, "offset": 1.0, "index": 1},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.export_markdown.export_markdown"),
+                patch("pipeline.export_docx.export_docx"),
+                patch("pipeline.export_hwpx.export_hwpx"),
+            ):
+                process_audio_pipeline(TEST_AUDIO_PATH, "unit_missing_chunk_duration_progress", config, progress_callback=report)
+
+        second_transcribe_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "Transcribing chunk 2/2..."
+        )
+        self.assertEqual(second_transcribe_payload["total_audio_seconds"], 2.0)
+        self.assertEqual(second_transcribe_payload["completed_chunk_count"], 1)
+        self.assertEqual(second_transcribe_payload["completed_audio_seconds"], 1.0)
+
+    def test_resume_status_payload_preserves_eta_seconds(self) -> None:
+        state = {
+            "stage": "transcribing",
+            "resume_supported": True,
+            "chunk_count": 4,
+            "completed_chunk_indices": [0, 1],
+            "last_progress": {
+                "message": "Transcribing chunk 3/4...",
+                "progress": 47,
+                "status": "processing",
+                "eta_seconds": 123,
+            },
+        }
+
+        resume_payload = main._build_resume_candidate_payload("unit_eta_resume", state)
+        draft_payload = main._build_analysis_draft_status("unit_eta_resume", state)
+
+        self.assertEqual(resume_payload["last_progress"]["eta_seconds"], 123)
+        self.assertEqual(draft_payload["last_progress"]["eta_seconds"], 123)
+
+    def test_resume_status_payload_preserves_null_eta_seconds(self) -> None:
+        state = {
+            "stage": "diarization",
+            "resume_supported": True,
+            "last_progress": {
+                "message": "Speaker Diarization & Alignment...",
+                "progress": 70,
+                "status": "processing",
+                "eta_seconds": None,
+            },
+        }
+
+        draft_payload = main._build_analysis_draft_status("unit_eta_resume_null", state)
+
+        self.assertIsNone(draft_payload["last_progress"]["eta_seconds"])
 
     def test_pipeline_writes_job_state_and_stt_checkpoints(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:

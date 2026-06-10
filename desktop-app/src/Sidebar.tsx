@@ -22,6 +22,7 @@ export interface SidebarProps {
         startedAt?: number | null;
         stalled?: boolean;
         transcriptReady?: boolean;
+        etaSeconds?: number | null;
     };
 }
 
@@ -152,6 +153,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
             analysisStatus.progress,
             analysisRawMessage || analysisStatus.message,
             analysisStatus.transcriptReady,
+            analysisStatus.etaSeconds,
         )
         : '';
     const transcriptProgressPercent = analysisStatus

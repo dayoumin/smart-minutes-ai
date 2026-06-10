@@ -90,10 +90,10 @@ def _split_punctuated_segment(segment: dict, *, min_chars: int = 40) -> list[dic
 def build_display_segments(
     segments: list[dict],
     *,
-    target_minimum_seconds: float = 25.0,
-    soft_maximum_seconds: float = 60.0,
-    hard_maximum_chars: int = 700,
-    max_gap_seconds: float = 3.0,
+    target_minimum_seconds: float = 90.0,
+    soft_maximum_seconds: float = 180.0,
+    hard_maximum_chars: int = 1400,
+    max_gap_seconds: float = 5.0,
 ) -> list[dict]:
     display_segments: list[dict] = []
     normalized_segments: list[dict] = []
@@ -115,19 +115,14 @@ def build_display_segments(
         current_end = _to_seconds(segment.get("end", current_start))
         gap_seconds = current_start - previous_end
         combined_duration = current_end - previous_start
-        previous_duration = previous_end - previous_start
         combined_text = f"{_segment_text(previous)} {_segment_text(segment)}".strip()
-        previous_needs_continuation = (
-            not looks_sentence_complete(_segment_text(previous))
-            or looks_incomplete_sentence_end(_segment_text(previous))
-        )
-        current_is_short_tail = len(_segment_text(segment)) <= 35
-        previous_is_short = previous_duration < target_minimum_seconds
-        can_merge = (
+        same_speaker_continues = (
             _segment_speaker(previous) == _segment_speaker(segment)
             and bool(previous.get("timing_approximate")) == bool(segment.get("timing_approximate"))
             and -max_gap_seconds <= gap_seconds <= max_gap_seconds
-            and (previous_needs_continuation or previous_is_short or current_is_short_tail)
+        )
+        can_merge = (
+            same_speaker_continues
             and combined_duration <= soft_maximum_seconds
             and len(combined_text) <= hard_maximum_chars
         )

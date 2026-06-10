@@ -72,6 +72,12 @@ interface AnalyzeResult {
     status?: string;
     heartbeat?: boolean;
     progress?: number;
+    eta_seconds?: number | null;
+    etaSeconds?: number | null;
+    total_audio_seconds?: number;
+    totalAudioSeconds?: number;
+    completed_audio_seconds?: number;
+    completedAudioSeconds?: number;
     transcript_ready?: boolean;
     transcriptReady?: boolean;
     summary?: string;
@@ -144,6 +150,8 @@ interface ResumeCandidate {
         message?: string;
         progress?: number;
         status?: string;
+        eta_seconds?: number | null;
+        etaSeconds?: number | null;
     };
 }
 
@@ -166,6 +174,8 @@ interface DraftStatusPayload {
             status?: string;
             transcript_ready?: boolean;
             transcriptReady?: boolean;
+            eta_seconds?: number | null;
+            etaSeconds?: number | null;
         };
         last_error?: string;
     }>;
@@ -542,6 +552,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [operationToast, setOperationToast] = useState<OperationToast | null>(null);
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
+    const [analysisEtaSeconds, setAnalysisEtaSeconds] = useState<number | null>(null);
     const transcriptReadyRef = useRef(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [errorMessage, setErrorMessage] = useState('');
@@ -616,9 +627,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 startedAt: analysisStartedAt,
                 stalled: analysisStalled,
                 transcriptReady,
+                etaSeconds: analysisEtaSeconds,
             },
         }));
-    }, [analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
+    }, [analysisEtaSeconds, analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
 
     useEffect(() => {
         if (!isAnalyzing) return;
@@ -742,6 +754,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         lastProgress: typeof remote.last_progress?.progress === 'number'
                             ? remote.last_progress.progress
                             : currentDraft.lastProgress,
+                        lastEtaSeconds: remote.last_progress && Object.prototype.hasOwnProperty.call(remote.last_progress, 'eta_seconds')
+                            ? (typeof remote.last_progress.eta_seconds === 'number' ? remote.last_progress.eta_seconds : null)
+                            : remote.last_progress && Object.prototype.hasOwnProperty.call(remote.last_progress, 'etaSeconds')
+                                ? (typeof remote.last_progress.etaSeconds === 'number' ? remote.last_progress.etaSeconds : null)
+                                : currentDraft.lastEtaSeconds,
                         transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || currentDraft.transcriptReady),
                         errorMessage: remote.last_error || (resumeEligible ? undefined : currentDraft.errorMessage),
                         resumeEligible,
@@ -754,6 +771,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         || nextDraft.stage !== currentDraft.stage
                         || nextDraft.lastMessage !== currentDraft.lastMessage
                         || nextDraft.lastProgress !== currentDraft.lastProgress
+                        || nextDraft.lastEtaSeconds !== currentDraft.lastEtaSeconds
                         || nextDraft.transcriptReady !== currentDraft.transcriptReady
                         || nextDraft.errorMessage !== currentDraft.errorMessage
                         || nextDraft.resumeEligible !== currentDraft.resumeEligible
@@ -1038,6 +1056,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             stage?: string;
             lastMessage?: string;
             lastProgress?: number;
+            lastEtaSeconds?: number | null;
             transcriptReady?: boolean;
             errorMessage?: string;
         } = {},
@@ -1062,6 +1081,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             stage: options.stage,
             lastMessage: options.lastMessage,
             lastProgress: options.lastProgress,
+            lastEtaSeconds: Object.prototype.hasOwnProperty.call(options, 'lastEtaSeconds')
+                ? options.lastEtaSeconds
+                : existing?.lastEtaSeconds,
             transcriptReady: Boolean(options.transcriptReady || existing?.transcriptReady),
             errorMessage: options.errorMessage,
             resumeEligible: existing?.resumeEligible,
@@ -1111,6 +1133,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
         setRawStatusMessage(draft.lastMessage || '');
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
+        setAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
     };
@@ -1355,6 +1378,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setAnalysisPhase('checking-server');
         setProgress(0);
         setRawStatusMessage('');
+        setAnalysisEtaSeconds(null);
         setLastRealProgressAt(getNowMs());
         setIsAnalysisStopConfirmOpen(false);
         setAnalysisStopRequestedAction(null);
@@ -1512,6 +1536,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setAnalysisPhase('analyzing');
             transcriptReadyRef.current = false;
             setTranscriptReady(false);
+            setAnalysisEtaSeconds(null);
             setLastRealProgressAt(getNowMs());
             setStatusMessage(current => current || '분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
 
@@ -1580,6 +1605,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     if (typeof parsed.progress === 'number') {
                         setProgress(Math.min(100, Math.max(0, parsed.progress)));
                     }
+                    const parsedEtaSeconds = typeof parsed.eta_seconds === 'number'
+                        ? parsed.eta_seconds
+                        : typeof parsed.etaSeconds === 'number'
+                            ? parsed.etaSeconds
+                            : null;
+                    setAnalysisEtaSeconds(parsedEtaSeconds);
                     const nextTranscriptReady = transcriptReadyRef.current
                         || Boolean(parsed.transcript_ready || parsed.transcriptReady || parsed.status === 'completed');
                     if (nextTranscriptReady) {
@@ -1594,6 +1625,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             stage: parsed.status || 'processing',
                             lastMessage: parsed.message,
                             lastProgress: typeof parsed.progress === 'number' ? parsed.progress : progress,
+                            lastEtaSeconds: parsedEtaSeconds,
                             transcriptReady: nextTranscriptReady,
                         });
                     }
@@ -1676,6 +1708,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             const completedElapsedMs = getNowMs() - startedAt;
             setProgress(100);
             setRawStatusMessage('');
+            setAnalysisEtaSeconds(null);
             setStatusMessage('회의록을 저장했습니다.');
             setCompletionNotice({
                 meetingId: newRecord.id,
@@ -1720,6 +1753,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 setResumeDrafts(listAnalysisResumeDrafts());
                 setProgress(0);
                 setRawStatusMessage('');
+                setAnalysisEtaSeconds(null);
                 setStatusMessage(requestedStopAction === 'cancel'
                     ? '분석을 취소했습니다.'
                     : '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.');
@@ -1739,6 +1773,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setAnalysisPhase('error');
             setErrorMessage(message);
             setRawStatusMessage('');
+            setAnalysisEtaSeconds(null);
             setStatusMessage('');
             setProgress(0);
         } finally {
@@ -1783,6 +1818,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setProgress(0);
             setErrorMessage('');
             setRawStatusMessage('');
+            setAnalysisEtaSeconds(null);
             setIsAnalysisStopConfirmOpen(false);
             setAnalysisStopRequestedAction(null);
             setIsRequestingAnalysisStop(false);
@@ -1912,6 +1948,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         progressPercent,
         rawStatusMessage || currentStatusMessage,
         transcriptReady,
+        analysisEtaSeconds,
     );
     const transcriptProgressPercent = getTranscriptReadyProgressPercent(
         progressPercent,

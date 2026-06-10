@@ -16,6 +16,7 @@ interface AnalysisStatus {
     startedAt?: number | null;
     stalled?: boolean;
     transcriptReady?: boolean;
+    etaSeconds?: number | null;
 }
 
 interface BenchmarkScore {
@@ -234,6 +235,7 @@ export const App: React.FC = () => {
                 startedAt: detail.startedAt || null,
                 stalled: Boolean(detail.stalled),
                 transcriptReady: Boolean(detail.transcriptReady),
+                etaSeconds: typeof detail.etaSeconds === 'number' ? detail.etaSeconds : null,
             });
         };
 

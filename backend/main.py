@@ -143,7 +143,7 @@ DETAIL_DIARIZATION_CANCELLED = "diarization_cancelled"
 DETAIL_DIARIZATION_DEFERRED = "diarization_deferred"
 GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
 ANALYSIS_CHECKPOINT_VERSION = 1
-ANALYSIS_PIPELINE_VERSION = "2026-05-13-long-file-v1"
+ANALYSIS_PIPELINE_VERSION = "2026-06-10-postprocessing-v2"
 MAX_EXPORT_STEM_CHARS = 96
 HWPX_REQUIRED_ENTRIES = {
     "mimetype",
@@ -464,6 +464,20 @@ def _seed_analysis_job_state(
     })
 
 
+def _last_progress_snapshot(progress_payload: dict, state: dict | None = None) -> dict:
+    state = state or {}
+    snapshot = {
+        "message": str(progress_payload.get("message") or ""),
+        "progress": int(progress_payload.get("progress") or 0),
+        "status": str(progress_payload.get("status") or ""),
+        "transcript_ready": bool(progress_payload.get("transcript_ready") or state.get("transcript_ready")),
+    }
+    if "eta_seconds" in progress_payload:
+        eta_seconds = progress_payload.get("eta_seconds")
+        snapshot["eta_seconds"] = int(eta_seconds) if isinstance(eta_seconds, (int, float)) and eta_seconds >= 0 else None
+    return snapshot
+
+
 def _build_resume_candidate_payload(job_id: str, state: dict) -> dict:
     progress_payload = state.get("last_progress") or {}
     completed_chunk_count = len(state.get("completed_chunk_indices") or [])
@@ -476,12 +490,7 @@ def _build_resume_candidate_payload(job_id: str, state: dict) -> dict:
         "active": ANALYSIS_JOBS.has(job_id),
         "chunk_count": int(state.get("chunk_count") or 0),
         "completed_chunk_count": completed_chunk_count,
-        "last_progress": {
-            "message": str(progress_payload.get("message") or ""),
-            "progress": int(progress_payload.get("progress") or 0),
-            "status": str(progress_payload.get("status") or ""),
-            "transcript_ready": bool(progress_payload.get("transcript_ready") or state.get("transcript_ready")),
-        },
+        "last_progress": _last_progress_snapshot(progress_payload, state),
     }
 
 
@@ -566,12 +575,7 @@ def _build_analysis_draft_status(job_id: str, state: dict) -> dict:
         "source_filename": str(state.get("source_filename") or ""),
         "source_size": _normalize_resume_file_size(state.get("source_size")),
         "source_last_modified": _normalize_resume_last_modified(state.get("source_last_modified")),
-        "last_progress": {
-            "message": str(progress_payload.get("message") or ""),
-            "progress": int(progress_payload.get("progress") or 0),
-            "status": str(progress_payload.get("status") or ""),
-            "transcript_ready": bool(progress_payload.get("transcript_ready") or state.get("transcript_ready")),
-        },
+        "last_progress": _last_progress_snapshot(progress_payload, state),
         "last_error": str(state.get("last_error") or ""),
     }
 
@@ -5802,8 +5806,54 @@ def process_audio_pipeline(
         nonlocal reused_chunk_count
         collected_segments = []
         total = len(chunks_to_process)
+        source_duration_fallback = max(float(source_wav_duration or 0.0), 0.0)
+        average_chunk_duration = source_duration_fallback / total if total > 0 and source_duration_fallback > 0 else 0.0
+
+        def _chunk_effective_duration(idx: int, chunk: dict) -> float:
+            duration = max(float(chunk.get("duration") or 0.0), 0.0)
+            if duration > 0:
+                return duration
+            try:
+                offset = float(chunk.get("offset") or 0.0)
+                if idx + 1 < total:
+                    next_offset = float(chunks_to_process[idx + 1].get("offset") or 0.0)
+                    if next_offset > offset:
+                        return next_offset - offset
+            except (TypeError, ValueError):
+                pass
+            return average_chunk_duration
+
+        effective_chunk_durations = [
+            _chunk_effective_duration(idx, chunk)
+            for idx, chunk in enumerate(chunks_to_process)
+        ]
+        total_audio_seconds = sum(effective_chunk_durations) or source_duration_fallback
+        completed_audio_seconds = 0.0
+        stt_started_at = time.monotonic()
         execution_fingerprint = _stt_execution_fingerprint(model_path, stt_device, stt_chunk_seconds)
         _set_stage("transcribing")
+
+        def _stt_progress_extra(idx: int, completed_seconds: float) -> dict:
+            elapsed_seconds = max(time.monotonic() - stt_started_at, 0.0)
+            remaining_audio_seconds = max(total_audio_seconds - completed_seconds, 0.0)
+            eta_seconds = None
+            audio_seconds_per_real_second = None
+            if completed_seconds > 0 and elapsed_seconds > 0:
+                audio_seconds_per_real_second = completed_seconds / elapsed_seconds
+                if audio_seconds_per_real_second > 0:
+                    eta_seconds = int(remaining_audio_seconds / audio_seconds_per_real_second)
+            return {
+                "stage": "transcribing",
+                "chunk_index": idx,
+                "completed_chunk_count": idx,
+                "total_chunk_count": total,
+                "completed_audio_seconds": round(completed_seconds, 3),
+                "total_audio_seconds": round(total_audio_seconds, 3),
+                "remaining_audio_seconds": round(remaining_audio_seconds, 3),
+                "elapsed_seconds": int(elapsed_seconds),
+                "audio_seconds_per_real_second": round(audio_seconds_per_real_second, 3) if audio_seconds_per_real_second else None,
+                "eta_seconds": eta_seconds,
+            }
 
         def _mark_chunk_completed(idx: int) -> None:
             state = _load_job_state(checkpoint_paths)
@@ -5817,7 +5867,7 @@ def process_audio_pipeline(
             _raise_if_cancelled()
             progress = 30 + int((idx / max(total, 1)) * 35)
             message = f"Transcribing chunk {idx + 1}/{total}..."
-            _report_progress(message, progress)
+            _report_progress(message, progress, **_stt_progress_extra(idx, completed_audio_seconds))
             chunk_checkpoint_path = get_stt_chunk_checkpoint_path(checkpoint_paths, idx)
             checkpoint_payload = load_json_checkpoint(chunk_checkpoint_path) if os.path.exists(chunk_checkpoint_path) else None
             if (
@@ -5827,6 +5877,7 @@ def process_audio_pipeline(
                 reused_chunk_count += 1
                 _mark_chunk_completed(idx)
                 collected_segments.extend(apply_time_offset(checkpoint_payload["segments"], float(chunk.get("offset", 0.0))))
+                completed_audio_seconds += effective_chunk_durations[idx]
                 continue
             try:
                 chunk_segments = transcribe_audio(
@@ -5844,6 +5895,7 @@ def process_audio_pipeline(
                 })
                 _mark_chunk_completed(idx)
                 collected_segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
+                completed_audio_seconds += effective_chunk_durations[idx]
             except Exception as chunk_exc:
                 print(f"[STT] Exception while transcribing chunk {idx + 1}: {chunk_exc}")
                 import traceback

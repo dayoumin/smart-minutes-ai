@@ -10,6 +10,7 @@ interface AnalysisStatus {
     startedAt?: number | null;
     stalled?: boolean;
     transcriptReady?: boolean;
+    etaSeconds?: number | null;
 }
 
 export interface LayoutProps {

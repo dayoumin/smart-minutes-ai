@@ -157,6 +157,7 @@
   - 원인 분리는 `STT 세그먼트가 너무 길게 묶인 경우`, `pyannote speaker boundary가 짧은 발화를 놓친 경우`, `STT 텍스트를 speaker boundary에 재배분하는 후처리 한계`로 나누어 확인한다.
   - 개선 후보는 짧은 무음/발화 전환 기준 재분할, speaker boundary 기반 텍스트 재배분, overlap/짧은 발화 의심 구간 표시, 사용자가 참석자를 수동 보정할 수 있는 UI다.
   - 자동 보정이 확실하지 않은 구간은 잘못 확정하지 말고 `참석자 확인 필요`로 표시하는 방식을 검토한다.
+  - 2026-06-10 보수 처리: 자동 혼합 구간 분할은 speaker coverage gap이 있어도 원래 STT 시간 범위를 보존하고 `speaker_needs_review`/`speaker_split_coverage_gap`을 남기도록 했다. 실제 샘플에서 확인 필요 표시가 과하거나 부족하지 않은지 보고, smoothing 보정 여부(`speaker_smoothed`)와 `mixed_speaker_split`을 UI 확인 후보로 보여줄지도 같이 검토한다.
 - [ ] 3-0순위: 인식 후 정리 품질 개선
   - 우선 모델 변경보다 `faster-whisper-large-v3 + pyannote` 결과를 회의록답게 정리하는 후처리를 개선한다.
   - 백엔드에서 `sentence_segments` 또는 `display_segments`를 만들어 화면, TXT, MD, DOCX, HWPX 내보내기까지 같은 문장 단위 대화록을 사용한다.

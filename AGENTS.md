@@ -24,6 +24,11 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Read `docs/design.md` before changing repeated UI surfaces.
 - Prefer user-facing terms such as `음성 파일`, `회의 요약`, `대화록`, and `분석 준비`.
 - Avoid exposing implementation terms such as model names, server details, or pipeline names in common user flows.
+- Do not render temporary success/info notices as inline banners that push page content down or resize the current work surface. Transient feedback such as "saved" or "completed" should use a toast, overlay, inline chip with stable reserved space, or another non-layout-shifting pattern.
+- Keep durable guidance inline only when the user must read it to decide the next action, such as errors, warnings, skipped/partial results, required setup, or recovery instructions.
+- Before adding any status or notice UI, classify it by user meaning: transient toast, durable banner, inline follow-up action, or blocking error. Do not choose the surface based only on an existing state variable name.
+- Keep repeated work surfaces layout-stable. Switching tabs, toggles, or modes should not make shared headers, tab bars, action buttons, search fields, or surrounding panels jump; reserve stable space, use consistent containers, or isolate variable-height content inside the active content area.
+- This does not prohibit legitimate content-height changes. It is acceptable for the active tab body, expandable details, or a newly opened panel to grow when the user explicitly changes context, but persistent controls and navigation anchors should remain visually steady.
 
 ## Portable Release Debugging Rules
 

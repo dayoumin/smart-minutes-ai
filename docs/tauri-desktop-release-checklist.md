@@ -29,6 +29,9 @@
 - 저장/다운로드 위치: 자동 저장, 내보내기, 내부 결과 폴더를 구분한다. 사용자가 다운로드한 파일과 앱 내부 결과 파일이 어디에 남는지 혼동되지 않아야 한다.
 - 외부망/내부망: 회사 PC가 외부망이 아니면 Ollama 모델 다운로드나 추가 설치를 앱 안에서 즉시 처리할 수 없을 수 있다. 이 경우 관리자가 모델을 준비하는 절차를 문서에 남긴다.
 - 백신/권한 정책: sidecar 실행, ffmpeg, 대용량 임시 파일 생성이 보안 정책에 막힐 수 있다. 실패 시 사용자에게 내부 구현 용어가 아니라 "분석 기능을 준비하지 못했습니다", "저장 공간 또는 권한을 확인해 주세요"처럼 안내한다.
+- Windows 보안 경고: 코드 서명 또는 SmartScreen/Defender 경고가 뜰 수 있다. 배포 전 회사 PC 기준으로 차단 여부를 확인하고, 허용이 필요한 경우 사용자 안내가 아니라 관리자 배포 절차에 기록한다.
+- 경로 조건: 한글, 공백, 긴 경로, OneDrive/네트워크 드라이브, 권한 제한 폴더에서 실행할 때 모델/출력/로그 경로가 깨지지 않는지 확인한다. 첫 배포는 가능하면 로컬 쓰기 가능한 짧은 경로에서 검증한다.
+- 로그/결과물 민감정보: 로그, 결과 JSON, HWPX/DOCX/TXT에는 회의 파일명, 참석자명, 발화 내용, 로컬 경로가 포함될 수 있다. 지원 요청이나 오류 공유 전에 어떤 파일을 전달해도 되는지 사용자/관리자 안내에 구분한다.
 
 ## 1. 실행 파일 형태
 
@@ -50,6 +53,9 @@
 - portable 배포에서는 exe 하나만 옮기는 것이 아니라 앱 폴더 전체를 유지해야 한다.
 - 모델 경로는 `실행 폴더/models/...` 기준으로 안내한다.
 - 현재 앱 설정 화면은 필수 모델 준비 상태와 `models` 폴더 기준 안내를 보여준다. 절대 경로 표시/복사 버튼은 후속 UX 개선으로 다루되, 배포 문서에는 실제 배치 위치를 반드시 명시한다.
+- 일반 사용자 배포 UX를 개선할 때는 `models`, `backend`, `binaries`, `runtime` 같은 내부 폴더를 최상위에 그대로 노출하지 않는 구조를 검토한다. 예: 최상위에는 `lmo_audio.exe`와 `START_HERE.txt`만 두고, 모델과 런타임 파일은 `_internal` 또는 앱 관리 데이터 폴더 아래에 둔다.
+- 내부 폴더를 숨기더라도 모델 파일을 단일 파일로 합치지는 않는다. STT 모델과 참석자 구분 모델은 여러 필수 파일로 구성되므로, 실제 파일 구조는 유지하고 앱/패키징/검증 코드가 역할 기반 모델 registry에서 경로를 찾게 한다.
+- 모델 교체 가능성을 열어둘 때는 `faster-whisper-large-v3` 같은 모델명을 UI, 설정 저장, backend 경로, verify script에 직접 박지 않는다. `stt`, `diarization`, `summary` 같은 역할과 `portable_model_layout.json` 또는 후속 model registry를 기준으로 resolve한다.
 - 필수 모델이 없으면 분석 버튼 클릭 후 즉시 원인과 조치 방법을 보여준다.
 - 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_ollama_no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
 - Ollama runtime은 기본 배포 zip에 포함하지 않는다. 앱 설정의 모델 탭에서 고정된 공식 standalone Windows CLI release zip을 받아 `runtime\ollama\ollama.exe`로 풀고, portable 폴더에 쓸 수 없으면 `%LOCALAPPDATA%\LMO_audio\runtime\ollama`를 사용한다. 앱은 앱 관리 runtime이 있으면 시스템 설치본보다 우선 사용하고, 앱 관리 runtime이 없으면 `OLLAMA_EXE`, PATH의 `ollama`, 일반 설치 경로의 시스템 Ollama 순서로 fallback한다. 앱 관리 runtime의 요약 모델 저장소는 같은 앱 관리 경계의 `models\ollama`를 사용한다. release 운영 시 `LMO_OLLAMA_RUNTIME_VERSION`과 `LMO_OLLAMA_RUNTIME_SHA256`을 기록해 다운로드 URL과 해시가 의도한 릴리스인지 확인한다.
@@ -61,6 +67,8 @@
 - 이전 portable/zip 산출물을 삭제한 뒤 새로 만든다.
 - zip을 빈 폴더에 풀어서 실행하는 clean-room 테스트를 한다.
 - zip 안의 exe와 현재 release exe가 같은 최신 빌드인지 확인한다.
+- 최종 zip 또는 전달 폴더의 버전/commit, 생성일, 크기, SHA256을 기록한다. 사용자가 받은 파일이 어느 빌드인지 `release-manifest.json`과 대조할 수 있어야 한다.
+- 모델과 외부 runtime을 포함하거나 제외할 때는 재배포 가능 여부, 라이선스/출처, 회사 내부 전달 가능 범위를 확인한다.
 - sidecar 재빌드가 필요한 Python 코드 변경 후에는 반드시 sidecar를 다시 만든다.
 
 ## 5. 사용자 시나리오

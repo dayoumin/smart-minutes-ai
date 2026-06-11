@@ -36,6 +36,7 @@ import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } f
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
+import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -46,8 +47,28 @@ const VERY_LONG_MEDIA_NOTICE_SECONDS = 90 * 60;
 const PARTICIPANT_SEPARATION_CAUTION_SECONDS = 140 * 60;
 const getNowMs = (): number => Date.now();
 
-const getSelectedFileProcessingGuidance = (durationSeconds: number | null): string | null => {
+const getAdjustedEtaSeconds = (
+    etaSeconds: number | null,
+    receivedAt: number | null,
+    nowMs: number,
+): number | null => {
+    if (typeof etaSeconds !== 'number' || !Number.isFinite(etaSeconds) || etaSeconds < 0) return null;
+    if (!receivedAt) return etaSeconds;
+    const elapsedSeconds = Math.floor(Math.max(0, nowMs - receivedAt) / 1000);
+    return Math.max(0, etaSeconds - elapsedSeconds);
+};
+
+const getSelectedFileProcessingGuidance = (
+    durationSeconds: number | null,
+    includeDiarizationDuringAnalysis: boolean,
+): string | null => {
     if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
+    if (includeDiarizationDuringAnalysis) {
+        if (durationSeconds >= PARTICIPANT_SEPARATION_CAUTION_SECONDS) {
+            return '매우 긴 파일입니다. 참석자 구분까지 이어서 실행하면 오래 걸릴 수 있습니다. 대화록을 먼저 보려면 아래 옵션을 끄세요.';
+        }
+        return '긴 파일입니다. 참석자 구분까지 이어서 실행하므로 전체 완료까지 시간이 더 걸릴 수 있습니다.';
+    }
     if (durationSeconds >= PARTICIPANT_SEPARATION_CAUTION_SECONDS) {
         return '매우 긴 파일입니다. 대화록을 먼저 저장합니다. 참석자 구분은 PC 상태에 따라 결과 화면에서 실행하지 못할 수 있습니다.';
     }
@@ -57,15 +78,25 @@ const getSelectedFileProcessingGuidance = (durationSeconds: number | null): stri
     return '긴 파일입니다. 대화록을 먼저 저장한 뒤 참석자 구분과 정리를 결과 화면에서 실행할 수 있습니다.';
 };
 
-const getAnalysisProgressGuidance = (durationSeconds: number | null, isTranscriptReady: boolean): string | null => {
-    if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
+const getAnalysisProgressGuidance = (
+    durationSeconds: number | null,
+    isTranscriptReady: boolean,
+    includeDiarizationDuringAnalysis: boolean,
+): string | null => {
     if (isTranscriptReady) {
-        return '대화록 저장이 끝나면 결과 화면에서 참석자 구분과 정리를 실행할 수 있습니다.';
+        return includeDiarizationDuringAnalysis
+            ? '대화록 진행분은 보존되었습니다. 참석자 구분까지 끝난 뒤 저장되며, 결과 보기를 누르면 편집 화면으로 이동합니다.'
+            : '대화록 진행분은 보존되었습니다. 저장 뒤 결과 보기를 누르면 음성 파일이 보관된 경우 참석자 구분과 정리를 실행할 수 있습니다.';
     }
+    if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
     if (durationSeconds >= VERY_LONG_MEDIA_NOTICE_SECONDS) {
-        return '파일이 길어 시간이 오래 걸릴 수 있습니다. 대화록 예상은 저장 기준이며, 완료된 진행분은 이어서 사용할 수 있게 남깁니다.';
+        return includeDiarizationDuringAnalysis
+            ? '파일이 길어 시간이 오래 걸릴 수 있습니다. 대화록이 준비된 뒤 참석자 구분까지 이어서 실행합니다.'
+            : '파일이 길어 시간이 오래 걸릴 수 있습니다. 대화록 예상은 저장 기준이며, 완료된 진행분은 이어서 사용할 수 있게 남깁니다.';
     }
-    return '대화록 예상은 저장 기준입니다. 참석자 구분과 정리는 결과 화면에서 실행할 수 있습니다.';
+    return includeDiarizationDuringAnalysis
+        ? '대화록이 준비된 뒤 참석자 구분까지 이어서 실행합니다.'
+        : '대화록 예상은 저장 기준입니다. 참석자 구분과 정리는 결과 화면에서 실행할 수 있습니다.';
 };
 
 interface AnalyzeResult {
@@ -220,10 +251,10 @@ interface CompletionNotice {
     autoSaveNote?: string;
 }
 
-interface OperationToast {
-    id: number;
-    message: string;
-    tone: 'warning' | 'neutral' | 'error';
+interface AnalysisSettingsResponse {
+    diarization?: {
+        generate_during_analysis?: boolean;
+    };
 }
 
 interface ReadinessCheck {
@@ -549,10 +580,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [isRequestingAnalysisStop, setIsRequestingAnalysisStop] = useState(false);
     const [analysisStopRequestedAction, setAnalysisStopRequestedAction] = useState<AnalysisStopAction | null>(null);
     const [statusMessage, setStatusMessage] = useState('');
-    const [operationToast, setOperationToast] = useState<OperationToast | null>(null);
+    const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
+    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(true);
+    const [isSavingDiarizationMode, setIsSavingDiarizationMode] = useState(false);
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
     const [analysisEtaSeconds, setAnalysisEtaSeconds] = useState<number | null>(null);
+    const [analysisEtaReceivedAt, setAnalysisEtaReceivedAt] = useState<number | null>(null);
     const transcriptReadyRef = useRef(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [errorMessage, setErrorMessage] = useState('');
@@ -580,13 +614,70 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const analysisStopActionRef = useRef<AnalysisStopAction | null>(null);
     const selectedResumeDraftIdRef = useRef<string | null>(null);
     const cleanupRetryInFlightRef = useRef(false);
+    const diarizationModeSaveRequestRef = useRef(0);
+    const diarizationModeSaveInFlightRef = useRef(false);
+    const updateAnalysisEtaSeconds = React.useCallback((nextEtaSeconds: number | null) => {
+        setAnalysisEtaSeconds(currentEtaSeconds => {
+            if (nextEtaSeconds === null) {
+                setAnalysisEtaReceivedAt(null);
+                return null;
+            }
+            if (currentEtaSeconds !== nextEtaSeconds) {
+                setAnalysisEtaReceivedAt(getNowMs());
+            }
+            return nextEtaSeconds;
+        });
+    }, []);
     const analysisStalled = isAnalyzing && analysisPhase === 'analyzing' && analysisNow - lastRealProgressAt >= ANALYSIS_STALL_WARNING_MS;
-    const showOperationToast = React.useCallback((message: string, tone: OperationToast['tone'] = 'neutral') => {
+    const showOperationToast = React.useCallback((message: string, tone: AppToastTone = 'neutral') => {
         setOperationToast({
             id: Date.now(),
             message,
             tone,
         });
+    }, []);
+
+    const loadAnalysisSettings = React.useCallback(async () => {
+        try {
+            const apiBase = await getApiBase();
+            const response = await fetch(`${apiBase}/api/settings`);
+            if (!response.ok) return;
+            const data = await response.json() as AnalysisSettingsResponse;
+            setDiarizationDuringAnalysis(data.diarization?.generate_during_analysis ?? true);
+        } catch {
+            // Keep the current local value if settings cannot be read.
+        }
+    }, []);
+
+    const handleDiarizationDuringAnalysisChange = React.useCallback(async (checked: boolean) => {
+        if (diarizationModeSaveInFlightRef.current) return;
+        const requestId = diarizationModeSaveRequestRef.current + 1;
+        diarizationModeSaveRequestRef.current = requestId;
+        diarizationModeSaveInFlightRef.current = true;
+        setDiarizationDuringAnalysis(checked);
+        setIsSavingDiarizationMode(true);
+        try {
+            const apiBase = await getApiBase();
+            const response = await fetch(`${apiBase}/api/settings`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    diarization: { generate_during_analysis: checked },
+                }),
+            });
+            if (!response.ok) throw new Error('참석자 구분 실행 방식을 저장하지 못했습니다.');
+            window.dispatchEvent(new Event('analysis:settings-updated'));
+        } catch (error) {
+            if (diarizationModeSaveRequestRef.current === requestId) {
+                setDiarizationDuringAnalysis(!checked);
+                setErrorMessage(error instanceof Error ? error.message : '참석자 구분 실행 방식을 저장하지 못했습니다.');
+            }
+        } finally {
+            if (diarizationModeSaveRequestRef.current === requestId) {
+                diarizationModeSaveInFlightRef.current = false;
+                setIsSavingDiarizationMode(false);
+            }
+        }
     }, []);
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
@@ -617,7 +708,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     }, [operationToast]);
 
     useEffect(() => {
+        void loadAnalysisSettings();
+        const handleSettingsUpdated = () => {
+            void loadAnalysisSettings();
+        };
+        window.addEventListener('focus', handleSettingsUpdated);
+        window.addEventListener('analysis:settings-updated', handleSettingsUpdated);
+        return () => {
+            window.removeEventListener('focus', handleSettingsUpdated);
+            window.removeEventListener('analysis:settings-updated', handleSettingsUpdated);
+        };
+    }, [loadAnalysisSettings]);
+
+    useEffect(() => {
         const active = isAnalyzing;
+        const adjustedEtaSeconds = getAdjustedEtaSeconds(analysisEtaSeconds, analysisEtaReceivedAt, analysisNow);
         window.dispatchEvent(new CustomEvent('analysis:status', {
             detail: {
                 active,
@@ -627,10 +732,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 startedAt: analysisStartedAt,
                 stalled: analysisStalled,
                 transcriptReady,
-                etaSeconds: analysisEtaSeconds,
+                etaSeconds: adjustedEtaSeconds,
             },
         }));
-    }, [analysisEtaSeconds, analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
+    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
 
     useEffect(() => {
         if (!isAnalyzing) return;
@@ -754,11 +859,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         lastProgress: typeof remote.last_progress?.progress === 'number'
                             ? remote.last_progress.progress
                             : currentDraft.lastProgress,
-                        lastEtaSeconds: remote.last_progress && Object.prototype.hasOwnProperty.call(remote.last_progress, 'eta_seconds')
-                            ? (typeof remote.last_progress.eta_seconds === 'number' ? remote.last_progress.eta_seconds : null)
-                            : remote.last_progress && Object.prototype.hasOwnProperty.call(remote.last_progress, 'etaSeconds')
-                                ? (typeof remote.last_progress.etaSeconds === 'number' ? remote.last_progress.etaSeconds : null)
-                                : currentDraft.lastEtaSeconds,
+                        lastEtaSeconds: remote.last_progress
+                            ? Object.prototype.hasOwnProperty.call(remote.last_progress, 'eta_seconds')
+                                ? (typeof remote.last_progress.eta_seconds === 'number' ? remote.last_progress.eta_seconds : null)
+                                : Object.prototype.hasOwnProperty.call(remote.last_progress, 'etaSeconds')
+                                    ? (typeof remote.last_progress.etaSeconds === 'number' ? remote.last_progress.etaSeconds : null)
+                                    : null
+                            : currentDraft.lastEtaSeconds,
                         transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || currentDraft.transcriptReady),
                         errorMessage: remote.last_error || (resumeEligible ? undefined : currentDraft.errorMessage),
                         resumeEligible,
@@ -1133,7 +1240,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
         setRawStatusMessage(draft.lastMessage || '');
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
-        setAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
+        updateAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
     };
@@ -1378,7 +1485,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setAnalysisPhase('checking-server');
         setProgress(0);
         setRawStatusMessage('');
-        setAnalysisEtaSeconds(null);
+        updateAnalysisEtaSeconds(null);
         setLastRealProgressAt(getNowMs());
         setIsAnalysisStopConfirmOpen(false);
         setAnalysisStopRequestedAction(null);
@@ -1532,11 +1639,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 stage: 'uploaded',
                 lastMessage: selectedResumeDraft ? '이전 음성 인식 진행분 재사용을 시도합니다.' : '분석을 시작합니다.',
                 lastProgress: 0,
+                lastEtaSeconds: null,
             });
             setAnalysisPhase('analyzing');
             transcriptReadyRef.current = false;
             setTranscriptReady(false);
-            setAnalysisEtaSeconds(null);
+            updateAnalysisEtaSeconds(null);
             setLastRealProgressAt(getNowMs());
             setStatusMessage(current => current || '분석을 시작합니다. 음성 추출과 전사를 진행합니다.');
 
@@ -1610,7 +1718,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         : typeof parsed.etaSeconds === 'number'
                             ? parsed.etaSeconds
                             : null;
-                    setAnalysisEtaSeconds(parsedEtaSeconds);
+                    updateAnalysisEtaSeconds(parsedEtaSeconds);
                     const nextTranscriptReady = transcriptReadyRef.current
                         || Boolean(parsed.transcript_ready || parsed.transcriptReady || parsed.status === 'completed');
                     if (nextTranscriptReady) {
@@ -1708,7 +1816,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             const completedElapsedMs = getNowMs() - startedAt;
             setProgress(100);
             setRawStatusMessage('');
-            setAnalysisEtaSeconds(null);
+            updateAnalysisEtaSeconds(null);
             setStatusMessage('회의록을 저장했습니다.');
             setCompletionNotice({
                 meetingId: newRecord.id,
@@ -1748,12 +1856,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         lastProgress: typeof existingDraft?.lastProgress === 'number'
                             ? existingDraft.lastProgress
                             : progress,
+                        lastEtaSeconds: null,
                     });
                 }
                 setResumeDrafts(listAnalysisResumeDrafts());
                 setProgress(0);
                 setRawStatusMessage('');
-                setAnalysisEtaSeconds(null);
+                updateAnalysisEtaSeconds(null);
                 setStatusMessage(requestedStopAction === 'cancel'
                     ? '분석을 취소했습니다.'
                     : '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.');
@@ -1768,12 +1877,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 stage: 'failed',
                 lastMessage: rawStatusMessage || statusMessage,
                 lastProgress: progress,
+                lastEtaSeconds: null,
                 errorMessage: message,
             });
             setAnalysisPhase('error');
             setErrorMessage(message);
             setRawStatusMessage('');
-            setAnalysisEtaSeconds(null);
+            updateAnalysisEtaSeconds(null);
             setStatusMessage('');
             setProgress(0);
         } finally {
@@ -1818,7 +1928,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setProgress(0);
             setErrorMessage('');
             setRawStatusMessage('');
-            setAnalysisEtaSeconds(null);
+            updateAnalysisEtaSeconds(null);
             setIsAnalysisStopConfirmOpen(false);
             setAnalysisStopRequestedAction(null);
             setIsRequestingAnalysisStop(false);
@@ -1859,6 +1969,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 stage: 'stopped',
                 lastMessage: rawStatusMessage || statusMessage,
                 lastProgress: progress,
+                lastEtaSeconds: null,
             });
         } else {
             if (file) {
@@ -1941,36 +2052,38 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
         ].filter(Boolean).join(' · ')
         : '음성/영상 파일을 선택해 주세요.';
-    const selectedFileGuidance = file ? getSelectedFileProcessingGuidance(fileDurationSeconds) : null;
+    const selectedFileGuidance = file
+        ? getSelectedFileProcessingGuidance(fileDurationSeconds, diarizationDuringAnalysis)
+        : null;
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
+    const effectiveAnalysisEtaSeconds = getAdjustedEtaSeconds(analysisEtaSeconds, analysisEtaReceivedAt, analysisNow);
     const transcriptEstimateLabel = formatTranscriptReadyEstimate(
         elapsedMs,
         progressPercent,
         rawStatusMessage || currentStatusMessage,
         transcriptReady,
-        analysisEtaSeconds,
+        effectiveAnalysisEtaSeconds,
     );
     const transcriptProgressPercent = getTranscriptReadyProgressPercent(
         progressPercent,
         rawStatusMessage || currentStatusMessage,
         transcriptReady,
     );
-    const analysisProgressGuidance = getAnalysisProgressGuidance(fileDurationSeconds, transcriptReady);
+    const analysisProgressGuidance = getAnalysisProgressGuidance(
+        fileDurationSeconds,
+        transcriptReady,
+        diarizationDuringAnalysis,
+    );
 
     return (
         <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
             {operationToast && (
-                <div className={`operation-toast status-${operationToast.tone}`} role="status" aria-live="polite">
-                    <span className="font-semibold">{operationToast.message}</span>
-                    <button
-                        type="button"
-                        className="operation-toast-close"
-                        aria-label="알림 닫기"
-                        onClick={() => setOperationToast(null)}
-                    >
-                        <X size={14} />
-                    </button>
-                </div>
+                <AppToast
+                    message={operationToast.message}
+                    tone={operationToast.tone}
+                    closeLabel="작업 알림 닫기"
+                    onClose={() => setOperationToast(null)}
+                />
             )}
             <div>
                 <h2 className="text-lg font-semibold text-foreground">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
@@ -2158,6 +2271,26 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         ) : (
                             <div />
                         )}
+                        <div className="analysis-mode-control">
+                            <label className="analysis-mode-toggle">
+                                <input
+                                    type="checkbox"
+                                    checked={diarizationDuringAnalysis}
+                                    onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
+                                    disabled={isSavingDiarizationMode || isAnalyzing}
+                                />
+                                <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
+                            </label>
+                            <span className="text-xs text-muted-foreground">기본값 저장</span>
+                            <button
+                                type="button"
+                                title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."
+                                aria-label="참석자 구분 실행 방식 도움말"
+                                className="inline-flex text-muted-foreground"
+                            >
+                                <CircleHelp size={14} />
+                            </button>
+                        </div>
                         <Button onClick={handleStartAnalysis} disabled={startButtonDisabled}>
                             {buttonLabel}
                         </Button>
@@ -2488,7 +2621,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <div className="analysis-stop-actions">
                                 <Button
                                     variant="outline"
-                                    className="h-8 px-3 text-xs"
                                     onClick={() => handleStopAnalysis('stop')}
                                     disabled={isRequestingAnalysisStop}
                                     aria-label="이어하기 기록을 남기고 분석 중지"
@@ -2499,7 +2631,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 </Button>
                                 <Button
                                     variant="outline"
-                                    className="h-8 px-3 text-xs"
                                     onClick={() => handleStopAnalysis('cancel')}
                                     disabled={isRequestingAnalysisStop}
                                     aria-label="이어하기 기록을 남기지 않고 분석 취소"
@@ -2509,8 +2640,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                     취소
                                 </Button>
                                 <Button
-                                    variant="secondary"
-                                    className="h-8 px-3 text-xs"
+                                    variant="primary"
                                     onClick={() => setIsAnalysisStopConfirmOpen(false)}
                                     disabled={isRequestingAnalysisStop}
                                 >

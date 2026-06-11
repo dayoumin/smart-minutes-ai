@@ -619,6 +619,26 @@
     @apply flex shrink-0 items-center gap-2;
   }
 
+  .meeting-detail-actions {
+    @apply relative flex shrink-0 flex-wrap items-center justify-end gap-2;
+  }
+
+  .analysis-mode-control {
+    @apply inline-flex min-h-10 items-center gap-1.5 rounded-md border border-transparent px-2 text-left text-muted-foreground transition-colors;
+  }
+
+  .analysis-mode-toggle {
+    @apply inline-flex items-center gap-2 text-left text-muted-foreground;
+  }
+
+  .analysis-mode-toggle input {
+    @apply m-0;
+  }
+
+  .analysis-mode-toggle-title {
+    @apply text-xs font-medium text-foreground;
+  }
+
   .meeting-status-run-button {
     @apply h-7 px-2 text-xs shadow-none;
   }
@@ -744,7 +764,7 @@
   }
 
   .save-toast {
-    @apply fixed bottom-6 left-1/2 z-50 flex -translate-x-1/2 items-center gap-3 rounded-[var(--radius-card)] border border-border bg-background px-4 py-3 text-sm shadow-lg;
+    @apply absolute right-0 top-[calc(100%+0.5rem)] z-20 flex min-h-10 max-w-[calc(100vw-2rem)] items-center gap-2 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-sm shadow-sm;
   }
 
   .operation-toast {
@@ -752,6 +772,14 @@
     background-color: var(--status-current-bg);
     border-color: var(--status-current-border);
     color: var(--status-current-fg);
+  }
+
+  .meeting-history-toast-stack {
+    @apply fixed right-6 top-6 z-50 flex w-[min(24rem,calc(100vw-2rem))] flex-col gap-2;
+  }
+
+  .meeting-history-toast-stack .operation-toast {
+    @apply static w-full max-w-none;
   }
 
   .save-toast-action {

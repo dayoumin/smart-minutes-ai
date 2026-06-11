@@ -419,7 +419,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [ollamaInstallNoticeMessage, setOllamaInstallNoticeMessage] = useState('');
     const [supportContactVisible, setSupportContactVisible] = useState(false);
     const [modelStatusErrorMessage, setModelStatusErrorMessage] = useState('');
-    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
+    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(true);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
     const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
@@ -496,7 +496,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [models?.summary_model_recommendation?.model, settings, summaryModelStatus]);
 
     const applySettingsToForm = useCallback((nextSettings: SettingsPayload) => {
-        setDiarizationDuringAnalysis(nextSettings.diarization?.generate_during_analysis ?? false);
+        setDiarizationDuringAnalysis(nextSettings.diarization?.generate_during_analysis ?? true);
         setSttDevice(nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu');
         setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
@@ -1035,7 +1035,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             applySettingsToForm(nextSettings);
             lastSavedGeneralKeyRef.current = generalSettingsKey({
                 downloadFormat: getDownloadFormatPreference(),
-                diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? false,
+                diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? true,
                 sttDevice: nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu',
                 preprocessingEnabled: nextSettings.preprocessing?.enabled ?? true,
                 preserveExtractedAudio: nextSettings.privacy?.preserve_extracted_audio ?? true,
@@ -1652,17 +1652,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             </div>
 
                             <div className="grid gap-3 lg:grid-cols-2">
-                                <label className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
+                                <label
+                                    className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3"
+                                    title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
+                                >
                                     <input
                                         type="checkbox"
                                         className="mt-1"
                                         checked={diarizationDuringAnalysis}
                                         onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
                                     />
-                                        <span>
-                                            <span className="block text-sm font-medium text-foreground">분석 중 참석자 구분 실행</span>
-                                            <span className="text-xs text-muted-foreground">끄면 결과 화면에서 따로 실행합니다. 나중에 실행하려면 음성 파일 보관이 필요합니다.</span>
+                                    <span className="grid gap-1">
+                                        <span className="block text-sm font-medium text-foreground">참석자 구분까지 이어서 실행</span>
+                                        <span className="text-xs text-muted-foreground">
+                                            켜면 전체 완료까지 더 걸릴 수 있고, 끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행합니다.
                                         </span>
+                                    </span>
                                     </label>
 
                                 <label className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">

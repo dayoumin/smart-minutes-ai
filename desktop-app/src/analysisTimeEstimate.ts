@@ -48,6 +48,7 @@ export const formatTranscriptReadyEstimate = (
 ): string => {
     if (isTranscriptReadyStage(message, progressPercent, transcriptReady)) return '대화록 준비됨';
     if (typeof backendEtaSeconds === 'number' && Number.isFinite(backendEtaSeconds) && backendEtaSeconds >= 0) {
+        if (backendEtaSeconds < 15) return '곧 완료';
         return `약 ${formatAnalysisDuration(backendEtaSeconds * 1000)}`;
     }
     if (elapsedMs < 5_000 || progressPercent < 10) return '측정 중';

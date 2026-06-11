@@ -9,6 +9,7 @@ import { StatusBanner } from './StatusBanner';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
 import { ProgressBar } from './ProgressBar';
 import { formatAnalysisDuration } from './analysisTimeEstimate';
+import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
 import {
     canGenerateSpeakerContext as canGenerateSpeakerContextFromState,
     getSpeakerGenerationStatus,
@@ -48,12 +49,6 @@ interface TopicGenerationRequestIntent {
 interface SavedFileToast {
     id: number;
     path: string | null;
-}
-
-interface OperationToast {
-    id: number;
-    message: string;
-    tone: 'warning' | 'neutral' | 'error';
 }
 
 interface ModelsStatusResponse {
@@ -137,6 +132,8 @@ interface GenerationProgressResponse {
     action?: DiarizationStopAction;
     started_at?: string;
     updated_at?: string;
+    eta_seconds?: number | null;
+    etaSeconds?: number | null;
 }
 
 interface StopDiarizationResponse {
@@ -196,18 +193,43 @@ const getFallbackDiarizationProgressPercent = (elapsedMs: number): number => {
     return Math.min(92, Math.max(3, Math.round(8 + easedProgress * 84)));
 };
 
+const getDisplayedDiarizationProgressPercent = (
+    reportedProgress: number | null,
+    elapsedMs: number,
+): number => {
+    const fallbackProgress = getFallbackDiarizationProgressPercent(elapsedMs);
+    if (typeof reportedProgress !== 'number' || reportedProgress <= 0) {
+        return fallbackProgress;
+    }
+    if (reportedProgress <= 30) {
+        return Math.max(reportedProgress, Math.min(68, fallbackProgress));
+    }
+    return reportedProgress;
+};
+
 const formatDiarizationRemainingEstimate = (
     elapsedMs: number,
     progressPercent: number,
     status?: string,
+    backendEtaSeconds?: number | null,
+    backendUpdatedAtMs?: number | null,
+    nowMs: number = getCurrentTimeMs(),
 ): string => {
     if (status === 'stopping') return '중지 중';
     if (progressPercent >= 99) return '곧 완료';
+    if (typeof backendEtaSeconds === 'number' && backendEtaSeconds >= 0) {
+        const elapsedSinceBackendUpdateMs = backendUpdatedAtMs
+            ? Math.max(0, nowMs - backendUpdatedAtMs)
+            : 0;
+        const remainingMs = Math.max(0, (backendEtaSeconds * 1000) - elapsedSinceBackendUpdateMs);
+        if (remainingMs < 15_000) return progressPercent >= 70 ? '곧 완료' : '계산 중';
+        return `약 ${formatAnalysisDuration(remainingMs)}`;
+    }
     if (elapsedMs < 5_000 || progressPercent < 10) return '측정 중';
 
     const estimatedTotalMs = elapsedMs / (Math.max(1, progressPercent) / 100);
     const remainingMs = Math.max(0, estimatedTotalMs - elapsedMs);
-    if (remainingMs < 15_000) return '곧 완료';
+    if (remainingMs < 15_000) return progressPercent >= 70 ? '곧 완료' : '계산 중';
     return `약 ${formatAnalysisDuration(remainingMs)}`;
 };
 
@@ -694,13 +716,18 @@ const buildGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON
     meetingPurpose: meeting.meetingPurpose || '',
 });
 
+const isTransientNoticeMessage = (message: string): boolean => (
+    message === '전체 요약을 정리했습니다.'
+);
+
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard, onOpenSettings }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
     const [noticeMessage, setNoticeMessage] = useState('');
+    const [noticeToast, setNoticeToast] = useState<AppToastMessage | null>(null);
     const [savedFileToast, setSavedFileToast] = useState<SavedFileToast | null>(null);
-    const [operationToast, setOperationToast] = useState<OperationToast | null>(null);
+    const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
     const [detailTab, setDetailTab] = useState<DetailTab>('script');
     const [organizeTab, setOrganizeTab] = useState<OrganizeTab>('summary');
@@ -755,11 +782,19 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         });
     }, []);
 
-    const showOperationToast = React.useCallback((message: string, tone: OperationToast['tone'] = 'neutral') => {
+    const showOperationToast = React.useCallback((message: string, tone: AppToastTone = 'neutral') => {
         setOperationToast({
             id: getCurrentTimeMs(),
             message,
             tone,
+        });
+    }, []);
+
+    const showNoticeToast = React.useCallback((message: string) => {
+        setNoticeToast({
+            id: getCurrentTimeMs(),
+            message,
+            tone: 'success',
         });
     }, []);
 
@@ -967,10 +1002,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [diarizationProgress?.active, diarizationProgressJobId, generatingKind, showOperationToast]);
 
     useEffect(() => {
-        if (noticeMessage === '참석자 이름을 저장했습니다.') {
-            setNoticeMessage('');
-        }
-    }, [noticeMessage]);
+        if (!noticeToast) return undefined;
+        const timerId = window.setTimeout(() => {
+            setNoticeToast(current => (current?.id === noticeToast.id ? null : current));
+        }, 3500);
+        return () => window.clearTimeout(timerId);
+    }, [noticeToast]);
 
     useEffect(() => {
         if (!operationToast) return undefined;
@@ -1471,11 +1508,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 document.querySelector('[data-summary-section="overview"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
             const nextSummaryStatus = data.generationStatus?.summary ?? data.generation_status?.summary;
-            setNoticeMessage(nextSummaryStatus === 'skipped'
+            const nextNoticeMessage = nextSummaryStatus === 'skipped'
                 ? '요약 AI가 준비되지 않아 대화록만 유지했습니다.'
                 : summaryRegenerationWillResetDerived
                     ? '전체 요약을 정리했습니다. 아래 정리도 다시 해 주세요.'
-                    : '전체 요약을 정리했습니다.');
+                    : '전체 요약을 정리했습니다.';
+            if (isTransientNoticeMessage(nextNoticeMessage)) {
+                setNoticeMessage('');
+                showNoticeToast(nextNoticeMessage);
+            } else {
+                setNoticeMessage(nextNoticeMessage);
+            }
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setErrorMessage(data.export_error);
             }
@@ -2488,18 +2531,27 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const diarizationProgressPercent = showDiarizationProgress
         ? Math.min(100, Math.max(
             0,
-            reportedDiarizationProgress && reportedDiarizationProgress > 0
-                ? reportedDiarizationProgress
-                : getFallbackDiarizationProgressPercent(diarizationElapsedMs),
+            getDisplayedDiarizationProgressPercent(reportedDiarizationProgress, diarizationElapsedMs),
         ))
         : 0;
+    const diarizationProgressIsEstimated = showDiarizationProgress
+        && (typeof reportedDiarizationProgress !== 'number' || reportedDiarizationProgress <= 30);
     const diarizationProgressMessage = formatDiarizationProgressMessage(
         diarizationProgress?.message || (diarizationStopRequested ? '참석자 구분 중지 중' : '참석자 구분 중'),
     );
+    const backendDiarizationEtaSeconds = typeof diarizationProgress?.eta_seconds === 'number'
+        ? diarizationProgress.eta_seconds
+        : typeof diarizationProgress?.etaSeconds === 'number'
+            ? diarizationProgress.etaSeconds
+            : null;
+    const backendDiarizationUpdatedAtMs = parseGenerationStartedAt(diarizationProgress?.updated_at);
     const diarizationRemainingEstimate = formatDiarizationRemainingEstimate(
         diarizationElapsedMs,
         diarizationProgressPercent,
         diarizationProgress?.status,
+        backendDiarizationEtaSeconds,
+        backendDiarizationUpdatedAtMs,
+        diarizationNow,
     );
     const effectiveDiarizationRemainingEstimate = diarizationStopRequested
         ? diarizationStopLabel
@@ -2514,23 +2566,29 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3 text-sm font-semibold text-foreground" role="status" aria-live="polite">
                             <span className="min-w-0 truncate">{diarizationProgressMessage}</span>
-                            <span className="shrink-0 text-primary">{Math.round(diarizationProgressPercent)}%</span>
+                            <span className="shrink-0 text-primary">
+                                {diarizationProgressIsEstimated
+                                    ? `추정 ${Math.round(diarizationProgressPercent)}%`
+                                    : `${Math.round(diarizationProgressPercent)}%`}
+                            </span>
                         </div>
                         <ProgressBar
                             value={diarizationProgressPercent}
                             size="sm"
                             tone={diarizationProgress?.status === 'failed' ? 'error' : 'primary'}
                             className="mt-3"
-                            label="참석자 구분 진행률"
+                            label={diarizationProgressIsEstimated ? '참석자 구분 추정 진행률' : '참석자 구분 진행률'}
                         />
                     </div>
                 </div>
-                <div className="shrink-0 text-left sm:text-right">
-                    <div className="text-xs text-muted-foreground">경과 시간</div>
-                    <div className="mt-1 text-sm font-semibold text-primary">
-                        {formatAnalysisDuration(diarizationElapsedMs)}
-                    </div>
-                    <div className="mt-3 text-xs text-muted-foreground">예상 남은 시간</div>
+                    <div className="shrink-0 text-left sm:text-right">
+                        <div className="text-xs text-muted-foreground">경과 시간</div>
+                        <div className="mt-1 text-sm font-semibold text-primary">
+                            {formatAnalysisDuration(diarizationElapsedMs)}
+                        </div>
+                        <div className="mt-3 text-xs text-muted-foreground">
+                            {diarizationProgressIsEstimated ? '추정 남은 시간' : '예상 남은 시간'}
+                        </div>
                     <div className="mt-1 text-sm font-semibold text-primary">
                         {effectiveDiarizationRemainingEstimate}
                     </div>
@@ -2565,7 +2623,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     <div className="diarization-stop-actions">
                         <Button
                             variant="outline"
-                            className="h-8 px-3 text-xs"
                             onClick={() => handleStopDiarization('defer')}
                             disabled={isStoppingDiarization}
                             title="원본 음성이 남아 있으면 다시 실행할 수 있게 중지"
@@ -2575,7 +2632,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                         </Button>
                         <Button
                             variant="outline"
-                            className="h-8 px-3 text-xs"
                             onClick={() => handleStopDiarization('cancel')}
                             disabled={isStoppingDiarization}
                             title="이번 참석자 구분 실행만 취소"
@@ -2584,8 +2640,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             취소
                         </Button>
                         <Button
-                            variant="secondary"
-                            className="h-8 px-3 text-xs"
+                            variant="primary"
                             onClick={() => setIsDiarizationStopConfirmOpen(false)}
                             disabled={isStoppingDiarization}
                         >
@@ -2635,39 +2690,24 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     {errorMessage}
                 </StatusBanner>
             )}
-            {savedFileToast && (
-                <div className="save-toast" role="status" aria-live="polite">
-                    <span className="font-semibold text-foreground">저장됨</span>
-                    {savedFileToast.path && isTauriRuntime() && (
-                        <button
-                            type="button"
-                            className="save-toast-action"
-                            onClick={handleOpenSavedFileLocation}
-                        >
-                            폴더 열기
-                        </button>
+            {(noticeToast || operationToast) && (
+                <div className="meeting-history-toast-stack">
+                    {noticeToast && (
+                        <AppToast
+                            message={noticeToast.message}
+                            tone={noticeToast.tone}
+                            closeLabel="성공 알림 닫기"
+                            onClose={() => setNoticeToast(null)}
+                        />
                     )}
-                    <button
-                        type="button"
-                        className="save-toast-close"
-                        aria-label="저장 알림 닫기"
-                        onClick={() => setSavedFileToast(null)}
-                    >
-                        <X size={14} />
-                    </button>
-                </div>
-            )}
-            {operationToast && (
-                <div className={`operation-toast status-${operationToast.tone}`} role="status" aria-live="polite">
-                    <span className="font-semibold">{operationToast.message}</span>
-                    <button
-                        type="button"
-                        className="operation-toast-close"
-                        aria-label="알림 닫기"
-                        onClick={() => setOperationToast(null)}
-                    >
-                        <X size={14} />
-                    </button>
+                    {operationToast && (
+                        <AppToast
+                            message={operationToast.message}
+                            tone={operationToast.tone}
+                            closeLabel="작업 알림 닫기"
+                            onClose={() => setOperationToast(null)}
+                        />
+                    )}
                 </div>
             )}
 
@@ -2683,7 +2723,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             ) : (
                                 <h2 className="meeting-detail-title min-w-0 flex-1">{selectedMeeting.title}</h2>
                             )}
-                            <div className="flex shrink-0 items-center gap-2">
+                            <div className="meeting-detail-actions">
                                 {isEditing ? (
                                     <>
                                         <Button onClick={handleSaveEdit}>
@@ -2724,6 +2764,28 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             onClick={() => setIsEditing(true)}
                                             disabled={isDownloading}
                                         />
+                                        {savedFileToast && (
+                                            <div className="save-toast" role="status" aria-live="polite">
+                                                <span className="font-semibold text-foreground">저장됨</span>
+                                                {savedFileToast.path && isTauriRuntime() && (
+                                                    <button
+                                                        type="button"
+                                                        className="save-toast-action"
+                                                        onClick={handleOpenSavedFileLocation}
+                                                    >
+                                                        폴더 열기
+                                                    </button>
+                                                )}
+                                                <button
+                                                    type="button"
+                                                    className="save-toast-close"
+                                                    aria-label="저장 알림 닫기"
+                                                    onClick={() => setSavedFileToast(null)}
+                                                >
+                                                    <X size={14} />
+                                                </button>
+                                            </div>
+                                        )}
                                     </>
                                 )}
                             </div>

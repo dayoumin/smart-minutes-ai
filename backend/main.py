@@ -16,7 +16,7 @@ import threading
 import time
 import urllib.request
 import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import AsyncIterator
 from xml.etree import ElementTree
@@ -391,7 +391,7 @@ def _can_defer_diarization_for_later(config: dict) -> bool:
 
 def _should_generate_diarization_during_analysis(config: dict) -> bool:
     diarization_config = config.get("diarization", {})
-    return bool(diarization_config.get("generate_during_analysis", False))
+    return bool(diarization_config.get("generate_during_analysis", True))
 
 
 def _normalize_resume_file_size(value: int | None) -> int | None:
@@ -611,13 +611,21 @@ def _record_analysis_heartbeat(job_id: str, progress_payload: dict) -> None:
         paths = build_job_checkpoint_paths(temp_dir, job_id)
         if not os.path.exists(paths.state_path):
             return
+        last_progress = {
+            "message": str(progress_payload.get("message") or ""),
+            "progress": int(progress_payload.get("progress") or 0),
+            "status": str(progress_payload.get("status") or ""),
+        }
+        if "eta_seconds" in progress_payload:
+            eta_seconds = progress_payload.get("eta_seconds")
+            last_progress["eta_seconds"] = (
+                int(eta_seconds)
+                if isinstance(eta_seconds, (int, float)) and eta_seconds >= 0
+                else None
+            )
         _write_job_state(paths, {
             "last_heartbeat_at": datetime.now().isoformat(),
-            "last_progress": {
-                "message": str(progress_payload.get("message") or ""),
-                "progress": int(progress_payload.get("progress") or 0),
-                "status": str(progress_payload.get("status") or ""),
-            },
+            "last_progress": last_progress,
         })
     except Exception:
         logging.exception("Failed to record analysis heartbeat")
@@ -744,7 +752,7 @@ async def models_status() -> dict:
         selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
-        diarization_during_analysis = bool(config.get("diarization", {}).get("generate_during_analysis", False))
+        diarization_during_analysis = _should_generate_diarization_during_analysis(config)
         summary_readiness = _summary_model_readiness(config)
         stt_device_status = get_stt_device_status()
         memory_gb = _system_memory_gb()
@@ -2413,6 +2421,7 @@ async def get_output_generation_progress(job_id: str, kind: str) -> dict:
         "message": "",
         "status": "idle",
         "active": False,
+        "eta_seconds": None,
     }
 
 
@@ -2929,12 +2938,14 @@ def _set_generation_progress(
     *,
     status: str = "processing",
     active: bool = True,
+    eta_seconds: int | float | None = None,
 ) -> None:
     if not generation_key:
         return
     now = datetime.now().isoformat()
     now_epoch = time.time()
     current = GENERATION_PROGRESS.get(generation_key) or {}
+    normalized_eta = int(eta_seconds) if isinstance(eta_seconds, (int, float)) and eta_seconds >= 0 else None
     GENERATION_PROGRESS[generation_key] = {
         **current,
         "job_id": generation_key[0],
@@ -2943,6 +2954,7 @@ def _set_generation_progress(
         "message": message,
         "status": status,
         "active": active,
+        "eta_seconds": normalized_eta,
         "started_at": current.get("started_at") or now,
         "updated_at": now,
         "updated_at_epoch": now_epoch,
@@ -2957,9 +2969,121 @@ def _record_generation_progress(
     *,
     status: str = "processing",
     active: bool = True,
+    eta_seconds: int | float | None = None,
 ) -> None:
     with GENERATION_STATUS_LOCK:
-        _set_generation_progress(generation_key, progress, message, status=status, active=active)
+        _set_generation_progress(generation_key, progress, message, status=status, active=active, eta_seconds=eta_seconds)
+
+
+def _stt_eta_metric_key(device: str | None) -> str:
+    normalized_device = str(device or "").strip().lower()
+    if normalized_device.startswith("cuda"):
+        return "cuda"
+    if normalized_device in {"auto", "cpu"}:
+        return normalized_device
+    return normalized_device or "unknown"
+
+
+def _analysis_eta_metrics_path(config: dict) -> str:
+    temp_dir = resolve_config_path(config["paths"]["temp_dir"])
+    return os.path.join(temp_dir, "analysis_eta_metrics.json")
+
+
+def _is_sane_stt_audio_rate(value: object) -> bool:
+    try:
+        rate = float(value)
+    except (TypeError, ValueError):
+        return False
+    return 0.02 <= rate <= 20.0
+
+
+def _load_analysis_eta_metrics(config: dict) -> dict:
+    try:
+        path = _analysis_eta_metrics_path(config)
+        if os.path.exists(path):
+            data = load_json_checkpoint(path)
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def _stt_eta_baseline_rate(config: dict, device: str | None, execution_fingerprint: str | None = None) -> float | None:
+    metrics = _load_analysis_eta_metrics(config)
+    stt_metrics = metrics.get("stt") if isinstance(metrics.get("stt"), dict) else {}
+    metric = None
+    if isinstance(stt_metrics, dict) and execution_fingerprint:
+        fingerprint_metrics = stt_metrics.get("fingerprints")
+        if isinstance(fingerprint_metrics, dict):
+            metric = fingerprint_metrics.get(execution_fingerprint)
+    if metric is None and isinstance(stt_metrics, dict):
+        legacy_device_metrics = stt_metrics.get("devices")
+        if isinstance(legacy_device_metrics, dict):
+            metric = legacy_device_metrics.get(_stt_eta_metric_key(device))
+    if isinstance(metric, dict) and _is_sane_stt_audio_rate(metric.get("audio_seconds_per_real_second")):
+        return float(metric["audio_seconds_per_real_second"])
+    return None
+
+
+def _record_stt_eta_baseline(
+    config: dict,
+    device: str | None,
+    measured_audio_seconds: float,
+    measured_real_seconds: float,
+    execution_fingerprint: str | None = None,
+) -> None:
+    if measured_audio_seconds <= 0 or measured_real_seconds <= 0:
+        return
+    rate = measured_audio_seconds / measured_real_seconds
+    if not _is_sane_stt_audio_rate(rate):
+        return
+    try:
+        path = _analysis_eta_metrics_path(config)
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        metrics = _load_analysis_eta_metrics(config)
+        stt_metrics = metrics.get("stt") if isinstance(metrics.get("stt"), dict) else {}
+        key = execution_fingerprint or _stt_eta_metric_key(device)
+        metric_group_name = "fingerprints" if execution_fingerprint else "devices"
+        metric_group = stt_metrics.get(metric_group_name) if isinstance(stt_metrics, dict) else {}
+        if not isinstance(metric_group, dict):
+            metric_group = {}
+        previous = metric_group.get(key)
+        previous_rate = previous.get("audio_seconds_per_real_second") if isinstance(previous, dict) else None
+        if _is_sane_stt_audio_rate(previous_rate):
+            rate = (float(previous_rate) * 0.7) + (rate * 0.3)
+        metric_group[key] = {
+            "audio_seconds_per_real_second": round(rate, 4),
+            "sample_audio_seconds": round(float(measured_audio_seconds), 3),
+            "sample_real_seconds": round(float(measured_real_seconds), 3),
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        }
+        stt_metrics[metric_group_name] = metric_group
+        metrics["stt"] = stt_metrics
+        atomic_write_json(path, metrics)
+    except Exception:
+        pass
+
+
+def _initial_stt_eta_seconds(
+    total_audio_seconds: float,
+    device: str | None,
+    baseline_audio_seconds_per_real_second: float | None = None,
+) -> int | None:
+    if total_audio_seconds <= 0:
+        return None
+    normalized_device = str(device or "").strip().lower()
+    if _is_sane_stt_audio_rate(baseline_audio_seconds_per_real_second):
+        audio_seconds_per_real_second = float(baseline_audio_seconds_per_real_second)
+    else:
+        audio_seconds_per_real_second = 1.0 if normalized_device.startswith("cuda") else 0.25
+    return max(1, int(total_audio_seconds / audio_seconds_per_real_second))
+
+
+def _initial_diarization_eta_seconds(total_audio_seconds: float) -> int | None:
+    if total_audio_seconds <= 0:
+        return None
+    return max(60, int(total_audio_seconds * 1.5))
 
 
 def _generation_stop_request(generation_key: tuple[str, str] | None) -> dict | None:
@@ -3398,9 +3522,11 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
         _record_generation_progress(generation_key, 15, "음성 파일 확인 중")
         _raise_if_generation_stopped(generation_key)
+        source_duration_seconds = get_wav_duration_seconds(source_audio_path)
+        diarization_eta_seconds = _initial_diarization_eta_seconds(source_duration_seconds)
         decision = _diarization_resource_decision(
             config,
-            get_wav_duration_seconds(source_audio_path),
+            source_duration_seconds,
             requested_override=True,
         )
         if decision.get("skipped"):
@@ -3420,16 +3546,21 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
         min_spk = config.get("diarization", {}).get("min_speakers")
         max_spk = config.get("diarization", {}).get("max_speakers")
-        _record_generation_progress(generation_key, 30, "참석자 음성 구간 분석 중")
+        _record_generation_progress(
+            generation_key,
+            30,
+            "참석자 음성 구간 분석 중",
+            eta_seconds=diarization_eta_seconds,
+        )
         _raise_if_generation_stopped(generation_key)
         speaker_segments = await asyncio.to_thread(
             lambda: diarize_audio(source_audio_path, diarize_model_path, min_spk, max_spk)
         )
         _raise_if_generation_stopped(generation_key)
-        _record_generation_progress(generation_key, 78, "참석자 구간을 대화록 시간과 맞추는 중")
+        _record_generation_progress(generation_key, 78, "참석자 구간을 대화록 시간과 맞추는 중", eta_seconds=5)
         aligned_segments = align_segments_with_speakers(copy.deepcopy(raw_segments), speaker_segments)
         _raise_if_generation_stopped(generation_key)
-        _record_generation_progress(generation_key, 86, "참석자 구분을 대화록에 반영 중")
+        _record_generation_progress(generation_key, 86, "참석자 구분을 대화록에 반영 중", eta_seconds=3)
         display_segments = build_display_segments(copy.deepcopy(aligned_segments))
         _raise_if_generation_stopped(generation_key)
 
@@ -3490,7 +3621,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
         export_error = None
         try:
             _raise_if_generation_stopped(generation_key)
-            _record_generation_progress(generation_key, 94, "내보내기 파일 갱신 중")
+            _record_generation_progress(generation_key, 94, "내보내기 파일 갱신 중", eta_seconds=2)
             outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
         except HTTPException:
             raise
@@ -3506,7 +3637,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
             "resume_supported": True,
         })
         _raise_if_generation_stopped(generation_key)
-        _record_generation_progress(generation_key, 100, "참석자 구분 완료", status="completed", active=False)
+        _record_generation_progress(generation_key, 100, "참석자 구분 완료", status="completed", active=False, eta_seconds=0)
         if (
             restored_source_audio
             and source_audio_path
@@ -5140,6 +5271,7 @@ async def stream_real_analysis(
         "progress": 0,
         "message": "분석을 준비하고 있습니다.",
         "status": "processing",
+        "eta_seconds": None,
     }
     last_real_progress_at = time.monotonic()
 
@@ -5157,6 +5289,7 @@ async def stream_real_analysis(
             "progress": progress,
             "message": step,
             "status": "processing",
+            "eta_seconds": None,
             **(metadata or {}),
         }
         loop.call_soon_threadsafe(
@@ -5291,6 +5424,12 @@ async def stream_real_analysis(
                 "resume_supported": cancel_action == "stop",
                 "cleanup_policy": "delete_resume_artifacts" if cancel_action == "cancel" else "preserve_checkpoints",
                 "last_heartbeat_at": datetime.now().isoformat(),
+                "last_progress": {
+                    "message": cancelled_message,
+                    "progress": 0,
+                    "status": cancelled_status,
+                    "eta_seconds": None,
+                },
             })
             if cancel_action == "cancel":
                 try:
@@ -5304,6 +5443,7 @@ async def stream_real_analysis(
                 "status": cancelled_status,
                 "action": cancel_action,
                 "message": cancelled_message,
+                "eta_seconds": None,
             })
             await queue.put("[DONE]")
         except Exception as exc:
@@ -5313,6 +5453,12 @@ async def stream_real_analysis(
                 "resume_supported": True,
                 "last_heartbeat_at": datetime.now().isoformat(),
                 "last_error": str(exc),
+                "last_progress": {
+                    "message": str(exc),
+                    "progress": 100,
+                    "status": "error",
+                    "eta_seconds": None,
+                },
             })
             await queue.put({
                 "type": "error",
@@ -5320,6 +5466,7 @@ async def stream_real_analysis(
                 "progress": 100,
                 "status": "error",
                 "message": str(exc),
+                "eta_seconds": None,
             })
             await queue.put("[DONE]")
         finally:
@@ -5581,6 +5728,7 @@ def process_audio_pipeline(
             "message": step,
             "progress": prog,
             "status": "processing",
+            "eta_seconds": None,
             **extra,
         }
         state_update = {
@@ -5593,7 +5741,7 @@ def process_audio_pipeline(
         _write_job_state(checkpoint_paths, state_update)
         if progress_callback:
             try:
-                progress_callback(step, prog, dict(extra))
+                progress_callback(step, prog, dict(last_progress_payload))
             except TypeError:
                 progress_callback(step, prog)
 
@@ -5819,6 +5967,8 @@ def process_audio_pipeline(
                     next_offset = float(chunks_to_process[idx + 1].get("offset") or 0.0)
                     if next_offset > offset:
                         return next_offset - offset
+                if source_duration_fallback > offset:
+                    return source_duration_fallback - offset
             except (TypeError, ValueError):
                 pass
             return average_chunk_duration
@@ -5829,19 +5979,24 @@ def process_audio_pipeline(
         ]
         total_audio_seconds = sum(effective_chunk_durations) or source_duration_fallback
         completed_audio_seconds = 0.0
+        measured_audio_seconds = 0.0
+        measured_real_seconds = 0.0
         stt_started_at = time.monotonic()
         execution_fingerprint = _stt_execution_fingerprint(model_path, stt_device, stt_chunk_seconds)
+        stt_baseline_rate = _stt_eta_baseline_rate(config, stt_device, execution_fingerprint)
         _set_stage("transcribing")
 
-        def _stt_progress_extra(idx: int, completed_seconds: float) -> dict:
+        def _stt_progress_extra(idx: int, completed_seconds: float, measured_seconds: float) -> dict:
             elapsed_seconds = max(time.monotonic() - stt_started_at, 0.0)
             remaining_audio_seconds = max(total_audio_seconds - completed_seconds, 0.0)
             eta_seconds = None
             audio_seconds_per_real_second = None
-            if completed_seconds > 0 and elapsed_seconds > 0:
-                audio_seconds_per_real_second = completed_seconds / elapsed_seconds
+            if measured_seconds > 0 and elapsed_seconds > 0:
+                audio_seconds_per_real_second = measured_seconds / elapsed_seconds
                 if audio_seconds_per_real_second > 0:
                     eta_seconds = int(remaining_audio_seconds / audio_seconds_per_real_second)
+            else:
+                eta_seconds = _initial_stt_eta_seconds(remaining_audio_seconds, stt_device, stt_baseline_rate)
             return {
                 "stage": "transcribing",
                 "chunk_index": idx,
@@ -5867,7 +6022,7 @@ def process_audio_pipeline(
             _raise_if_cancelled()
             progress = 30 + int((idx / max(total, 1)) * 35)
             message = f"Transcribing chunk {idx + 1}/{total}..."
-            _report_progress(message, progress, **_stt_progress_extra(idx, completed_audio_seconds))
+            _report_progress(message, progress, **_stt_progress_extra(idx, completed_audio_seconds, measured_audio_seconds))
             chunk_checkpoint_path = get_stt_chunk_checkpoint_path(checkpoint_paths, idx)
             checkpoint_payload = load_json_checkpoint(chunk_checkpoint_path) if os.path.exists(chunk_checkpoint_path) else None
             if (
@@ -5880,6 +6035,7 @@ def process_audio_pipeline(
                 completed_audio_seconds += effective_chunk_durations[idx]
                 continue
             try:
+                chunk_started_at = time.monotonic()
                 chunk_segments = transcribe_audio(
                     chunk["path"],
                     model_path,
@@ -5896,11 +6052,14 @@ def process_audio_pipeline(
                 _mark_chunk_completed(idx)
                 collected_segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
                 completed_audio_seconds += effective_chunk_durations[idx]
+                measured_audio_seconds += effective_chunk_durations[idx]
+                measured_real_seconds += max(time.monotonic() - chunk_started_at, 0.0)
             except Exception as chunk_exc:
                 print(f"[STT] Exception while transcribing chunk {idx + 1}: {chunk_exc}")
                 import traceback
                 traceback.print_exc()
                 raise
+        _record_stt_eta_baseline(config, stt_device, measured_audio_seconds, measured_real_seconds, execution_fingerprint)
         return collected_segments
 
     try:
@@ -6063,7 +6222,11 @@ def process_audio_pipeline(
                 aligned_segments = copy.deepcopy(segments)
                 display_segments = display_checkpoint["segments"]
             else:
-                _report_progress("Speaker Diarization & Alignment...", 70)
+                _report_progress(
+                    "Speaker Diarization & Alignment...",
+                    70,
+                    eta_seconds=_initial_diarization_eta_seconds(source_wav_duration),
+                )
                 _raise_if_cancelled()
                 diarize_model_path = config["paths"]["diarization_model"]
                 if diarize_model_path and diarize_model_path.startswith((".", "..")):

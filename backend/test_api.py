@@ -238,7 +238,7 @@ class AnalyzeApiTest(unittest.TestCase):
             main.GENERATION_PROGRESS.pop(generation_key, None)
             main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
             key = main._begin_generation(*generation_key)
-            main._set_generation_progress(key, 42, "참석자 음성 구간 분석 중")
+            main._set_generation_progress(key, 42, "참석자 음성 구간 분석 중", eta_seconds=25)
 
         try:
             response = self.client.get("/api/outputs/unit_progress_job/generation-progress/diarization")
@@ -247,11 +247,26 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertTrue(payload["active"])
             self.assertEqual(payload["progress"], 42)
             self.assertEqual(payload["message"], "참석자 음성 구간 분석 중")
+            self.assertEqual(payload["eta_seconds"], 25)
         finally:
             with main.GENERATION_STATUS_LOCK:
                 main._end_generation(generation_key)
                 main.GENERATION_PROGRESS.pop(generation_key, None)
                 main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+
+    def test_generation_progress_idle_includes_null_eta_seconds(self) -> None:
+        generation_key = ("unit_idle_progress_job", "diarization")
+        with main.GENERATION_STATUS_LOCK:
+            main.ACTIVE_GENERATIONS.discard(generation_key)
+            main.GENERATION_PROGRESS.pop(generation_key, None)
+            main.GENERATION_STOP_REQUESTS.pop(generation_key, None)
+
+        response = self.client.get("/api/outputs/unit_idle_progress_job/generation-progress/diarization")
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.json()
+        self.assertFalse(payload["active"])
+        self.assertIsNone(payload["eta_seconds"])
 
     def test_generation_stop_defers_active_diarization(self) -> None:
         with tempfile.TemporaryDirectory() as output_dir:
@@ -2500,6 +2515,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(normalized["stt"]["device"], "cpu")
         self.assertEqual(normalized["processing"]["long_audio_chunk_seconds"], 30)
         self.assertFalse(normalized["diarization"]["enabled"])
+        self.assertTrue(normalized["diarization"]["generate_during_analysis"])
 
     def test_generic_models_path_migrates_to_default_model_path(self) -> None:
         normalized = normalize_stt_config({
@@ -2589,6 +2605,44 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(heartbeat["progress"], 30)
         self.assertTrue(heartbeat["heartbeat"])
         self.assertEqual(heartbeat["message"], "음성 인식 중입니다.")
+
+    def test_analysis_heartbeat_preserves_eta_seconds_in_job_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job_id = "unit_heartbeat_eta"
+            paths = build_job_checkpoint_paths(temp_dir, job_id)
+            Path(paths.root_dir).mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.state_path, {"stage": "transcribing"})
+            fake_config = {"paths": {"temp_dir": temp_dir}}
+
+            with patch("main.load_config", return_value=fake_config):
+                main._record_analysis_heartbeat(job_id, {
+                    "message": "Transcribing chunk 1/3...",
+                    "progress": 30,
+                    "status": "processing",
+                    "eta_seconds": 123,
+                })
+
+            state = load_json_checkpoint(paths.state_path)
+            self.assertEqual(state["last_progress"]["eta_seconds"], 123)
+
+    def test_analysis_heartbeat_preserves_null_eta_seconds_in_job_state(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            job_id = "unit_heartbeat_null_eta"
+            paths = build_job_checkpoint_paths(temp_dir, job_id)
+            Path(paths.root_dir).mkdir(parents=True, exist_ok=True)
+            atomic_write_json(paths.state_path, {"stage": "diarization"})
+            fake_config = {"paths": {"temp_dir": temp_dir}}
+
+            with patch("main.load_config", return_value=fake_config):
+                main._record_analysis_heartbeat(job_id, {
+                    "message": "Speaker Diarization & Alignment...",
+                    "progress": 70,
+                    "status": "processing",
+                    "eta_seconds": None,
+                })
+
+            state = load_json_checkpoint(paths.state_path)
+            self.assertIsNone(state["last_progress"]["eta_seconds"])
 
     def test_real_analysis_stream_sends_heartbeat_during_long_worker_gap(self) -> None:
         fake_config = {
@@ -2938,6 +2992,7 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertTrue(state["cancelled"])
             self.assertEqual(state["cancel_action"], "stop")
             self.assertTrue(state["resume_supported"])
+            self.assertIsNone(state["last_progress"]["eta_seconds"])
 
     def test_real_analysis_cancel_action_deletes_resume_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:
@@ -4144,7 +4199,6 @@ class AnalyzeApiTest(unittest.TestCase):
                 "summary": {"enabled": True, "generate_during_analysis": True},
                 "privacy": {"auto_delete_temp_audio": True},
             }
-
             with (
                 patch("main.resolve_model_path", return_value="resolved-model"),
                 patch("main.model_exists", return_value=False),
@@ -4177,10 +4231,22 @@ class AnalyzeApiTest(unittest.TestCase):
             payload for step, _progress, payload in progress_payloads
             if step == "Transcribing chunk 2/2..."
         )
+        post_transcription_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "음성 인식이 완료되었습니다. 후처리를 준비하고 있습니다."
+        )
+        diarization_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "Speaker Diarization & Alignment..."
+        )
         self.assertEqual(first_transcribe_payload["total_chunk_count"], 2)
         self.assertEqual(first_transcribe_payload["total_audio_seconds"], 2.0)
+        self.assertIsInstance(first_transcribe_payload["eta_seconds"], int)
+        self.assertGreaterEqual(first_transcribe_payload["eta_seconds"], 1)
         self.assertEqual(second_transcribe_payload["completed_chunk_count"], 1)
         self.assertGreater(second_transcribe_payload["completed_audio_seconds"], 0)
+        self.assertIsNone(post_transcription_payload["eta_seconds"])
+        self.assertIn("eta_seconds", diarization_payload)
         self.assertEqual(len(result["result_data"]["raw_stt_segments"]), 2)
         self.assertEqual(len(result["result_data"]["aligned_segments"]), 2)
         self.assertIn("display_segments", result["result_data"])
@@ -4208,15 +4274,26 @@ class AnalyzeApiTest(unittest.TestCase):
                 "summary": {"enabled": False, "generate_during_analysis": False},
                 "privacy": {"auto_delete_temp_audio": True},
             }
+            execution_fingerprint = main._stt_execution_fingerprint("faster-whisper-large-v3", "cpu", 30)
+            main._record_stt_eta_baseline(
+                config,
+                "cpu",
+                measured_audio_seconds=60.0,
+                measured_real_seconds=30.0,
+                execution_fingerprint=execution_fingerprint,
+            )
+            self.assertEqual(main._stt_eta_baseline_rate(config, "cpu", execution_fingerprint), 2.0)
+            self.assertIsNone(main._stt_eta_baseline_rate(config, "cpu", "different-fingerprint"))
 
             with (
                 patch("main.resolve_model_path", return_value="resolved-model"),
                 patch("main.model_exists", return_value=False),
                 patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
-                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=2.0),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=100.0),
                 patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
                     {"path": TEST_AUDIO_PATH, "offset": 0.0, "index": 0},
-                    {"path": TEST_AUDIO_PATH, "offset": 1.0, "index": 1},
+                    {"path": TEST_AUDIO_PATH, "offset": 30.0, "index": 1},
+                    {"path": TEST_AUDIO_PATH, "offset": 80.0, "index": 2},
                 ]),
                 patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
                 patch("pipeline.export_txt.export_txt"),
@@ -4226,13 +4303,109 @@ class AnalyzeApiTest(unittest.TestCase):
             ):
                 process_audio_pipeline(TEST_AUDIO_PATH, "unit_missing_chunk_duration_progress", config, progress_callback=report)
 
+        first_transcribe_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "Transcribing chunk 1/3..."
+        )
         second_transcribe_payload = next(
             payload for step, _progress, payload in progress_payloads
-            if step == "Transcribing chunk 2/2..."
+            if step == "Transcribing chunk 2/3..."
         )
-        self.assertEqual(second_transcribe_payload["total_audio_seconds"], 2.0)
+        self.assertEqual(first_transcribe_payload["total_audio_seconds"], 100.0)
+        self.assertIsInstance(first_transcribe_payload["eta_seconds"], int)
+        self.assertEqual(first_transcribe_payload["eta_seconds"], 50)
+        self.assertEqual(second_transcribe_payload["total_audio_seconds"], 100.0)
         self.assertEqual(second_transcribe_payload["completed_chunk_count"], 1)
-        self.assertEqual(second_transcribe_payload["completed_audio_seconds"], 1.0)
+        self.assertEqual(second_transcribe_payload["completed_audio_seconds"], 30.0)
+
+    def test_pipeline_eta_ignores_reused_stt_chunks_for_measured_throughput(self) -> None:
+        progress_payloads = []
+
+        def report(step, progress, extra=None):
+            progress_payloads.append((step, progress, extra or {}))
+
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "",
+                    "output_dir": os.path.join(work_dir, "outputs"),
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": False, "generate_during_analysis": False},
+                "summary": {"enabled": False, "generate_during_analysis": False},
+                "privacy": {"auto_delete_temp_audio": True},
+            }
+            checkpoint_paths = build_job_checkpoint_paths(config["paths"]["temp_dir"], "unit_reused_chunk_eta")
+            Path(checkpoint_paths.audio_dir).mkdir(parents=True, exist_ok=True)
+            Path(checkpoint_paths.chunks_dir).mkdir(parents=True, exist_ok=True)
+            Path(checkpoint_paths.stt_dir).mkdir(parents=True, exist_ok=True)
+            chunk_paths = [Path(checkpoint_paths.chunks_dir) / f"chunk_{idx + 1:03d}.wav" for idx in range(3)]
+            for chunk_path in chunk_paths:
+                chunk_path.write_bytes(b"chunk")
+            chunks = [
+                {"path": str(chunk_paths[0]), "offset": 0.0, "duration": 30.0, "index": 0},
+                {"path": str(chunk_paths[1]), "offset": 30.0, "duration": 30.0, "index": 1},
+                {"path": str(chunk_paths[2]), "offset": 60.0, "duration": 30.0, "index": 2},
+            ]
+            Path(checkpoint_paths.source_wav_path).write_bytes(b"source")
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(output_path).write_bytes(b"source")
+                return {"preprocessing": preprocessing or {}}
+
+            with (
+                patch("main.resolve_model_path", return_value="resolved-model"),
+                patch("main.model_exists", return_value=False),
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=90.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=chunks),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "fresh"}]),
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.export_markdown.export_markdown"),
+                patch("pipeline.export_docx.export_docx"),
+                patch("pipeline.export_hwpx.export_hwpx"),
+            ):
+                normalized_config = main.normalize_app_config(copy.deepcopy(config))
+                input_fingerprint = main.hash_file_contents(TEST_AUDIO_PATH)
+                config_fingerprint = main._analysis_config_fingerprint(normalized_config)
+                atomic_write_json(checkpoint_paths.state_path, {
+                    "job_id": "unit_reused_chunk_eta",
+                    "input_fingerprint": input_fingerprint,
+                    "config_fingerprint": config_fingerprint,
+                    "source_filename": os.path.basename(TEST_AUDIO_PATH),
+                    "source_wav_completed": True,
+                    "resume_requested": True,
+                    "resume_supported": True,
+                })
+                execution_fingerprint = main._stt_execution_fingerprint(normalized_config["paths"]["stt_model"], "cpu", 30)
+                atomic_write_json(main.get_stt_chunk_checkpoint_path(checkpoint_paths, 0), {
+                    "chunk_index": 0,
+                    "input_fingerprint": input_fingerprint,
+                    "config_fingerprint": config_fingerprint,
+                    "source_wav_size": os.path.getsize(checkpoint_paths.source_wav_path),
+                    "source_wav_duration": 90.0,
+                    "chunk_path": os.path.abspath(str(chunk_paths[0])),
+                    "chunk_size_bytes": os.path.getsize(chunk_paths[0]),
+                    "offset": 0.0,
+                    "duration": 30.0,
+                    "stt_execution_fingerprint": execution_fingerprint,
+                    "segments": [{"start": 0.0, "end": 1.0, "text": "cached"}],
+                })
+                process_audio_pipeline(TEST_AUDIO_PATH, "unit_reused_chunk_eta", config, progress_callback=report)
+
+        second_transcribe_payload = next(
+            payload for step, _progress, payload in progress_payloads
+            if step == "Transcribing chunk 2/3..."
+        )
+        self.assertEqual(second_transcribe_payload["completed_audio_seconds"], 30.0)
+        self.assertIsNone(second_transcribe_payload["audio_seconds_per_real_second"])
+        self.assertEqual(second_transcribe_payload["eta_seconds"], 240)
 
     def test_resume_status_payload_preserves_eta_seconds(self) -> None:
         state = {

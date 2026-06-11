@@ -5,6 +5,8 @@
 - When a task explicitly asks for agent-based review, split the work by perspective or surface when useful.
 - If the active agent limit is reached, close older idle agents first, then continue with the requested review.
 - Prefer clear review scopes such as product-level review, UI/UX review, implementation review, and regression-risk review.
+- For exploratory work where the user says "루프를 돌리자", gives a rough goal, or asks to decide which P2 findings matter now, use the project skill `.agents/skills/lmo-audio-iterative-dev-loop`. Keep the loop bounded: smallest useful slice, narrow verification, big/small review only when useful, then fix only blockers and current-goal P2s.
+- Treat P2 findings as triage items, not automatic work. Fix P2s that affect the current user flow, release/runtime reliability, saved data, or test confidence. Defer or ignore speculative P2s, and record useful deferred items in `todo.md` or `roadmap.md`.
 
 ## Audio Performance Work
 

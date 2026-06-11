@@ -1,0 +1,4 @@
+interface:
+  display_name: "LMO Iterative Dev Loop"
+  short_description: "Run bounded build-review-test loops for unclear feature work."
+  default_prompt: "Turn this rough goal into a small implementation loop, verify it, review it, and separate fixes from deferred P2 items."

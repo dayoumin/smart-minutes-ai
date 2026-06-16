@@ -1062,7 +1062,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
     const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
-    const readinessBannerTitle = readinessState === 'missing-models' ? '분석 준비가 필요합니다' : '분석을 시작할 수 없습니다';
+    const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
 
     const refreshReadiness = async (options: ReadinessOptions = {}): Promise<ReadinessCheck> => {
         if (ANALYSIS_MODE !== 'real') {
@@ -2150,7 +2150,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             )}
             <div className="writer-header">
                 <div>
-                    <div className="writer-kicker">분석 준비</div>
                     <h2 className="writer-title">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
                 </div>
             </div>
@@ -2182,7 +2181,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
                 <section className="writer-section">
                     <div className="writer-section-heading">
-                        <span className="writer-section-index">1</span>
                         <h3>회의 정보</h3>
                     </div>
                     <div className="writer-field-grid">
@@ -2203,7 +2201,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
                 <section className="writer-section">
                     <div className="writer-section-heading">
-                        <span className="writer-section-index">2</span>
                         <h3>{resumeSelectionActive ? '같은 음성/영상 파일 선택 *' : '음성/영상 파일 *'}</h3>
                     </div>
                     <input
@@ -2355,7 +2352,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                     />
                                     <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
                                 </label>
-                                <span className="text-xs text-muted-foreground">기본값 저장</span>
                                 <button
                                     type="button"
                                     title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."

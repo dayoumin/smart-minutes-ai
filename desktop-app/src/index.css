@@ -784,10 +784,6 @@
     @apply flex min-h-12 items-end justify-between gap-4;
   }
 
-  .writer-kicker {
-    @apply mb-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground;
-  }
-
   .writer-title {
     @apply text-xl font-semibold text-foreground;
   }
@@ -806,10 +802,6 @@
 
   .writer-section-heading h3 {
     @apply m-0 text-sm font-semibold;
-  }
-
-  .writer-section-index {
-    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-xs font-semibold text-muted-foreground;
   }
 
   .writer-field-grid {

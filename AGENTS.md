@@ -24,7 +24,8 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 ## UI and Copy Work
 
 - Read `docs/design.md` before changing repeated UI surfaces.
-- Prefer user-facing terms such as `음성 파일`, `회의 요약`, `대화록`, and `분석 준비`.
+- Prefer user-facing terms such as `음성 파일`, `회의 요약`, and `대화록`.
+- Do not add redundant eyebrow labels, decorative section markers, or repeated helper text to the first meeting-writing screen when the title/control already explains the purpose.
 - Avoid exposing implementation terms such as model names, server details, or pipeline names in common user flows.
 - Do not render temporary success/info notices as inline banners that push page content down or resize the current work surface. Transient feedback such as "saved" or "completed" should use a toast, overlay, inline chip with stable reserved space, or another non-layout-shifting pattern.
 - Keep durable guidance inline only when the user must read it to decide the next action, such as errors, warnings, skipped/partial results, required setup, or recovery instructions.

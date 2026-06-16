@@ -137,9 +137,9 @@ class SummarizeFollowupTest(unittest.TestCase):
             return {
                 "content": "보고서 전체 본문입니다.",
                 "sections": [
-                    {"title": "다른 제목", "content": "배경 본문"},
-                    {"title": "임의 제목", "content": "조치 본문"},
-                    {"title": "추가 제목", "content": "제외될 본문"},
+                    {"title": "결론 및 조치", "content": "조치 본문"},
+                    {"title": "검토 배경", "content": "배경 본문"},
+                    {"title": "추가 제목", "content": "참고로 남을 본문"},
                 ],
             }
 
@@ -158,9 +158,11 @@ class SummarizeFollowupTest(unittest.TestCase):
                 },
             )
 
-        self.assertEqual([section["title"] for section in report["sections"]], ["검토 배경", "결론 및 조치"])
-        self.assertEqual([section["content"] for section in report["sections"]], ["배경 본문", "조치 본문"])
-        self.assertNotIn("제외될 본문", [section["content"] for section in report["sections"]])
+        self.assertEqual([section["title"] for section in report["sections"]], ["검토 배경", "결론 및 조치", "참고"])
+        self.assertEqual(report["sections"][0]["content"], "배경 본문")
+        self.assertEqual(report["sections"][1]["content"], "조치 본문")
+        self.assertIn("추가 제목", report["sections"][2]["content"])
+        self.assertIn("참고로 남을 본문", report["sections"][2]["content"])
         self.assertEqual(len(captured_prompts), 1)
         prompt = captured_prompts[0]
         self.assertIn("위원회 보고 양식", prompt)
@@ -203,6 +205,55 @@ class SummarizeFollowupTest(unittest.TestCase):
             )
 
         self.assertEqual(report["sections"], [{"title": "결론 및 조치", "content": "조치 본문"}])
+
+    def test_meeting_report_retries_when_sections_do_not_match_template(self):
+        template = {"sections": ["검토 배경", "결론 및 조치"]}
+        with patch(
+            "pipeline.summarize._generate_json_once",
+            side_effect=[
+                {
+                    "content": "처음 보고서입니다.",
+                    "sections": [{"title": "무관한 섹션", "content": "재시도 대상 본문"}],
+                },
+                {
+                    "content": "재시도 보고서입니다.",
+                    "sections": [{"title": "검토 배경", "content": "재시도 배경 본문"}],
+                },
+            ],
+        ) as generate_json:
+            report = generate_meeting_report(
+                [{"speaker": "SPEAKER_00", "text": "검토 배경을 논의했습니다."}],
+                {"overview": "검토 배경 논의"},
+                report_template=template,
+                model_name_or_path="gemma-test",
+            )
+
+        self.assertEqual(generate_json.call_count, 2)
+        self.assertEqual(report["sections"], [{"title": "검토 배경", "content": "재시도 배경 본문"}])
+
+    def test_meeting_report_keeps_unmatched_retry_sections_as_reference(self):
+        template = {"sections": ["검토 배경", "결론 및 조치"]}
+        with patch(
+            "pipeline.summarize._generate_json_once",
+            side_effect=[
+                {
+                    "content": "처음 보고서입니다.",
+                    "sections": [{"title": "무관한 섹션", "content": "처음 본문"}],
+                },
+                {
+                    "content": "재시도 보고서입니다.",
+                    "sections": [{"title": "여전히 무관한 섹션", "content": "보존할 본문"}],
+                },
+            ],
+        ):
+            report = generate_meeting_report(
+                [{"speaker": "SPEAKER_00", "text": "검토 배경을 논의했습니다."}],
+                {"overview": "검토 배경 논의"},
+                report_template=template,
+                model_name_or_path="gemma-test",
+            )
+
+        self.assertEqual(report["sections"], [{"title": "참고", "content": "여전히 무관한 섹션\n보존할 본문"}])
 
 
 if __name__ == "__main__":

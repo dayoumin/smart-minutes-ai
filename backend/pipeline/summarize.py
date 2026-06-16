@@ -473,6 +473,31 @@ def _report_section_key(title: str) -> str:
     return re.sub(r"\s+", " ", title).strip().casefold()
 
 
+def _reference_report_section(unmatched_sections: list[dict]) -> dict | None:
+    lines: list[str] = []
+    for section in unmatched_sections:
+        title = str(section.get("title") or "").strip()
+        content = str(section.get("content") or "").strip()
+        if not content:
+            continue
+        if title:
+            lines.append(f"{title}\n{content}")
+        else:
+            lines.append(content)
+    if not lines:
+        return None
+    return {"title": "참고", "content": "\n\n".join(lines)}
+
+
+def _report_needs_template_retry(report: dict, template: dict | None = None) -> bool:
+    if not _report_template_section_names(template):
+        return False
+    sections = report.get("sections") if isinstance(report, dict) else []
+    if not isinstance(sections, list) or not sections:
+        return True
+    return all(_report_section_key(str(section.get("title") or "")) == _report_section_key("참고") for section in sections if isinstance(section, dict))
+
+
 def _report_sections_from_response(data, template: dict | None = None) -> list[dict]:
     if isinstance(data, list):
         items = data
@@ -522,18 +547,14 @@ def _report_sections_from_response(data, template: dict | None = None) -> list[d
                 else:
                     unmatched_sections.append(section)
 
-            unmatched_index = 0
-            for index, template_title in enumerate(template_section_names):
-                if ordered_slots[index] is not None or unmatched_index >= len(unmatched_sections):
-                    continue
-                ordered_slots[index] = {
-                    "title": template_title,
-                    "content": unmatched_sections[unmatched_index]["content"],
-                }
-                unmatched_index += 1
             ordered_sections = [section for section in ordered_slots if section is not None]
+            reference_section = _reference_report_section(unmatched_sections)
+            if reference_section:
+                ordered_sections.append(reference_section)
             if ordered_sections:
                 return ordered_sections
+            if reference_section:
+                return [reference_section]
         return sections
 
     summary_content = ""
@@ -648,7 +669,7 @@ Transcript:
 """
     data = _generate_json_once(model_name_or_path, prompt)
     report = _meeting_report_from_response(data, template)
-    if report.get("content") and report.get("sections"):
+    if report.get("content") and report.get("sections") and not _report_needs_template_retry(report, template):
         return report
 
     retry_prompt = f"""Return only valid JSON for a Korean meeting report.

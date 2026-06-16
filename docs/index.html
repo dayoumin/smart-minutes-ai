@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LMO 회의 인사이트 문서 허브</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --surface: #ffffff;
+      --text: #172033;
+      --muted: #657085;
+      --border: #d9dee8;
+      --accent: #0f766e;
+    }
+    body {
+      margin: 0;
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.6;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 260px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    nav {
+      border-right: 1px solid var(--border);
+      background: #eef2f6;
+      padding: 28px 22px;
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      box-sizing: border-box;
+    }
+    nav h1 {
+      margin: 0 0 18px;
+      font-size: 20px;
+      line-height: 1.3;
+    }
+    nav a {
+      display: block;
+      color: var(--text);
+      text-decoration: none;
+      padding: 7px 0;
+      font-size: 14px;
+    }
+    main {
+      padding: 36px;
+      max-width: 1100px;
+    }
+    .intro {
+      max-width: 760px;
+      color: var(--muted);
+      margin-bottom: 26px;
+    }
+    section {
+      margin: 0 0 34px;
+    }
+    h2 {
+      margin: 0 0 12px;
+      font-size: 18px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      display: block;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 16px;
+      color: inherit;
+      text-decoration: none;
+    }
+    .card strong {
+      display: block;
+      margin-bottom: 6px;
+      color: var(--accent);
+    }
+    .card span,
+    .note {
+      color: var(--muted);
+      font-size: 14px;
+    }
+    ul {
+      margin: 8px 0 0;
+      padding-left: 20px;
+    }
+    code {
+      background: #e9edf3;
+      border-radius: 4px;
+      padding: 1px 4px;
+      font-family: Consolas, monospace;
+    }
+    @media (max-width: 780px) {
+      .layout {
+        display: block;
+      }
+      nav {
+        position: static;
+        height: auto;
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+      main {
+        padding: 24px 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <nav>
+      <h1>문서 허브</h1>
+      <a href="#overview">개요</a>
+      <a href="#quality">평가/품질</a>
+      <a href="#operations">운영</a>
+      <a href="#archive">변환 후보</a>
+      <a href="#rule">문서 추가 규칙</a>
+    </nav>
+    <main>
+      <section id="overview">
+        <h2>개요</h2>
+        <p class="intro">
+          LMO 회의 인사이트의 사용자 학습, QA, 운영 문서를 모으는 시작점입니다.
+          새로 읽을 문서는 HTML 문서로 우선 연결하고, 기존 Markdown 문서는 변환 후보로 분리합니다.
+        </p>
+      </section>
+
+      <section id="quality">
+        <h2>평가/품질</h2>
+        <div class="grid">
+          <a class="card" href="report-export-manual-qa.html">
+            <strong>보고서 저장 수동 QA</strong>
+            <span>Word/한글 뷰어에서 DOCX/HWPX 보고서 저장 품질을 확인하는 체크리스트와 샘플 기준입니다.</span>
+          </a>
+        </div>
+      </section>
+
+      <section id="operations">
+        <h2>운영</h2>
+        <div class="grid">
+          <a class="card" href="review-request-guide.html">
+            <strong>검토 요청 가이드</strong>
+            <span>검토 범위와 요청 방식을 정리한 HTML 가이드입니다.</span>
+          </a>
+        </div>
+      </section>
+
+      <section id="archive">
+        <h2>변환 후보</h2>
+        <p class="note">아래 문서는 현재 Markdown 원본입니다. 자주 참조하는 문서는 HTML로 변환한 뒤 이 허브의 대표 카드로 올립니다.</p>
+        <ul>
+          <li><code>docs/tauri-desktop-release-checklist.md</code>: portable 빌드/검증</li>
+          <li><code>docs/user-scenario-test-matrix.md</code>: 사용자 시나리오 테스트</li>
+          <li><code>docs/frontend-simulation-testing.md</code>: 프론트엔드 시뮬레이션</li>
+          <li><code>docs/design.md</code>: UI/문구 디자인 기준</li>
+          <li><code>docs/airepoto-reference-adoption-plan.md</code>: 보고서/회의록 완성도 계획</li>
+        </ul>
+      </section>
+
+      <section id="rule">
+        <h2>문서 추가 규칙</h2>
+        <p class="note">
+          새 학습/설계/QA/운영 문서는 이 허브에 한 번만 연결합니다. 사용자에게 바로 보여줄 문서는 HTML로 만들고,
+          원본 로그, JSON, Markdown, 개발자용 스크립트는 변환 후보나 참고 자료로만 둡니다.
+        </p>
+      </section>
+    </main>
+  </div>
+</body>
+</html>

@@ -74,6 +74,22 @@ def _meeting_report_intro(result: dict, sections: list[dict]) -> str:
     return content
 
 
+def _meeting_report_template_name(result: dict) -> str:
+    report = result.get("meeting_report") or {}
+    if not isinstance(report, dict):
+        report = {}
+    snapshot = report.get("templateSnapshot") or report.get("template_snapshot") or {}
+    if isinstance(snapshot, dict) and str(snapshot.get("name") or "").strip():
+        return str(snapshot.get("name") or "").strip()
+    if str(report.get("templateName") or report.get("template_name") or "").strip():
+        return str(report.get("templateName") or report.get("template_name")).strip()
+    report_template = result.get("report_template") or {}
+    report_template_id = str(report.get("templateId") or report.get("template_id") or "").strip()
+    if isinstance(report_template, dict) and (not report_template_id or str(report_template.get("id") or "").strip() == report_template_id):
+        return str(report_template.get("name") or "").strip()
+    return ""
+
+
 def _report_text_blocks(text: str) -> list[tuple[str, str]]:
     blocks: list[tuple[str, str]] = []
     for raw_line in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
@@ -190,6 +206,9 @@ def _add_title_block(doc: Document, title: str, result: dict) -> None:
     ]
     if result.get("meeting_purpose"):
         rows.append(("회의 목적", str(result.get("meeting_purpose") or "")))
+    report_template_name = _meeting_report_template_name(result)
+    if report_template_name:
+        rows.append(("보고 양식", report_template_name))
 
     table = doc.add_table(rows=len(rows), cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
@@ -217,6 +236,11 @@ def _add_meeting_report(doc: Document, result: dict, section_no: int, *, include
 
     doc.add_heading(f"{section_no}. 회의록 보고서", level=1)
     section_no += 1
+    template_name = _meeting_report_template_name(result)
+    if template_name:
+        paragraph = doc.add_paragraph(f"보고 양식: {template_name}")
+        paragraph.paragraph_format.space_after = Pt(6)
+        _apply_run_font(paragraph, size=9)
     intro = _meeting_report_intro(result, sections)
     if intro:
         doc.add_heading("보고서 개요", level=2)

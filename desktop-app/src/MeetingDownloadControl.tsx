@@ -176,14 +176,27 @@ const buildOrganizedText = (meeting: MeetingRecord): string => {
     return lines.filter(Boolean).join('\n');
 };
 
+const resolveReportTemplateName = (meeting: MeetingRecord): string => {
+    const report = meeting.meetingReport;
+    const snapshotName = report?.templateSnapshot?.name?.trim();
+    if (snapshotName) return snapshotName;
+    const storedName = report?.templateName?.trim();
+    if (storedName) return storedName;
+    if (!report?.templateId || report.templateId === meeting.reportTemplate?.id) {
+        return meeting.reportTemplate?.name?.trim() ?? '';
+    }
+    return '';
+};
+
 const buildReportText = (meeting: MeetingRecord): string => {
     const report = meeting.meetingReport;
     const sections = report?.sections ?? [];
+    const reportTemplateName = resolveReportTemplateName(meeting);
     const lines = [
         meeting.title,
         `일시: ${meeting.date}`,
         `회의 목적: ${meeting.meetingPurpose || '-'}`,
-        meeting.reportTemplate?.name ? `보고 양식: ${meeting.reportTemplate.name}` : '',
+        reportTemplateName ? `보고 양식: ${reportTemplateName}` : '',
         '',
         '[회의록 보고서]',
     ];

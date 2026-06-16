@@ -4350,12 +4350,18 @@ async def generate_output_meeting_report(job_id: str, payload: dict | None = Bod
                 raise HTTPException(status_code=409, detail=DETAIL_REPORT_INPUT_CHANGED)
 
             latest_status = _ensure_generation_status(latest_summary)
+            report_template_id = latest_result.get("selected_report_template_id", "standard-minutes")
             report_payload = {
-                "templateId": latest_result.get("selected_report_template_id", "standard-minutes"),
+                "templateId": report_template_id,
                 "generatedAt": datetime.now().isoformat(timespec="seconds"),
                 "content": str(meeting_report.get("content") or "").strip(),
                 "sections": meeting_report.get("sections") or [],
             }
+            report_payload = _meeting_report_with_template_snapshot(
+                report_payload,
+                latest_result.get("report_template", {}),
+                report_template_id,
+            )
             latest_result["meeting_report"] = report_payload
             latest_status["meeting_report"] = "completed"
             latest_summary["generation_status"] = latest_status
@@ -4946,6 +4952,15 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
         speaker_labels,
         speaker_fallback_when_unlabeled=has_speaker_labels,
     )
+    selected_report_template_id = payload.get("selectedReportTemplateId") or payload.get("selected_report_template_id") or "standard-minutes"
+    report_template = payload.get("reportTemplate") or payload.get("report_template") or {}
+    meeting_report = payload.get("meetingReport") or payload.get("meeting_report") or {}
+    report_template_id = str(
+        (meeting_report.get("templateId") or meeting_report.get("template_id") or selected_report_template_id)
+        if isinstance(meeting_report, dict)
+        else selected_report_template_id
+    )
+    meeting_report = _meeting_report_with_template_snapshot(meeting_report, report_template, report_template_id)
     return {
         "job_id": payload.get("jobId") or payload.get("id") or datetime.now().strftime("%Y%m%d_%H%M%S"),
         "export_scope": _normalize_export_scope(payload.get("exportScope") or payload.get("export_scope")),
@@ -4953,13 +4968,13 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
         "created_at": payload.get("date") or datetime.now().isoformat(timespec="seconds"),
         "participants": payload.get("participants") or "",
         "meeting_purpose": payload.get("meetingPurpose") or payload.get("meeting_purpose") or "",
-        "selected_report_template_id": payload.get("selectedReportTemplateId") or payload.get("selected_report_template_id") or "standard-minutes",
-        "report_template": payload.get("reportTemplate") or payload.get("report_template") or {},
+        "selected_report_template_id": selected_report_template_id,
+        "report_template": report_template,
         "selected_context_template_id": payload.get("selectedContextTemplateId") or payload.get("selected_context_template_id") or "general",
         "context_template": payload.get("contextTemplate") or payload.get("context_template") or {},
         "selected_term_glossary_ids": payload.get("selectedTermGlossaryIds") or payload.get("selected_term_glossary_ids") or [],
         "term_glossaries": payload.get("termGlossaries") or payload.get("term_glossaries") or [],
-        "meeting_report": payload.get("meetingReport") or payload.get("meeting_report") or {},
+        "meeting_report": meeting_report,
         "segments": segments,
         "display_segments": display_segments,
         "speaker_labels": speaker_labels,
@@ -5157,6 +5172,32 @@ def _report_generation_fingerprint(result_data: dict, segments: list[dict]) -> s
         "needs_check": summary.get("needs_check", []),
     }
     return _stable_json_fingerprint(normalized)
+
+
+def _report_template_snapshot(template: dict | None, template_id: str | None = None) -> dict:
+    if not isinstance(template, dict):
+        return {}
+    snapshot = copy.deepcopy(template)
+    snapshot_id = str(snapshot.get("id") or "").strip()
+    if template_id and snapshot_id and snapshot_id != template_id:
+        return {}
+    name = str(snapshot.get("name") or "").strip()
+    if not snapshot_id or not name:
+        return {}
+    return snapshot
+
+
+def _meeting_report_with_template_snapshot(meeting_report: dict, report_template: dict | None, template_id: str) -> dict:
+    report_payload = copy.deepcopy(meeting_report) if isinstance(meeting_report, dict) else {}
+    existing_snapshot = _report_template_snapshot(
+        report_payload.get("templateSnapshot") or report_payload.get("template_snapshot"),
+        template_id,
+    )
+    snapshot = existing_snapshot or _report_template_snapshot(report_template, template_id)
+    if snapshot:
+        report_payload["templateSnapshot"] = snapshot
+        report_payload["templateName"] = str(snapshot.get("name") or "").strip()
+    return report_payload
 
 
 def _meeting_context_from_result_data(result_data: dict) -> dict:

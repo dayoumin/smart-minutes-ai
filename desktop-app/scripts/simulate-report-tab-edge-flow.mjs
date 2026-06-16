@@ -176,6 +176,9 @@ const installRoutes = async (page) => {
       ?? requestBody.report_template?.id
       ?? 'standard-minutes';
     const requestTemplate = requestBody.reportTemplate ?? requestBody.report_template ?? {};
+    const responseTemplate = requestTemplate.id
+      ? requestTemplate
+      : { id: templateId, name: templateId === 'standard-minutes' ? '기본 보고서' : templateId };
     if (templateId === 'custom-report-edge') {
       assert.equal(requestTemplate.id, 'custom-report-edge');
       assert.equal(requestTemplate.name, '재생성 검증 보고 양식');
@@ -198,6 +201,8 @@ const installRoutes = async (page) => {
       body: JSON.stringify({
         meetingReport: {
           templateId,
+          templateName: responseTemplate.name,
+          templateSnapshot: responseTemplate,
           generatedAt: '2026-06-16T09:00:00.000Z',
           content: longContent,
           sections: responseSections.map((title, index) => ({
@@ -396,6 +401,7 @@ const run = async () => {
     let record = await readMeeting(page);
     assert.equal(record.generationStatus.meetingReport, 'completed');
     assert.equal(record.meetingReport.templateId, 'standard-minutes');
+    assert.equal(record.meetingReport.templateName, '기본 보고서');
     assert.equal(await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).count(), 0);
     await assertNoHorizontalOverflow(page);
 
@@ -428,12 +434,15 @@ const run = async () => {
     assert.equal(record.generationStatus.meetingReport, 'failed');
     assert.equal(record.selectedReportTemplateId, 'custom-report-edge');
     assert.equal(record.meetingReport.templateId, 'standard-minutes');
+    await page.getByText('생성 양식: 기본 보고서', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByText('standard-minutes').waitFor({ timeout: 10000 });
 
     await reportButton.click();
+    await page.getByText('생성 양식: 재생성 검증 보고 양식', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByText('custom-report-edge').waitFor({ timeout: 10000 });
     record = await readMeeting(page);
     assert.equal(record.meetingReport.templateId, 'custom-report-edge');
+    assert.equal(record.meetingReport.templateSnapshot.name, '재생성 검증 보고 양식');
     await assertNoHorizontalOverflow(page);
 
     console.log('ok - report tab edge flow simulation');

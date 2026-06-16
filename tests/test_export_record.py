@@ -112,8 +112,19 @@ class ExportRecordTest(unittest.TestCase):
         payload = legacy_meeting_payload(
             exportScope="report",
             title="보고서 범위 회의",
+            reportTemplate={
+                "id": "current-report",
+                "name": "현재 선택 보고 양식",
+                "sections": ["현재 양식"],
+            },
             meetingReport={
                 "templateId": "custom-report",
+                "templateName": "생성 당시 보고 양식",
+                "templateSnapshot": {
+                    "id": "custom-report",
+                    "name": "생성 당시 보고 양식",
+                    "sections": ["검토 배경", "후속 조치"],
+                },
                 "generatedAt": "2026-06-16T10:00:00",
                 "content": "보고서 전체 본문입니다.",
                 "sections": [
@@ -127,6 +138,9 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(md_response.status_code, 200, md_response.text)
         md_text = md_response.content.decode("utf-8")
         self.assertIn("회의록 보고서", md_text)
+        self.assertIn("보고 양식", md_text)
+        self.assertIn("생성 당시 보고 양식", md_text)
+        self.assertNotIn("현재 선택 보고 양식", md_text)
         self.assertIn("보고서 개요", md_text)
         self.assertIn("보고서 전체 본문입니다.", md_text)
         self.assertIn("검토 배경", md_text)
@@ -139,6 +153,8 @@ class ExportRecordTest(unittest.TestCase):
             section_xml = archive.read("Contents/section0.xml").decode("utf-8")
             preview_text = archive.read("Preview/PrvText.txt").decode("utf-8")
         self.assertIn("[문서 정보]", preview_text)
+        self.assertIn("보고 양식  생성 당시 보고 양식", preview_text)
+        self.assertNotIn("현재 선택 보고 양식", preview_text)
         self.assertIn("보고서 개요", preview_text)
         self.assertIn("보고서 전체 본문입니다.", preview_text)
         self.assertIn("1.1 검토 배경", preview_text)
@@ -152,6 +168,8 @@ class ExportRecordTest(unittest.TestCase):
         with zipfile.ZipFile(io.BytesIO(docx_response.content)) as archive:
             document_xml = archive.read("word/document.xml").decode("utf-8")
         self.assertIn("<w:tbl>", document_xml)
+        self.assertIn("생성 당시 보고 양식", document_xml)
+        self.assertNotIn("현재 선택 보고 양식", document_xml)
         self.assertIn("보고서 개요", document_xml)
         self.assertIn("보고서 전체 본문입니다.", document_xml)
         self.assertIn('w:eastAsia="맑은 고딕"', document_xml)
@@ -268,6 +286,8 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200, response.text)
         response_payload = response.json()
         self.assertEqual(response_payload["meeting_report"]["templateId"], "custom-report-api")
+        self.assertEqual(response_payload["meeting_report"]["templateName"], "API 검증 보고 양식")
+        self.assertEqual(response_payload["meeting_report"]["templateSnapshot"], report_template)
         self.assertEqual(response_payload["meeting_report"]["content"], "API 검증 보고서 본문")
 
         generate_args = generate_report.call_args.args
@@ -279,6 +299,8 @@ class ExportRecordTest(unittest.TestCase):
         self.assertEqual(saved_result["selected_report_template_id"], "custom-report-api")
         self.assertEqual(saved_result["report_template"], report_template)
         self.assertEqual(saved_result["meeting_report"]["templateId"], "custom-report-api")
+        self.assertEqual(saved_result["meeting_report"]["templateName"], "API 검증 보고 양식")
+        self.assertEqual(saved_result["meeting_report"]["templateSnapshot"], report_template)
         self.assertEqual(saved_result["summary"]["generation_status"]["meeting_report"], "completed")
 
     def test_generate_report_uses_payload_organized_record_over_saved_result(self):

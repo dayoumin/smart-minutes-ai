@@ -65,6 +65,9 @@ def _meeting_report_text_items(title: str, result: dict, *, include_empty: bool 
         return []
 
     lines = [title]
+    template_name = _meeting_report_template_name(result)
+    if template_name:
+        lines.append(f"보고 양식  {template_name}")
     intro = _meeting_report_intro(result, sections)
     if intro:
         lines.append("")
@@ -103,6 +106,22 @@ def _meeting_report_intro(result: dict, sections: list[dict]) -> str:
     }:
         return ""
     return content
+
+
+def _meeting_report_template_name(result: dict) -> str:
+    report = result.get("meeting_report") or {}
+    if not isinstance(report, dict):
+        report = {}
+    snapshot = report.get("templateSnapshot") or report.get("template_snapshot") or {}
+    if isinstance(snapshot, dict) and str(snapshot.get("name") or "").strip():
+        return str(snapshot.get("name") or "").strip()
+    if str(report.get("templateName") or report.get("template_name") or "").strip():
+        return str(report.get("templateName") or report.get("template_name")).strip()
+    report_template = result.get("report_template") or {}
+    report_template_id = str(report.get("templateId") or report.get("template_id") or "").strip()
+    if isinstance(report_template, dict) and (not report_template_id or str(report_template.get("id") or "").strip() == report_template_id):
+        return str(report_template.get("name") or "").strip()
+    return ""
 
 
 def _report_text_lines(text: str) -> list[str]:

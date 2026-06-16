@@ -942,6 +942,18 @@ const coerceReportTemplateSnapshot = (template: MeetingRecord['reportTemplate'] 
     };
 };
 
+const getMeetingReportTemplateName = (meeting: MeetingRecord | null | undefined): string => {
+    const report = meeting?.meetingReport;
+    const snapshotName = report?.templateSnapshot?.name?.trim();
+    if (snapshotName) return snapshotName;
+    const storedName = report?.templateName?.trim();
+    if (storedName) return storedName;
+    if (!report?.templateId || report.templateId === meeting?.reportTemplate?.id) {
+        return meeting?.reportTemplate?.name?.trim() ?? '';
+    }
+    return report.templateId;
+};
+
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard, onOpenSettings }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
@@ -2730,6 +2742,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         selectedMeeting?.meetingReport?.content?.trim()
         || selectedMeeting?.meetingReport?.sections?.length,
     );
+    const meetingReportTemplateName = getMeetingReportTemplateName(selectedMeeting);
     const reportMatchesCurrentTemplate = !selectedMeeting?.meetingReport?.templateId
         || selectedMeeting.meetingReport.templateId === reportOutputTemplate.id;
     const reportHasCurrentOrganizedRecord = hasGeneratedSummary
@@ -4525,6 +4538,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             )}
                             {canShowAnyMeetingReport && selectedMeeting?.meetingReport ? (
                                 <div className="detail-report-result">
+                                    {meetingReportTemplateName && (
+                                        <div className="detail-report-meta">생성 양식: {meetingReportTemplateName}</div>
+                                    )}
                                     {(selectedMeeting.meetingReport.sections?.length ?? 0) > 0 ? (
                                         selectedMeeting.meetingReport.sections?.map(section => (
                                             <section key={section.title} className="detail-report-result-section">

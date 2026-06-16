@@ -30,9 +30,14 @@ export interface MeetingReportTemplate {
     id: string;
     name: string;
     purpose?: string;
+    instructions?: string;
     sections?: string[];
+    requiredSections?: string[];
+    optionalSections?: string[];
     tone?: string;
     detailLevel?: string;
+    updatedAt?: string;
+    builtIn?: boolean;
 }
 
 export interface MeetingContextTemplate {
@@ -81,6 +86,8 @@ export interface MeetingRecord {
     };
     meetingReport?: {
         templateId: string;
+        templateName?: string;
+        templateSnapshot?: MeetingReportTemplate;
         generatedAt: string;
         content: string;
         sections?: Array<{ title: string; content: string }>;

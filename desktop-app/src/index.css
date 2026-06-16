@@ -518,6 +518,19 @@
     background-color: var(--status-action-hover-bg);
   }
 
+  .sidebar-heading-row {
+    @apply mb-3 flex items-center justify-between gap-2 px-3 pt-1;
+  }
+
+  .sidebar-utility-button {
+    @apply flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted/40;
+  }
+
+  .sidebar-utility-button-active {
+    background-color: var(--brand-primary-soft);
+    color: var(--brand-primary);
+  }
+
   .sidebar-create-button {
     @apply flex min-h-10 w-full items-center gap-2 rounded-md border border-border bg-background px-3 py-2 text-left text-sm font-semibold text-foreground shadow-sm transition-colors;
   }
@@ -623,6 +636,10 @@
     @apply relative flex shrink-0 flex-wrap items-center justify-end gap-2;
   }
 
+  .detail-download-button {
+    @apply inline-flex h-10 items-center gap-2 whitespace-nowrap;
+  }
+
   .analysis-mode-control {
     @apply inline-flex min-h-10 items-center gap-1.5 rounded-md border border-transparent px-2 text-left text-muted-foreground transition-colors;
   }
@@ -644,8 +661,91 @@
   }
 
   .meeting-detail-body {
-    @apply px-5 pb-5 pt-7;
+    @apply px-5 pb-5 pt-6;
     background-color: var(--bg-page);
+  }
+
+  .meeting-detail-shell {
+    @apply mx-auto w-full max-w-[1500px];
+  }
+
+  .meeting-skeleton-line,
+  .meeting-skeleton-card,
+  .meeting-skeleton-pill,
+  .meeting-skeleton-search,
+  .meeting-skeleton-row {
+    @apply animate-pulse rounded-[var(--radius-card)];
+    background: linear-gradient(90deg, var(--color-neutral-100), var(--color-neutral-200), var(--color-neutral-100));
+    background-size: 180% 100%;
+  }
+
+  .dark .meeting-skeleton-line,
+  .dark .meeting-skeleton-card,
+  .dark .meeting-skeleton-pill,
+  .dark .meeting-skeleton-search,
+  .dark .meeting-skeleton-row {
+    background: linear-gradient(90deg, var(--color-neutral-800), var(--color-neutral-700), var(--color-neutral-800));
+    background-size: 180% 100%;
+  }
+
+  .meeting-skeleton-title {
+    @apply h-7 w-44;
+  }
+
+  .meeting-skeleton-heading {
+    @apply h-5 w-28;
+  }
+
+  .meeting-skeleton-card {
+    @apply h-16 border border-border/60;
+  }
+
+  .meeting-skeleton-tabs {
+    @apply min-h-10 items-end;
+  }
+
+  .meeting-skeleton-pill {
+    @apply h-8 w-20 rounded-full;
+  }
+
+  .meeting-skeleton-search {
+    @apply h-10 w-full rounded-full lg:max-w-sm;
+  }
+
+  .meeting-skeleton-actions {
+    @apply flex flex-wrap gap-2;
+  }
+
+  .meeting-skeleton-list {
+    @apply grid gap-2;
+  }
+
+  .meeting-skeleton-row {
+    @apply h-16 w-full;
+  }
+
+  .meeting-skeleton-row-short {
+    @apply w-3/4;
+  }
+
+  .meeting-empty-panel {
+    @apply flex min-h-[420px] flex-col items-center justify-center gap-3 p-8 text-center;
+  }
+
+  .meeting-empty-panel h2 {
+    @apply text-lg font-semibold text-foreground;
+  }
+
+  .meeting-empty-panel p {
+    @apply text-sm text-muted-foreground;
+  }
+
+  .detail-main-nav {
+    @apply flex flex-col gap-3 pt-4 lg:flex-row lg:items-center lg:justify-between;
+  }
+
+  .detail-search-field {
+    @apply relative w-full lg:max-w-sm;
   }
 
   .tab-list {
@@ -660,12 +760,76 @@
     @apply border-primary text-primary;
   }
 
+  .detail-mode-switch {
+    @apply inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-full border border-border/70 bg-muted/45 p-1;
+  }
+
+  .detail-mode-switch .tab-button {
+    @apply rounded-full border-0 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-background/80 hover:text-foreground;
+  }
+
+  .detail-mode-switch .tab-button-active {
+    @apply bg-background text-foreground shadow-sm ring-1 ring-border/70;
+  }
+
   .summary-block {
     @apply rounded-[var(--radius-card)] border-l-4 border-primary/30 bg-primary/5 px-4 py-3 text-sm font-medium leading-relaxed text-foreground whitespace-pre-wrap break-words;
   }
 
+  .writer-shell {
+    @apply mx-auto flex h-full w-full max-w-[68rem] flex-col gap-5 pt-1;
+  }
+
+  .writer-header {
+    @apply flex min-h-12 items-end justify-between gap-4;
+  }
+
+  .writer-kicker {
+    @apply mb-1 text-xs font-semibold uppercase tracking-normal text-muted-foreground;
+  }
+
+  .writer-title {
+    @apply text-xl font-semibold text-foreground;
+  }
+
+  .writer-panel {
+    @apply flex flex-col gap-6 p-4 sm:p-6;
+  }
+
+  .writer-section {
+    @apply grid gap-4 border-t border-border/60 pt-5 first:border-t-0 first:pt-0 lg:grid-cols-[8.5rem_minmax(0,1fr)];
+  }
+
+  .writer-section-heading {
+    @apply flex items-center gap-2 self-start text-sm font-semibold text-foreground lg:pt-1.5;
+  }
+
+  .writer-section-heading h3 {
+    @apply m-0 text-sm font-semibold;
+  }
+
+  .writer-section-index {
+    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-border bg-muted text-xs font-semibold text-muted-foreground;
+  }
+
+  .writer-field-grid {
+    @apply grid gap-4 md:grid-cols-2;
+  }
+
+  .writer-field {
+    @apply flex min-w-0 flex-col gap-2;
+  }
+
+  .writer-field-wide {
+    @apply md:col-span-2;
+  }
+
+  .writer-field label {
+    @apply text-[13px] font-semibold text-foreground;
+  }
+
   .file-drop-zone {
-    @apply rounded-[var(--radius-card)] border border-dashed border-border bg-background p-4 transition-colors;
+    @apply rounded-[var(--radius-card)] border border-dashed border-border bg-background p-4 transition-colors sm:p-5;
   }
 
   .file-drop-zone:hover {
@@ -689,8 +853,277 @@
     background-color: var(--topic-chip-active-bg);
   }
 
+  .writer-action-bar {
+    @apply flex flex-col gap-3 border-t border-border/70 pt-5 lg:flex-row lg:items-center lg:justify-between;
+  }
+
+  .writer-secondary-actions {
+    @apply flex min-w-0 flex-wrap items-center gap-2;
+  }
+
+  .writer-primary-actions {
+    @apply flex flex-col gap-3 sm:flex-row sm:items-center lg:justify-end;
+  }
+
+  .writer-start-button {
+    @apply min-h-11 min-w-28 px-5 text-sm font-semibold;
+  }
+
   .detail-action-row {
     @apply rounded-[var(--radius-card)] border border-border/70 bg-background p-4;
+  }
+
+  .detail-action-row-modern {
+    @apply border-border/60 bg-background/80 shadow-sm;
+  }
+
+  .detail-work-surface {
+    @apply rounded-[var(--radius-card)] border border-border/70 bg-surface p-4 shadow-sm;
+  }
+
+  .detail-command-bar {
+    @apply mb-4 flex min-h-14 flex-col gap-3 border-b border-border/70 pb-3 xl:flex-row xl:items-center xl:justify-between;
+  }
+
+  .detail-command-primary {
+    @apply flex w-full min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center xl:w-auto;
+  }
+
+  .detail-command-inline-tools {
+    @apply flex shrink-0 items-center gap-2;
+  }
+
+  .detail-command-actions {
+    @apply relative flex w-full flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-end xl:w-auto;
+  }
+
+  .detail-section-toolbar {
+    @apply mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between;
+  }
+
+  .detail-inline-select {
+    @apply inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-full border border-border/80 bg-background px-3 py-2 text-xs text-muted-foreground sm:w-auto sm:min-w-72;
+  }
+
+  .detail-context-actions {
+    @apply relative flex w-full flex-col gap-2 sm:w-auto sm:flex-row sm:items-end;
+  }
+
+  .detail-context-button {
+    @apply h-10 shrink-0 rounded-full px-3 text-xs;
+  }
+
+  .detail-context-menu-wrap {
+    @apply relative shrink-0;
+  }
+
+  .detail-context-menu-button {
+    @apply h-10 w-10 rounded-full;
+  }
+
+  .detail-context-menu {
+    @apply absolute right-0 top-12 z-30 min-w-36 rounded-[var(--radius-card)] border border-border bg-background p-1;
+    box-shadow: var(--shadow-card-hover);
+  }
+
+  .detail-context-menu button {
+    @apply flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-45;
+  }
+
+  .detail-context-menu button svg {
+    @apply shrink-0;
+  }
+
+  .detail-context-menu-danger {
+    color: var(--status-error-fg);
+  }
+
+  .detail-context-menu-danger:not(:disabled):hover {
+    background-color: var(--status-error-bg);
+  }
+
+  .detail-context-menu-note {
+    @apply mt-1 border-t border-border/70 px-3 py-2 text-xs leading-relaxed text-muted-foreground;
+  }
+
+  .detail-context-inline-error {
+    @apply text-xs font-medium;
+    color: var(--status-error-fg);
+  }
+
+  .detail-inline-select span {
+    @apply shrink-0 font-semibold;
+  }
+
+  .detail-inline-select select {
+    @apply min-w-0 flex-1 border-0 bg-transparent text-sm font-semibold text-foreground outline-none;
+  }
+
+  .detail-output-chip {
+    @apply inline-flex items-center rounded-full border border-border/70 bg-surface px-2.5 py-1 text-xs font-semibold text-muted-foreground;
+  }
+
+  .detail-context-preview {
+    @apply mb-4 flex flex-col gap-3 rounded-[var(--radius-card)] border border-border/60 bg-surface/60 px-3 py-3 text-sm text-muted-foreground sm:flex-row sm:items-start sm:justify-between;
+  }
+
+  .detail-applied-context {
+    @apply mb-3 inline-flex rounded-full border border-border/70 bg-surface px-2.5 py-1 text-xs font-semibold text-muted-foreground;
+  }
+
+  .detail-context-title {
+    @apply mb-1 text-sm font-semibold text-foreground;
+  }
+
+  .detail-context-tags {
+    @apply flex shrink-0 flex-wrap gap-1.5;
+  }
+
+  .detail-context-tags span {
+    @apply rounded-full bg-background px-2 py-1 text-[11px] font-semibold text-muted-foreground ring-1 ring-border/70;
+  }
+
+  .detail-section-caption {
+    @apply mt-1 text-sm leading-relaxed text-muted-foreground;
+  }
+
+  .detail-section-caption-standalone {
+    @apply mb-4 mt-0;
+  }
+
+  .detail-report-outline {
+    @apply grid gap-3 rounded-[var(--radius-card)] border border-border/70 bg-background p-4 text-sm leading-relaxed text-muted-foreground;
+  }
+
+  .detail-report-title {
+    @apply mb-1 text-sm font-semibold text-foreground;
+  }
+
+  .detail-report-sections {
+    @apply flex flex-wrap gap-1.5;
+  }
+
+  .detail-report-sections span {
+    @apply rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-muted-foreground ring-1 ring-border/70;
+  }
+
+  .detail-report-checklist {
+    @apply grid gap-2 rounded-[var(--radius-card)] border border-border/70 bg-background p-4 text-sm text-muted-foreground;
+  }
+
+  .detail-report-checklist-title {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .detail-report-checklist ul {
+    @apply grid list-disc gap-1.5 pl-5;
+  }
+
+  .detail-report-checklist li {
+    @apply leading-relaxed;
+  }
+
+  .detail-report-result {
+    @apply grid gap-3;
+  }
+
+  .detail-report-result-section {
+    @apply rounded-[var(--radius-card)] border border-border/70 bg-background p-4;
+  }
+
+  .detail-report-result-section h4 {
+    @apply mb-2 text-sm font-semibold text-foreground;
+  }
+
+  .detail-report-result-section p,
+  .detail-report-content {
+    @apply whitespace-pre-line break-words text-sm leading-7 text-foreground;
+  }
+
+  .context-template-modal-backdrop {
+    @apply fixed inset-0 z-50 flex items-center justify-center px-4 py-6 backdrop-blur-sm;
+    background-color: var(--bg-overlay);
+  }
+
+  .context-template-modal {
+    @apply w-full max-w-xl rounded-[var(--radius-card)] border border-border bg-background p-5;
+    box-shadow: var(--shadow-card-hover);
+  }
+
+  .context-template-confirm-modal {
+    @apply max-w-md;
+  }
+
+  .context-template-modal-header {
+    @apply mb-4 flex items-start justify-between gap-4;
+  }
+
+  .context-template-modal-header h3 {
+    @apply text-lg font-semibold text-foreground;
+  }
+
+  .context-template-modal-header p {
+    @apply mt-1 text-sm leading-relaxed text-muted-foreground;
+  }
+
+  .context-template-count {
+    @apply text-xs font-medium;
+  }
+
+  .context-template-form {
+    @apply grid gap-4;
+  }
+
+  .context-template-form label {
+    @apply grid gap-1.5;
+  }
+
+  .context-template-form label span {
+    @apply text-xs font-semibold text-muted-foreground;
+  }
+
+  .context-template-textarea {
+    @apply min-h-36 w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed outline-none transition-colors duration-200 placeholder:text-muted-foreground focus-visible:border-primary focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .context-template-textarea-compact {
+    @apply min-h-24;
+  }
+
+  .context-template-error {
+    @apply rounded-md border px-3 py-2 text-sm font-medium;
+    background-color: var(--status-error-bg);
+    border-color: var(--status-error-border);
+    color: var(--status-error-fg);
+  }
+
+  .context-template-delete-summary {
+    @apply mb-3 grid gap-1 rounded-[var(--radius-card)] border px-3 py-2.5;
+    background-color: var(--status-error-bg);
+    border-color: var(--status-error-border);
+  }
+
+  .context-template-delete-summary span {
+    @apply text-xs font-semibold text-muted-foreground;
+  }
+
+  .context-template-delete-summary strong {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  .context-template-modal-actions {
+    @apply mt-5 flex justify-end gap-2;
+  }
+
+  .context-template-delete-button {
+    @apply inline-flex items-center gap-1.5 border-0;
+    background-color: var(--status-error-fg);
+    color: var(--color-neutral-0);
+  }
+
+  .context-template-delete-button:hover {
+    background-color: var(--status-error-progress);
+    color: var(--color-neutral-0);
   }
 
   .detail-action-button {
@@ -799,6 +1232,11 @@
     color: color-mix(in srgb, var(--status-current-fg) 72%, transparent);
   }
 
+  .operation-toast-action {
+    @apply shrink-0 rounded-md px-2 py-1 text-xs font-semibold transition-colors;
+    color: var(--status-current-fg);
+  }
+
   .save-toast-close:hover {
     background-color: var(--surface-action-hover-bg);
     color: var(--text-default);
@@ -807,6 +1245,10 @@
   .operation-toast-close:hover {
     background-color: color-mix(in srgb, var(--status-current-border) 24%, transparent);
     color: var(--status-current-fg);
+  }
+
+  .operation-toast-action:hover {
+    background-color: color-mix(in srgb, var(--status-current-border) 24%, transparent);
   }
 
   .detail-micro-card {
@@ -858,15 +1300,31 @@
   }
 
   .topic-chip {
-    @apply max-w-72 truncate rounded-full border px-3 py-1 text-xs font-medium shadow-sm transition-colors;
+    @apply max-w-72 cursor-pointer truncate rounded-full border px-3 py-1 text-xs font-medium shadow-sm transition-colors;
     background-color: var(--topic-chip-bg);
     border-color: var(--topic-chip-border);
     color: var(--topic-chip-fg);
   }
 
+  .topic-chip:focus-visible,
+  .topic-chip:focus-within {
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  .topic-chip:disabled,
+  .topic-chip-disabled {
+    @apply cursor-not-allowed opacity-60;
+  }
+
   .topic-chip:hover {
     border-color: var(--topic-chip-active-border);
     color: var(--topic-chip-active-fg);
+  }
+
+  .topic-chip:disabled:hover,
+  .topic-chip-disabled:hover {
+    border-color: var(--topic-chip-border);
+    color: var(--topic-chip-fg);
   }
 
   .topic-chip-active {
@@ -899,8 +1357,12 @@
   }
 
   .speaker-label {
-    @apply mb-1 flex items-center gap-2 font-semibold;
+    @apply mb-1 flex min-w-0 items-center gap-2 font-semibold;
     color: var(--speaker-text);
+  }
+
+  .speaker-label span:last-child {
+    @apply min-w-0 truncate;
   }
 
   .speaker-dot {
@@ -972,8 +1434,36 @@
     color: var(--speaker-text);
   }
 
+  .script-list {
+    @apply grid gap-2;
+  }
+
+  .script-row {
+    @apply p-3 md:grid-cols-[9.25rem_1fr];
+  }
+
+  .script-meta {
+    @apply grid content-start gap-1.5;
+  }
+
+  .script-time-range {
+    @apply font-mono text-[11px] font-medium tracking-normal;
+  }
+
+  .script-badge-row {
+    @apply flex flex-wrap gap-1.5;
+  }
+
+  .script-badge {
+    @apply inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground;
+  }
+
+  .script-text {
+    @apply min-h-10 whitespace-pre-wrap px-3.5 py-2.5 text-[15px] leading-7;
+  }
+
   .script-edit-textarea {
-    @apply min-h-28 w-full rounded-md border border-input bg-background px-3 py-2 text-sm leading-relaxed text-foreground outline-none transition focus:ring-2 focus:ring-primary/30;
+    @apply min-h-28 w-full rounded-md border border-input bg-background px-3.5 py-2.5 text-[15px] leading-7 text-foreground outline-none transition focus:ring-2 focus:ring-primary/30;
   }
 
   .speaker-tone-0 {

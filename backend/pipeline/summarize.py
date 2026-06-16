@@ -22,6 +22,7 @@ EMPTY_SUMMARY = {
 MAX_DIRECT_SUMMARY_CHARS = 8000
 SUMMARY_CHUNK_CHARS = 6000
 GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
+MAX_CONTEXT_GLOSSARY_ENTRIES = 80
 
 
 def _reject_generic_single_topic(sections: list[dict]) -> list[dict]:
@@ -92,8 +93,82 @@ def _normalize_summary(data: dict) -> dict:
     return summary
 
 
-def _build_prompt(transcript_text: str, partial: bool = False, meeting_context: dict | None = None) -> str:
-    scope = "partial transcript" if partial else "transcript"
+def _context_lines_from_report_template(template: dict) -> list[str]:
+    if not isinstance(template, dict):
+        return []
+    lines = []
+    name = str(template.get("name") or "").strip()
+    purpose = str(template.get("purpose") or "").strip()
+    sections = template.get("sections") if isinstance(template.get("sections"), list) else []
+    tone = str(template.get("tone") or "").strip()
+    detail_level = str(template.get("detailLevel") or template.get("detail_level") or "").strip()
+    if name:
+        lines.append(f"- 보고서 양식: {name}")
+    if purpose:
+        lines.append(f"- 양식 목적: {purpose}")
+    if sections:
+        section_text = ", ".join(str(section).strip() for section in sections if str(section).strip())
+        if section_text:
+            lines.append(f"- 선호 섹션: {section_text}")
+    if tone:
+        lines.append(f"- 문체 기준: {tone}")
+    if detail_level:
+        lines.append(f"- 상세도: {detail_level}")
+    return lines
+
+
+def _context_lines_from_context_template(template: dict) -> list[str]:
+    if not isinstance(template, dict):
+        return []
+    lines = []
+    name = str(template.get("name") or "").strip()
+    purpose = str(template.get("purpose") or "").strip()
+    prompt = str(template.get("prompt") or "").strip()
+    focus = template.get("focus") if isinstance(template.get("focus"), list) else []
+    if name and str(template.get("id") or "").strip() != "general":
+        lines.append(f"- 정리 맥락 제목: {name}")
+    if prompt:
+        lines.append(f"- 정리 맥락 지시: {prompt}")
+    elif purpose and str(template.get("id") or "").strip() != "general":
+        lines.append(f"- 정리 맥락 설명: {purpose}")
+    focus_text = ", ".join(str(item).strip() for item in focus if str(item).strip())
+    if focus_text and str(template.get("id") or "").strip() != "general":
+        lines.append(f"- 정리 초점: {focus_text}")
+    return lines
+
+
+def _context_lines_from_glossaries(glossaries: list) -> list[str]:
+    if not isinstance(glossaries, list):
+        return []
+    lines = []
+    count = 0
+    for glossary in glossaries:
+        if not isinstance(glossary, dict):
+            continue
+        glossary_name = str(glossary.get("name") or glossary.get("category") or "").strip()
+        for entry in glossary.get("entries", []) or []:
+            if not isinstance(entry, dict) or entry.get("active") is False:
+                continue
+            canonical = str(entry.get("canonical") or "").strip()
+            if not canonical:
+                continue
+            variants = entry.get("variants") if isinstance(entry.get("variants"), list) else []
+            variant_text = ", ".join(str(variant).strip() for variant in variants if str(variant).strip())
+            description = str(entry.get("description") or "").strip()
+            prefix = f"{glossary_name}: " if glossary_name else ""
+            line = f"- {prefix}{canonical}"
+            if variant_text:
+                line += f" (오인식/변형 후보: {variant_text})"
+            if description:
+                line += f" - {description}"
+            lines.append(line)
+            count += 1
+            if count >= MAX_CONTEXT_GLOSSARY_ENTRIES:
+                return lines
+    return lines
+
+
+def _meeting_context_block(meeting_context: dict | None, *, include_report_template: bool = False) -> str:
     context_lines = []
     if meeting_context:
         title = str(meeting_context.get("title") or "").strip()
@@ -105,14 +180,26 @@ def _build_prompt(transcript_text: str, partial: bool = False, meeting_context: 
             context_lines.append(f"- 회의 일시: {date}")
         if purpose:
             context_lines.append(f"- 회의 목적: {purpose}")
-    context_block = ""
-    if context_lines:
-        context_block = (
-            "Meeting context for orientation only:\n"
-            + "\n".join(context_lines)
-            + "\nUse this context to choose what to emphasize, but if it conflicts with the transcript, trust the transcript. "
-            "Do not state context-only information as a confirmed discussion result.\n\n"
-        )
+        context_lines.extend(_context_lines_from_context_template(meeting_context.get("context_template") or {}))
+        if include_report_template:
+            context_lines.extend(_context_lines_from_report_template(meeting_context.get("report_template") or {}))
+        glossary_lines = _context_lines_from_glossaries(meeting_context.get("term_glossaries") or [])
+        if glossary_lines:
+            context_lines.append("- 선택 분야별 용어: 아래 용어는 회의 목적/정리 맥락과 함께 표기와 의미 참고용으로 사용하며, 실제 논의 여부는 대화록으로 판단합니다.")
+            context_lines.extend(glossary_lines)
+    if not context_lines:
+        return ""
+    return (
+        "Meeting context for orientation only:\n"
+        + "\n".join(context_lines)
+        + "\nUse this context to choose what to emphasize, but if it conflicts with the transcript, trust the transcript. "
+        "Do not state context-only information as a confirmed discussion result.\n\n"
+    )
+
+
+def _build_prompt(transcript_text: str, partial: bool = False, meeting_context: dict | None = None) -> str:
+    scope = "partial transcript" if partial else "transcript"
+    context_block = _meeting_context_block(meeting_context)
     return f"""You are a Korean meeting-minutes assistant.
 Summarize the {scope} into strict JSON only. Do not wrap it in Markdown.
 Write all JSON values in Korean unless a source term must remain in English.
@@ -369,6 +456,113 @@ def _speaker_context_summaries_from_response(data) -> list[dict]:
     return _normalize_speaker_context_summaries(items)
 
 
+def _text_items(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item or "").strip()]
+
+
+def _report_template_section_names(template: dict | None) -> list[str]:
+    template_sections = template.get("sections") if isinstance(template, dict) else []
+    if not isinstance(template_sections, list):
+        return []
+    return [str(section).strip() for section in template_sections if str(section or "").strip()]
+
+
+def _report_section_key(title: str) -> str:
+    return re.sub(r"\s+", " ", title).strip().casefold()
+
+
+def _report_sections_from_response(data, template: dict | None = None) -> list[dict]:
+    if isinstance(data, list):
+        items = data
+    elif isinstance(data, dict):
+        items = (
+            data.get("sections")
+            or data.get("report_sections")
+            or data.get("reportSections")
+            or data.get("meeting_report")
+            or data.get("meetingReport")
+            or []
+        )
+        if isinstance(items, dict):
+            items = items.get("sections") or []
+    else:
+        items = []
+
+    template_section_names = _report_template_section_names(template)
+    sections: list[dict] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or item.get("section") or item.get("heading") or "").strip()
+        raw_content = item.get("content") or item.get("body") or item.get("summary") or ""
+        if isinstance(raw_content, list):
+            content = "\n".join(_text_items(raw_content)).strip()
+        else:
+            content = str(raw_content or "").strip()
+        if title and content:
+            sections.append({"title": title, "content": content})
+
+    if sections:
+        if template_section_names:
+            template_index_by_key = {
+                _report_section_key(title): index
+                for index, title in enumerate(template_section_names)
+            }
+            ordered_slots: list[dict | None] = [None] * len(template_section_names)
+            unmatched_sections: list[dict] = []
+            for section in sections:
+                template_index = template_index_by_key.get(_report_section_key(section["title"]))
+                if template_index is not None and ordered_slots[template_index] is None:
+                    ordered_slots[template_index] = {
+                        "title": template_section_names[template_index],
+                        "content": section["content"],
+                    }
+                else:
+                    unmatched_sections.append(section)
+
+            unmatched_index = 0
+            for index, template_title in enumerate(template_section_names):
+                if ordered_slots[index] is not None or unmatched_index >= len(unmatched_sections):
+                    continue
+                ordered_slots[index] = {
+                    "title": template_title,
+                    "content": unmatched_sections[unmatched_index]["content"],
+                }
+                unmatched_index += 1
+            ordered_sections = [section for section in ordered_slots if section is not None]
+            if ordered_sections:
+                return ordered_sections
+        return sections
+
+    summary_content = ""
+    if isinstance(data, dict):
+        summary_content = str(data.get("content") or data.get("summary") or data.get("report") or "").strip()
+    if summary_content and template_section_names:
+        return [
+            {"title": template_section_names[0], "content": summary_content}
+        ]
+    return []
+
+
+def _meeting_report_from_response(data, template: dict | None = None) -> dict:
+    source = data
+    if isinstance(data, dict):
+        nested = data.get("meeting_report") or data.get("meetingReport")
+        if isinstance(nested, dict):
+            source = nested
+    sections = _report_sections_from_response(source, template)
+    content = ""
+    if isinstance(source, dict):
+        content = str(source.get("content") or source.get("report") or source.get("summary") or "").strip()
+    if not content and sections:
+        content = "\n\n".join(f"{section['title']}\n{section['content']}" for section in sections)
+    if not sections and content:
+        sections = [{"title": "보고서", "content": content}]
+    return {"content": content, "sections": sections}
+
+
 def _fallback_speaker_context_from_segments(transcript_segments: list[dict]) -> list[dict]:
     by_speaker: dict[str, dict] = {}
     for segment in transcript_segments:
@@ -398,21 +592,112 @@ def _fallback_speaker_context_from_segments(transcript_segments: list[dict]) -> 
     return summaries
 
 
+def generate_meeting_report(
+    transcript_segments: list[dict],
+    base_summary: dict,
+    topic_sections: list[dict] | None = None,
+    speaker_context_summaries: list[dict] | None = None,
+    report_template: dict | None = None,
+    model_name_or_path: str = "./models/llm/gemma.gguf",
+    meeting_context: dict | None = None,
+) -> dict:
+    transcript_text = _segments_to_transcript(transcript_segments)
+    if not transcript_text.strip():
+        return {}
+
+    template = report_template if isinstance(report_template, dict) else {}
+    section_names = _report_template_section_names(template)
+    if not section_names:
+        section_names = ["회의 개요", "주요 내용", "결정사항", "후속 조치"]
+
+    context_block = _meeting_context_block(meeting_context, include_report_template=True)
+    prompt = f"""You are a Korean meeting report assistant.
+Create a formal meeting report from the already organized meeting notes.
+Use the transcript as source of truth and the organized notes as the main structure.
+Apply the report template exactly when possible. Use the required section titles in the same order and do not add unrelated section titles. Do not invent facts.
+Return strict JSON only. Do not wrap it in Markdown.
+Write all JSON values in Korean unless a source term must remain in English.
+
+{context_block}\
+Required JSON schema:
+{{
+  "content": "complete report text",
+  "sections": [
+    {{"title": "template section title", "content": "report-ready section body"}}
+  ]
+}}
+
+Report template:
+{json.dumps(template or {}, ensure_ascii=False)}
+
+Required section order:
+{json.dumps(section_names, ensure_ascii=False)}
+Use these section titles as the final report section titles. Do not add unrelated section titles.
+
+Organized summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Topic sections:
+{json.dumps(topic_sections or [], ensure_ascii=False)}
+
+Participant context summaries:
+{json.dumps(speaker_context_summaries or [], ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text, 9000)}
+"""
+    data = _generate_json_once(model_name_or_path, prompt)
+    report = _meeting_report_from_response(data, template)
+    if report.get("content") and report.get("sections"):
+        return report
+
+    retry_prompt = f"""Return only valid JSON for a Korean meeting report.
+Use exactly these top-level keys: "content" and "sections".
+The "sections" array must follow this order:
+{json.dumps(section_names, ensure_ascii=False)}
+Use these section titles as the final report section titles. Do not add unrelated section titles.
+
+Schema:
+{{"content":"", "sections":[{{"title":"", "content":""}}]}}
+
+{context_block}\
+Report template:
+{json.dumps(template or {}, ensure_ascii=False)}
+
+Organized summary:
+{json.dumps(base_summary or {}, ensure_ascii=False)}
+
+Topic sections:
+{json.dumps(topic_sections or [], ensure_ascii=False)}
+
+Participant context summaries:
+{json.dumps(speaker_context_summaries or [], ensure_ascii=False)}
+
+Transcript:
+{_trim_followup_transcript(transcript_text, 7000)}
+"""
+    retry_data = _generate_json_once(model_name_or_path, retry_prompt)
+    return _meeting_report_from_response(retry_data, template)
+
+
 def generate_topic_sections(
     transcript_segments: list[dict],
     base_summary: dict,
     model_name_or_path: str = "./models/llm/gemma.gguf",
+    meeting_context: dict | None = None,
 ) -> list[dict]:
     transcript_text = _segments_to_transcript(transcript_segments)
     if not transcript_text.strip():
         return []
 
+    context_block = _meeting_context_block(meeting_context)
     prompt = f"""You are a Korean meeting-minutes assistant.
 Create 3 to 7 topic-by-topic meeting notes from the transcript and the basic meeting summary.
 Do not collapse the whole meeting into a single generic topic such as "핵심 주제".
 Return strict JSON only. Do not wrap it in Markdown.
 Do not invent facts. Write all JSON values in Korean unless a source term must remain in English.
 
+{context_block}\
 Required JSON schema:
 {{
   "topic_sections": [
@@ -442,6 +727,7 @@ Create 3 to 7 Korean topic sections from this transcript.
 Do not return only one broad topic. Split by concrete discussion subjects, decisions, model details, risks, or follow-up work.
 Each item must include "topic", "summary", "evidence", and "actions".
 
+{context_block}\
 Schema:
 {{"topic_sections":[{{"topic":"", "summary":"", "evidence":[], "actions":[]}}]}}
 
@@ -464,6 +750,7 @@ def generate_topic_section_for_title(
     base_summary: dict,
     topic_title: str,
     model_name_or_path: str = "./models/llm/gemma.gguf",
+    meeting_context: dict | None = None,
 ) -> dict:
     topic_title = str(topic_title or "").strip()
     if not topic_title:
@@ -474,12 +761,14 @@ def generate_topic_section_for_title(
         return {}
 
     topic_title_json = json.dumps(topic_title, ensure_ascii=False)
+    context_block = _meeting_context_block(meeting_context)
     prompt = f"""You are a Korean meeting-minutes assistant.
 Create one focused topic section for the requested topic title.
 Use the transcript as the source of truth. If the requested topic is only partially discussed, summarize the related parts and add uncertainty to evidence or actions.
 Return strict JSON only. Do not wrap it in Markdown.
 Do not invent facts. Write all JSON values in Korean unless a source term must remain in English.
 
+{context_block}\
 Required JSON schema:
 {{
   "topic_sections": [
@@ -520,12 +809,14 @@ def generate_speaker_context_summaries(
     base_summary: dict,
     topic_sections: list[dict] | None = None,
     model_name_or_path: str = "./models/llm/gemma.gguf",
+    meeting_context: dict | None = None,
 ) -> list[dict]:
     transcript_text = _segments_to_transcript(transcript_segments)
     if not transcript_text.strip():
         return []
     speaker_focused_text = _speaker_focused_transcript(transcript_segments)
 
+    context_block = _meeting_context_block(meeting_context)
     prompt = f"""You are a Korean meeting-minutes assistant.
 Create participant-by-participant context summaries from the whole meeting context.
 Do not summarize each participant mechanically from isolated utterances. Interpret each participant's comments in relation to the overall discussion, other participants, topics, decisions, and tasks.
@@ -534,6 +825,7 @@ Return strict JSON only. Do not wrap it in Markdown.
 Use existing participant labels unless a verified participant name is present in the transcript or summary.
 Do not invent participant identities. Write all JSON values in Korean unless a source term must remain in English.
 
+{context_block}\
 Required JSON schema:
 {{
   "speaker_context_summaries": [
@@ -571,6 +863,7 @@ Do not return prose, markdown, or a single general summary.
 Create one item per participant label found in the transcript.
 Each item must include "speaker", "display_name", "role_in_meeting", "summary", "key_points", "actions", and "needs_check".
 
+{context_block}\
 Schema:
 {{"speaker_context_summaries":[{{"speaker":"", "display_name":"", "role_in_meeting":"", "summary":"", "key_points":[], "actions":[], "needs_check":[]}}]}}
 

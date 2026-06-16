@@ -30,9 +30,7 @@ export interface LayoutProps {
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
     return (
         <div className="flex h-screen min-w-[320px] flex-col bg-background text-foreground overflow-hidden">
-            <Header
-                onOpenSettings={onOpenSettings}
-            />
+            <Header />
             <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
                 <Sidebar
                     activeTab={activeTab}
@@ -41,6 +39,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onCreateMeeting={onCreateMeeting}
                     onDeleteMeeting={onDeleteMeeting}
                     onSelectResumeDraft={onSelectResumeDraft}
+                    onOpenSettings={onOpenSettings}
                     onOpenAsrBenchmark={showAsrBenchmark ? () => onTabChange?.('asr-benchmark') : undefined}
                     analysisStatus={analysisStatus}
                 />

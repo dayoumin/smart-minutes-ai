@@ -26,6 +26,40 @@ export interface TranscriptEditMeta {
     speakerContextOutdated?: boolean;
 }
 
+export interface MeetingReportTemplate {
+    id: string;
+    name: string;
+    purpose?: string;
+    sections?: string[];
+    tone?: string;
+    detailLevel?: string;
+}
+
+export interface MeetingContextTemplate {
+    id: string;
+    name: string;
+    purpose?: string;
+    prompt?: string;
+    termGlossaryIds?: string[];
+    focus?: string[];
+    updatedAt?: string;
+}
+
+export interface MeetingTermGlossary {
+    id: string;
+    name: string;
+    category: string;
+    description?: string;
+    entries?: Array<{
+        id: string;
+        canonical: string;
+        variants?: string[];
+        description?: string;
+        use?: 'summary' | 'correction' | 'both';
+        active?: boolean;
+    }>;
+}
+
 export interface MeetingRecord {
     id: string;
     date: string;
@@ -33,6 +67,24 @@ export interface MeetingRecord {
     summary: string;
     participants: string;
     meetingPurpose?: string;
+    selectedReportTemplateId?: string;
+    reportTemplate?: MeetingReportTemplate;
+    selectedContextTemplateId?: string;
+    contextTemplate?: MeetingContextTemplate;
+    selectedMinutesTemplateId?: string;
+    minutesTemplate?: MeetingReportTemplate;
+    selectedTermGlossaryIds?: string[];
+    termGlossaries?: MeetingTermGlossary[];
+    confirmedMinutes?: {
+        updatedAt: string;
+        segments: MeetingSegment[];
+    };
+    meetingReport?: {
+        templateId: string;
+        generatedAt: string;
+        content: string;
+        sections?: Array<{ title: string; content: string }>;
+    };
     segments?: MeetingSegment[];
     displaySegments?: MeetingSegment[];
     editedDisplaySegments?: MeetingSegment[];
@@ -84,6 +136,16 @@ type StoredMeetingRecord = Partial<MeetingRecord> & {
     diarization_defer_message?: string;
     transcript_edit_meta?: TranscriptEditMeta;
     meeting_purpose?: string;
+    selected_report_template_id?: string;
+    report_template?: MeetingReportTemplate;
+    selected_context_template_id?: string;
+    context_template?: MeetingContextTemplate;
+    selected_minutes_template_id?: string;
+    minutes_template?: MeetingReportTemplate;
+    selected_term_glossary_ids?: string[];
+    term_glossaries?: MeetingTermGlossary[];
+    confirmed_minutes?: MeetingRecord['confirmedMinutes'];
+    meeting_report?: MeetingRecord['meetingReport'];
 };
 
 const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => ({
@@ -105,6 +167,16 @@ const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => (
     diarizationDeferMessage: record.diarizationDeferMessage ?? record.diarization_defer_message ?? '',
     transcriptEditMeta: record.transcriptEditMeta ?? record.transcript_edit_meta ?? {},
     meetingPurpose: record.meetingPurpose ?? record.meeting_purpose ?? '',
+    selectedReportTemplateId: record.selectedReportTemplateId ?? record.selected_report_template_id ?? 'standard-minutes',
+    reportTemplate: record.reportTemplate ?? record.report_template,
+    selectedContextTemplateId: record.selectedContextTemplateId ?? record.selected_context_template_id ?? 'general',
+    contextTemplate: record.contextTemplate ?? record.context_template,
+    selectedMinutesTemplateId: record.selectedMinutesTemplateId ?? record.selected_minutes_template_id ?? 'archive-minutes',
+    minutesTemplate: record.minutesTemplate ?? record.minutes_template,
+    selectedTermGlossaryIds: record.selectedTermGlossaryIds ?? record.selected_term_glossary_ids ?? [],
+    termGlossaries: record.termGlossaries ?? record.term_glossaries ?? [],
+    confirmedMinutes: record.confirmedMinutes ?? record.confirmed_minutes,
+    meetingReport: record.meetingReport ?? record.meeting_report,
 });
 
 export interface MeetingTopicSection {
@@ -137,6 +209,8 @@ export interface MeetingGenerationStatus {
     topic_sections?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
     speakerContextSummaries?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
     speaker_context_summaries?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
+    meetingReport?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
+    meeting_report?: 'not_started' | 'generating' | 'completed' | 'failed' | 'skipped';
 }
 
 const DB_NAME = 'MeetingHistoryDB';

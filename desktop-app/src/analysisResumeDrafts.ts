@@ -1,3 +1,5 @@
+import type { ReportTemplate, TermGlossary } from './meetingKnowledge';
+
 export type AnalysisResumeDraftStatus = 'active' | 'cancelled' | 'stopped' | 'failed' | 'completed' | 'unavailable';
 export type AnalysisResumeDraftUnavailableReason = 'no-checkpoint' | 'file-mismatch' | 'completed' | 'not-candidate';
 
@@ -7,6 +9,10 @@ export interface AnalysisResumeDraft {
     date: string;
     participants: string;
     meetingPurpose?: string;
+    selectedReportTemplateId?: string;
+    reportTemplate?: ReportTemplate;
+    selectedTermGlossaryIds?: string[];
+    termGlossaries?: TermGlossary[];
     sourceFilename: string;
     sourceSize: number;
     sourceLastModified: number;

@@ -1000,8 +1000,6 @@ const run = async () => {
     await page.locator('#settings-models-panel option[value="gemma4:e2b"]').waitFor({ state: 'attached', timeout: 10000 });
     await page.locator('#settings-models-panel option[value="gemma4:e4b"]').waitFor({ state: 'attached', timeout: 10000 });
     await page.getByRole('link', { name: 'gemma4:e2b 모델 페이지' }).waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: 'gemma4:e2b 모델 받기' }).first().waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).first().waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
 
@@ -1021,13 +1019,9 @@ const run = async () => {
     summaryReady = true;
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.getByRole('button', { name: '모델', exact: true }).click();
-    await page.getByText('선택됨').first().waitFor({ timeout: 12000 });
+    await page.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.locator('.tab-list').getByRole('button', { name: '전체 요약' }).click();
-    await page.waitForFunction(() => {
-      const button = Array.from(document.querySelectorAll('button')).find(item => item.getAttribute('aria-label') === '전체 요약 정리');
-      return button && !button.disabled;
-    }, null, { timeout: 10000 });
 
     await page.getByText('원본 음성 누락 회의록').first().click();
     await page.getByText('참석자 구분 원본 음성 누락 확인').waitFor({ timeout: 10000 });
@@ -1105,7 +1099,7 @@ const run = async () => {
     await stopDiarizationButton.click();
     await page.getByText('참석자 구분을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
     await page.getByText('경과 시간').waitFor({ timeout: 10000 });
-    await page.getByText('예상 남은 시간').waitFor({ timeout: 10000 });
+    await page.getByText('추정 남은 시간').waitFor({ timeout: 10000 });
     await page.locator('.diarization-stop-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByText('참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
     const stoppingDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지 중' });
@@ -1181,7 +1175,7 @@ const run = async () => {
     await participantCard.getByText('발언 1회 · 텍스트 비중 17%').waitFor({ timeout: 10000 });
     await page.getByText('핵심 발언').first().waitFor({ timeout: 10000 });
 
-    await page.getByRole('button', { name: '회의록 HWPX 파일을 다운로드 폴더에 저장' }).click();
+    await page.getByRole('button', { name: '기록 정리 HWPX 파일을 다운로드 폴더에 저장' }).click();
     for (let attempt = 0; attempt < 50 && exportCalls.length === 0; attempt += 1) {
       await sleep(100);
     }
@@ -1189,9 +1183,20 @@ const run = async () => {
     assert.equal(await page.getByText('HWPX 파일을 다운로드 폴더에 저장했습니다.').count(), 0);
 
     assert.deepEqual(exportCalls, ['hwpx:save-copy']);
+    assert.equal(exportBodies[0]?.exportScope, 'organized');
+    assert.match(exportBodies[0]?.title ?? '', /_기록정리$/);
     assert.equal(exportBodies[0]?.meetingPurpose, 'AI 시스템 통제권 논의 정리');
     assert.equal(exportBodies[0]?.speakerLabels?.['화자1'], '김검토');
     assert.equal(exportBodies[0]?.displaySegments?.[0]?.text, '사용자가 다듬은 대화록입니다. 통제권과 지식 확장 기준을 길게 설명했습니다.');
+
+    await page.locator('.tab-list').getByRole('button', { name: '대화록' }).click();
+    await page.getByRole('button', { name: '대화록 TXT 파일을 다운로드 폴더에 저장' }).click();
+    for (let attempt = 0; attempt < 50 && exportCalls.length === 1; attempt += 1) {
+      await sleep(100);
+    }
+    assert.deepEqual(exportCalls, ['hwpx:save-copy', 'txt:save-copy']);
+    assert.equal(exportBodies[1]?.exportScope, 'transcript');
+    assert.match(exportBodies[1]?.title ?? '', /_대화록$/);
 
     await page.getByText('기본 별칭 참석자 회의록').first().click();
     await page.getByRole('heading', { name: '기본 별칭 참석자 회의록' }).waitFor({ timeout: 10000 });

@@ -1,5 +1,6 @@
 import html
 import os
+import re
 import zipfile
 from typing import Any
 
@@ -36,18 +37,122 @@ def _format_time(value: Any) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d}"
 
 
+def _meeting_report_sections(result: dict, *, include_empty: bool = False) -> list[dict]:
+    report = result.get("meeting_report") or {}
+    if not isinstance(report, dict):
+        report = {}
+
+    sections = []
+    for item in report.get("sections") or []:
+        if not isinstance(item, dict):
+            continue
+        raw_title = str(item.get("title") or "").strip()
+        content = str(item.get("content") or "").strip()
+        if raw_title or content:
+            sections.append({"title": raw_title or "보고서", "content": content})
+
+    content = str(report.get("content") or "").strip()
+    if not sections and content:
+        sections.append({"title": "회의록 보고서", "content": content})
+    if not sections and include_empty:
+        sections.append({"title": "회의록 보고서", "content": "보고서 내용이 없습니다."})
+    return sections
+
+
+def _meeting_report_text_items(title: str, result: dict, *, include_empty: bool = False) -> list[str]:
+    sections = _meeting_report_sections(result, include_empty=include_empty)
+    if not sections:
+        return []
+
+    lines = [title]
+    intro = _meeting_report_intro(result, sections)
+    if intro:
+        lines.append("")
+        lines.append("보고서 개요")
+        lines.extend(_report_text_lines(intro))
+    section_prefix = _section_number_prefix(title)
+    for index, section in enumerate(sections, start=1):
+        lines.append("")
+        lines.append(f"{section_prefix}.{index} {section.get('title') or '보고서'}")
+        lines.extend(_report_text_lines(section.get("content") or "내용 없음"))
+    return lines
+
+
+def _normalized_report_text(value: str) -> str:
+    return re.sub(r"\s+", "", value or "")
+
+
+def _meeting_report_intro(result: dict, sections: list[dict]) -> str:
+    report = result.get("meeting_report") or {}
+    if not isinstance(report, dict):
+        return ""
+
+    content = str(report.get("content") or "").strip()
+    if not content or not sections:
+        return ""
+
+    section_content = "\n".join(str(section.get("content") or "") for section in sections)
+    section_with_titles = "\n".join(
+        f"{section.get('title') or '보고서'}\n{section.get('content') or ''}"
+        for section in sections
+    )
+    content_key = _normalized_report_text(content)
+    if content_key in {
+        _normalized_report_text(section_content),
+        _normalized_report_text(section_with_titles),
+    }:
+        return ""
+    return content
+
+
+def _report_text_lines(text: str) -> list[str]:
+    lines: list[str] = []
+    for raw_line in str(text or "").replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        bullet_match = re.match(r"^[-*•]\s+(.+)$", line)
+        if bullet_match:
+            lines.append(f"· {bullet_match.group(1).strip()}")
+            continue
+        numbered_match = re.match(r"^(\d+[.)])\s+(.+)$", line)
+        if numbered_match:
+            lines.append(f"{numbered_match.group(1)} {numbered_match.group(2).strip()}")
+            continue
+        lines.append(line)
+    return lines or ["내용 없음"]
+
+
+def _section_number_prefix(title: str) -> str:
+    match = re.match(r"^\s*(\d+)", title or "")
+    return match.group(1) if match else "1"
+
+
+def _metadata_lines(result: dict) -> list[str]:
+    lines = [
+        "[문서 정보]",
+        f"원본 파일  {result.get('source_file', '') or '-'}",
+        f"처리 일시  {result.get('created_at', '') or '-'}",
+    ]
+    if result.get("meeting_purpose"):
+        lines.append(f"회의 목적  {result.get('meeting_purpose', '')}")
+    return lines
+
+
 def _report_lines(result: dict) -> list[str]:
     summary = result.get("summary", {}) or {}
+    export_scope = result.get("export_scope") or "full"
     title = summary.get("title") or "회의록"
     segments = get_transcript_segments(result)
 
     lines = [
         title,
-        f"원본 파일: {result.get('source_file', '')}",
-        f"처리 일시: {result.get('created_at', '')}",
+        "",
+        *_metadata_lines(result),
     ]
-    if result.get("meeting_purpose"):
-        lines.append(f"회의 목적: {result.get('meeting_purpose', '')}")
+    if export_scope == "report":
+        lines.extend(["", *_meeting_report_text_items("1. 회의록 보고서", result, include_empty=True)])
+        return lines
     lines.extend(
         [
             "",
@@ -61,18 +166,25 @@ def _report_lines(result: dict) -> list[str]:
     lines.extend(_line_text_items("5. 결정 사항", summary.get("decisions", []) or []))
     lines.extend(_line_text_items("6. 할 일", summary.get("actions", []) or []))
     lines.extend(_line_text_items("7. 확인 필요 사항", summary.get("needs_check", []) or []))
-    lines.append("8. 대화록")
+    transcript_title = "8. 대화록"
+    if export_scope == "full":
+        report_lines = _meeting_report_text_items("8. 회의록 보고서", result)
+        if report_lines:
+            lines.extend(report_lines)
+            transcript_title = "9. 대화록"
+    if export_scope != "organized":
+        lines.append(transcript_title)
 
-    if segments:
-        for segment in segments:
-            start = _format_time(segment.get("start", 0.0))
-            end = _format_time(segment.get("end", 0.0))
-            speaker = segment.get("speaker_name") or segment.get("speaker") or "Speaker"
-            text = segment.get("text", "")
-            timing = " 시간 추정" if segment.get("timing_approximate") else ""
-            lines.append(f"[{start}-{end}{timing}] {speaker}: {text}")
-    else:
-        lines.append("대화록 데이터가 없습니다.")
+        if segments:
+            for segment in segments:
+                start = _format_time(segment.get("start", 0.0))
+                end = _format_time(segment.get("end", 0.0))
+                speaker = segment.get("speaker_name") or segment.get("speaker") or "Speaker"
+                text = segment.get("text", "")
+                timing = " 시간 추정" if segment.get("timing_approximate") else ""
+                lines.append(f"[{start}-{end}{timing}] {speaker}: {text}")
+        else:
+            lines.append("대화록 데이터가 없습니다.")
 
     return lines
 

@@ -16,6 +16,7 @@ const importTsModule = async (path) => {
 
 const {
   canGenerateSpeakerContext,
+  getMeetingReportGenerationStatus,
   getSpeakerGenerationStatus,
   getTopicGenerationStatus,
   normalizeGenerationStatus,
@@ -27,13 +28,26 @@ const {
   getTranscriptReadyProgressPercent,
 } = await importTsModule('src/analysisTimeEstimate.ts');
 
+const {
+  listMinutesOutputTemplates,
+  listReportTemplates,
+} = await importTsModule('src/meetingKnowledge.ts');
+
+const reportTemplates = listReportTemplates();
+const minutesOutputTemplates = listMinutesOutputTemplates();
+assert.equal(reportTemplates.some((template) => template.id === 'archive-minutes'), false);
+assert.equal(reportTemplates.some((template) => template.id === 'report-ready-minutes'), false);
+assert.equal(reportTemplates.some((template) => template.name === '기본 보고서'), true);
+assert.equal(minutesOutputTemplates.some((template) => template.id === 'archive-minutes'), true);
+
 const normalizedStatus = normalizeGenerationStatus(
-    { topicSections: 'generating', speakerContextSummaries: 'completed' },
-    { topic_sections: 'completed' },
+    { topicSections: 'generating', speakerContextSummaries: 'completed', meeting_report: 'failed' },
+    { topic_sections: 'completed', meetingReport: 'completed' },
 );
 assert.equal(normalizedStatus.summary, undefined);
 assert.equal(normalizedStatus.topicSections, 'completed');
 assert.equal(normalizedStatus.speakerContextSummaries, 'completed');
+assert.equal(normalizedStatus.meetingReport, 'completed');
 
 assert.equal(getTopicGenerationStatus(undefined, []), 'not_started');
 assert.equal(getTopicGenerationStatus(undefined, [{ topic: '예산' }]), 'completed');
@@ -41,6 +55,10 @@ assert.equal(getTopicGenerationStatus({ topic_sections: 'failed' }, [{ topic: '�
 
 assert.equal(getSpeakerGenerationStatus(undefined, []), 'not_started');
 assert.equal(getSpeakerGenerationStatus({ speaker_context_summaries: 'completed' }, []), 'failed');
+
+assert.equal(getMeetingReportGenerationStatus(undefined, null), 'not_started');
+assert.equal(getMeetingReportGenerationStatus(undefined, { content: '보고서 본문' }), 'completed');
+assert.equal(getMeetingReportGenerationStatus({ meeting_report: 'completed' }, { content: '' }), 'failed');
 
 assert.equal(canGenerateSpeakerContext({ topic_sections: 'not_started' }, []), false);
 assert.equal(canGenerateSpeakerContext({ topic_sections: 'generating' }, [{ topic: '예산' }]), false);

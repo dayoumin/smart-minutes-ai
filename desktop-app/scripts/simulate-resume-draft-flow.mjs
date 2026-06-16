@@ -144,6 +144,8 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     title: '중단된 회의',
     date: '2026-05-13T09:30',
     meetingPurpose: '중단된 분석 이어하기 확인',
+    selectedReportTemplateId: 'standard-minutes',
+    selectedTermGlossaryIds: ['lmo'],
     sourceFilename: 'resume-draft-target.mp4',
     sourceSize: fixtureUpload.size,
     sourceLastModified: fixtureUpload.lastModified,
@@ -267,6 +269,8 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
+    assert.equal(await page.locator('#report-template').count(), 0);
+    assert.equal(await page.locator('label.topic-chip').count(), 0);
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByText('같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.').waitFor({ timeout: 10000 });
     await page.locator('.app-panel').first().getByRole('button', { name: '이어하기', exact: true }).click();
@@ -274,6 +278,10 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     assert.equal(resumeCandidatesCalled, true);
     assert.match(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\ndraft-job-001/);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\ntrue/);
+    assert.match(analyzeRequestSnapshot ?? '', /name="selected_report_template_id"\r\n\r\nstandard-minutes/);
+    assert.match(analyzeRequestSnapshot ?? '', /name="selected_term_glossary_ids"\r\n\r\n\[\]/);
+    assert.match(analyzeRequestSnapshot ?? '', /name="report_template"\r\n\r\n[\s\S]*"id":"standard-minutes"/);
+    assert.match(analyzeRequestSnapshot ?? '', /name="term_glossaries"\r\n\r\n\[\]/);
     const storedDrafts = await page.evaluate(() => window.localStorage.getItem('analysisResumeDrafts'));
     const parsedDrafts = JSON.parse(storedDrafts ?? '[]');
     assert.equal(parsedDrafts.length, 2);
@@ -1116,7 +1124,11 @@ const expectValue = async (page, selector, expected) => {
   await page.waitForFunction(
     ({ selector: nextSelector, expected: nextExpected }) => {
       const element = document.querySelector(nextSelector);
-      return element instanceof HTMLInputElement && element.value === nextExpected;
+      return (
+        element instanceof HTMLInputElement
+        || element instanceof HTMLSelectElement
+        || element instanceof HTMLTextAreaElement
+      ) && element.value === nextExpected;
     },
     { selector, expected },
   );

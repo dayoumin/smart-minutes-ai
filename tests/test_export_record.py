@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import sys
@@ -106,6 +107,258 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200, response.text)
         self.assertGreater(len(response.content), 0)
+
+    def test_report_scope_exports_generated_meeting_report(self):
+        payload = legacy_meeting_payload(
+            exportScope="report",
+            title="보고서 범위 회의",
+            meetingReport={
+                "templateId": "custom-report",
+                "generatedAt": "2026-06-16T10:00:00",
+                "content": "보고서 전체 본문입니다.",
+                "sections": [
+                    {"title": "검토 배경", "content": "보고서 전용 배경입니다."},
+                    {"title": "후속 조치", "content": "보고서 전용 조치입니다."},
+                ],
+            },
+        )
+
+        md_response = self.client.post("/api/export-record/md", json=payload)
+        self.assertEqual(md_response.status_code, 200, md_response.text)
+        md_text = md_response.content.decode("utf-8")
+        self.assertIn("회의록 보고서", md_text)
+        self.assertIn("보고서 개요", md_text)
+        self.assertIn("보고서 전체 본문입니다.", md_text)
+        self.assertIn("검토 배경", md_text)
+        self.assertIn("보고서 전용 조치입니다.", md_text)
+        self.assertNotIn("테스트 발화입니다.", md_text)
+
+        hwpx_response = self.client.post("/api/export-record/hwpx", json=payload)
+        self.assertEqual(hwpx_response.status_code, 200, hwpx_response.text)
+        with zipfile.ZipFile(io.BytesIO(hwpx_response.content)) as archive:
+            section_xml = archive.read("Contents/section0.xml").decode("utf-8")
+            preview_text = archive.read("Preview/PrvText.txt").decode("utf-8")
+        self.assertIn("[문서 정보]", preview_text)
+        self.assertIn("보고서 개요", preview_text)
+        self.assertIn("보고서 전체 본문입니다.", preview_text)
+        self.assertIn("1.1 검토 배경", preview_text)
+        self.assertIn("1.2 후속 조치", preview_text)
+        self.assertIn("보고서 전용 배경입니다.", section_xml)
+        self.assertIn("보고서 전용 조치입니다.", preview_text)
+        self.assertNotIn("테스트 발화입니다.", section_xml)
+
+        docx_response = self.client.post("/api/export-record/docx", json=payload)
+        self.assertEqual(docx_response.status_code, 200, docx_response.text)
+        with zipfile.ZipFile(io.BytesIO(docx_response.content)) as archive:
+            document_xml = archive.read("word/document.xml").decode("utf-8")
+        self.assertIn("<w:tbl>", document_xml)
+        self.assertIn("보고서 개요", document_xml)
+        self.assertIn("보고서 전체 본문입니다.", document_xml)
+        self.assertIn('w:eastAsia="맑은 고딕"', document_xml)
+        self.assertIn("1.1 검토 배경", document_xml)
+        self.assertIn("1.2 후속 조치", document_xml)
+        self.assertIn("보고서 전용 조치입니다.", document_xml)
+        self.assertNotIn("테스트 발화입니다.", document_xml)
+
+    def test_report_scope_uses_content_when_sections_are_blank(self):
+        payload = legacy_meeting_payload(
+            exportScope="report",
+            meetingReport={
+                "content": "빈 섹션 대신 살아야 하는 보고서 본문입니다.",
+                "sections": [{}, {"title": "   ", "content": "   "}],
+            },
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        md_text = response.content.decode("utf-8")
+        self.assertIn("빈 섹션 대신 살아야 하는 보고서 본문입니다.", md_text)
+        self.assertNotIn("내용 없음", md_text)
+
+    def test_full_scope_exports_meeting_report_and_transcript(self):
+        payload = legacy_meeting_payload(
+            exportScope="full",
+            meetingReport={
+                "content": "전체 저장에 포함될 보고서 본문입니다.",
+                "sections": [{"title": "보고서 결론", "content": "전체 저장 보고서 결론입니다."}],
+            },
+        )
+
+        response = self.client.post("/api/export-record/md", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        content = response.content.decode("utf-8")
+        self.assertIn("회의록 보고서", content)
+        self.assertIn("전체 저장 보고서 결론입니다.", content)
+        self.assertIn("대화록", content)
+        self.assertIn("테스트 발화입니다.", content)
+
+    def test_report_scope_save_copy_uses_report_suffix_and_content(self):
+        payload = legacy_meeting_payload(
+            exportScope="report",
+            title="보고서 범위 회의",
+            meetingReport={
+                "content": "저장 복사 보고서 본문입니다.",
+                "sections": [{"title": "저장 복사", "content": "저장 복사 보고서 내용입니다."}],
+            },
+        )
+        saved_paths: list[Path] = []
+
+        def fake_download_path(filename: str) -> Path:
+            path = Path(self.work_dir.name) / filename
+            saved_paths.append(path)
+            return path
+
+        with patch.object(main, "_unique_download_path", side_effect=fake_download_path):
+            response = self.client.post(
+                "/api/export-record/md/save-copy",
+                json=payload,
+                headers={"origin": "http://127.0.0.1:5173"},
+            )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(saved_paths)
+        saved_path = saved_paths[0]
+        self.assertTrue(saved_path.name.endswith("_보고서.md"))
+        saved_text = saved_path.read_text(encoding="utf-8")
+        self.assertIn("저장 복사 보고서 내용입니다.", saved_text)
+        self.assertNotIn("테스트 발화입니다.", saved_text)
+        self.assertEqual(response.json()["saved_path"], str(saved_path))
+
+    def test_generate_report_uses_selected_report_template_and_persists_template_id(self):
+        job_id = "report-template-job"
+        report_template = {
+            "id": "custom-report-api",
+            "name": "API 검증 보고 양식",
+            "purpose": "보고서 생성 요청에 선택 양식이 유지되는지 확인한다.",
+            "instructions": "보고 문체로 정리한다.",
+            "sections": ["검토 배경", "결론 및 조치"],
+        }
+        payload = legacy_meeting_payload(
+            id=job_id,
+            jobId=job_id,
+            selectedReportTemplateId="custom-report-api",
+            reportTemplate=report_template,
+            generationStatus={
+                "summary": "completed",
+                "topicSections": "completed",
+                "speakerContextSummaries": "completed",
+                "meetingReport": "not_started",
+            },
+            topicSections=[{"topic": "보고서", "summary": "보고서 생성 요청 검증"}],
+            speakerContextSummaries=[],
+            participantSummaries=[],
+        )
+
+        with (
+            patch.object(main, "_summary_model_readiness", return_value={"ready": True}),
+            patch.object(main, "_resolve_summary_model", return_value="gemma-test"),
+            patch.object(main, "_refresh_summary_exports", return_value={}),
+            patch(
+                "pipeline.summarize.generate_meeting_report",
+                return_value={
+                    "content": "API 검증 보고서 본문",
+                    "sections": [{"title": "검토 배경", "content": "API 검증 보고서 본문"}],
+                },
+            ) as generate_report,
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-report", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        response_payload = response.json()
+        self.assertEqual(response_payload["meeting_report"]["templateId"], "custom-report-api")
+        self.assertEqual(response_payload["meeting_report"]["content"], "API 검증 보고서 본문")
+
+        generate_args = generate_report.call_args.args
+        self.assertEqual(generate_args[4], report_template)
+        self.assertEqual(generate_report.call_args.kwargs["meeting_context"]["report_template"], report_template)
+
+        result_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        saved_result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved_result["selected_report_template_id"], "custom-report-api")
+        self.assertEqual(saved_result["report_template"], report_template)
+        self.assertEqual(saved_result["meeting_report"]["templateId"], "custom-report-api")
+        self.assertEqual(saved_result["summary"]["generation_status"]["meeting_report"], "completed")
+
+    def test_generate_report_uses_payload_organized_record_over_saved_result(self):
+        job_id = "report-payload-current-job"
+        result_path = Path(self.temp_dir.name) / f"{job_id}_result.json"
+        result_path.write_text(
+            json.dumps(
+                {
+                    "job_id": job_id,
+                    "source_file": "stale.mp4",
+                    "created_at": "2026-06-16 09:00",
+                    "meeting_purpose": "이전 목적",
+                    "selected_report_template_id": "standard-minutes",
+                    "report_template": {"id": "standard-minutes", "name": "기본 보고서", "sections": ["회의 개요"]},
+                    "segments": [
+                        {"start": 0, "end": 5, "speaker": "SPEAKER_00", "text": "현재 화면에서 정리한 내용을 보고서로 만듭니다."}
+                    ],
+                    "summary": {
+                        "title": "이전 제목",
+                        "overview": "저장된 이전 요약",
+                        "topics": ["이전 주제"],
+                        "topic_sections": [{"topic": "이전", "summary": "이전 주제 정리"}],
+                        "speaker_context_summaries": [{"speaker": "SPEAKER_00", "summary": "이전 참석자 정리"}],
+                        "participant_summaries": [{"participant": "SPEAKER_00", "summary": "이전 참석자 요약"}],
+                        "generation_status": {
+                            "summary": "completed",
+                            "topic_sections": "completed",
+                            "speaker_context_summaries": "completed",
+                            "meeting_report": "not_started",
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
+        report_template = {
+            "id": "fresh-report-api",
+            "name": "현재 보고 양식",
+            "purpose": "현재 화면 기준으로 보고서를 생성한다.",
+            "sections": ["현재 개요", "현재 조치"],
+        }
+        payload = legacy_meeting_payload(
+            id=job_id,
+            jobId=job_id,
+            title="현재 화면 제목",
+            summary="현재 화면 요약",
+            topics=["현재 주제"],
+            topicSections=[{"topic": "현재", "summary": "현재 주제 정리"}],
+            speakerContextSummaries=[{"speaker": "SPEAKER_00", "summary": "현재 참석자 정리"}],
+            participantSummaries=[{"participant": "SPEAKER_00", "summary": "현재 참석자 요약"}],
+            selectedReportTemplateId="fresh-report-api",
+            reportTemplate=report_template,
+        )
+
+        with (
+            patch.object(main, "_summary_model_readiness", return_value={"ready": True}),
+            patch.object(main, "_resolve_summary_model", return_value="gemma-test"),
+            patch.object(main, "_refresh_summary_exports", return_value={}),
+            patch(
+                "pipeline.summarize.generate_meeting_report",
+                return_value={
+                    "content": "현재 화면 기준 보고서 본문",
+                    "sections": [{"title": "현재 개요", "content": "현재 화면 기준 보고서 본문"}],
+                },
+            ) as generate_report,
+        ):
+            response = self.client.post(f"/api/outputs/{job_id}/generate-report", json=payload)
+
+        self.assertEqual(response.status_code, 200, response.text)
+        generate_args = generate_report.call_args.args
+        self.assertEqual(generate_args[1]["overview"], "현재 화면 요약")
+        self.assertEqual(generate_args[2], [{"topic": "현재", "summary": "현재 주제 정리"}])
+        self.assertEqual(generate_args[3], [{"speaker": "SPEAKER_00", "summary": "현재 참석자 정리"}])
+        self.assertEqual(generate_args[4], report_template)
+
+        saved_result = json.loads(result_path.read_text(encoding="utf-8"))
+        self.assertEqual(saved_result["summary"]["overview"], "현재 화면 요약")
+        self.assertEqual(saved_result["summary"]["topic_sections"][0]["topic"], "현재")
+        self.assertEqual(saved_result["meeting_report"]["templateId"], "fresh-report-api")
 
     def test_download_output_regenerates_legacy_minimal_hwpx(self):
         job_id = "legacy_hwpx"

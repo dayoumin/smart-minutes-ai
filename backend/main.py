@@ -83,6 +83,16 @@ app = FastAPI(title="NIFS AI Meeting API")
 
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
+
+
+def _parse_json_form_field(raw_value: str | None, fallback):
+    if not raw_value:
+        return fallback
+    try:
+        parsed = json.loads(raw_value)
+    except (TypeError, json.JSONDecodeError):
+        return fallback
+    return parsed if isinstance(parsed, type(fallback)) else fallback
 OLLAMA_PULL_STATUS_LOCK = threading.RLock()
 OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK = threading.RLock()
 MODEL_DOWNLOAD_STATUS_LOCK = threading.RLock()
@@ -136,8 +146,10 @@ GENERATION_PROGRESS_MAX_ENTRIES = 128
 DETAIL_SUMMARY_INPUT_CHANGED = "summary_input_changed"
 DETAIL_TOPIC_INPUT_CHANGED = "topic_input_changed"
 DETAIL_SPEAKER_INPUT_CHANGED = "speaker_input_changed"
+DETAIL_REPORT_INPUT_CHANGED = "report_input_changed"
 DETAIL_TOPIC_EMPTY_RESULT = "topic_generation_empty"
 DETAIL_SPEAKER_EMPTY_RESULT = "speaker_context_generation_empty"
+DETAIL_REPORT_EMPTY_RESULT = "meeting_report_generation_empty"
 DETAIL_DIARIZATION_RUNTIME_ERROR = "diarization_runtime_error"
 DETAIL_DIARIZATION_CANCELLED = "diarization_cancelled"
 DETAIL_DIARIZATION_DEFERRED = "diarization_deferred"
@@ -2814,6 +2826,7 @@ def _skipped_summary(message: str) -> dict:
             "summary": "skipped",
             "topic_sections": "skipped",
             "speaker_context_summaries": "skipped",
+            "meeting_report": "skipped",
         },
     }
 
@@ -3400,6 +3413,10 @@ def _clear_speaker_context_after_topic_change(summary: dict, status: dict) -> No
     status["speaker_context_summaries"] = "not_started"
 
 
+def _mark_meeting_report_outdated(result_data: dict, status: dict) -> None:
+    status["meeting_report"] = "not_started"
+
+
 def _valid_generated_topic_sections(topic_sections: list[dict]) -> list[dict]:
     sections = [
         section
@@ -3787,11 +3804,7 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
                     lambda: summarize_meeting(
                         segments,
                         _resolve_summary_model(config),
-                        meeting_context={
-                            "title": result_data.get("summary", {}).get("title", ""),
-                            "date": result_data.get("created_at", ""),
-                            "meeting_purpose": result_data.get("meeting_purpose", ""),
-                        },
+                        meeting_context=_meeting_context_from_result_data(result_data),
                     )
                 )
         except Exception:
@@ -3838,12 +3851,15 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
             if summary_state == "completed":
                 latest_status["topic_sections"] = "not_started"
                 latest_status["speaker_context_summaries"] = "not_started"
+                _mark_meeting_report_outdated(latest_result, latest_status)
             elif summary_state == "skipped":
                 latest_status["topic_sections"] = "skipped"
                 latest_status["speaker_context_summaries"] = "skipped"
+                _mark_meeting_report_outdated(latest_result, latest_status)
             else:
                 latest_status["topic_sections"] = "not_started"
                 latest_status["speaker_context_summaries"] = "not_started"
+                _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
             _save_job_result(job_id, latest_result)
             result_data = latest_result
@@ -3911,10 +3927,12 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             from pipeline.summarize import generate_topic_sections
 
             topic_sections = await asyncio.to_thread(
-                generate_topic_sections,
-                segments,
-                summary,
-                _resolve_summary_model(config),
+                lambda: generate_topic_sections(
+                    segments,
+                    summary,
+                    _resolve_summary_model(config),
+                    meeting_context=_meeting_context_from_result_data(result_data),
+                )
             )
         except Exception:
             with GENERATION_STATUS_LOCK:
@@ -3950,6 +3968,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             latest_summary["topics"] = list(dict.fromkeys(existing_topics + generated_topics))
             latest_status["topic_sections"] = "completed"
             _clear_speaker_context_after_topic_change(latest_summary, latest_status)
+            _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
             latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
@@ -4026,11 +4045,13 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
             from pipeline.summarize import generate_topic_section_for_title
 
             topic_section = await asyncio.to_thread(
-                generate_topic_section_for_title,
-                segments,
-                summary,
-                topic_title,
-                _resolve_summary_model(config),
+                lambda: generate_topic_section_for_title(
+                    segments,
+                    summary,
+                    topic_title,
+                    _resolve_summary_model(config),
+                    meeting_context=_meeting_context_from_result_data(result_data),
+                )
             )
         except HTTPException:
             with GENERATION_STATUS_LOCK:
@@ -4097,6 +4118,7 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
             latest_summary["topics"] = list(dict.fromkeys(existing_topics + [section["topic"] for section in next_sections if section.get("topic")]))
             latest_status["topic_sections"] = "completed" if len(next_sections) >= 1 else "not_started"
             _clear_speaker_context_after_topic_change(latest_summary, latest_status)
+            _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
             latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
@@ -4167,11 +4189,13 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             from pipeline.summarize import generate_speaker_context_summaries
 
             speaker_context_summaries = await asyncio.to_thread(
-                generate_speaker_context_summaries,
-                segments,
-                summary,
-                summary.get("topic_sections", []),
-                _resolve_summary_model(config),
+                lambda: generate_speaker_context_summaries(
+                    segments,
+                    summary,
+                    summary.get("topic_sections", []),
+                    _resolve_summary_model(config),
+                    meeting_context=_meeting_context_from_result_data(result_data),
+                )
             )
         except Exception:
             with GENERATION_STATUS_LOCK:
@@ -4213,6 +4237,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             latest_summary["speaker_context_summaries"] = speaker_context_summaries
             latest_summary["participant_summaries"] = _participant_summaries_from_speaker_context(speaker_context_summaries)
             latest_status["speaker_context_summaries"] = "completed"
+            _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
             latest_summary.pop("generation_error_detail", None)
             _save_job_result(job_id, latest_result)
@@ -4232,6 +4257,124 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             "job_id": job_id,
             "speaker_context_summaries": speaker_context_summaries,
             "participant_summaries": summary["participant_summaries"],
+            "generation_status": status,
+            "outputs": outputs,
+            "export_error": export_error,
+        }
+    finally:
+        with GENERATION_STATUS_LOCK:
+            _end_generation(generation_key)
+
+
+@app.post("/api/outputs/{job_id}/generate-report")
+async def generate_output_meeting_report(job_id: str, payload: dict | None = Body(None)) -> dict:
+    from pipeline.transcript_display import get_transcript_segments
+
+    job_id = _validate_job_id(job_id)
+    generation_key = None
+    try:
+        with GENERATION_STATUS_LOCK:
+            result_data, had_saved_result = _load_or_rebuild_job_result(job_id, payload, persist_rebuilt=False)
+            segments = get_transcript_segments(result_data)
+            if not segments:
+                raise HTTPException(status_code=400, detail="Transcript segments are required")
+            input_fingerprint = _report_generation_fingerprint(result_data, segments)
+
+            summary = result_data.setdefault("summary", {})
+            status = _ensure_generation_status(summary)
+            status.setdefault("meeting_report", "completed" if result_data.get("meeting_report") else "not_started")
+            if status.get("summary") != "completed" or not str(summary.get("overview") or "").strip():
+                raise HTTPException(status_code=409, detail="Summary must be generated before meeting report")
+            if status.get("summary") == "skipped":
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
+            if status.get("meeting_report") == "generating":
+                raise HTTPException(status_code=409, detail="Meeting report is already being generated")
+            generation_key = _begin_generation(job_id, "meeting_report")
+            status["meeting_report"] = "generating"
+            summary["generation_status"] = status
+            if had_saved_result:
+                _save_job_result(job_id, result_data)
+
+        try:
+            config = load_config()
+            readiness = await asyncio.to_thread(_summary_model_readiness, config)
+            if not readiness["ready"]:
+                with GENERATION_STATUS_LOCK:
+                    if os.path.exists(_get_job_result_path(job_id)):
+                        latest_result = _load_latest_generation_result(job_id, result_data)
+                        latest_summary = latest_result.setdefault("summary", {})
+                        latest_status = _ensure_generation_status(latest_summary)
+                        latest_status["meeting_report"] = "not_started"
+                        latest_summary["generation_status"] = latest_status
+                        _save_job_result(job_id, latest_result)
+                raise HTTPException(status_code=409, detail="summary_model_not_ready")
+
+            from pipeline.summarize import generate_meeting_report
+
+            meeting_report = await asyncio.to_thread(
+                lambda: generate_meeting_report(
+                    segments,
+                    summary,
+                    summary.get("topic_sections", []),
+                    summary.get("speaker_context_summaries", []),
+                    result_data.get("report_template", {}),
+                    _resolve_summary_model(config),
+                    meeting_context=_meeting_context_from_result_data(result_data),
+                )
+            )
+        except HTTPException:
+            raise
+        except Exception:
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _mark_generation_failed(job_id, result_data, "meeting_report", "meeting_report_generation_error")
+            logging.exception("Failed to generate meeting report")
+            raise HTTPException(status_code=500, detail="Failed to generate meeting report")
+
+        if not meeting_report or not str(meeting_report.get("content") or "").strip():
+            with GENERATION_STATUS_LOCK:
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _mark_generation_failed(job_id, result_data, "meeting_report", DETAIL_REPORT_EMPTY_RESULT)
+            raise HTTPException(status_code=502, detail=DETAIL_REPORT_EMPTY_RESULT)
+
+        with GENERATION_STATUS_LOCK:
+            latest_result = _load_latest_generation_result(job_id, result_data)
+            latest_segments = get_transcript_segments(latest_result)
+            latest_summary = latest_result.setdefault("summary", {})
+            if _report_generation_fingerprint(latest_result, latest_segments) != input_fingerprint:
+                latest_status = _ensure_generation_status(latest_summary)
+                latest_status["meeting_report"] = "not_started"
+                latest_summary["generation_status"] = latest_status
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _save_job_result(job_id, latest_result)
+                raise HTTPException(status_code=409, detail=DETAIL_REPORT_INPUT_CHANGED)
+
+            latest_status = _ensure_generation_status(latest_summary)
+            report_payload = {
+                "templateId": latest_result.get("selected_report_template_id", "standard-minutes"),
+                "generatedAt": datetime.now().isoformat(timespec="seconds"),
+                "content": str(meeting_report.get("content") or "").strip(),
+                "sections": meeting_report.get("sections") or [],
+            }
+            latest_result["meeting_report"] = report_payload
+            latest_status["meeting_report"] = "completed"
+            latest_summary["generation_status"] = latest_status
+            latest_summary.pop("generation_error_detail", None)
+            _save_job_result(job_id, latest_result)
+            result_data = latest_result
+            status = latest_status
+
+        export_error = None
+        try:
+            outputs = _refresh_summary_exports(job_id, result_data)
+        except Exception:
+            logging.exception("Failed to refresh exports after meeting report generation")
+            outputs = _result_outputs(job_id)
+            export_error = "보고서는 생성됐지만 다운로드 파일 갱신은 실패했습니다."
+
+        return {
+            "job_id": job_id,
+            "meeting_report": result_data.get("meeting_report", {}),
             "generation_status": status,
             "outputs": outputs,
             "export_error": export_error,
@@ -4600,6 +4743,25 @@ def _export_record_to_download_path(kind: str, payload: dict, target_path: Path)
         raise
 
 
+def _normalize_export_scope(value) -> str:
+    scope = str(value or "full").strip().lower()
+    return scope if scope in {"transcript", "organized", "report", "full"} else "full"
+
+
+def _export_download_title(payload: dict, base_title: str) -> str:
+    suffixes = {
+        "transcript": "대화록",
+        "organized": "기록정리",
+        "report": "보고서",
+        "full": "전체",
+    }
+    scope = _normalize_export_scope(payload.get("exportScope") or payload.get("export_scope"))
+    suffix = suffixes.get(scope, "전체")
+    if suffix and base_title.endswith(f"_{suffix}"):
+        return base_title
+    return f"{base_title}_{suffix}" if suffix else base_title
+
+
 def _auto_save_completed_outputs(
     *,
     result_data: dict,
@@ -4786,10 +4948,18 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
     )
     return {
         "job_id": payload.get("jobId") or payload.get("id") or datetime.now().strftime("%Y%m%d_%H%M%S"),
+        "export_scope": _normalize_export_scope(payload.get("exportScope") or payload.get("export_scope")),
         "source_file": payload.get("sourceFile") or "",
         "created_at": payload.get("date") or datetime.now().isoformat(timespec="seconds"),
         "participants": payload.get("participants") or "",
         "meeting_purpose": payload.get("meetingPurpose") or payload.get("meeting_purpose") or "",
+        "selected_report_template_id": payload.get("selectedReportTemplateId") or payload.get("selected_report_template_id") or "standard-minutes",
+        "report_template": payload.get("reportTemplate") or payload.get("report_template") or {},
+        "selected_context_template_id": payload.get("selectedContextTemplateId") or payload.get("selected_context_template_id") or "general",
+        "context_template": payload.get("contextTemplate") or payload.get("context_template") or {},
+        "selected_term_glossary_ids": payload.get("selectedTermGlossaryIds") or payload.get("selected_term_glossary_ids") or [],
+        "term_glossaries": payload.get("termGlossaries") or payload.get("term_glossaries") or [],
+        "meeting_report": payload.get("meetingReport") or payload.get("meeting_report") or {},
         "segments": segments,
         "display_segments": display_segments,
         "speaker_labels": speaker_labels,
@@ -4824,9 +4994,55 @@ def _apply_payload_metadata_override(result_data: dict, payload: dict | None) ->
         result_data["participants"] = payload.get("participants") or ""
     if "meetingPurpose" in payload or "meeting_purpose" in payload:
         result_data["meeting_purpose"] = payload.get("meetingPurpose") or payload.get("meeting_purpose") or ""
+    if "selectedReportTemplateId" in payload or "selected_report_template_id" in payload:
+        result_data["selected_report_template_id"] = (
+            payload.get("selectedReportTemplateId") or payload.get("selected_report_template_id") or "standard-minutes"
+        )
+    if "reportTemplate" in payload or "report_template" in payload:
+        result_data["report_template"] = payload.get("reportTemplate") or payload.get("report_template") or {}
+    if "selectedContextTemplateId" in payload or "selected_context_template_id" in payload:
+        result_data["selected_context_template_id"] = (
+            payload.get("selectedContextTemplateId") or payload.get("selected_context_template_id") or "general"
+        )
+    if "contextTemplate" in payload or "context_template" in payload:
+        result_data["context_template"] = payload.get("contextTemplate") or payload.get("context_template") or {}
+    if "selectedTermGlossaryIds" in payload or "selected_term_glossary_ids" in payload:
+        result_data["selected_term_glossary_ids"] = payload.get("selectedTermGlossaryIds") or payload.get("selected_term_glossary_ids") or []
+    if "termGlossaries" in payload or "term_glossaries" in payload:
+        result_data["term_glossaries"] = payload.get("termGlossaries") or payload.get("term_glossaries") or []
+    if "meetingReport" in payload or "meeting_report" in payload:
+        result_data["meeting_report"] = payload.get("meetingReport") or payload.get("meeting_report") or {}
     if "title" in payload:
         summary = result_data.setdefault("summary", {})
         summary["title"] = payload.get("title") or summary.get("title") or "회의록"
+    return result_data
+
+
+def _apply_payload_organized_override(result_data: dict, payload: dict | None) -> dict:
+    if not payload:
+        return result_data
+
+    summary = result_data.setdefault("summary", {})
+    if _payload_has_key(payload, "summary"):
+        summary["overview"] = _participant_copy_value(payload.get("summary") or "")
+    if _payload_has_key(payload, "topics"):
+        summary["topics"] = _participant_copy_value(payload.get("topics") or [])
+    if _payload_has_key(payload, "actions"):
+        summary["actions"] = _participant_copy_value(payload.get("actions") or [])
+    if _payload_has_key(payload, "decisions"):
+        summary["decisions"] = _participant_copy_value(payload.get("decisions") or [])
+    if _payload_has_key(payload, "needsCheck", "needs_check"):
+        summary["needs_check"] = _participant_copy_value(payload.get("needsCheck") or payload.get("needs_check") or [])
+    if _payload_has_key(payload, "topicSections", "topic_sections"):
+        summary["topic_sections"] = _participant_copy_value(payload.get("topicSections") or payload.get("topic_sections") or [])
+    if _payload_has_key(payload, "speakerContextSummaries", "speaker_context_summaries"):
+        summary["speaker_context_summaries"] = _participant_copy_value(
+            payload.get("speakerContextSummaries") or payload.get("speaker_context_summaries") or []
+        )
+    if _payload_has_key(payload, "participantSummaries", "participant_summaries"):
+        summary["participant_summaries"] = _participant_copy_value(
+            payload.get("participantSummaries") or payload.get("participant_summaries") or []
+        )
     return result_data
 
 
@@ -4835,6 +5051,7 @@ def _apply_payload_transcript_override(result_data: dict, payload: dict | None) 
         return result_data
 
     result_data = _apply_payload_metadata_override(result_data, payload)
+    result_data = _apply_payload_organized_override(result_data, payload)
     has_speaker_labels = _payload_has_key(payload, "speakerLabels", "speaker_labels")
     speaker_labels = _payload_speaker_labels(payload)
     edited_payload_segments = _payload_segments(payload, "editedDisplaySegments", "edited_display_segments")
@@ -4916,8 +5133,45 @@ def _generation_input_fingerprint(result_data: dict, segments: list[dict]) -> st
         "title": summary.get("title", ""),
         "created_at": result_data.get("created_at", ""),
         "meeting_purpose": result_data.get("meeting_purpose", ""),
+        "selected_context_template_id": result_data.get("selected_context_template_id", "general"),
+        "context_template": result_data.get("context_template", {}),
+        "selected_term_glossary_ids": result_data.get("selected_term_glossary_ids", []),
+        "term_glossaries": result_data.get("term_glossaries", []),
     }
     return _stable_json_fingerprint(normalized)
+
+
+def _report_generation_fingerprint(result_data: dict, segments: list[dict]) -> str:
+    summary = result_data.get("summary") or {}
+    normalized = {
+        "input": _generation_input_fingerprint(result_data, segments),
+        "selected_report_template_id": result_data.get("selected_report_template_id", "standard-minutes"),
+        "report_template": result_data.get("report_template", {}),
+        "overview": summary.get("overview", ""),
+        "topics": summary.get("topics", []),
+        "topic_sections": summary.get("topic_sections", []),
+        "speaker_context_summaries": summary.get("speaker_context_summaries", []),
+        "participant_summaries": summary.get("participant_summaries", []),
+        "actions": summary.get("actions", []),
+        "decisions": summary.get("decisions", []),
+        "needs_check": summary.get("needs_check", []),
+    }
+    return _stable_json_fingerprint(normalized)
+
+
+def _meeting_context_from_result_data(result_data: dict) -> dict:
+    summary = result_data.get("summary") or {}
+    return {
+        "title": summary.get("title", ""),
+        "date": result_data.get("created_at", ""),
+        "meeting_purpose": result_data.get("meeting_purpose", ""),
+        "selected_report_template_id": result_data.get("selected_report_template_id", "standard-minutes"),
+        "report_template": result_data.get("report_template", {}),
+        "selected_context_template_id": result_data.get("selected_context_template_id", "general"),
+        "context_template": result_data.get("context_template", {}),
+        "selected_term_glossary_ids": result_data.get("selected_term_glossary_ids", []),
+        "term_glossaries": result_data.get("term_glossaries", []),
+    }
 
 
 def _load_latest_generation_result(job_id: str, fallback_result: dict) -> dict:
@@ -4978,7 +5232,7 @@ async def export_record(kind: str, payload: dict = Body(...)) -> FileResponse:
 
     result_data = _export_record_to_path(kind, payload, output_path)
 
-    filename = _safe_export_name(result_data["summary"]["title"], extension)
+    filename = _safe_export_name(_export_download_title(payload, result_data["summary"]["title"]), extension)
     return FileResponse(output_path, filename=filename, media_type=media_type)
 
 
@@ -4996,7 +5250,7 @@ async def save_export_record_copy(kind: str, request: Request, payload: dict = B
 
     extension = allowed[kind]
     title = str(payload.get("title") or "회의록")
-    target_path = _unique_download_path(_safe_export_name(title, extension))
+    target_path = _unique_download_path(_safe_export_name(_export_download_title(payload, title), extension))
     result_data = _export_record_to_download_path(kind, payload, target_path)
     return {
         "kind": kind,
@@ -5033,11 +5287,21 @@ async def analyze_meeting(
     file_last_modified: int | None = Form(None),
     resume_requested: bool = Form(False),
     meeting_purpose: str = Form(""),
+    selected_report_template_id: str = Form("standard-minutes"),
+    report_template: str = Form(""),
+    selected_context_template_id: str = Form("general"),
+    context_template: str = Form(""),
+    selected_term_glossary_ids: str = Form(""),
+    term_glossaries: str = Form(""),
 ) -> StreamingResponse:
     if not isinstance(meeting_purpose, str):
         meeting_purpose = ""
     if not isinstance(participants, str):
         participants = ""
+    report_template_payload = _parse_json_form_field(report_template, {})
+    context_template_payload = _parse_json_form_field(context_template, {})
+    selected_term_glossary_ids_payload = _parse_json_form_field(selected_term_glossary_ids, [])
+    term_glossaries_payload = _parse_json_form_field(term_glossaries, [])
     if mode not in {"mock", "real"}:
         raise HTTPException(status_code=400, detail="mode must be 'mock' or 'real'")
 
@@ -5069,6 +5333,12 @@ async def analyze_meeting(
                 None,
                 analysis_job_id,
                 meeting_purpose=meeting_purpose,
+                selected_report_template_id=selected_report_template_id,
+                report_template=report_template_payload,
+                selected_context_template_id=selected_context_template_id,
+                context_template=context_template_payload,
+                selected_term_glossary_ids=selected_term_glossary_ids_payload,
+                term_glossaries=term_glossaries_payload,
                 prepared_upload_path=upload_path,
                 source_filename=file.filename,
                 prepared_cancel_event=cancel_event,
@@ -5108,8 +5378,21 @@ async def analyze_meeting(
                 "title": title,
                 "date": date,
                 "participants": participants,
+                "meeting_purpose": meeting_purpose,
+                "selected_report_template_id": selected_report_template_id,
+                "report_template": report_template_payload,
+                "selected_context_template_id": selected_context_template_id,
+                "context_template": context_template_payload,
+                "selected_term_glossary_ids": selected_term_glossary_ids_payload,
+                "term_glossaries": term_glossaries_payload,
                 "source_file": file.filename,
             },
+            "selected_report_template_id": selected_report_template_id,
+            "report_template": report_template_payload,
+            "selected_context_template_id": selected_context_template_id,
+            "context_template": context_template_payload,
+            "selected_term_glossary_ids": selected_term_glossary_ids_payload,
+            "term_glossaries": term_glossaries_payload,
             "summary": (
                 f"[Mock 회의록]\n"
                 f"- 회의명: {title}\n"
@@ -5240,6 +5523,12 @@ async def stream_real_analysis(
     requested_job_id: str | None = None,
     *,
     meeting_purpose: str = "",
+    selected_report_template_id: str = "standard-minutes",
+    report_template: dict | None = None,
+    selected_context_template_id: str = "general",
+    context_template: dict | None = None,
+    selected_term_glossary_ids: list | None = None,
+    term_glossaries: list | None = None,
     prepared_upload_path: str | None = None,
     source_filename: str | None = None,
     prepared_cancel_event=None,
@@ -5351,6 +5640,12 @@ async def stream_real_analysis(
                 "date": date,
                 "participants": participants,
                 "meeting_purpose": meeting_purpose,
+                "selected_report_template_id": selected_report_template_id,
+                "report_template": report_template or {},
+                "selected_context_template_id": selected_context_template_id,
+                "context_template": context_template or {},
+                "selected_term_glossary_ids": selected_term_glossary_ids or [],
+                "term_glossaries": term_glossaries or [],
             }
             raise_if_cancelled()
             result = await asyncio.to_thread(
@@ -5374,6 +5669,12 @@ async def stream_real_analysis(
                     "date": date,
                     "participants": participants,
                     "meeting_purpose": meeting_purpose,
+                    "selected_report_template_id": selected_report_template_id,
+                    "report_template": report_template or {},
+                    "selected_context_template_id": selected_context_template_id,
+                    "context_template": context_template or {},
+                    "selected_term_glossary_ids": selected_term_glossary_ids or [],
+                    "term_glossaries": term_glossaries or [],
                     "source_file": source_filename or (file.filename if file else ""),
                     "job_id": result["job_id"],
                 },
@@ -5397,6 +5698,12 @@ async def stream_real_analysis(
                 "actions": result_data.get("summary", {}).get("actions", []),
                 "decisions": result_data.get("summary", {}).get("decisions", []),
                 "needs_check": result_data.get("summary", {}).get("needs_check", []),
+                "selected_report_template_id": result_data.get("selected_report_template_id", selected_report_template_id),
+                "report_template": result_data.get("report_template", report_template or {}),
+                "selected_context_template_id": result_data.get("selected_context_template_id", selected_context_template_id),
+                "context_template": result_data.get("context_template", context_template or {}),
+                "selected_term_glossary_ids": result_data.get("selected_term_glossary_ids", selected_term_glossary_ids or []),
+                "term_glossaries": result_data.get("term_glossaries", term_glossaries or []),
                 "segments": segments_for_ui(result_data.get("segments", [])),
                 "display_segments": segments_for_ui(result_data.get("display_segments", [])),
                 "diarization_skipped": bool(result_settings.get("diarization_skipped")),
@@ -6124,6 +6431,12 @@ def process_audio_pipeline(
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
         "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
+        "selected_report_template_id": (meeting_context or {}).get("selected_report_template_id", "standard-minutes"),
+        "report_template": (meeting_context or {}).get("report_template", {}),
+        "selected_context_template_id": (meeting_context or {}).get("selected_context_template_id", "general"),
+        "context_template": (meeting_context or {}).get("context_template", {}),
+        "selected_term_glossary_ids": (meeting_context or {}).get("selected_term_glossary_ids", []),
+        "term_glossaries": (meeting_context or {}).get("term_glossaries", []),
         "settings": {
             "stt_model": stt_model_path,
             "diarization_model": config["paths"].get("diarization_model"),
@@ -6158,6 +6471,7 @@ def process_audio_pipeline(
                 "summary": "not_started",
                 "topic_sections": "not_started",
                 "speaker_context_summaries": "not_started",
+                "meeting_report": "not_started",
             },
         },
     }
@@ -6324,6 +6638,12 @@ def process_audio_pipeline(
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
         "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
+        "selected_report_template_id": (meeting_context or {}).get("selected_report_template_id", "standard-minutes"),
+        "report_template": (meeting_context or {}).get("report_template", {}),
+        "selected_context_template_id": (meeting_context or {}).get("selected_context_template_id", "general"),
+        "context_template": (meeting_context or {}).get("context_template", {}),
+        "selected_term_glossary_ids": (meeting_context or {}).get("selected_term_glossary_ids", []),
+        "term_glossaries": (meeting_context or {}).get("term_glossaries", []),
         "settings": {
             "stt_model": stt_model_path,
             "diarization_model": config["paths"].get("diarization_model"),

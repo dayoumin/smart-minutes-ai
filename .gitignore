@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.py[cod]
+.cache/
 *$py.class
 .venv/
 backend/.venv*/
@@ -32,6 +33,7 @@ runtime/ollama/*
 *.bin
 
 # Temp & Output
+.tmp/
 .codex-work/
 outputs/
 backend/temp/

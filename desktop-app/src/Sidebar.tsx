@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { BarChart3, ChevronDown, ChevronUp, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, Trash2 } from 'lucide-react';
+import { BarChart3, ChevronDown, ChevronUp, Clock3, Loader2, MoreVertical, Pencil, Pin, PinOff, Settings, Trash2 } from 'lucide-react';
 import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, AnalysisResumeDraft, listAnalysisResumeDrafts } from './analysisResumeDrafts';
 import { deleteMeeting, getAllMeetings, MeetingRecord, updateMeeting } from './meetingRepository';
 import { toApiUrl } from './apiBase';
@@ -13,6 +13,7 @@ export interface SidebarProps {
     onCreateMeeting?: () => void;
     onDeleteMeeting?: (id: string) => void;
     onSelectResumeDraft?: (jobId: string) => void;
+    onOpenSettings?: () => void;
     onOpenAsrBenchmark?: () => void;
     analysisStatus?: {
         active: boolean;
@@ -88,7 +89,7 @@ const formatResumeDraftUpdatedAt = (value: string): string => {
     });
 };
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenAsrBenchmark, analysisStatus }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
     const [showResumeDrafts, setShowResumeDrafts] = useState(false);
@@ -228,7 +229,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     return (
         <aside ref={sidebarRef} className="relative z-10 flex max-h-[42vh] shrink-0 flex-col border-b border-border bg-background p-4 lg:h-full lg:max-h-none lg:w-72 lg:border-b-0 lg:border-r">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <div className="mb-3 px-3 pt-1">
+                <div className="sidebar-heading-row">
                     <span className="text-lg font-semibold text-foreground">회의 기록</span>
                 </div>
                 <button
@@ -402,16 +403,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         </button>
                     )}
                 </div>
-                {onOpenAsrBenchmark && (
-                    <div className="mt-3 border-t border-border pt-3">
+                {(onOpenSettings || onOpenAsrBenchmark) && (
+                    <div className="mt-3 grid gap-1 border-t border-border pt-3">
+                        {onOpenSettings && (
+                            <button
+                                type="button"
+                                className="sidebar-utility-button"
+                                onClick={() => {
+                                    setOpenMenuId(null);
+                                    onOpenSettings();
+                                }}
+                            >
+                                <Settings size={15} />
+                                앱 설정
+                            </button>
+                        )}
+                        {onOpenAsrBenchmark && (
                         <button
                             type="button"
-                            className={`flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold transition-colors ${activeTab === 'asr-benchmark' ? 'bg-primary/10 text-primary' : 'text-foreground hover:bg-muted/40'}`}
+                            className={`sidebar-utility-button ${activeTab === 'asr-benchmark' ? 'sidebar-utility-button-active' : ''}`}
                             onClick={onOpenAsrBenchmark}
                         >
                             <BarChart3 size={15} />
                             ASR 테스트 결과
                         </button>
+                        )}
                     </div>
                 )}
             </div>

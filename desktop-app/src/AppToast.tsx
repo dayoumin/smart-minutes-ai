@@ -12,6 +12,8 @@ export interface AppToastMessage {
 interface AppToastProps {
     message: string;
     tone?: AppToastTone;
+    actionLabel?: string;
+    onAction?: () => void;
     closeLabel?: string;
     onClose: () => void;
 }
@@ -19,11 +21,22 @@ interface AppToastProps {
 export const AppToast: React.FC<AppToastProps> = ({
     message,
     tone = 'neutral',
+    actionLabel,
+    onAction,
     closeLabel = '알림 닫기',
     onClose,
 }) => (
     <div className={`operation-toast status-${tone}`} role="status" aria-live="polite">
         <span className="font-semibold">{message}</span>
+        {actionLabel && onAction && (
+            <button
+                type="button"
+                className="operation-toast-action"
+                onClick={onAction}
+            >
+                {actionLabel}
+            </button>
+        )}
         <button
             type="button"
             className="operation-toast-close"

@@ -6,6 +6,8 @@ export interface MeetingGenerationStatusShape {
     topic_sections?: GenerationState;
     speakerContextSummaries?: GenerationState;
     speaker_context_summaries?: GenerationState;
+    meetingReport?: GenerationState;
+    meeting_report?: GenerationState;
 }
 
 export interface TopicSectionShape {
@@ -15,8 +17,8 @@ export interface TopicSectionShape {
 const pickGenerationStatus = (
     baseStatus: MeetingGenerationStatusShape | undefined,
     patchStatus: MeetingGenerationStatusShape | undefined,
-    camelKey: 'summary' | 'topicSections' | 'speakerContextSummaries',
-    snakeKey: 'summary' | 'topic_sections' | 'speaker_context_summaries',
+    camelKey: 'summary' | 'topicSections' | 'speakerContextSummaries' | 'meetingReport',
+    snakeKey: 'summary' | 'topic_sections' | 'speaker_context_summaries' | 'meeting_report',
 ): GenerationState | undefined => (
     patchStatus?.[camelKey]
     ?? patchStatus?.[snakeKey]
@@ -35,6 +37,12 @@ export const normalizeGenerationStatus = (
         patchStatus,
         'speakerContextSummaries',
         'speaker_context_summaries',
+    ),
+    meetingReport: pickGenerationStatus(
+        baseStatus,
+        patchStatus,
+        'meetingReport',
+        'meeting_report',
     ),
 });
 
@@ -64,6 +72,16 @@ export const getSpeakerGenerationStatus = (
     const explicitStatus = status?.speakerContextSummaries ?? status?.speaker_context_summaries;
     if (explicitStatus === 'completed' && !hasSpeakerContext) return 'failed';
     return explicitStatus ?? (hasSpeakerContext ? 'completed' : 'not_started');
+};
+
+export const getMeetingReportGenerationStatus = (
+    status?: MeetingGenerationStatusShape,
+    meetingReport?: { content?: string; sections?: unknown[] } | null,
+): GenerationState => {
+    const hasMeetingReport = Boolean(meetingReport?.content?.trim() || meetingReport?.sections?.length);
+    const explicitStatus = status?.meetingReport ?? status?.meeting_report;
+    if (explicitStatus === 'completed' && !hasMeetingReport) return 'failed';
+    return explicitStatus ?? (hasMeetingReport ? 'completed' : 'not_started');
 };
 
 export const canGenerateSpeakerContext = (

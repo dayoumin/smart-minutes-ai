@@ -37,6 +37,15 @@ import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
+import {
+    ContextTemplate,
+    DEFAULT_CONTEXT_TEMPLATE_ID,
+    DEFAULT_REPORT_TEMPLATE_ID,
+    getContextTemplateById,
+    getReportTemplateById,
+    ReportTemplate,
+    TermGlossary,
+} from './meetingKnowledge';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -142,10 +151,28 @@ interface AnalyzeResult {
     diarizationDeferred?: boolean;
     diarization_defer_message?: string;
     diarizationDeferMessage?: string;
+    selected_report_template_id?: string;
+    selectedReportTemplateId?: string;
+    report_template?: ReportTemplate;
+    reportTemplate?: ReportTemplate;
+    selected_context_template_id?: string;
+    selectedContextTemplateId?: string;
+    context_template?: ContextTemplate;
+    contextTemplate?: ContextTemplate;
+    selected_term_glossary_ids?: string[];
+    selectedTermGlossaryIds?: string[];
+    term_glossaries?: TermGlossary[];
+    termGlossaries?: TermGlossary[];
     meeting?: {
         source_file?: string;
         job_id?: string;
         meeting_purpose?: string;
+        selected_report_template_id?: string;
+        report_template?: ReportTemplate;
+        selected_context_template_id?: string;
+        context_template?: ContextTemplate;
+        selected_term_glossary_ids?: string[];
+        term_glossaries?: TermGlossary[];
     };
     outputs?: {
         job_id?: string;
@@ -570,6 +597,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [initialDateValue, setInitialDateValue] = useState(date);
     const [meetingPurpose, setMeetingPurpose] = useState('');
+    const [selectedReportTemplateId, setSelectedReportTemplateId] = useState(DEFAULT_REPORT_TEMPLATE_ID);
     const [file, setFile] = useState<File | null>(null);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [progress, setProgress] = useState(0);
@@ -604,6 +632,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
     const [selectedResumeDraftId, setSelectedResumeDraftId] = useState<string | null>(null);
     const [deletingResumeDraftIds, setDeletingResumeDraftIds] = useState<Set<string>>(() => new Set());
+    const selectedReportTemplate = useMemo(
+        () => getReportTemplateById(selectedReportTemplateId),
+        [selectedReportTemplateId],
+    );
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const videoFileInputRef = useRef<HTMLInputElement | null>(null);
     const analysisInFlightRef = useRef(false);
@@ -682,10 +714,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
         || Boolean(meetingPurpose.trim())
+        || selectedReportTemplateId !== DEFAULT_REPORT_TEMPLATE_ID
         || Boolean(file)
         || Boolean(selectedResumeDraftId)
         || date !== initialDateValue
-    ), [date, file, initialDateValue, meetingPurpose, selectedResumeDraftId, title]);
+    ), [date, file, initialDateValue, meetingPurpose, selectedReportTemplateId, selectedResumeDraftId, title]);
     const hasWriterCloseRisk = isAnalyzing || isExtractingAudio || hasDraftableInput;
 
     useEffect(() => {
@@ -960,7 +993,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         const fields: string[] = [];
         if (!title.trim()) fields.push('회의 제목');
         if (!date) fields.push('일시');
-        if (!meetingPurpose.trim()) fields.push('회의 목적/정리 맥락');
+        if (!meetingPurpose.trim()) fields.push('회의 목적');
         if (!file) fields.push('음성 파일');
         return fields;
     }, [date, file, meetingPurpose, title]);
@@ -1179,6 +1212,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             date,
             participants: '',
             meetingPurpose: meetingPurpose.trim(),
+            selectedReportTemplateId: selectedReportTemplate.id,
+            reportTemplate: selectedReportTemplate,
             sourceFilename: file.name,
             sourceSize: file.size,
             sourceLastModified: file.lastModified,
@@ -1231,6 +1266,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setTitle(draft.title);
         setDate(draft.date);
         setMeetingPurpose(draft.meetingPurpose || draft.participants || '');
+        setSelectedReportTemplateId(draft.selectedReportTemplateId || DEFAULT_REPORT_TEMPLATE_ID);
         setSelectedResumeDraftId(draft.jobId);
         if (canResumeDraft(draft)) {
             unsuppressResumeCandidateKey(getResumeDraftKey(draft));
@@ -1653,6 +1689,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             formData.append('date', date);
             formData.append('participants', '');
             formData.append('meeting_purpose', meetingPurpose.trim());
+            formData.append('selected_report_template_id', selectedReportTemplate.id);
+            formData.append('report_template', JSON.stringify(selectedReportTemplate));
             formData.append('mode', ANALYSIS_MODE);
             formData.append('job_id', analysisJobId);
             formData.append('file', file as File);
@@ -1766,6 +1804,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 title: title.trim(),
                 participants: '',
                 meetingPurpose: meetingPurpose.trim(),
+                selectedReportTemplateId: finalData.selectedReportTemplateId
+                    || finalData.selected_report_template_id
+                    || finalData.meeting?.selected_report_template_id
+                    || selectedReportTemplate.id,
+                reportTemplate: finalData.reportTemplate
+                    || finalData.report_template
+                    || finalData.meeting?.report_template
+                    || selectedReportTemplate,
+                selectedContextTemplateId: finalData.selectedContextTemplateId
+                    || finalData.selected_context_template_id
+                    || finalData.meeting?.selected_context_template_id
+                    || DEFAULT_CONTEXT_TEMPLATE_ID,
+                contextTemplate: finalData.contextTemplate
+                    || finalData.context_template
+                    || finalData.meeting?.context_template
+                    || getContextTemplateById(DEFAULT_CONTEXT_TEMPLATE_ID),
+                selectedTermGlossaryIds: finalData.selectedTermGlossaryIds
+                    || finalData.selected_term_glossary_ids
+                    || finalData.meeting?.selected_term_glossary_ids
+                    || [],
+                termGlossaries: finalData.termGlossaries
+                    || finalData.term_glossaries
+                    || finalData.meeting?.term_glossaries
+                    || [],
                 summary: finalData.summary || '요약 결과가 없습니다.',
                 segments: finalData.segments || [],
                 displaySegments: finalData.displaySegments || finalData.display_segments || [],
@@ -1826,6 +1888,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             });
             setTitle('');
             setMeetingPurpose('');
+            setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
             const nextInitialDate = new Date().toISOString().slice(0, 16);
             setInitialDateValue(nextInitialDate);
             setDate(nextInitialDate);
@@ -2076,7 +2139,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     );
 
     return (
-        <div className="flex h-full w-full max-w-[48rem] flex-col gap-5 mx-auto pt-1">
+        <div className="writer-shell">
             {operationToast && (
                 <AppToast
                     message={operationToast.message}
@@ -2085,11 +2148,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     onClose={() => setOperationToast(null)}
                 />
             )}
-            <div>
-                <h2 className="text-lg font-semibold text-foreground">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
+            <div className="writer-header">
+                <div>
+                    <div className="writer-kicker">분석 준비</div>
+                    <h2 className="writer-title">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
+                </div>
             </div>
 
-            <div className="app-panel p-4 flex flex-col gap-5 sm:p-6">
+            <div className="app-panel writer-panel">
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <span>이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.</span>
@@ -2113,26 +2179,33 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         </div>
                     </div>
                 )}
-                <div className="flex flex-col gap-2">
-                    <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-title">회의 제목 *</label>
-                    <Input id="meeting-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2026년 상반기 기획 회의" disabled={isAnalyzing} />
-                </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div className="flex flex-col gap-2">
-                        <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-date">일시 *</label>
-                        <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
+                <section className="writer-section">
+                    <div className="writer-section-heading">
+                        <span className="writer-section-index">1</span>
+                        <h3>회의 정보</h3>
                     </div>
-                    <div className="flex flex-col gap-2">
-                        <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-purpose">회의 목적/정리 맥락 *</label>
-                        <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
+                    <div className="writer-field-grid">
+                        <div className="writer-field writer-field-wide">
+                            <label htmlFor="meeting-title">회의 제목 *</label>
+                            <Input id="meeting-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2026년 상반기 기획 회의" disabled={isAnalyzing} />
+                        </div>
+                        <div className="writer-field">
+                            <label htmlFor="meeting-date">일시 *</label>
+                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
+                        </div>
+                        <div className="writer-field">
+                            <label htmlFor="meeting-purpose">회의 목적 *</label>
+                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
+                        </div>
                     </div>
-                </div>
+                </section>
 
-                <div className="flex flex-col gap-2 mt-2">
-                    <label className="text-[13px] font-semibold text-foreground" htmlFor="meeting-file-input">
-                        {resumeSelectionActive ? '같은 음성/영상 파일 선택 *' : '음성/영상 파일 *'}
-                    </label>
+                <section className="writer-section">
+                    <div className="writer-section-heading">
+                        <span className="writer-section-index">2</span>
+                        <h3>{resumeSelectionActive ? '같은 음성/영상 파일 선택 *' : '음성/영상 파일 *'}</h3>
+                    </div>
                     <input
                         type="file"
                         ref={fileInputRef}
@@ -2217,7 +2290,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 ? `${selectedResumeDraft.sourceFilename} 파일을 다시 선택해 주세요.`
                                 : resumeDraftFileMismatch
                                     ? `선택한 파일이 다릅니다. ${selectedResumeDraft.sourceFilename} 파일을 다시 선택해 주세요.`
-                                    : '같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.'}
+                            : '같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.'}
                         </div>
                     )}
                     {matchingActiveDraft && !isAnalyzing && (
@@ -2225,12 +2298,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
                         </div>
                     )}
-                </div>
+                </section>
 
                 {!isAnalyzing && (
-                    <div className="flex flex-col gap-3 border-t border-border/70 pt-5 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="writer-action-bar">
                         {!resumeSelectionActive ? (
-                            <div className="flex shrink-0 flex-wrap items-center gap-2">
+                            <div className="writer-secondary-actions">
                                 <Button
                                     variant="outline"
                                     className="detail-action-button"
@@ -2271,29 +2344,31 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         ) : (
                             <div />
                         )}
-                        <div className="analysis-mode-control">
-                            <label className="analysis-mode-toggle">
-                                <input
-                                    type="checkbox"
-                                    checked={diarizationDuringAnalysis}
-                                    onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
-                                    disabled={isSavingDiarizationMode || isAnalyzing}
-                                />
-                                <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
-                            </label>
-                            <span className="text-xs text-muted-foreground">기본값 저장</span>
-                            <button
-                                type="button"
-                                title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."
-                                aria-label="참석자 구분 실행 방식 도움말"
-                                className="inline-flex text-muted-foreground"
-                            >
-                                <CircleHelp size={14} />
-                            </button>
+                        <div className="writer-primary-actions">
+                            <div className="analysis-mode-control">
+                                <label className="analysis-mode-toggle">
+                                    <input
+                                        type="checkbox"
+                                        checked={diarizationDuringAnalysis}
+                                        onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
+                                        disabled={isSavingDiarizationMode || isAnalyzing}
+                                    />
+                                    <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
+                                </label>
+                                <span className="text-xs text-muted-foreground">기본값 저장</span>
+                                <button
+                                    type="button"
+                                    title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."
+                                    aria-label="참석자 구분 실행 방식 도움말"
+                                    className="inline-flex text-muted-foreground"
+                                >
+                                    <CircleHelp size={14} />
+                                </button>
+                            </div>
+                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonDisabled}>
+                                {buttonLabel}
+                            </Button>
                         </div>
-                        <Button onClick={handleStartAnalysis} disabled={startButtonDisabled}>
-                            {buttonLabel}
-                        </Button>
                     </div>
                 )}
                 {audioExtractStatusVisible && (

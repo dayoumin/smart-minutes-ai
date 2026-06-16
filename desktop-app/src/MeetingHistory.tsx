@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, Loader2, Pause, Play, Save, Search, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Trash2, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -12,12 +12,29 @@ import { formatAnalysisDuration } from './analysisTimeEstimate';
 import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
 import {
     canGenerateSpeakerContext as canGenerateSpeakerContextFromState,
+    getMeetingReportGenerationStatus,
     getSpeakerGenerationStatus,
     getSummaryGenerationStatus,
     getTopicGenerationStatus,
     normalizeGenerationStatus,
 } from './meetingGeneration';
 import { getTopicGenerationUiState, TopicGenerationIntent } from './topicGenerationUi';
+import {
+    deleteContextTemplate,
+    deleteReportTemplate,
+    DEFAULT_REPORT_TEMPLATE_ID,
+    getContextTemplateById,
+    getTermGlossariesByIds,
+    getReportTemplateById,
+    listContextTemplates,
+    listReportTemplates,
+    MAX_CUSTOM_CONTEXT_TEMPLATES,
+    MAX_CUSTOM_REPORT_TEMPLATES,
+    ContextTemplate,
+    ReportTemplate,
+    saveContextTemplate,
+    saveReportTemplate,
+} from './meetingKnowledge';
 
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
@@ -27,11 +44,25 @@ interface MeetingHistoryProps {
     onOpenSettings?: () => void;
 }
 
-type DetailTab = 'summary' | 'script';
+type DetailTab = 'summary' | 'script' | 'report';
 type OrganizeTab = 'summary' | 'topics' | 'speakers';
-type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries';
+type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries' | 'meetingReport';
 type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
 type DiarizationStopAction = 'cancel' | 'defer';
+type TemplateDeleteTarget = {
+    kind: 'context';
+    id: string;
+    name: string;
+    template: ContextTemplate;
+    meetingId: string;
+    transcriptEditMeta: MeetingRecord['transcriptEditMeta'];
+} | {
+    kind: 'report';
+    id: string;
+    name: string;
+    template: ReportTemplate;
+    meetingId: string;
+} | null;
 
 const getCurrentTimeMs = (): number => Date.now();
 
@@ -50,6 +81,19 @@ interface SavedFileToast {
     id: number;
     path: string | null;
 }
+
+type TemplateUndoToast = {
+    id: number;
+    kind: 'context';
+    template: ContextTemplate;
+    meetingId: string;
+    transcriptEditMeta: MeetingRecord['transcriptEditMeta'];
+} | {
+    id: number;
+    kind: 'report';
+    template: ReportTemplate;
+    meetingId: string;
+};
 
 interface ModelsStatusResponse {
     summary_ready?: boolean;
@@ -96,6 +140,15 @@ interface GenerateSpeakerContextResponse {
     speakerContextSummaries?: MeetingSpeakerContextSummary[];
     participant_summaries?: MeetingRecord['participantSummaries'];
     participantSummaries?: MeetingRecord['participantSummaries'];
+    generation_status?: MeetingRecord['generationStatus'];
+    generationStatus?: MeetingRecord['generationStatus'];
+    outputs?: MeetingRecord['outputFiles'];
+    export_error?: string | null;
+}
+
+interface GenerateReportResponse {
+    meeting_report?: MeetingRecord['meetingReport'];
+    meetingReport?: MeetingRecord['meetingReport'];
     generation_status?: MeetingRecord['generationStatus'];
     generationStatus?: MeetingRecord['generationStatus'];
     outputs?: MeetingRecord['outputFiles'];
@@ -154,6 +207,7 @@ const isStaleGenerationMessage = (message: string): boolean => (
     message.includes('이번 결과는 저장하지 않았습니다')
     || message.includes('주제별 정리를 저장하지 않았습니다')
     || message.includes('참석자별 정리를 저장하지 않았습니다')
+    || message.includes('이번 보고서는 저장하지 않았습니다')
 );
 
 const isGuidanceNeedsCheckItem = (message: string): boolean => (
@@ -286,11 +340,20 @@ const getGenerationErrorInfo = async (response: Response, fallback: string): Pro
         if (parsed.detail === 'speaker_input_changed') {
             return { message: '대화록이나 주제별 정리가 바뀌어 참석자별 정리를 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
         }
+        if (parsed.detail === 'report_input_changed') {
+            return { message: '대화록이나 정리 내용이 바뀌어 이번 보고서는 저장하지 않았습니다. 다시 생성해 주세요.', detail: parsed.detail };
+        }
         if (parsed.detail === 'topic_generation_empty') {
             return { message: '주제별 정리 결과가 비어 있습니다. 요약 내용을 확인한 뒤 다시 정리해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'speaker_context_generation_empty') {
             return { message: '참석자별 정리 결과가 비어 있습니다. 주제별 정리와 대화록을 확인한 뒤 다시 정리해 주세요.', detail: parsed.detail };
+        }
+        if (parsed.detail === 'meeting_report_generation_empty') {
+            return { message: '회의록 보고서 결과가 비어 있습니다. 기록 정리와 보고 양식을 확인한 뒤 다시 생성해 주세요.', detail: parsed.detail };
+        }
+        if (parsed.detail === 'Summary must be generated before meeting report') {
+            return { message: '기록 정리를 먼저 완료한 뒤 보고서를 생성해 주세요.', detail: parsed.detail };
         }
         if (parsed.detail === 'audio_required_for_diarization') {
             return { message: '참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.', detail: parsed.detail };
@@ -364,24 +427,84 @@ const DetailHelpButton = ({ title, ariaLabel }: DetailHelpButtonProps) => (
 interface DetailTabButtonProps {
     active: boolean;
     disabled?: boolean;
+    id?: string;
+    panelId?: string;
     title?: string;
     onClick: () => void;
+    onKeyDown?: React.KeyboardEventHandler<HTMLButtonElement>;
     children: React.ReactNode;
 }
 
-const DetailTabButton = ({ active, disabled = false, title, onClick, children }: DetailTabButtonProps) => (
+const DetailTabButton = ({ active, disabled = false, id, panelId, title, onClick, onKeyDown, children }: DetailTabButtonProps) => (
     <button
+        id={id}
         type="button"
-        aria-pressed={active}
+        role="tab"
+        aria-selected={active}
+        aria-controls={panelId}
         aria-disabled={disabled || undefined}
+        tabIndex={active && !disabled ? 0 : -1}
         className={`tab-button ${active ? 'tab-button-active' : ''}`}
         disabled={disabled}
         onClick={onClick}
+        onKeyDown={onKeyDown}
         title={title}
     >
         {children}
     </button>
 );
+
+interface KeyboardTabTarget<T extends string> {
+    value: T;
+    id: string;
+    disabled?: boolean;
+    select: () => void;
+}
+
+const MODAL_FOCUSABLE_SELECTOR = [
+    'a[href]',
+    'button:not([disabled])',
+    'textarea:not([disabled])',
+    'input:not([disabled])',
+    'select:not([disabled])',
+    '[tabindex]:not([tabindex="-1"])',
+].join(',');
+
+const getFocusableModalElements = (container: HTMLElement | null): HTMLElement[] => {
+    if (!container) return [];
+    return Array.from(container.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR))
+        .filter(element => !element.getAttribute('aria-hidden') && element.tabIndex >= 0);
+};
+
+const getMenuItems = (container: HTMLElement | null): HTMLElement[] => {
+    if (!container) return [];
+    return Array.from(container.querySelectorAll<HTMLElement>('[role="menuitem"]'))
+        .filter(element => !element.hasAttribute('disabled') && element.getAttribute('aria-disabled') !== 'true');
+};
+
+const handleKeyboardTabNavigation = <T extends string>(
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    tabs: KeyboardTabTarget<T>[],
+    activeValue: T,
+) => {
+    const key = event.key;
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(key)) return;
+    const enabledTabs = tabs.filter(tab => !tab.disabled);
+    if (!enabledTabs.length) return;
+
+    event.preventDefault();
+    const currentIndex = Math.max(0, enabledTabs.findIndex(tab => tab.value === activeValue));
+    const nextIndex = key === 'Home'
+        ? 0
+        : key === 'End'
+            ? enabledTabs.length - 1
+            : key === 'ArrowLeft'
+                ? (currentIndex - 1 + enabledTabs.length) % enabledTabs.length
+                : (currentIndex + 1) % enabledTabs.length;
+    const nextTab = enabledTabs[nextIndex];
+    nextTab.select();
+    window.setTimeout(() => document.getElementById(nextTab.id)?.focus(), 0);
+};
 
 interface OrganizeRunButtonProps {
     ariaLabel: string;
@@ -714,11 +837,110 @@ const buildGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON
     title: meeting.title || '',
     date: meeting.date || '',
     meetingPurpose: meeting.meetingPurpose || '',
+    selectedContextTemplateId: meeting.selectedContextTemplateId || '',
+    contextTemplate: meeting.contextTemplate || {},
+    selectedMinutesTemplateId: meeting.selectedMinutesTemplateId || '',
+    minutesTemplate: meeting.minutesTemplate || {},
+    selectedTermGlossaryIds: meeting.selectedTermGlossaryIds || [],
+    termGlossaries: meeting.termGlossaries || [],
 });
 
-const isTransientNoticeMessage = (message: string): boolean => (
-    message === '전체 요약을 정리했습니다.'
+const buildReportGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON.stringify({
+    base: buildGenerationInputFingerprint(meeting),
+    selectedReportTemplateId: meeting.selectedReportTemplateId || '',
+    reportTemplate: meeting.reportTemplate || {},
+    summary: meeting.summary || '',
+    topics: meeting.topics || [],
+    topicSections: meeting.topicSections || [],
+    speakerContextSummaries: meeting.speakerContextSummaries || [],
+    participantSummaries: meeting.participantSummaries || [],
+    actions: meeting.actions || [],
+    decisions: meeting.decisions || [],
+    needsCheck: meeting.needsCheck || [],
+});
+
+const hasMeetingReportContent = (meetingReport: MeetingRecord['meetingReport'] | null | undefined): boolean => (
+    Boolean(meetingReport?.content?.trim() || meetingReport?.sections?.length)
 );
+
+const meetingReportIsCurrentForTemplate = (meeting: MeetingRecord, templateId: string): boolean => (
+    hasMeetingReportContent(meeting.meetingReport)
+    && meeting.meetingReport?.templateId === templateId
+    && Boolean(meeting.summary?.trim())
+    && !meeting.transcriptEditMeta?.summaryOutdated
+    && !meeting.transcriptEditMeta?.topicSectionsOutdated
+    && !meeting.transcriptEditMeta?.speakerContextOutdated
+);
+
+const reportTemplateFingerprint = (template?: unknown): string => {
+    const item = template && typeof template === 'object' ? template as Partial<ReportTemplate> : {};
+    return JSON.stringify({
+        id: item.id || '',
+        name: item.name || '',
+        purpose: item.purpose || '',
+        instructions: item.instructions || '',
+        sections: item.sections || [],
+        requiredSections: item.requiredSections || [],
+        optionalSections: item.optionalSections || [],
+        tone: item.tone || '',
+        detailLevel: item.detailLevel || '',
+    });
+};
+
+const contextTemplateFingerprint = (template?: unknown): string => {
+    const item = template && typeof template === 'object' ? template as Partial<ContextTemplate> : {};
+    return JSON.stringify({
+        id: item.id || '',
+        name: item.name || '',
+        purpose: item.purpose || '',
+        prompt: item.prompt || '',
+        termGlossaryIds: item.termGlossaryIds || [],
+        focus: item.focus || [],
+    });
+};
+
+const coerceContextTemplateSnapshot = (
+    template: MeetingRecord['contextTemplate'] | undefined,
+    templateId?: string,
+): ContextTemplate | null => {
+    if (!template || (templateId && template.id !== templateId) || !template.id || !template.name) return null;
+    const rawTemplate = template as Partial<ContextTemplate>;
+    return {
+        id: template.id,
+        name: template.name,
+        purpose: template.purpose || rawTemplate.prompt || '',
+        prompt: rawTemplate.prompt,
+        termGlossaryIds: Array.isArray(rawTemplate.termGlossaryIds) ? rawTemplate.termGlossaryIds : [],
+        focus: Array.isArray(rawTemplate.focus) ? rawTemplate.focus : [],
+        updatedAt: rawTemplate.updatedAt,
+        builtIn: rawTemplate.builtIn,
+    };
+};
+
+const coerceReportTemplateSnapshot = (template: MeetingRecord['reportTemplate'] | undefined, templateId?: string): ReportTemplate | null => {
+    if (!template || (templateId && template.id !== templateId) || !template.id || !template.name) return null;
+    const sections = Array.isArray(template.sections) ? template.sections : [];
+    const rawTemplate = template as Partial<ReportTemplate>;
+    const tone = rawTemplate.tone === 'minutes' || rawTemplate.tone === 'review' || rawTemplate.tone === 'report'
+        ? rawTemplate.tone
+        : 'report';
+    const detailLevel = rawTemplate.detailLevel === 'concise' || rawTemplate.detailLevel === 'standard' || rawTemplate.detailLevel === 'detailed'
+        ? rawTemplate.detailLevel
+        : 'standard';
+    return {
+        id: template.id,
+        name: template.name,
+        purpose: template.purpose || '',
+        instructions: rawTemplate.instructions,
+        sections,
+        requiredSections: Array.isArray(rawTemplate.requiredSections) ? rawTemplate.requiredSections : sections.slice(0, Math.min(2, sections.length)),
+        optionalSections: Array.isArray(rawTemplate.optionalSections) ? rawTemplate.optionalSections : sections.slice(Math.min(2, sections.length)),
+        tone,
+        detailLevel,
+        updatedAt: rawTemplate.updatedAt,
+        builtIn: rawTemplate.builtIn,
+    };
+};
 
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard, onOpenSettings }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
@@ -728,6 +950,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [noticeToast, setNoticeToast] = useState<AppToastMessage | null>(null);
     const [savedFileToast, setSavedFileToast] = useState<SavedFileToast | null>(null);
     const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
+    const [templateUndoToast, setTemplateUndoToast] = useState<TemplateUndoToast | null>(null);
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
     const [detailTab, setDetailTab] = useState<DetailTab>('script');
     const [organizeTab, setOrganizeTab] = useState<OrganizeTab>('summary');
@@ -758,6 +981,42 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [summaryModelReady, setSummaryModelReady] = useState<boolean | null>(null);
     const [summaryModelMessage, setSummaryModelMessage] = useState('');
     const [isSpeakerLabelPanelOpen, setIsSpeakerLabelPanelOpen] = useState(false);
+    const [contextTemplates, setContextTemplates] = useState(() => listContextTemplates());
+    const [isContextTemplateModalOpen, setIsContextTemplateModalOpen] = useState(false);
+    const [isContextTemplateMenuOpen, setIsContextTemplateMenuOpen] = useState(false);
+    const [contextTemplateDraftId, setContextTemplateDraftId] = useState<string | null>(null);
+    const [contextTemplateTitle, setContextTemplateTitle] = useState('');
+    const [contextTemplatePrompt, setContextTemplatePrompt] = useState('');
+    const [contextTemplateError, setContextTemplateError] = useState('');
+    const [reportTemplates, setReportTemplates] = useState(() => listReportTemplates());
+    const [isReportTemplateModalOpen, setIsReportTemplateModalOpen] = useState(false);
+    const [isReportTemplateMenuOpen, setIsReportTemplateMenuOpen] = useState(false);
+    const [reportTemplateDraftId, setReportTemplateDraftId] = useState<string | null>(null);
+    const [reportTemplateTitle, setReportTemplateTitle] = useState('');
+    const [reportTemplatePurpose, setReportTemplatePurpose] = useState('');
+    const [reportTemplateSections, setReportTemplateSections] = useState('');
+    const [reportTemplateError, setReportTemplateError] = useState('');
+    const [pendingTemplateDelete, setPendingTemplateDelete] = useState<TemplateDeleteTarget>(null);
+    const [templateDeleteError, setTemplateDeleteError] = useState('');
+    const [isDeletingTemplate, setIsDeletingTemplate] = useState(false);
+    const reportOutputTemplate = useMemo(
+        () => coerceReportTemplateSnapshot(selectedMeeting?.reportTemplate, selectedMeeting?.selectedReportTemplateId)
+            ?? reportTemplates.find(template => template.id === selectedMeeting?.selectedReportTemplateId)
+            ?? getReportTemplateById(selectedMeeting?.selectedReportTemplateId),
+        [reportTemplates, selectedMeeting?.reportTemplate, selectedMeeting?.selectedReportTemplateId],
+    );
+    const canEditActiveReportTemplate = Boolean(reportOutputTemplate && !reportOutputTemplate.builtIn);
+    const customReportTemplateCount = reportTemplates.filter(template => !template.builtIn).length;
+    const canCreateReportTemplate = customReportTemplateCount < MAX_CUSTOM_REPORT_TEMPLATES;
+    const activeContextTemplate = useMemo(() => (
+        coerceContextTemplateSnapshot(selectedMeeting?.contextTemplate, selectedMeeting?.selectedContextTemplateId)
+        ?? contextTemplates.find(template => template.id === selectedMeeting?.selectedContextTemplateId)
+        ?? getContextTemplateById(selectedMeeting?.selectedContextTemplateId)
+    ), [contextTemplates, selectedMeeting?.contextTemplate, selectedMeeting?.selectedContextTemplateId]);
+    const canEditActiveContextTemplate = Boolean(activeContextTemplate && !activeContextTemplate.builtIn);
+    const customContextTemplateCount = contextTemplates.filter(template => !template.builtIn).length;
+    const canCreateContextTemplate = customContextTemplateCount < MAX_CUSTOM_CONTEXT_TEMPLATES;
+    const shouldShowContextPreview = activeContextTemplate.id !== 'general';
     const currentSelectedMeetingIdRef = useRef<string | null>(null);
     const selectedMeetingRef = useRef<MeetingRecord | null>(null);
     const recordsRef = useRef<MeetingRecord[]>([]);
@@ -772,6 +1031,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const topicSectionsSectionRef = useRef<HTMLDivElement | null>(null);
     const speakerSummarySectionRef = useRef<HTMLDivElement | null>(null);
     const speakerLabelsPanelRef = useRef<HTMLDivElement | null>(null);
+    const contextTemplateModalRef = useRef<HTMLElement | null>(null);
+    const reportTemplateModalRef = useRef<HTMLElement | null>(null);
+    const deleteTemplateModalRef = useRef<HTMLElement | null>(null);
+    const contextTemplateMenuRef = useRef<HTMLDivElement | null>(null);
+    const reportTemplateMenuRef = useRef<HTMLDivElement | null>(null);
+    const modalReturnFocusIdRef = useRef<string | null>(null);
 
     const normalizeTopicKey = React.useCallback((value: string) => value.trim().toLocaleLowerCase(), []);
 
@@ -790,6 +1055,29 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         });
     }, []);
 
+    const showContextTemplateUndoToast = React.useCallback((
+        template: ContextTemplate,
+        meetingId: string,
+        transcriptEditMeta: MeetingRecord['transcriptEditMeta'],
+    ) => {
+        setTemplateUndoToast({
+            id: getCurrentTimeMs(),
+            kind: 'context',
+            template,
+            meetingId,
+            transcriptEditMeta,
+        });
+    }, []);
+
+    const showReportTemplateUndoToast = React.useCallback((template: ReportTemplate, meetingId: string) => {
+        setTemplateUndoToast({
+            id: getCurrentTimeMs(),
+            kind: 'report',
+            template,
+            meetingId,
+        });
+    }, []);
+
     const showNoticeToast = React.useCallback((message: string) => {
         setNoticeToast({
             id: getCurrentTimeMs(),
@@ -797,6 +1085,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             tone: 'success',
         });
     }, []);
+
+    useEffect(() => {
+        if (!noticeMessage) return;
+        showNoticeToast(noticeMessage);
+        setNoticeMessage('');
+    }, [noticeMessage, showNoticeToast]);
 
     const handleOpenSavedFileLocation = async () => {
         if (!savedFileToast?.path) return;
@@ -1018,6 +1312,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [operationToast]);
 
     useEffect(() => {
+        if (!templateUndoToast) return undefined;
+        const timerId = window.setTimeout(() => {
+            setTemplateUndoToast(current => (current?.id === templateUndoToast.id ? null : current));
+        }, 8000);
+        return () => window.clearTimeout(timerId);
+    }, [templateUndoToast]);
+
+    useEffect(() => {
         let cancelled = false;
         const loadAudioUrl = async () => {
             if (!selectedMeeting?.jobId) {
@@ -1100,6 +1402,436 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         meetingUpdateQueuesRef.current[targetId] = queuedTask;
         await queuedTask;
     };
+
+    const handleSelectContextTemplate = async (templateId: string) => {
+        setIsContextTemplateMenuOpen(false);
+        setContextTemplateError('');
+        const template = contextTemplates.find(item => item.id === templateId) ?? getContextTemplateById(templateId);
+        const selectedTermGlossaryIds = template.termGlossaryIds ?? [];
+        await updateSelectedMeeting(currentMeeting => {
+            const contextChanged = (currentMeeting.selectedContextTemplateId ?? 'general') !== template.id
+                || contextTemplateFingerprint(currentMeeting.contextTemplate) !== contextTemplateFingerprint(template);
+            return {
+                selectedContextTemplateId: template.id,
+                contextTemplate: template,
+                selectedTermGlossaryIds,
+                termGlossaries: getTermGlossariesByIds(selectedTermGlossaryIds),
+                transcriptEditMeta: contextChanged
+                    ? {
+                        ...(currentMeeting.transcriptEditMeta ?? {}),
+                        summaryOutdated: Boolean(currentMeeting.summary?.trim()),
+                        topicSectionsOutdated: Boolean(currentMeeting.topicSections?.length),
+                        speakerContextOutdated: Boolean(
+                            currentMeeting.speakerContextSummaries?.length
+                            || currentMeeting.participantSummaries?.length,
+                        ),
+                    }
+                    : currentMeeting.transcriptEditMeta,
+            };
+        });
+    };
+
+    const handleOpenNewContextTemplate = () => {
+        setIsContextTemplateMenuOpen(false);
+        if (!canCreateContextTemplate) {
+            const message = `정리 맥락은 최대 ${MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다. 필요 없는 맥락을 삭제한 뒤 추가해 주세요.`;
+            setContextTemplateError(message);
+            showOperationToast(message, 'warning');
+            return;
+        }
+        setContextTemplateError('');
+        setContextTemplateDraftId(null);
+        setContextTemplateTitle('');
+        setContextTemplatePrompt('');
+        modalReturnFocusIdRef.current = 'context-template-menu-button';
+        setIsContextTemplateModalOpen(true);
+    };
+
+    const handleOpenEditContextTemplate = () => {
+        setIsContextTemplateMenuOpen(false);
+        if (!activeContextTemplate || activeContextTemplate.builtIn) return;
+        setContextTemplateError('');
+        setContextTemplateDraftId(activeContextTemplate.id);
+        setContextTemplateTitle(activeContextTemplate.name);
+        setContextTemplatePrompt(activeContextTemplate.prompt || activeContextTemplate.purpose || '');
+        modalReturnFocusIdRef.current = 'context-template-menu-button';
+        setIsContextTemplateModalOpen(true);
+    };
+
+    const handleCloseContextTemplateModal = () => {
+        setIsContextTemplateModalOpen(false);
+        setContextTemplateDraftId(null);
+        setContextTemplateTitle('');
+        setContextTemplatePrompt('');
+        setContextTemplateError('');
+    };
+
+    const handleSaveContextTemplate = async () => {
+        const name = contextTemplateTitle.trim();
+        const prompt = contextTemplatePrompt.trim();
+        if (!name || !prompt) return;
+        if (!contextTemplateDraftId && !canCreateContextTemplate) {
+            setContextTemplateError(`정리 맥락은 최대 ${MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.`);
+            return;
+        }
+
+        let template: ReturnType<typeof saveContextTemplate>;
+        try {
+            template = saveContextTemplate({
+                id: contextTemplateDraftId ?? `custom-context-${Date.now()}`,
+                name,
+                purpose: prompt,
+                prompt,
+                termGlossaryIds: [],
+                focus: ['사용자 기준'],
+                updatedAt: new Date().toISOString(),
+            });
+        } catch {
+            setContextTemplateError(`정리 맥락은 최대 ${MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.`);
+            return;
+        }
+        const nextTemplates = listContextTemplates();
+        setContextTemplates(nextTemplates);
+        handleCloseContextTemplateModal();
+        await handleSelectContextTemplate(template.id);
+    };
+
+    const handleDeleteContextTemplate = () => {
+        setIsContextTemplateMenuOpen(false);
+        if (!activeContextTemplate || activeContextTemplate.builtIn || !selectedMeeting) return;
+        modalReturnFocusIdRef.current = 'context-template-menu-button';
+        setTemplateDeleteError('');
+        setPendingTemplateDelete({
+            kind: 'context',
+            id: activeContextTemplate.id,
+            name: activeContextTemplate.name,
+            template: activeContextTemplate,
+            meetingId: selectedMeeting.id,
+            transcriptEditMeta: selectedMeeting.transcriptEditMeta,
+        });
+    };
+
+    const handleSelectReportTemplate = async (templateId: string, templateOverride?: ReportTemplate) => {
+        setIsReportTemplateMenuOpen(false);
+        setReportTemplateError('');
+        const template = templateOverride ?? reportTemplates.find(item => item.id === templateId) ?? getReportTemplateById(templateId);
+        await updateSelectedMeeting(currentMeeting => {
+            const reportTemplateChanged = (currentMeeting.selectedReportTemplateId ?? DEFAULT_REPORT_TEMPLATE_ID) !== template.id
+                || reportTemplateFingerprint(currentMeeting.reportTemplate) !== reportTemplateFingerprint(template);
+            return {
+                selectedReportTemplateId: template.id,
+                reportTemplate: template,
+                meetingReport: currentMeeting.meetingReport,
+                generationStatus: reportTemplateChanged
+                    ? normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: 'not_started' })
+                    : currentMeeting.generationStatus,
+            };
+        });
+    };
+
+    const handleOpenNewReportTemplate = () => {
+        setIsReportTemplateMenuOpen(false);
+        if (!canCreateReportTemplate) {
+            const message = `보고서 양식은 최대 ${MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다. 필요 없는 양식을 삭제한 뒤 추가해 주세요.`;
+            setReportTemplateError(message);
+            showOperationToast(message, 'warning');
+            return;
+        }
+        setReportTemplateError('');
+        setReportTemplateDraftId(null);
+        setReportTemplateTitle('');
+        setReportTemplatePurpose('');
+        setReportTemplateSections('보고 개요\n주요 논의\n결정사항\n후속 조치');
+        modalReturnFocusIdRef.current = 'report-template-menu-button';
+        setIsReportTemplateModalOpen(true);
+    };
+
+    const handleOpenEditReportTemplate = () => {
+        setIsReportTemplateMenuOpen(false);
+        if (!reportOutputTemplate || reportOutputTemplate.builtIn) return;
+        setReportTemplateError('');
+        setReportTemplateDraftId(reportOutputTemplate.id);
+        setReportTemplateTitle(reportOutputTemplate.name);
+        setReportTemplatePurpose(reportOutputTemplate.instructions || reportOutputTemplate.purpose || '');
+        setReportTemplateSections(reportOutputTemplate.sections.join('\n'));
+        modalReturnFocusIdRef.current = 'report-template-menu-button';
+        setIsReportTemplateModalOpen(true);
+    };
+
+    const handleCloseReportTemplateModal = () => {
+        setIsReportTemplateModalOpen(false);
+        setReportTemplateDraftId(null);
+        setReportTemplateTitle('');
+        setReportTemplatePurpose('');
+        setReportTemplateSections('');
+        setReportTemplateError('');
+    };
+
+    const handleSaveReportTemplate = async () => {
+        const name = reportTemplateTitle.trim();
+        const purpose = reportTemplatePurpose.trim();
+        const sections = reportTemplateSections
+            .split(/\r?\n|,/)
+            .map(section => section.trim())
+            .filter(Boolean);
+        if (!name || !purpose || sections.length < 1) return;
+        if (!reportTemplateDraftId && !canCreateReportTemplate) {
+            setReportTemplateError(`보고서 양식은 최대 ${MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.`);
+            return;
+        }
+
+        let template: ReturnType<typeof saveReportTemplate>;
+        try {
+            template = saveReportTemplate({
+                id: reportTemplateDraftId ?? `custom-report-${Date.now()}`,
+                name,
+                purpose,
+                instructions: purpose,
+                sections,
+                requiredSections: sections.slice(0, Math.min(2, sections.length)),
+                optionalSections: sections.slice(Math.min(2, sections.length)),
+                tone: 'report',
+                detailLevel: 'standard',
+                updatedAt: new Date().toISOString(),
+            });
+        } catch {
+            setReportTemplateError(`보고서 양식은 최대 ${MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.`);
+            return;
+        }
+        const nextTemplates = listReportTemplates();
+        setReportTemplates(nextTemplates);
+        handleCloseReportTemplateModal();
+        await handleSelectReportTemplate(template.id, template);
+    };
+
+    const handleDeleteReportTemplate = () => {
+        setIsReportTemplateMenuOpen(false);
+        if (!reportOutputTemplate || reportOutputTemplate.builtIn || !selectedMeeting) return;
+        modalReturnFocusIdRef.current = 'report-template-menu-button';
+        setTemplateDeleteError('');
+        setPendingTemplateDelete({
+            kind: 'report',
+            id: reportOutputTemplate.id,
+            name: reportOutputTemplate.name,
+            template: reportOutputTemplate,
+            meetingId: selectedMeeting.id,
+        });
+    };
+
+    const handleCloseTemplateDeleteModal = () => {
+        if (isDeletingTemplate) return;
+        setPendingTemplateDelete(null);
+        setTemplateDeleteError('');
+    };
+
+    const handleRestoreDeletedTemplate = async () => {
+        if (!templateUndoToast) return;
+        const target = templateUndoToast;
+        setTemplateUndoToast(null);
+        setErrorMessage('');
+
+        try {
+            if (target.kind === 'context') {
+                const restoredTemplate = saveContextTemplate(target.template);
+                setContextTemplates(listContextTemplates());
+                const selectedTermGlossaryIds = restoredTemplate.termGlossaryIds ?? [];
+                await updateSelectedMeeting(currentMeeting => ({
+                    selectedContextTemplateId: restoredTemplate.id,
+                    contextTemplate: restoredTemplate,
+                    selectedTermGlossaryIds,
+                    termGlossaries: getTermGlossariesByIds(selectedTermGlossaryIds),
+                    transcriptEditMeta: target.transcriptEditMeta,
+                }), target.meetingId);
+                showOperationToast('정리 맥락을 복원했습니다.', 'success');
+                return;
+            }
+
+            const restoredTemplate = saveReportTemplate(target.template);
+            setReportTemplates(listReportTemplates());
+            await updateSelectedMeeting(currentMeeting => {
+                const reportIsCurrentAgain = meetingReportIsCurrentForTemplate(currentMeeting, restoredTemplate.id);
+                return {
+                    selectedReportTemplateId: restoredTemplate.id,
+                    reportTemplate: restoredTemplate,
+                    meetingReport: currentMeeting.meetingReport,
+                    generationStatus: reportIsCurrentAgain
+                        ? normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: 'completed' })
+                        : normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: 'not_started' }),
+                };
+            }, target.meetingId);
+            showOperationToast('보고 양식을 복원했습니다.', 'success');
+        } catch {
+            showOperationToast('복원하지 못했습니다. 잠시 후 다시 시도해 주세요.', 'error');
+        }
+    };
+
+    const handleConfirmTemplateDelete = async () => {
+        if (!pendingTemplateDelete || isDeletingTemplate) return;
+
+        setIsDeletingTemplate(true);
+        setTemplateDeleteError('');
+        try {
+            if (pendingTemplateDelete.kind === 'context') {
+                await handleSelectContextTemplate('general');
+                deleteContextTemplate(pendingTemplateDelete.id);
+                setContextTemplates(listContextTemplates());
+                showContextTemplateUndoToast(
+                    pendingTemplateDelete.template,
+                    pendingTemplateDelete.meetingId,
+                    pendingTemplateDelete.transcriptEditMeta,
+                );
+            } else {
+                const defaultTemplate = getReportTemplateById(DEFAULT_REPORT_TEMPLATE_ID);
+                await updateSelectedMeeting(currentMeeting => ({
+                    selectedReportTemplateId: defaultTemplate.id,
+                    reportTemplate: defaultTemplate,
+                    meetingReport: currentMeeting.meetingReport,
+                    generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: 'not_started' }),
+                }), pendingTemplateDelete.meetingId);
+                deleteReportTemplate(pendingTemplateDelete.id);
+                setReportTemplates(listReportTemplates());
+                showReportTemplateUndoToast(pendingTemplateDelete.template, pendingTemplateDelete.meetingId);
+            }
+            setPendingTemplateDelete(null);
+        } catch {
+            setTemplateDeleteError('삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+        } finally {
+            setIsDeletingTemplate(false);
+        }
+    };
+
+    useEffect(() => {
+        const activeModal = isContextTemplateModalOpen
+            ? { type: 'context', element: contextTemplateModalRef.current }
+            : isReportTemplateModalOpen
+                ? { type: 'report', element: reportTemplateModalRef.current }
+                : pendingTemplateDelete
+                    ? { type: 'delete', element: deleteTemplateModalRef.current }
+                    : null;
+        if (!activeModal?.element) return;
+
+        const focusTimer = window.setTimeout(() => {
+            const [firstFocusable] = getFocusableModalElements(activeModal.element);
+            (firstFocusable ?? activeModal.element)?.focus();
+        }, 0);
+
+        const closeActiveModal = () => {
+            if (activeModal.type === 'context') {
+                setIsContextTemplateModalOpen(false);
+                setContextTemplateDraftId(null);
+                setContextTemplateTitle('');
+                setContextTemplatePrompt('');
+                setContextTemplateError('');
+                return;
+            }
+            if (activeModal.type === 'report') {
+                setIsReportTemplateModalOpen(false);
+                setReportTemplateDraftId(null);
+                setReportTemplateTitle('');
+                setReportTemplatePurpose('');
+                setReportTemplateSections('');
+                setReportTemplateError('');
+                return;
+            }
+            if (isDeletingTemplate) return;
+            setPendingTemplateDelete(null);
+            setTemplateDeleteError('');
+        };
+
+        const handleModalKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                closeActiveModal();
+                return;
+            }
+            if (event.key !== 'Tab') return;
+            const focusableElements = getFocusableModalElements(activeModal.element);
+            if (!focusableElements.length) {
+                event.preventDefault();
+                activeModal.element?.focus();
+                return;
+            }
+            const firstElement = focusableElements[0];
+            const lastElement = focusableElements[focusableElements.length - 1];
+            if (event.shiftKey && document.activeElement === firstElement) {
+                event.preventDefault();
+                lastElement.focus();
+                return;
+            }
+            if (!event.shiftKey && document.activeElement === lastElement) {
+                event.preventDefault();
+                firstElement.focus();
+            }
+        };
+
+        document.addEventListener('keydown', handleModalKeyDown, true);
+        return () => {
+            window.clearTimeout(focusTimer);
+            document.removeEventListener('keydown', handleModalKeyDown, true);
+            window.setTimeout(() => {
+                const returnFocusId = modalReturnFocusIdRef.current;
+                if (returnFocusId) document.getElementById(returnFocusId)?.focus();
+                modalReturnFocusIdRef.current = null;
+            }, 0);
+        };
+    }, [isContextTemplateModalOpen, isReportTemplateModalOpen, isDeletingTemplate, pendingTemplateDelete]);
+
+    useEffect(() => {
+        if (!isContextTemplateMenuOpen && !isReportTemplateMenuOpen) return;
+
+        const activeMenuRef = isContextTemplateMenuOpen ? contextTemplateMenuRef : reportTemplateMenuRef;
+        const returnFocusId = isContextTemplateMenuOpen ? 'context-template-menu-button' : 'report-template-menu-button';
+        const focusTimer = window.setTimeout(() => {
+            getMenuItems(activeMenuRef.current)?.[0]?.focus();
+        }, 0);
+
+        const handlePointerDown = (event: MouseEvent) => {
+            const target = event.target as Node | null;
+            if (!target) return;
+            if (isContextTemplateMenuOpen && contextTemplateMenuRef.current?.contains(target)) return;
+            if (isReportTemplateMenuOpen && reportTemplateMenuRef.current?.contains(target)) return;
+            setIsContextTemplateMenuOpen(false);
+            setIsReportTemplateMenuOpen(false);
+        };
+
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Tab') {
+                setIsContextTemplateMenuOpen(false);
+                setIsReportTemplateMenuOpen(false);
+                return;
+            }
+            if (event.key === 'Escape') {
+                event.preventDefault();
+                setIsContextTemplateMenuOpen(false);
+                setIsReportTemplateMenuOpen(false);
+                window.setTimeout(() => {
+                    document.getElementById(returnFocusId)?.focus();
+                }, 0);
+                return;
+            }
+            if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+            const menuItems = getMenuItems(activeMenuRef.current);
+            if (!menuItems.length) return;
+            event.preventDefault();
+            const currentIndex = menuItems.findIndex(item => item === document.activeElement);
+            const nextIndex = event.key === 'Home'
+                ? 0
+                : event.key === 'End'
+                    ? menuItems.length - 1
+                    : event.key === 'ArrowUp'
+                        ? (currentIndex <= 0 ? menuItems.length - 1 : currentIndex - 1)
+                        : (currentIndex < 0 || currentIndex >= menuItems.length - 1 ? 0 : currentIndex + 1);
+            menuItems[nextIndex]?.focus();
+        };
+
+        document.addEventListener('mousedown', handlePointerDown, true);
+        document.addEventListener('keydown', handleKeyDown, true);
+        return () => {
+            window.clearTimeout(focusTimer);
+            document.removeEventListener('mousedown', handlePointerDown, true);
+            document.removeEventListener('keydown', handleKeyDown, true);
+        };
+    }, [isContextTemplateMenuOpen, isReportTemplateMenuOpen]);
 
     const syncMeetingOutputRecord = async (meetingId: string, jobId?: string | null): Promise<SyncOutputRecordResponse | null> => {
         if (!jobId) return null;
@@ -1513,12 +2245,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 : summaryRegenerationWillResetDerived
                     ? '전체 요약을 정리했습니다. 아래 정리도 다시 해 주세요.'
                     : '전체 요약을 정리했습니다.';
-            if (isTransientNoticeMessage(nextNoticeMessage)) {
-                setNoticeMessage('');
-                showNoticeToast(nextNoticeMessage);
-            } else {
-                setNoticeMessage(nextNoticeMessage);
-            }
+            setNoticeMessage(nextNoticeMessage);
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setErrorMessage(data.export_error);
             }
@@ -1550,6 +2277,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const summaryOutdated = Boolean(transcriptEditMeta.summaryOutdated);
     const summaryGenerationStatus = getSummaryGenerationStatus(selectedMeeting?.generationStatus, selectedMeeting?.summary);
     const topicGenerationStatus = getTopicGenerationStatus(selectedMeeting?.generationStatus, selectedMeeting?.topicSections);
+    const meetingReportGenerationStatus = getMeetingReportGenerationStatus(
+        selectedMeeting?.generationStatus,
+        selectedMeeting?.meetingReport,
+    );
     const hasTranscriptData = Boolean(
         (selectedMeeting?.editedDisplaySegments?.length ?? 0)
         || (selectedMeeting?.displaySegments?.length ?? 0)
@@ -1635,12 +2366,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         : '';
     const organizeModelGuidanceMessage = summaryModelMessage || '정리 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
     const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
-    const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable;
+    const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;
     const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;
-    const summaryRegenerationWillResetDerived = Boolean(selectedMeeting?.topicSections?.length || selectedMeeting?.speakerContextSummaries?.length || selectedMeeting?.participantSummaries?.length);
+    const summaryRegenerationWillResetDerived = Boolean(
+        selectedMeeting?.topicSections?.length
+        || selectedMeeting?.speakerContextSummaries?.length
+        || selectedMeeting?.participantSummaries?.length
+        || selectedMeeting?.meetingReport?.content?.trim(),
+    );
 
     useEffect(() => {
-        if (detailTab !== 'summary' || canOpenOrganizeTab) return;
+        if (detailTab === 'script' || canOpenOrganizeTab) return;
         setDetailTab('script');
     }, [canOpenOrganizeTab, detailTab]);
 
@@ -1903,6 +2639,86 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         }
     };
 
+    const handleGenerateMeetingReport = async () => {
+        if (generatingKind !== null || meetingReportGenerationStatus === 'generating') return;
+        if (!ensureNoUnsavedDraftChanges('보고서 생성')) return;
+        if (!canRunMeetingReportGeneration || !selectedMeeting?.jobId) {
+            setNoticeMessage('');
+            const reportGenerationBlockedMessage = summaryModelUnavailable
+                ? organizeModelGuidanceMessage
+                : !selectedMeeting?.jobId
+                    ? '이 회의록은 분석 결과와 연결되어 있지 않아 보고서를 생성할 수 없습니다.'
+                    : summaryGenerationStatus !== 'completed' || !selectedMeeting?.summary?.trim() || summarySkippedForDeferredAnalysis
+                        ? '기록 정리 탭의 전체 요약을 먼저 완료한 뒤 보고서를 생성할 수 있습니다.'
+                        : summaryOutdated
+                            ? '전체 요약을 다시 정리한 뒤 보고서를 생성할 수 있습니다.'
+                            : topicSectionsOutdated
+                                ? '주제별 정리를 다시 한 뒤 보고서를 생성할 수 있습니다.'
+                                : speakerContextOutdated
+                                    ? '참석자별 정리를 다시 한 뒤 보고서를 생성할 수 있습니다.'
+                                    : '보고서를 생성할 수 없습니다. 기록 정리 상태를 확인해 주세요.';
+            setErrorMessage(reportGenerationBlockedMessage);
+            return;
+        }
+
+        const targetMeeting = selectedMeeting;
+        const targetJobId = selectedMeeting.jobId;
+        const inputFingerprint = buildReportGenerationInputFingerprint(targetMeeting);
+        try {
+            setErrorMessage('');
+            setNoticeMessage('');
+            setGeneratingKind('meetingReport');
+            setLocalGenerationStatus(targetMeeting.id, 'meetingReport', 'generating');
+            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-report`), {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(targetMeeting),
+            });
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '회의록 보고서를 만들지 못했습니다.'));
+
+            const data = await response.json() as GenerateReportResponse;
+            let inputChangedBeforeSave = false;
+            await updateSelectedMeeting(currentMeeting => {
+                const inputChangedSinceRequest = buildReportGenerationInputFingerprint(currentMeeting) !== inputFingerprint;
+                if (inputChangedSinceRequest) {
+                    inputChangedBeforeSave = true;
+                    return {
+                        generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: 'not_started' }),
+                    };
+                }
+                return {
+                    meetingReport: data.meetingReport ?? data.meeting_report,
+                    generationStatus: data.generationStatus ?? data.generation_status ?? { meetingReport: 'completed' },
+                    outputFiles: data.outputs ?? currentMeeting.outputFiles,
+                };
+            }, targetMeeting.id);
+            if (inputChangedBeforeSave) {
+                setNoticeMessage('');
+                setErrorMessage('회의 정보나 정리 내용이 바뀌어 이번 보고서는 저장하지 않았습니다. 다시 생성해 주세요.');
+                return;
+            }
+            if (searchQuery.trim()) {
+                setSearchQuery('');
+            }
+            setDetailTab('report');
+            setNoticeMessage('회의록 보고서를 생성했습니다.');
+            if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setErrorMessage(data.export_error);
+            }
+        } catch (error) {
+            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
+            await updateSelectedMeeting(currentMeeting => ({
+                generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: nextState }),
+            }), targetMeeting.id);
+            if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
+                setNoticeMessage('');
+                setErrorMessage(error instanceof Error ? error.message : '회의록 보고서 생성 중 오류가 발생했습니다.');
+            }
+        } finally {
+            setGeneratingKind(null);
+        }
+    };
+
     const contentQuery = useMemo(() => searchQuery.trim().toLowerCase(), [searchQuery]);
     const renderSearchText = React.useCallback((text: string | null | undefined) => (
         highlightSearchText(String(text ?? ''), searchQuery)
@@ -1910,6 +2726,57 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const hasGeneratedSummary = summaryGenerationStatus === 'completed'
         && Boolean(selectedMeeting?.summary?.trim())
         && !summarySkippedForDeferredAnalysis;
+    const hasGeneratedMeetingReport = Boolean(
+        selectedMeeting?.meetingReport?.content?.trim()
+        || selectedMeeting?.meetingReport?.sections?.length,
+    );
+    const reportMatchesCurrentTemplate = !selectedMeeting?.meetingReport?.templateId
+        || selectedMeeting.meetingReport.templateId === reportOutputTemplate.id;
+    const reportHasCurrentOrganizedRecord = hasGeneratedSummary
+        && !summaryOutdated
+        && !topicSectionsOutdated
+        && !speakerContextOutdated;
+    const meetingReportIsGenerating = meetingReportGenerationStatus === 'generating';
+    const meetingReportGenerationFailed = meetingReportGenerationStatus === 'failed';
+    const meetingReportIsStoredButNotCurrent = hasGeneratedMeetingReport
+        && (
+            meetingReportGenerationStatus !== 'completed'
+            || !reportHasCurrentOrganizedRecord
+            || !reportMatchesCurrentTemplate
+        );
+    const organizeOutputIsGenerating = summaryGenerationStatus === 'generating'
+        || topicGenerationStatus === 'generating'
+        || speakerGenerationStatus === 'generating';
+    const canOpenReportTab = hasTranscriptData;
+    const canRunMeetingReportGeneration = reportHasCurrentOrganizedRecord
+        && !summaryModelUnavailable
+        && Boolean(selectedMeeting?.jobId);
+    const reportTabDisabledMessage = canOpenReportTab ? '회의록 보고서' : '대화록이 있어야 보고서를 사용할 수 있습니다.';
+    const appliedContextLabel = activeContextTemplate.id !== 'general' && hasGeneratedSummary && !summaryOutdated
+        ? activeContextTemplate.name
+        : '';
+    const detailKeyboardTabs: KeyboardTabTarget<DetailTab>[] = [
+        { value: 'script', id: 'meeting-detail-tab-script', select: () => setDetailTab('script') },
+        { value: 'summary', id: 'meeting-detail-tab-summary', disabled: !canOpenOrganizeTab, select: () => setDetailTab('summary') },
+        { value: 'report', id: 'meeting-detail-tab-report', disabled: !canOpenReportTab, select: () => setDetailTab('report') },
+    ];
+    const organizeKeyboardTabs: KeyboardTabTarget<OrganizeTab>[] = [
+        { value: 'summary', id: 'organize-mode-tab-summary', select: () => setOrganizeTab('summary') },
+        { value: 'topics', id: 'organize-mode-tab-topics', select: () => setOrganizeTab('topics') },
+        { value: 'speakers', id: 'organize-mode-tab-speakers', select: () => setOrganizeTab('speakers') },
+    ];
+    const handleDetailTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+        handleKeyboardTabNavigation(event, detailKeyboardTabs, detailTab);
+    };
+    const handleOrganizeTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+        handleKeyboardTabNavigation(event, organizeKeyboardTabs, organizeTab);
+    };
+
+    useEffect(() => {
+        if (detailTab !== 'report' || canOpenReportTab) return;
+        setDetailTab(canOpenOrganizeTab ? 'summary' : 'script');
+    }, [canOpenOrganizeTab, canOpenReportTab, detailTab]);
+
     const summaryMatches = hasGeneratedSummary
         && (!contentQuery || Boolean(selectedMeeting?.summary.toLowerCase().includes(contentQuery)));
     const allTopics = useMemo(() => {
@@ -2451,21 +3318,55 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     };
 
     const getActionLabel = (status: string): string => (status === 'generating' ? '정리 중' : '정리');
-    const shouldShowSummaryAction = summaryGenerationStatus !== 'completed' || summaryOutdated;
-    const shouldOfferTopicRegeneration = topicGenerationStatus === 'completed'
-        && !topicSectionsOutdated
-        && (selectedMeeting?.topicSections?.filter(section => section.topic?.trim()).length ?? 0) <= 1;
-    const shouldShowTopicAction = topicGenerationStatus !== 'completed' || topicSectionsOutdated || shouldOfferTopicRegeneration;
+    const summaryActionButtonLabel = summaryGenerationStatus === 'generating'
+        ? '정리 중'
+        : hasGeneratedSummary
+            ? '다시 정리'
+            : '정리';
+    const summaryActionButtonTitle = summaryGenerationStatus === 'completed' && !summaryOutdated
+        ? '현재 정리 맥락으로 전체 요약을 다시 정리'
+        : '현재 정리 맥락으로 전체 요약 정리';
     const shouldShowSpeakerAction = speakerGenerationStatus !== 'completed' || speakerContextOutdated || topicSectionsOutdated;
     const hasTopicSectionResults = Boolean(
         selectedMeeting?.topicSections?.some(section => section.topic?.trim() || section.summary?.trim()),
     );
     const canShowCompletedCustomTopicInput = topicGenerationStatus === 'completed' && !topicSectionsOutdated && hasTopicSectionResults;
-    const speakerActionBlockedMessage = !summaryModelUnavailable && shouldShowSpeakerAction && !canRunSpeakerContextGeneration
-        ? topicSectionsOutdated
-            ? '주제별 정리를 다시 한 뒤 참석자별 정리를 실행할 수 있습니다.'
-            : '주제별 정리를 먼저 하면 참석자별 정리를 실행할 수 있습니다.'
+    const topicActionBlockedMessage = !summaryModelUnavailable && !canRunTopicGeneration
+        ? summaryOutdated
+            ? '전체 요약을 다시 정리한 뒤 주제별 정리를 실행할 수 있습니다.'
+            : '전체 요약을 먼저 정리한 뒤 주제별 정리를 실행할 수 있습니다.'
         : '';
+    const speakerActionBlockedMessage = !summaryModelUnavailable && shouldShowSpeakerAction && !canRunSpeakerContextGeneration
+        ? summaryOutdated
+            ? '전체 요약을 다시 정리한 뒤 주제별 정리와 참석자별 정리를 실행할 수 있습니다.'
+            : topicSectionsOutdated
+                ? '주제별 정리를 다시 한 뒤 참석자별 정리를 실행할 수 있습니다.'
+                : '주제별 정리를 먼저 하면 참석자별 정리를 실행할 수 있습니다.'
+        : '';
+    const reportActionBlockedMessage = summaryModelUnavailable
+        ? organizeModelGuidanceMessage
+        : !selectedMeeting?.jobId
+            ? '이 회의록은 분석 결과와 연결되어 있지 않아 보고서를 생성할 수 없습니다.'
+            : !hasGeneratedSummary
+                ? '기록 정리 탭의 전체 요약을 먼저 완료한 뒤 보고서를 생성할 수 있습니다.'
+                : summaryOutdated
+                    ? '전체 요약을 다시 정리한 뒤 보고서를 생성할 수 있습니다.'
+                    : topicSectionsOutdated
+                        ? '주제별 정리를 다시 한 뒤 보고서를 생성할 수 있습니다.'
+                        : speakerContextOutdated
+                            ? '참석자별 정리를 다시 한 뒤 보고서를 생성할 수 있습니다.'
+                            : '';
+    const canShowAnyMeetingReport = hasGeneratedMeetingReport && Boolean(selectedMeeting?.meetingReport);
+    const reportReadinessItems = [
+        !hasGeneratedSummary
+            ? '기록 정리 탭에서 전체 요약을 먼저 만듭니다.'
+            : summaryOutdated
+                ? '기록 정리 탭에서 전체 요약을 다시 정리합니다.'
+                : '',
+        topicSectionsOutdated ? '주제별 정리가 이전 기준이면 주제별 정리를 다시 실행합니다.' : '',
+        speakerContextOutdated ? '참석자별 정리가 이전 기준이면 참석자별 정리를 다시 실행합니다.' : '',
+        '보고 양식을 선택한 뒤 생성합니다.',
+    ].filter((item): item is string => Boolean(item));
     const isCurrentTopicGenerationRequest = Boolean(
         topicGenerationIntent?.meetingId
         && selectedMeeting?.id
@@ -2497,7 +3398,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const customTopicButtonAriaLabel = isCustomTopicGenerationRunning ? '추가 주제 정리 중' : '주제 추가 정리';
     const topicActionButtonLabel = isMainTopicGenerationRunning
         ? '정리 중'
-        : shouldOfferTopicRegeneration
+        : topicGenerationStatus === 'completed' && !topicSectionsOutdated
             ? '다시 정리'
             : getActionLabel(topicGenerationStatus);
     const topicActionButtonTitle = isMainTopicGenerationRunning
@@ -2506,10 +3407,34 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             ? '다른 정리가 진행 중입니다.'
             : summaryModelUnavailable
                 ? organizeModelGuidanceMessage
-            : canRunTopicGeneration
-                ? (shouldOfferTopicRegeneration ? '주제별 다시 정리' : '주제별 정리')
-                : '전체 요약을 먼저 정리해 주세요.';
+                : canRunTopicGeneration
+                    ? (topicGenerationStatus === 'completed' && !topicSectionsOutdated ? '주제별 다시 정리' : '주제별 정리')
+                    : summaryOutdated
+                        ? '전체 요약을 다시 정리해 주세요.'
+                        : '전체 요약을 먼저 정리해 주세요.';
     const topicActionButtonAriaLabel = isMainTopicGenerationRunning ? '주제별 정리 중' : '주제별 정리';
+    const speakerActionButtonLabel = speakerGenerationStatus === 'generating'
+        ? '정리 중'
+        : speakerGenerationStatus === 'completed' && !speakerContextOutdated && !topicSectionsOutdated
+            ? '다시 정리'
+            : getActionLabel(speakerGenerationStatus);
+    const speakerActionButtonTitle = summaryModelUnavailable
+        ? organizeModelGuidanceMessage
+        : summaryOutdated
+            ? '전체 요약을 다시 정리해 주세요.'
+            : canCreateSpeakerContext
+                ? (speakerGenerationStatus === 'completed' && !speakerContextOutdated && !topicSectionsOutdated ? '참석자별 다시 정리' : '참석자별 정리')
+                : '주제별 정리를 먼저 만들어 주세요.';
+    const reportActionButtonLabel = meetingReportGenerationStatus === 'generating'
+        ? '생성 중'
+        : hasGeneratedMeetingReport || meetingReportGenerationFailed
+            ? '다시 생성'
+            : '생성';
+    const reportActionButtonTitle = summaryModelUnavailable
+        ? organizeModelGuidanceMessage
+        : canRunMeetingReportGeneration
+            ? (hasGeneratedMeetingReport || meetingReportGenerationFailed ? '회의록 보고서 다시 생성' : '회의록 보고서 생성')
+            : reportActionBlockedMessage || '기록 정리를 먼저 완료해 주세요.';
 
     const renderRunIcon = (
         kind: GenerationKind,
@@ -2652,22 +3577,58 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         </div>
     ) : null;
 
-    if (isLoading) {
-        return (
-            <div className="mx-auto max-w-5xl">
-                <div className="app-panel flex min-h-[420px] items-center justify-center text-sm text-muted-foreground">
-                    회의 기록을 불러오는 중입니다.
+    const meetingDetailSkeleton = (
+        <div className="meeting-detail-shell" aria-busy="true" aria-live="polite">
+            <article className="app-panel overflow-hidden">
+                <div className="app-panel-header">
+                    <div className="meeting-detail-heading">
+                        <div className="meeting-skeleton-line meeting-skeleton-title" />
+                        <div className="meeting-meta-grid">
+                            <div className="meeting-skeleton-card" />
+                            <div className="meeting-skeleton-card" />
+                            <div className="meeting-skeleton-card sm:col-span-2" />
+                        </div>
+                    </div>
                 </div>
-            </div>
-        );
+                <div className="detail-main-nav px-5">
+                    <div className="tab-list meeting-skeleton-tabs" aria-hidden="true">
+                        <div className="meeting-skeleton-pill" />
+                        <div className="meeting-skeleton-pill" />
+                        <div className="meeting-skeleton-pill" />
+                    </div>
+                    <div className="meeting-skeleton-search" />
+                </div>
+                <div className="meeting-detail-body">
+                    <section className="detail-work-surface">
+                        <div className="detail-command-bar">
+                            <div className="meeting-skeleton-line meeting-skeleton-heading" />
+                            <div className="meeting-skeleton-actions">
+                                <div className="meeting-skeleton-pill" />
+                                <div className="meeting-skeleton-pill" />
+                            </div>
+                        </div>
+                        <div className="meeting-skeleton-list" aria-hidden="true">
+                            <div className="meeting-skeleton-row" />
+                            <div className="meeting-skeleton-row" />
+                            <div className="meeting-skeleton-row meeting-skeleton-row-short" />
+                        </div>
+                    </section>
+                </div>
+            </article>
+            <span className="sr-only">회의 기록을 불러오는 중입니다.</span>
+        </div>
+    );
+
+    if (isLoading) {
+        return meetingDetailSkeleton;
     }
 
     if (!selectedMeeting) {
         return (
-            <div className="mx-auto max-w-5xl">
-                <div className="app-panel flex min-h-[420px] flex-col items-center justify-center gap-3 text-center">
-                    <h2 className="text-lg font-semibold text-foreground">선택된 회의록이 없습니다</h2>
-                    <p className="text-sm text-muted-foreground">왼쪽 회의 기록에서 회의록을 선택하거나 새 회의록을 작성하세요.</p>
+            <div className="meeting-detail-shell">
+                <div className="app-panel meeting-empty-panel">
+                    <h2>선택된 회의록이 없습니다</h2>
+                    <p>왼쪽 회의 기록에서 회의록을 선택하거나 새 회의록을 작성하세요.</p>
                     {onCreateMeeting && (
                         <Button onClick={onCreateMeeting}>
                             새 회의록 작성
@@ -2679,18 +3640,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }
 
     return (
-        <div className="mx-auto max-w-5xl">
-            {noticeMessage && (
-                <StatusBanner tone="success" className="mb-4">
-                    {noticeMessage}
-                </StatusBanner>
-            )}
+        <div className="meeting-detail-shell">
             {errorMessage && (
                 <StatusBanner tone="error" className="mb-4">
                     {errorMessage}
                 </StatusBanner>
             )}
-            {(noticeToast || operationToast) && (
+            {(noticeToast || operationToast || templateUndoToast) && (
                 <div className="meeting-history-toast-stack">
                     {noticeToast && (
                         <AppToast
@@ -2706,6 +3662,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             tone={operationToast.tone}
                             closeLabel="작업 알림 닫기"
                             onClose={() => setOperationToast(null)}
+                        />
+                    )}
+                    {templateUndoToast && (
+                        <AppToast
+                            message={templateUndoToast.kind === 'context' ? '정리 맥락을 삭제했습니다.' : '보고 양식을 삭제했습니다.'}
+                            tone="neutral"
+                            actionLabel="되돌리기"
+                            closeLabel="삭제 알림 닫기"
+                            onAction={() => void handleRestoreDeletedTemplate()}
+                            onClose={() => setTemplateUndoToast(null)}
                         />
                     )}
                 </div>
@@ -2739,15 +3705,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     </>
                                 ) : (
                                     <>
-                                        <MeetingDownloadControl
-                                            meeting={selectedMeeting}
-                                            onNotice={setNoticeMessage}
-                                            onError={setErrorMessage}
-                                            onSaved={showSavedFileToast}
-                                            onDownloadingChange={setIsDownloading}
-                                            beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
-                                            disabled={isDownloading}
-                                        />
                                         {selectedMeeting.jobId && audioSourceUrl && (
                                             <IconButton
                                                 aria-label="음성 파일을 다운로드 폴더에 저장"
@@ -2799,8 +3756,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         <Input value={editDate} onChange={event => setEditDate(event.target.value)} aria-label="회의 일시" placeholder="회의 일시" />
                                     </label>
                                     <label className="grid gap-1 text-xs font-semibold text-foreground">
-                                        회의 목적/정리 맥락
-                                        <Input value={editMeetingPurpose} onChange={event => setEditMeetingPurpose(event.target.value)} aria-label="회의 목적 또는 정리 맥락" placeholder="정리할 때 강조할 맥락" />
+                                        회의 목적
+                                        <Input value={editMeetingPurpose} onChange={event => setEditMeetingPurpose(event.target.value)} aria-label="회의 목적" placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" />
                                     </label>
                                 </div>
                                 {!selectedMeeting.meetingPurpose && selectedMeeting.participants && (
@@ -2818,7 +3775,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             <span className="meeting-meta-value">{selectedMeeting.date}</span>
                                         </div>
                                         <div className="meeting-meta-item">
-                                            <span className="meeting-meta-label">{selectedMeeting.meetingPurpose ? '회의 목적/정리 맥락' : '참석자'}</span>
+                                            <span className="meeting-meta-label">{selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}</span>
                                             <span className="meeting-meta-value">{selectedMeeting.meetingPurpose || selectedMeeting.participants || '-'}</span>
                                         </div>
                                         {selectedMeeting.sourceFile && (
@@ -2878,33 +3835,45 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         {diarizationStatusTitle}
                                     </div>
                                 )}
-                                {selectedMeeting.jobId && audioAvailability === 'missing' && !diarizationStatusTitle && (
-                                    <div className="status-note mt-3">
-                                        참석자 구분을 다시 실행하려면 분석 당시 보관한 음성 파일이 필요합니다.
-                                    </div>
-                                )}
                             </>
                         )}
                     </div>
 
-                    <div className="flex flex-col gap-3 pt-4 lg:flex-row lg:items-end lg:justify-between">
-                        <div className="tab-list" aria-label="회의록 상세">
+                    <div className="detail-main-nav">
+                        <div className="tab-list" role="tablist" aria-label="회의록 상세">
                             <DetailTabButton
+                                id="meeting-detail-tab-script"
+                                panelId="meeting-detail-panel-script"
                                 active={detailTab === 'script'}
                                 onClick={() => setDetailTab('script')}
+                                onKeyDown={handleDetailTabKeyDown}
                             >
                                 대화록
                             </DetailTabButton>
                             <DetailTabButton
+                                id="meeting-detail-tab-summary"
+                                panelId="meeting-detail-panel-summary"
                                 active={detailTab === 'summary'}
                                 disabled={!canOpenOrganizeTab}
                                 onClick={() => setDetailTab('summary')}
+                                onKeyDown={handleDetailTabKeyDown}
                                 title={canOpenOrganizeTab ? '기록 정리' : organizeTabDisabledMessage}
                             >
                                 기록 정리
                             </DetailTabButton>
+                            <DetailTabButton
+                                id="meeting-detail-tab-report"
+                                panelId="meeting-detail-panel-report"
+                                active={detailTab === 'report'}
+                                disabled={!canOpenReportTab}
+                                onClick={() => setDetailTab('report')}
+                                onKeyDown={handleDetailTabKeyDown}
+                                title={reportTabDisabledMessage}
+                            >
+                                보고서
+                            </DetailTabButton>
                         </div>
-                        <label className="relative w-full lg:max-w-xs">
+                        <label className="detail-search-field">
                             <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
                             <Input
                                 value={searchQuery}
@@ -2919,7 +3888,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
                 <div className="meeting-detail-body space-y-6">
                     {detailTab === 'summary' && (
-                        <>
+                        <section
+                            id="meeting-detail-panel-summary"
+                            role="tabpanel"
+                            aria-labelledby="meeting-detail-tab-summary"
+                            className="space-y-6"
+                        >
                             {summaryModelUnavailable && (
                                 <StatusBanner
                                     tone="warning"
@@ -2941,57 +3915,209 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 </section>
                             )}
 
-                            <section className="detail-action-row">
-                                <div className="mb-3 flex items-center gap-2">
-                                    <h3 className="section-title">정리</h3>
-                                    <DetailHelpButton
-                                        title="필요한 정리 탭을 열어 정리합니다. 전체 요약을 먼저 만들면 주제별 정리와 참석자별 정리를 이어서 만들 수 있습니다."
-                                        ariaLabel="정리 도움말"
-                                    />
-                                </div>
-                                <div className="mb-4 flex flex-wrap items-end gap-2">
-                                    <div className="tab-list flex-1" aria-label="정리 종류">
-                                        <DetailTabButton
-                                            active={organizeTab === 'summary'}
-                                            onClick={() => setOrganizeTab('summary')}
-                                        >
-                                            전체 요약
-                                        </DetailTabButton>
-                                        <DetailTabButton
-                                            active={organizeTab === 'topics'}
-                                            onClick={() => setOrganizeTab('topics')}
-                                        >
-                                            주제별 정리
-                                        </DetailTabButton>
-                                        <DetailTabButton
-                                            active={organizeTab === 'speakers'}
-                                            onClick={() => setOrganizeTab('speakers')}
-                                        >
-                                            참석자별 정리
-                                        </DetailTabButton>
-                                    </div>
-                                    {organizeTab === 'speakers' && (
-                                        <div className="flex items-center gap-2 pb-1">
-                                            <DetailHelpButton
-                                                title="AI가 참석자별로 정리한 초안입니다. 텍스트 비중은 대화록 글자 수 기준입니다."
-                                                ariaLabel="참석자별 정리 도움말"
-                                            />
-                                            {(!!visibleSpeakerSummaries.length || hasCompletedEmptySpeakerContext) && (
-                                                <IconButton
-                                                    variant="outline"
-                                                    icon={<Edit3 size={16} />}
-                                                    className="h-8 w-8"
-                                                    onClick={openSpeakerLabelEditor}
-                                                    aria-label="이름 변경"
-                                                    title="이름 변경"
+                            <section className="detail-work-surface">
+                                <div className="detail-command-bar">
+                                    <div className="detail-command-primary">
+                                        <div className="detail-mode-switch" role="tablist" aria-label="정리 종류">
+                                            <DetailTabButton
+                                                id="organize-mode-tab-summary"
+                                                panelId="organize-mode-panel-summary"
+                                                active={organizeTab === 'summary'}
+                                                onClick={() => setOrganizeTab('summary')}
+                                                onKeyDown={handleOrganizeTabKeyDown}
+                                            >
+                                                전체 요약
+                                            </DetailTabButton>
+                                            <DetailTabButton
+                                                id="organize-mode-tab-topics"
+                                                panelId="organize-mode-panel-topics"
+                                                active={organizeTab === 'topics'}
+                                                onClick={() => setOrganizeTab('topics')}
+                                                onKeyDown={handleOrganizeTabKeyDown}
+                                            >
+                                                주제별 정리
+                                            </DetailTabButton>
+                                            <DetailTabButton
+                                                id="organize-mode-tab-speakers"
+                                                panelId="organize-mode-panel-speakers"
+                                                active={organizeTab === 'speakers'}
+                                                onClick={() => setOrganizeTab('speakers')}
+                                                onKeyDown={handleOrganizeTabKeyDown}
+                                            >
+                                                참석자별 정리
+                                            </DetailTabButton>
+                                        </div>
+                                        {organizeTab === 'speakers' && (
+                                            <div className="detail-command-inline-tools">
+                                                <DetailHelpButton
+                                                    title="AI가 참석자별로 정리한 초안입니다. 텍스트 비중은 대화록 글자 수 기준입니다."
+                                                    ariaLabel="참석자별 정리 도움말"
                                                 />
+                                                {(!!visibleSpeakerSummaries.length || hasCompletedEmptySpeakerContext) && (
+                                                    <IconButton
+                                                        variant="outline"
+                                                        icon={<Edit3 size={16} />}
+                                                        className="h-8 w-8"
+                                                        onClick={openSpeakerLabelEditor}
+                                                        aria-label="이름 변경"
+                                                        title="이름 변경"
+                                                    />
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="detail-command-actions">
+                                        <label className="detail-inline-select">
+                                            <span>이번 정리 기준</span>
+                                            <select
+                                                value={activeContextTemplate.id}
+                                                onChange={event => void handleSelectContextTemplate(event.target.value)}
+                                                disabled={generatingKind !== null || organizeOutputIsGenerating}
+                                                aria-label="이번 정리 기준 선택"
+                                            >
+                                                <option value="general">선택 안 함</option>
+                                                {contextTemplates.filter(template => template.id !== 'general').map(template => (
+                                                    <option key={template.id} value={template.id}>
+                                                        {template.name}
+                                                    </option>
+                                                ))}
+                                            </select>
+                                        </label>
+                                        <div className="detail-context-menu-wrap" ref={contextTemplateMenuRef}>
+                                            <IconButton
+                                                id="context-template-menu-button"
+                                                variant="outline"
+                                                className="detail-context-menu-button"
+                                                icon={<MoreVertical size={16} />}
+                                                onClick={() => setIsContextTemplateMenuOpen(value => !value)}
+                                                aria-label="정리 맥락 메뉴"
+                                                title="정리 맥락 메뉴"
+                                                aria-haspopup="menu"
+                                                aria-expanded={isContextTemplateMenuOpen}
+                                                aria-controls="context-template-menu"
+                                                disabled={generatingKind !== null || organizeOutputIsGenerating}
+                                            />
+                                            {isContextTemplateMenuOpen && (
+                                                <div
+                                                    id="context-template-menu"
+                                                    className="detail-context-menu"
+                                                    role="menu"
+                                                    aria-labelledby="context-template-menu-button"
+                                                >
+                                                    <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewContextTemplate}>
+                                                        <Plus size={14} />
+                                                        추가
+                                                    </button>
+                                                    <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditContextTemplate} disabled={!canEditActiveContextTemplate}>
+                                                        <Edit3 size={14} />
+                                                        변경
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        role="menuitem"
+                                                        tabIndex={-1}
+                                                        className="detail-context-menu-danger"
+                                                        onClick={handleDeleteContextTemplate}
+                                                        disabled={!canEditActiveContextTemplate}
+                                                    >
+                                                        <Trash2 size={14} />
+                                                        삭제
+                                                    </button>
+                                                    {!canCreateContextTemplate && (
+                                                        <div className="detail-context-menu-note">
+                                                            최대 {MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                        </div>
+                                                    )}
+                                                </div>
                                             )}
                                         </div>
-                                    )}
+                                        {organizeTab === 'summary' && (
+                                            <OrganizeRunButton
+                                                className="detail-context-button"
+                                                ariaLabel="전체 요약 정리"
+                                                disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
+                                                onClick={handleGenerateSummary}
+                                                title={summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
+                                                icon={renderRunIcon('summary', summaryGenerationStatus)}
+                                                label={summaryActionButtonLabel}
+                                            />
+                                        )}
+                                        {organizeTab === 'topics' && (
+                                            <OrganizeRunButton
+                                                className="detail-context-button"
+                                                ariaLabel={topicActionButtonAriaLabel}
+                                                disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                onClick={handleGenerateTopicSections}
+                                                title={topicActionButtonTitle}
+                                                icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
+                                                label={topicActionButtonLabel}
+                                            />
+                                        )}
+                                        {organizeTab === 'speakers' && (
+                                            <OrganizeRunButton
+                                                className="detail-context-button"
+                                                ariaLabel="참석자별 정리"
+                                                disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
+                                                onClick={handleGenerateSpeakerContext}
+                                                title={speakerActionButtonTitle}
+                                                icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
+                                                label={speakerActionButtonLabel}
+                                            />
+                                        )}
+                                        <MeetingDownloadControl
+                                            meeting={selectedMeeting}
+                                            scope="organized"
+                                            presentation="button"
+                                            label="기록 정리 저장"
+                                            className="detail-context-button"
+                                            onNotice={setNoticeMessage}
+                                            onError={setErrorMessage}
+                                            onSaved={showSavedFileToast}
+                                            onDownloadingChange={setIsDownloading}
+                                            beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                            disabled={isDownloading || !hasGeneratedSummary}
+                                        />
+                                    </div>
                                 </div>
+                                {contextTemplateError && (
+                                    <div className="detail-context-inline-error" role="status">
+                                        {contextTemplateError}
+                                    </div>
+                                )}
+                                {shouldShowContextPreview && (
+                                    <div className="detail-context-preview" aria-label="선택한 정리 기준 설명">
+                                        <div className="min-w-0">
+                                            <div className="detail-context-title">이번 정리 기준: {activeContextTemplate.name}</div>
+                                            <p>{activeContextTemplate.prompt || activeContextTemplate.purpose}</p>
+                                        </div>
+                                        {!!activeContextTemplate.focus.length && (
+                                            <div className="detail-context-tags" aria-label="정리 초점">
+                                                {activeContextTemplate.focus.map(item => (
+                                                    <span key={item}>{item}</span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+                                {appliedContextLabel && (
+                                    <div className="detail-applied-context" aria-label="현재 결과에 적용된 정리 기준">
+                                        현재 결과 기준: {appliedContextLabel}
+                                    </div>
+                                )}
 
                                 {organizeTab === 'summary' && (
-                                    <div className="space-y-3" data-summary-section="overview">
+                                    <div
+                                        id="organize-mode-panel-summary"
+                                        role="tabpanel"
+                                        aria-labelledby="organize-mode-tab-summary"
+                                        className="space-y-3"
+                                        data-summary-section="overview"
+                                    >
+                                        {summaryOutdated && hasGeneratedSummary && (
+                                            <InlineStateNote>
+                                                회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 전체 요약은 이전 기준일 수 있습니다.
+                                            </InlineStateNote>
+                                        )}
                                         {hasGeneratedSummary ? (
                                             summaryMatches ? (
                                                 <div className="detail-callout">{renderSearchText(toParticipantCopy(selectedMeeting.summary))}</div>
@@ -3001,11 +4127,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         ) : (
                                             <InlineStateNote>
                                                 전체 요약을 정리하면 주요 내용, 결정사항, 할 일을 여기에서 확인할 수 있습니다.
-                                            </InlineStateNote>
-                                        )}
-                                        {summaryOutdated && hasGeneratedSummary && (
-                                            <InlineStateNote>
-                                                회의 정보나 대화록이 바뀌어 현재 전체 요약은 이전 기준일 수 있습니다.
                                             </InlineStateNote>
                                         )}
                                         {hasResultHighlights && (
@@ -3044,26 +4165,25 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 </ul>
                                             </div>
                                         )}
-                                        {shouldShowSummaryAction && (
-                                            <div className="flex justify-end">
-                                                <OrganizeRunButton
-                                                    ariaLabel="전체 요약 정리"
-                                                    disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
-                                                    onClick={handleGenerateSummary}
-                                                    title={summaryModelUnavailable ? organizeModelGuidanceMessage : '전체 요약 정리'}
-                                                    icon={renderRunIcon('summary', summaryGenerationStatus)}
-                                                    label={getActionLabel(summaryGenerationStatus)}
-                                                />
-                                            </div>
-                                        )}
                                     </div>
                                 )}
 
                                 {organizeTab === 'topics' && (
-                                    <div className="space-y-3" ref={topicSectionsSectionRef}>
+                                    <div
+                                        id="organize-mode-panel-topics"
+                                        role="tabpanel"
+                                        aria-labelledby="organize-mode-tab-topics"
+                                        className="space-y-3"
+                                        ref={topicSectionsSectionRef}
+                                    >
+                                        {topicActionBlockedMessage && (
+                                            <InlineStateNote>
+                                                {topicActionBlockedMessage}
+                                            </InlineStateNote>
+                                        )}
                                         {topicSectionsOutdated && (
                                             <InlineStateNote>
-                                                회의 정보나 대화록이 바뀌어 현재 주제별 정리는 이전 기준일 수 있습니다.
+                                                회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 주제별 정리는 이전 기준일 수 있습니다.
                                             </InlineStateNote>
                                         )}
                                         {visibleTopicSections.length ? (
@@ -3152,32 +4272,26 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 />
                                             </div>
                                         )}
-                                        {shouldShowTopicAction && (
-                                            <div className="flex justify-end">
-                                                <OrganizeRunButton
-                                                    ariaLabel={topicActionButtonAriaLabel}
-                                                    disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
-                                                    onClick={handleGenerateTopicSections}
-                                                    title={topicActionButtonTitle}
-                                                    icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
-                                                    label={topicActionButtonLabel}
-                                                />
-                                            </div>
-                                        )}
                                     </div>
                                 )}
 
                                 {organizeTab === 'speakers' && (
-                                    <div className="space-y-3" ref={speakerSummarySectionRef}>
+                                    <div
+                                        id="organize-mode-panel-speakers"
+                                        role="tabpanel"
+                                        aria-labelledby="organize-mode-tab-speakers"
+                                        className="space-y-3"
+                                        ref={speakerSummarySectionRef}
+                                    >
                                         <InlineStateNote>
                                             AI가 참석자별로 정리한 초안입니다. 이름은 필요하면 수정해 주세요.
                                         </InlineStateNote>
                                         {speakerContextOutdated && (
                                             <InlineStateNote>
-                                                회의 정보나 대화록이 바뀌어 현재 참석자별 정리는 이전 기준일 수 있습니다.
+                                                회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 참석자별 정리는 이전 기준일 수 있습니다.
                                             </InlineStateNote>
                                         )}
-                                        {speakerActionBlockedMessage && filteredSpeakerSummaries.length > 0 && (
+                                        {speakerActionBlockedMessage && (
                                             <InlineStateNote>
                                                 {speakerActionBlockedMessage}
                                             </InlineStateNote>
@@ -3273,31 +4387,197 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                             : '참석자별 정리를 하면 참석자별 요약과 핵심 발언이 여기에 표시됩니다.'}
                                             </InlineStateNote>
                                         )}
-                                        {shouldShowSpeakerAction && (
-                                            <div className="flex justify-end">
-                                                <OrganizeRunButton
-                                                    ariaLabel="참석자별 정리"
-                                                    disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
-                                                    onClick={handleGenerateSpeakerContext}
-                                                    title={summaryModelUnavailable ? organizeModelGuidanceMessage : canCreateSpeakerContext ? '참석자별 정리' : '주제별 정리를 먼저 만들어 주세요.'}
-                                                    icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
-                                                    label={getActionLabel(speakerGenerationStatus)}
-                                                />
-                                            </div>
-                                        )}
                                     </div>
                                 )}
                             </section>
 
-                        </>
+                        </section>
+                    )}
+
+                    {detailTab === 'report' && (
+                        <section
+                            id="meeting-detail-panel-report"
+                            role="tabpanel"
+                            aria-labelledby="meeting-detail-tab-report"
+                            className="detail-work-surface"
+                        >
+                            <div className="detail-command-bar">
+                                <div className="detail-command-primary">
+                                    <div className="flex flex-wrap items-center gap-2">
+                                        <h3 className="section-title">회의록 보고서</h3>
+                                        <span className="detail-output-chip">{reportOutputTemplate.name}</span>
+                                    </div>
+                                </div>
+                                <div className="detail-command-actions">
+                                    <label className="detail-inline-select">
+                                        <span>보고 양식</span>
+                                        <select
+                                            value={reportOutputTemplate.id}
+                                            onChange={event => void handleSelectReportTemplate(event.target.value)}
+                                            disabled={generatingKind !== null || meetingReportIsGenerating}
+                                            aria-label="보고 양식 선택"
+                                        >
+                                            {reportTemplates.map(template => (
+                                                <option key={template.id} value={template.id}>
+                                                    {template.name}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </label>
+                                    <div className="detail-context-menu-wrap" ref={reportTemplateMenuRef}>
+                                        <IconButton
+                                            id="report-template-menu-button"
+                                            variant="outline"
+                                            className="detail-context-menu-button"
+                                            icon={<MoreVertical size={16} />}
+                                            onClick={() => setIsReportTemplateMenuOpen(value => !value)}
+                                            aria-label="보고 양식 메뉴"
+                                            title="보고 양식 메뉴"
+                                            aria-haspopup="menu"
+                                            aria-expanded={isReportTemplateMenuOpen}
+                                            aria-controls="report-template-menu"
+                                            disabled={generatingKind !== null || meetingReportIsGenerating}
+                                        />
+                                        {isReportTemplateMenuOpen && (
+                                            <div
+                                                id="report-template-menu"
+                                                className="detail-context-menu"
+                                                role="menu"
+                                                aria-labelledby="report-template-menu-button"
+                                            >
+                                                <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewReportTemplate}>
+                                                    <Plus size={14} />
+                                                    추가
+                                                </button>
+                                                <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditReportTemplate} disabled={!canEditActiveReportTemplate}>
+                                                    <Edit3 size={14} />
+                                                    변경
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    role="menuitem"
+                                                    tabIndex={-1}
+                                                    className="detail-context-menu-danger"
+                                                    onClick={handleDeleteReportTemplate}
+                                                    disabled={!canEditActiveReportTemplate}
+                                                >
+                                                    <Trash2 size={14} />
+                                                    삭제
+                                                </button>
+                                                {!canCreateReportTemplate && (
+                                                    <div className="detail-context-menu-note">
+                                                        최대 {MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                    <OrganizeRunButton
+                                        ariaLabel="회의록 보고서 생성"
+                                        disabled={!canRunMeetingReportGeneration || generatingKind !== null || meetingReportGenerationStatus === 'generating'}
+                                        onClick={handleGenerateMeetingReport}
+                                        title={reportActionButtonTitle}
+                                        icon={renderRunIcon('meetingReport', meetingReportGenerationStatus)}
+                                        label={reportActionButtonLabel}
+                                    />
+                                    <MeetingDownloadControl
+                                        meeting={selectedMeeting}
+                                        scope="report"
+                                        presentation="button"
+                                        label="보고서 저장"
+                                        className="detail-context-button"
+                                        onNotice={setNoticeMessage}
+                                        onError={setErrorMessage}
+                                        onSaved={showSavedFileToast}
+                                        onDownloadingChange={setIsDownloading}
+                                        beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                        disabled={isDownloading || !hasGeneratedMeetingReport || meetingReportIsGenerating}
+                                    />
+                                </div>
+                            </div>
+                            <p className="detail-section-caption detail-section-caption-standalone">
+                                기록 정리를 바탕으로 보고 양식에 맞춰 다시 가공하는 산출물입니다.
+                            </p>
+                            {reportTemplateError && (
+                                <div className="detail-context-inline-error" role="status">
+                                    {reportTemplateError}
+                                </div>
+                            )}
+                            {reportActionBlockedMessage && (
+                                <InlineStateNote>
+                                    {reportActionBlockedMessage}
+                                </InlineStateNote>
+                            )}
+                            {meetingReportIsGenerating && (
+                                <InlineStateNote>
+                                    회의록 보고서를 생성 중입니다. 기존 보고서가 있으면 완료 전까지 보관용으로 표시됩니다.
+                                </InlineStateNote>
+                            )}
+                            {meetingReportIsStoredButNotCurrent && (
+                                <InlineStateNote>
+                                    현재 보고서는 이전 기록 정리 또는 보고 양식 기준으로 생성되었습니다. 아래 기존 보고서는 보관용으로 표시됩니다.
+                                </InlineStateNote>
+                            )}
+                            {meetingReportGenerationFailed && !meetingReportIsGenerating && (
+                                <InlineStateNote>
+                                    보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.
+                                </InlineStateNote>
+                            )}
+                            {canShowAnyMeetingReport && selectedMeeting?.meetingReport ? (
+                                <div className="detail-report-result">
+                                    {(selectedMeeting.meetingReport.sections?.length ?? 0) > 0 ? (
+                                        selectedMeeting.meetingReport.sections?.map(section => (
+                                            <section key={section.title} className="detail-report-result-section">
+                                                <h4>{section.title}</h4>
+                                                <p>{renderSearchText(section.content)}</p>
+                                            </section>
+                                        ))
+                                    ) : (
+                                        <p className="detail-report-content">{renderSearchText(selectedMeeting.meetingReport.content)}</p>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="detail-report-outline">
+                                    <div>
+                                        <div className="detail-report-title">{reportOutputTemplate.name}</div>
+                                        <p>{reportOutputTemplate.purpose}</p>
+                                    </div>
+                                    <div className="detail-report-sections" aria-label="보고서 구성">
+                                        {reportOutputTemplate.sections.map(section => (
+                                            <span key={section}>{section}</span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+                            {!hasGeneratedMeetingReport && !reportActionBlockedMessage && !meetingReportIsGenerating && (
+                                <InlineStateNote>
+                                    보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.
+                                </InlineStateNote>
+                            )}
+                            {!hasGeneratedMeetingReport && !meetingReportIsGenerating && reportReadinessItems.length > 0 && (
+                                <div className="detail-report-checklist" aria-label="보고서 생성 준비">
+                                    <div className="detail-report-checklist-title">생성 전 확인</div>
+                                    <ul>
+                                        {reportReadinessItems.map(item => <li key={item}>{item}</li>)}
+                                    </ul>
+                                </div>
+                            )}
+                        </section>
                     )}
 
                     {detailTab === 'script' && (
-                        <section>
+                        <section
+                            id="meeting-detail-panel-script"
+                            role="tabpanel"
+                            aria-labelledby="meeting-detail-tab-script"
+                            className="detail-work-surface"
+                        >
                             <div className="mb-4 flex flex-col gap-3">
-                                <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                                    <h3 className="section-title">대화록</h3>
-                                    <div className="flex flex-wrap gap-2">
+                                <div className="detail-command-bar">
+                                    <div className="detail-command-primary">
+                                        <h3 className="section-title">대화록</h3>
+                                    </div>
+                                    <div className="detail-command-actions">
                                         {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
                                             <Button variant="outline" onClick={handleRevertTranscript}>
                                                 원본 복원
@@ -3319,6 +4599,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     <Copy size={15} />
                                                     편집용 복사
                                                 </Button>
+                                                <MeetingDownloadControl
+                                                    meeting={selectedMeeting}
+                                                    scope="transcript"
+                                                    presentation="button"
+                                                    label="대화록 저장"
+                                                    onNotice={setNoticeMessage}
+                                                    onError={setErrorMessage}
+                                                    onSaved={showSavedFileToast}
+                                                    onDownloadingChange={setIsDownloading}
+                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                                    disabled={isDownloading || !displaySegments.length}
+                                                />
                                                 <Button variant="outline" onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
                                                     <Edit3 size={15} />
                                                     대화록 편집
@@ -3368,18 +4660,23 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                 )}
                             </div>
                             {(isTranscriptEditing ? transcriptSegmentDrafts.length : visibleSegments.length) ? (
-                                <div className="space-y-2">
+                                <div className="script-list">
                                     {(isTranscriptEditing ? transcriptSegmentDrafts : visibleSegments).map((segment, index) => {
                                         const warning = looksLikeKoreanMisrecognition(segment.text);
                                         const needsSpeakerReview = segmentNeedsSpeakerReview(segment);
+                                        const speakerTone = getSegmentSpeakerTone(segment, index);
                                         return (
-                                            <article key={`${segment.start}-${index}`} className={`script-row ${warning ? 'script-row-warning' : ''}`}>
-                                                <div className="script-meta flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
-                                                    <span className={`speaker-dot ${getSegmentSpeakerTone(segment, index)}`} />
-                                                    <span className="font-semibold text-foreground">{renderSearchText(segment.displaySpeaker || segment.speaker || '참석자')}</span>
-                                                    <span>{segment.start} - {segment.end}</span>
-                                                    {segment.timingApproximate && <span className="script-badge">시간 추정</span>}
-                                                    {needsSpeakerReview && <span className="script-badge">참석자 확인 필요</span>}
+                                            <article key={`${segment.start}-${index}`} className={`speaker-turn script-row ${speakerTone} ${warning ? 'speaker-turn-warning' : ''}`}>
+                                                <div className="speaker-meta script-meta">
+                                                    <div className="speaker-label">
+                                                        <span className="speaker-dot" />
+                                                        <span>{renderSearchText(segment.displaySpeaker || segment.speaker || '참석자')}</span>
+                                                    </div>
+                                                    <div className="script-time-range">{segment.start} - {segment.end}</div>
+                                                    <div className="script-badge-row">
+                                                        {segment.timingApproximate && <span className="script-badge">시간 추정</span>}
+                                                        {needsSpeakerReview && <span className="script-badge">참석자 확인 필요</span>}
+                                                    </div>
                                                 </div>
                                                 {isTranscriptEditing ? (
                                                     <textarea
@@ -3389,7 +4686,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                         aria-label={`${segment.displaySpeaker || segment.speaker || '참석자'} 대화록 수정`}
                                                     />
                                                 ) : (
-                                                    <p className="script-text">{renderSearchText(segment.text)}</p>
+                                                    <p className="speaker-text script-text">{renderSearchText(segment.text)}</p>
                                                 )}
                                             </article>
                                         );
@@ -3402,6 +4699,202 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     )}
                 </div>
             </article>
+            {isContextTemplateModalOpen && (
+                <div className="context-template-modal-backdrop" role="presentation">
+                    <section
+                        ref={contextTemplateModalRef}
+                        className="context-template-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="context-template-modal-title"
+                        tabIndex={-1}
+                    >
+                        <div className="context-template-modal-header">
+                            <div>
+                                <h3 id="context-template-modal-title">
+                                    {contextTemplateDraftId ? '정리 맥락 수정' : '정리 맥락 추가'}
+                                </h3>
+                                <p>자주 쓰는 회의 맥락과 정리 프롬프트를 저장해 다음 회의록에서 재사용합니다.</p>
+                                <p className="context-template-count">
+                                    사용자 맥락 {customContextTemplateCount}/{MAX_CUSTOM_CONTEXT_TEMPLATES}
+                                </p>
+                            </div>
+                            <IconButton
+                                variant="outline"
+                                icon={<X size={18} />}
+                                onClick={handleCloseContextTemplateModal}
+                                aria-label="정리 맥락 창 닫기"
+                                title="닫기"
+                            />
+                        </div>
+                        <div className="context-template-form">
+                            <label>
+                                <span>제목</span>
+                                <Input
+                                    value={contextTemplateTitle}
+                                    onChange={event => setContextTemplateTitle(event.target.value)}
+                                    placeholder="예: LMO 심사 회의, 월간 사업 점검"
+                                    autoFocus
+                                />
+                            </label>
+                            <label>
+                                <span>정리 프롬프트</span>
+                                <textarea
+                                    value={contextTemplatePrompt}
+                                    onChange={event => setContextTemplatePrompt(event.target.value)}
+                                    className="context-template-textarea"
+                                    placeholder="예: 심사 안건, 위해성 평가 쟁점, 보완 요청, 결정사항을 중심으로 정리한다."
+                                />
+                            </label>
+                            {contextTemplateError && (
+                                <div className="context-template-error" role="alert">
+                                    {contextTemplateError}
+                                </div>
+                            )}
+                        </div>
+                        <div className="context-template-modal-actions">
+                            <Button variant="outline" onClick={handleCloseContextTemplateModal}>
+                                취소
+                            </Button>
+                            <Button
+                                onClick={() => void handleSaveContextTemplate()}
+                                disabled={!contextTemplateTitle.trim() || !contextTemplatePrompt.trim() || (!contextTemplateDraftId && !canCreateContextTemplate)}
+                            >
+                                저장
+                            </Button>
+                        </div>
+                    </section>
+                </div>
+            )}
+            {isReportTemplateModalOpen && (
+                <div className="context-template-modal-backdrop" role="presentation">
+                    <section
+                        ref={reportTemplateModalRef}
+                        className="context-template-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="report-template-modal-title"
+                        tabIndex={-1}
+                    >
+                        <div className="context-template-modal-header">
+                            <div>
+                                <h3 id="report-template-modal-title">
+                                    {reportTemplateDraftId ? '보고 양식 수정' : '보고 양식 추가'}
+                                </h3>
+                                <p>회의록 보고서를 만들 때 적용할 보고 형식과 섹션 순서를 저장합니다.</p>
+                                <p className="context-template-count">
+                                    사용자 양식 {customReportTemplateCount}/{MAX_CUSTOM_REPORT_TEMPLATES}
+                                </p>
+                            </div>
+                            <IconButton
+                                variant="outline"
+                                icon={<X size={18} />}
+                                onClick={handleCloseReportTemplateModal}
+                                aria-label="보고 양식 창 닫기"
+                                title="닫기"
+                            />
+                        </div>
+                        <div className="context-template-form">
+                            <label>
+                                <span>제목</span>
+                                <Input
+                                    value={reportTemplateTitle}
+                                    onChange={event => setReportTemplateTitle(event.target.value)}
+                                    placeholder="예: 심사위원회 보고 양식"
+                                    autoFocus
+                                />
+                            </label>
+                            <label>
+                                <span>보고 지시문</span>
+                                <textarea
+                                    value={reportTemplatePurpose}
+                                    onChange={event => setReportTemplatePurpose(event.target.value)}
+                                    className="context-template-textarea"
+                                    placeholder="예: 회의 목적, 주요 논의, 결정사항, 후속 조치를 보고 문체로 간결하게 정리한다."
+                                />
+                            </label>
+                            <label>
+                                <span>섹션 순서</span>
+                                <textarea
+                                    value={reportTemplateSections}
+                                    onChange={event => setReportTemplateSections(event.target.value)}
+                                    className="context-template-textarea context-template-textarea-compact"
+                                    placeholder={'보고 개요\n주요 논의\n결정사항\n후속 조치'}
+                                />
+                            </label>
+                            {reportTemplateError && (
+                                <div className="context-template-error" role="alert">
+                                    {reportTemplateError}
+                                </div>
+                            )}
+                        </div>
+                        <div className="context-template-modal-actions">
+                            <Button variant="outline" onClick={handleCloseReportTemplateModal}>
+                                취소
+                            </Button>
+                            <Button
+                                onClick={() => void handleSaveReportTemplate()}
+                                disabled={!reportTemplateTitle.trim() || !reportTemplatePurpose.trim() || !reportTemplateSections.trim() || (!reportTemplateDraftId && !canCreateReportTemplate)}
+                            >
+                                저장
+                            </Button>
+                        </div>
+                    </section>
+                </div>
+            )}
+            {pendingTemplateDelete && (
+                <div className="context-template-modal-backdrop" role="presentation">
+                    <section
+                        ref={deleteTemplateModalRef}
+                        className="context-template-modal context-template-confirm-modal"
+                        role="dialog"
+                        aria-modal="true"
+                        aria-labelledby="template-delete-modal-title"
+                        tabIndex={-1}
+                    >
+                        <div className="context-template-modal-header">
+                            <div>
+                                <h3 id="template-delete-modal-title">
+                                    {pendingTemplateDelete.kind === 'context' ? '정리 맥락 삭제' : '보고 양식 삭제'}
+                                </h3>
+                                <p>
+                                    삭제하면 저장된 사용자 목록에서 사라지고 현재 회의는 기본값으로 돌아갑니다. 삭제 직후 알림에서 되돌릴 수 있습니다.
+                                </p>
+                            </div>
+                            <IconButton
+                                variant="outline"
+                                icon={<X size={18} />}
+                                onClick={handleCloseTemplateDeleteModal}
+                                aria-label="삭제 확인 창 닫기"
+                                title="닫기"
+                                disabled={isDeletingTemplate}
+                            />
+                        </div>
+                        <div className="context-template-delete-summary">
+                            <span>{pendingTemplateDelete.kind === 'context' ? '정리 맥락' : '보고 양식'}</span>
+                            <strong>{pendingTemplateDelete.name}</strong>
+                        </div>
+                        {templateDeleteError && (
+                            <div className="context-template-error" role="alert">
+                                {templateDeleteError}
+                            </div>
+                        )}
+                        <div className="context-template-modal-actions">
+                            <Button variant="outline" onClick={handleCloseTemplateDeleteModal} disabled={isDeletingTemplate}>
+                                취소
+                            </Button>
+                            <Button
+                                className="context-template-delete-button"
+                                onClick={() => void handleConfirmTemplateDelete()}
+                                disabled={isDeletingTemplate}
+                            >
+                                {isDeletingTemplate ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                                삭제
+                            </Button>
+                        </div>
+                    </section>
+                </div>
+            )}
         </div>
     );
 };

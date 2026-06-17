@@ -39,6 +39,17 @@
   --color-neutral-800: #1e293b;
   --color-neutral-900: #0f172a;
   --color-neutral-950: #020617;
+
+  /* Refero-inspired compact monochrome pilot tokens */
+  --refero-graphite: #0a0a0a;
+  --refero-pure-black: #000000;
+  --refero-carbon: #171717;
+  --refero-concrete: #737373;
+  --refero-ash: #a1a1a1;
+  --refero-smoke: #b9b9b9;
+  --refero-hairline: #e5e5e5;
+  --refero-mist: #f2f2f2;
+  --refero-chalk: #ffffff;
 }
 
 /* ── 2. SEMANTIC TOKENS (Light Mode) ──────────────────────── */
@@ -777,7 +788,7 @@
   }
 
   .writer-shell {
-    @apply mx-auto flex h-full w-full max-w-[68rem] flex-col gap-5 pt-1;
+    @apply mx-auto flex h-full w-full max-w-[75rem] flex-col gap-4 pt-0;
   }
 
   .writer-header {
@@ -785,19 +796,52 @@
   }
 
   .writer-title {
-    @apply text-xl font-semibold text-foreground;
+    @apply text-[18px] font-semibold text-foreground;
+    letter-spacing: 0;
   }
 
   .writer-panel {
-    @apply flex flex-col gap-6 p-4 sm:p-6;
+    @apply flex flex-col gap-5 p-4 sm:p-5;
+    background-color: var(--refero-chalk);
+    border-color: var(--refero-hairline);
+    box-shadow: none;
+  }
+
+  .writer-panel .btn {
+    box-shadow: none;
+  }
+
+  .writer-panel .btn-outline {
+    border-color: var(--refero-hairline);
+    background-color: var(--refero-chalk);
+    color: var(--refero-graphite);
+  }
+
+  .writer-panel .btn-outline:hover {
+    background-color: var(--refero-mist);
+    color: var(--refero-graphite);
+  }
+
+  .writer-panel .input-field {
+    border-color: var(--refero-hairline);
+    border-radius: 10px;
+    background-color: var(--refero-chalk);
+    color: var(--refero-graphite);
+    box-shadow: none;
+  }
+
+  .writer-panel .input-field:focus-visible {
+    border-color: var(--refero-graphite);
   }
 
   .writer-section {
-    @apply grid gap-4 border-t border-border/60 pt-5 first:border-t-0 first:pt-0 lg:grid-cols-[8.5rem_minmax(0,1fr)];
+    @apply grid gap-3 border-t pt-4 first:border-t-0 first:pt-0 lg:grid-cols-[9rem_minmax(0,1fr)];
+    border-color: var(--refero-hairline);
   }
 
   .writer-section-heading {
-    @apply flex items-center gap-2 self-start text-sm font-semibold text-foreground lg:pt-1.5;
+    @apply flex items-center gap-2 self-start text-sm font-semibold lg:pt-1.5;
+    color: var(--refero-graphite);
   }
 
   .writer-section-heading h3 {
@@ -805,7 +849,7 @@
   }
 
   .writer-field-grid {
-    @apply grid gap-4 md:grid-cols-2;
+    @apply grid gap-3 md:grid-cols-2;
   }
 
   .writer-field {
@@ -817,36 +861,44 @@
   }
 
   .writer-field label {
-    @apply text-[13px] font-semibold text-foreground;
+    @apply text-[13px] font-semibold;
+    color: var(--refero-graphite);
   }
 
   .file-drop-zone {
-    @apply rounded-[var(--radius-card)] border border-dashed border-border bg-background p-4 transition-colors sm:p-5;
+    @apply border p-4 transition-colors sm:p-5;
+    border-color: var(--refero-hairline);
+    border-radius: 14px;
+    background-color: var(--refero-chalk);
   }
 
   .file-drop-zone:hover {
-    border-color: var(--border-brand);
-    background-color: var(--bg-surface-hover);
+    border-color: var(--refero-smoke);
+    background-color: var(--refero-mist);
   }
 
   .file-drop-zone:focus-visible {
-    outline: 2px solid var(--brand-primary);
+    outline: 2px solid var(--refero-graphite);
     outline-offset: 2px;
-    border-color: var(--border-brand);
+    border-color: var(--refero-graphite);
   }
 
   .file-drop-zone-selected {
-    border-color: var(--border-strong);
-    background-color: var(--bg-surface-hover);
+    border-color: var(--refero-graphite);
+    background-color: var(--refero-chalk);
   }
 
   .file-upload-icon {
-    @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-[var(--radius-card)] text-primary;
-    background-color: var(--topic-chip-active-bg);
+    @apply flex h-10 w-10 shrink-0 items-center justify-center border;
+    border-color: var(--refero-hairline);
+    border-radius: 10px;
+    background-color: var(--refero-mist);
+    color: var(--refero-graphite);
   }
 
   .writer-action-bar {
-    @apply flex flex-col gap-3 border-t border-border/70 pt-5 lg:flex-row lg:items-center lg:justify-between;
+    @apply flex flex-col gap-3 border-t pt-4 lg:flex-row lg:items-center lg:justify-between;
+    border-color: var(--refero-hairline);
   }
 
   .writer-secondary-actions {
@@ -859,6 +911,13 @@
 
   .writer-start-button {
     @apply min-h-11 min-w-28 px-5 text-sm font-semibold;
+    background-color: var(--refero-graphite);
+    color: var(--refero-chalk);
+    box-shadow: none;
+  }
+
+  .writer-start-button:hover {
+    background-color: var(--refero-carbon);
   }
 
   .detail-action-row {

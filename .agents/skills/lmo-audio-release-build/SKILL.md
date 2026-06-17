@@ -13,6 +13,8 @@ Treat an unqualified request such as "build", "release build", "portable build",
 
 Do not use `corepack pnpm --dir desktop-app build` for that request. It only creates Vite web assets and does not update the executable, sidecar, models, or `releases\lmo_audio`.
 
+If the request implies sharing, handoff, company delivery, another PC, or a zip file, the normal transfer artifact is the slim handoff package, not the full `releases\lmo_audio` folder. Build and verify the clean portable folder first, then run `corepack pnpm package:handoff` and report the zip path and size.
+
 ## Required Workflow
 
 1. Read `AGENTS.md` and `docs\tauri-desktop-release-checklist.md`.
@@ -41,6 +43,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 
    - `dirty`
    - frontend asset names
    - whether the manifest commit matches `git rev-parse HEAD`
+8. If the user is likely to transfer the build to another PC, run `corepack pnpm package:handoff` and report the resulting `releases\handoff\lmo_audio_no_ollama_no_whisper_<commit>.zip` size separately from the full portable folder size.
 
 ## Manual Update Package
 
@@ -71,3 +74,5 @@ powershell -NoProfile -ExecutionPolicy Bypass -File releases\updates\lmo_audio_u
 ## Final Response
 
 State whether the release is ready for a normal user PC, give the path `releases\lmo_audio`, and mention residual risk such as a dirty manifest or a clean-room zip test that was not performed.
+
+For delivery/handoff work, lead with the slim handoff zip path and size. Mention the full portable folder only as the local source/verification folder, because it includes large embedded model files and is not the usual transfer artifact.

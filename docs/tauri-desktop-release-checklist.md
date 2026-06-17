@@ -134,6 +134,7 @@ corepack pnpm check:portable
 - 분석 시작, 진행 상태, 중지/취소, 이어하기, 참석자 구분, 기록 정리, 저장/다운로드, 설정, 모델 상태, 경로, Tauri command, sidecar API가 바뀌면 데스크탑앱 한계 체크를 함께 한다.
 - 백엔드 Python, 패키징 리소스, 모델 경로, ffmpeg, Tauri/Rust, release script가 바뀌면 최종 portable 빌드와 `verify_portable.ps1` 검증 대상이다.
 - 회사 전달, 실행 파일 재생성, zip/update package 생성, "빌드" 요청은 항상 사용자용 portable 배포 흐름으로 본다.
+- 공유/전달/다른 PC 실행 목적이면 전체 `releases\lmo_audio` 폴더가 아니라 `corepack pnpm package:handoff`로 만든 슬림 zip을 기본 전달 산출물로 보고한다. 전체 폴더 크기는 검증 원본 크기로만 구분하고, 사용자가 전체 모델 포함 배포를 명시하지 않았으면 최종 전달물처럼 말하지 않는다.
 
 1. 변경 범위를 분류한다: 웹 UI, 데스크탑/Tauri, 백엔드, 배포 스크립트, 모델/성능.
 2. 변경 범위에 맞는 좁은 검증을 먼저 실행한다.
@@ -149,7 +150,8 @@ corepack pnpm check:portable
 8. `scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`가 통과하는지 확인한다.
    - 전체 자동 게이트로는 `corepack pnpm check:portable`을 사용한다.
 9. `releases\lmo_audio\release-manifest.json`의 `commit`이 `git rev-parse HEAD`와 같고 `dirty=false`인지 확인한다.
-10. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다.
+10. 공유/전달 목적이면 `corepack pnpm package:handoff`를 실행하고 zip 경로, 크기, 포함/제외 모델 검수 결과를 기록한다.
+11. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다.
 
 단순 문구/아이콘 변경처럼 배포가 필요 없는 경우에는 5~10번을 생략할 수 있다. 사용자가 "빌드" 또는 "전달"을 요청한 경우에는 5~10번을 생략하지 않는다.
 
@@ -211,6 +213,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\create_update_packag
 ### 회사 전달용 슬림 zip
 
 새 PC에 전달하되 2GB 이상 Whisper 모델, Ollama 실행 파일, Gemma 등 Ollama 요약 모델 데이터를 제외하려면 풀 portable 빌드가 끝난 뒤 아래 명령을 사용한다. 요약 프로그램과 요약 모델은 대상 PC에서 앱 설정 화면으로 받는다.
+
+Codex가 사용자에게 배포 결과를 보고할 때는 이 zip을 먼저 제시한다. `releases\lmo_audio`는 로컬 검증 원본이며, 크기가 수 GB가 될 수 있으므로 일반 전달물로 오해시키지 않는다.
 
 ```powershell
 corepack pnpm package:handoff

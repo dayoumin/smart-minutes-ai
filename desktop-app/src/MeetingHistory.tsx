@@ -1647,7 +1647,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 const restoredTemplate = saveContextTemplate(target.template);
                 setContextTemplates(listContextTemplates());
                 const selectedTermGlossaryIds = restoredTemplate.termGlossaryIds ?? [];
-                await updateSelectedMeeting(currentMeeting => ({
+                await updateSelectedMeeting(() => ({
                     selectedContextTemplateId: restoredTemplate.id,
                     contextTemplate: restoredTemplate,
                     selectedTermGlossaryIds,

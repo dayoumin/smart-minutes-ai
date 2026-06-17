@@ -1262,7 +1262,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage('새 분석을 처음부터 시작합니다.');
     };
 
-    const handleResumeDraftPrepare = (draft: AnalysisResumeDraft) => {
+    const handleResumeDraftPrepare = React.useCallback((draft: AnalysisResumeDraft) => {
         setTitle(draft.title);
         setDate(draft.date);
         setMeetingPurpose(draft.meetingPurpose || draft.participants || '');
@@ -1279,7 +1279,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         updateAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
-    };
+    }, [updateAnalysisEtaSeconds]);
 
     const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
     const resumeDraftSelectionRequestId = resumeDraftSelectionRequest?.requestId;
@@ -1295,7 +1295,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             return;
         }
         handleResumeDraftPrepare(draft);
-    }, [resumeDraftSelectionJobId, resumeDraftSelectionRequestId]);
+    }, [handleResumeDraftPrepare, resumeDraftSelectionJobId, resumeDraftSelectionRequestId]);
 
     const handleDeleteResumeDraft = async (draft: AnalysisResumeDraft) => {
         if (deletingResumeDraftIds.has(draft.jobId)) return;

@@ -38,6 +38,7 @@ from config_normalization import (
     normalize_app_config,
     remove_summary_user_model,
 )
+from generation_gateway import classify_generation_exception, failure_for_code
 from job_checkpoints import (
     CorruptCheckpointError,
     atomic_write_json,
@@ -1112,16 +1113,18 @@ def _model_download_preflight(model_key: str, target_path: str) -> str:
     target = Path(target_path)
     try:
         target.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return f"모델을 저장할 폴더를 만들지 못했습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+    except OSError:
+        logging.exception("Failed to create model download directory")
+        return "모델을 저장할 폴더를 만들지 못했습니다. 저장 위치 권한을 확인해 주세요"
 
     probe_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(prefix=".download-check-", dir=target, delete=False) as handle:
             probe_path = Path(handle.name)
             handle.write(b"ok")
-    except OSError as exc:
-        return f"모델 폴더에 파일을 쓸 수 없습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+    except OSError:
+        logging.exception("Failed to write model download probe")
+        return "모델 폴더에 파일을 쓸 수 없습니다. 저장 위치 권한을 확인해 주세요"
     finally:
         if probe_path:
             try:
@@ -1400,16 +1403,18 @@ def _request_ollama_runtime_download_stop() -> dict:
 def _ollama_runtime_download_preflight(target_path: Path) -> str:
     try:
         target_path.mkdir(parents=True, exist_ok=True)
-    except OSError as exc:
-        return f"요약 프로그램 저장 폴더를 만들지 못했습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+    except OSError:
+        logging.exception("Failed to create summary runtime download directory")
+        return "요약 프로그램 저장 폴더를 만들지 못했습니다. 저장 위치 권한을 확인해 주세요"
 
     probe_path: Path | None = None
     try:
         with tempfile.NamedTemporaryFile(prefix=".download-check-", dir=target_path, delete=False) as handle:
             probe_path = Path(handle.name)
             handle.write(b"ok")
-    except OSError as exc:
-        return f"요약 프로그램 저장 폴더에 파일을 쓸 수 없습니다. 저장 위치 권한을 확인해 주세요: {exc}"
+    except OSError:
+        logging.exception("Failed to write summary runtime download probe")
+        return "요약 프로그램 저장 폴더에 파일을 쓸 수 없습니다. 저장 위치 권한을 확인해 주세요"
     finally:
         if probe_path:
             try:
@@ -2014,16 +2019,20 @@ def _ollama_model_exists_strict(model_name: str) -> bool:
             timeout=15,
             **hidden_subprocess_kwargs(),
         )
-    except FileNotFoundError:
-        raise HTTPException(status_code=503, detail="요약 프로그램(Ollama)을 찾지 못했습니다. 요약 프로그램을 설치한 뒤 준비 상태 확인을 눌러 주세요.")
     except Exception as exc:
-        raise HTTPException(status_code=503, detail=f"Ollama 모델 상태를 확인하지 못했습니다: {exc}")
+        logging.exception("Failed to inspect Ollama models")
+        raise _generation_http_exception(exc, "model_status")
 
     output = "\n".join(part.strip() for part in (completed.stdout, completed.stderr) if part and part.strip())
     if completed.returncode != 0:
-        raise HTTPException(
-            status_code=503,
-            detail=output[-4000:] or "Ollama 모델 상태를 확인하지 못했습니다.",
+        raise _generation_http_exception(
+            subprocess.CalledProcessError(
+                completed.returncode,
+                [find_ollama_executable(), "list"],
+                output=completed.stdout,
+                stderr=completed.stderr,
+            ),
+            "model_status",
         )
 
     return any(line.split(maxsplit=1)[0] == model_name for line in completed.stdout.splitlines()[1:] if line.split())
@@ -2811,6 +2820,7 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
             "ready": False,
             "status": "skipped",
             "message": "요약 기능이 꺼져 있어 대화록만 생성했습니다.",
+            "reason": "generation_disabled",
         }
 
     model_name_or_path = _resolve_summary_model(config, start_ollama=start_ollama)
@@ -2819,6 +2829,7 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
             "ready": False,
             "status": "skipped",
             "message": "요약 AI 설정이 없어 대화록만 생성했습니다.",
+            "reason": "model_missing",
         }
 
     if os.path.exists(model_name_or_path):
@@ -2829,14 +2840,24 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
             "ready": False,
             "status": "skipped",
             "message": "요약 AI 모델 파일이 없어 대화록만 생성했습니다.",
+            "reason": "model_missing",
         }
 
     if ollama_model_exists(model_name_or_path, start_server=start_ollama):
         return {"ready": True, "status": "ready", "message": ""}
 
+    connection_status = _ollama_connection_status().get("status")
+    reason = (
+        "runtime_missing"
+        if connection_status == "missing"
+        else "server_unreachable"
+        if connection_status in {"system_stopped", "managed_stopped"}
+        else "model_missing"
+    )
     return {
         "ready": False,
         "status": "skipped",
+        "reason": reason,
         "message": f"요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 Ollama에 {model_name_or_path} 모델을 준비해 주세요.",
     }
 
@@ -2858,6 +2879,17 @@ def _skipped_summary(message: str) -> dict:
             "meeting_report": "skipped",
         },
     }
+
+
+def _failed_summary(failure) -> dict:
+    summary = _skipped_summary(failure.user_message)
+    summary["generation_status"]["summary"] = "failed"
+    summary["generation_status"]["topic_sections"] = "not_started"
+    summary["generation_status"]["speaker_context_summaries"] = "not_started"
+    summary["generation_status"]["meeting_report"] = "not_started"
+    summary["generation_error_detail"] = failure.code
+    summary["generation_error"] = failure.as_detail("summary")
+    return summary
 
 
 def _should_generate_summary_during_analysis(config: dict) -> bool:
@@ -2883,6 +2915,20 @@ def _summary_status(summary: dict) -> str:
     status = _ensure_generation_status(summary)
     value = status.get("summary")
     return value if isinstance(value, str) else "not_started"
+
+
+def _generation_http_exception(error: BaseException, generation_kind: str) -> HTTPException:
+    failure = classify_generation_exception(error)
+    return HTTPException(
+        status_code=failure.http_status,
+        detail=failure.as_detail(generation_kind),
+    )
+
+
+def _summary_failure_from_result(summary: dict):
+    error = summary.get("generation_error")
+    code = error.get("code") if isinstance(error, dict) else summary.get("generation_error_detail")
+    return failure_for_code(str(code or "generation_internal_error"))
 
 
 def _has_existing_summary_content(summary: dict | None) -> bool:
@@ -3457,13 +3503,42 @@ def _valid_generated_topic_sections(topic_sections: list[dict]) -> list[dict]:
     return sections
 
 
+def _set_generation_error(summary: dict, detail: str, generation_kind: str) -> None:
+    summary["generation_error_detail"] = detail
+    failure = failure_for_code(detail)
+    if failure.code == detail:
+        summary["generation_error"] = failure.as_detail(generation_kind)
+    else:
+        summary.pop("generation_error", None)
+
+
+def _clear_generation_error(summary: dict) -> None:
+    summary.pop("generation_error_detail", None)
+    summary.pop("generation_error", None)
+
+
 def _mark_generation_failed(job_id: str, result_data: dict, summary_key: str, detail: str) -> dict:
     latest_result = _load_latest_generation_result(job_id, result_data)
     latest_summary = latest_result.setdefault("summary", {})
     latest_status = _ensure_generation_status(latest_summary)
-    latest_status[summary_key] = "failed"
+    meeting_report = latest_result.get("meeting_report")
+    if not isinstance(meeting_report, dict):
+        meeting_report = {}
+    existing_content = {
+        "summary": _has_existing_summary_content(latest_summary),
+        "topic_sections": bool(_valid_generated_topic_sections(latest_summary.get("topic_sections", []))),
+        "speaker_context_summaries": bool(
+            latest_summary.get("speaker_context_summaries")
+            or latest_summary.get("participant_summaries")
+        ),
+        "meeting_report": bool(
+            str(meeting_report.get("content") or "").strip()
+            or meeting_report.get("sections")
+        ),
+    }.get(summary_key, False)
+    latest_status[summary_key] = "completed" if existing_content else "failed"
     latest_summary["generation_status"] = latest_status
-    latest_summary["generation_error_detail"] = detail
+    _set_generation_error(latest_summary, detail, summary_key)
     _save_job_result(job_id, latest_result)
     return latest_result
 
@@ -3485,11 +3560,11 @@ def _restore_topic_section_status_after_custom_failure(
     ])
     if valid_topic_section_count >= 1:
         latest_status["topic_sections"] = "completed"
-        latest_summary.pop("generation_error_detail", None)
+        _clear_generation_error(latest_summary)
     else:
         latest_status["topic_sections"] = fallback_status
         if detail and fallback_status == "failed":
-            latest_summary["generation_error_detail"] = detail
+            _set_generation_error(latest_summary, detail, "topic_sections")
     latest_summary["generation_status"] = latest_status
     _save_job_result(job_id, latest_result)
     return latest_result
@@ -3804,7 +3879,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
                     job_id,
                     result_data if "result_data" in locals() else {},
                     DETAIL_DIARIZATION_RUNTIME_ERROR,
-                    f"{type(exc).__name__}: {exc}",
+                    "참석자 구분 중 문제가 발생했습니다. 원본 음성과 모델 상태를 확인한 뒤 다시 실행해 주세요.",
                 )
             except Exception:
                 pass
@@ -3856,7 +3931,8 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
             config = load_config()
             readiness = await asyncio.to_thread(_summary_model_readiness, config)
             if not readiness["ready"]:
-                summary_data = _skipped_summary(readiness["message"])
+                failure = failure_for_code(str(readiness.get("reason") or "model_missing"))
+                summary_data = _failed_summary(failure)
             else:
                 summary_data = await asyncio.to_thread(
                     lambda: summarize_meeting(
@@ -3865,16 +3941,22 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
                         meeting_context=_meeting_context_from_result_data(result_data),
                     )
                 )
-        except Exception:
+        except Exception as exc:
+            http_error = _generation_http_exception(exc, "summary")
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
                     latest_result = _load_latest_generation_result(job_id, result_data)
                     latest_summary = latest_result.setdefault("summary", {})
                     latest_status = _ensure_generation_status(latest_summary)
-                    latest_status["summary"] = "failed"
+                    latest_status["summary"] = (
+                        previous_summary_status
+                        if had_existing_summary_content and previous_summary_status != "generating"
+                        else "failed"
+                    )
+                    _set_generation_error(latest_summary, http_error.detail["code"], "summary")
                     _save_job_result(job_id, latest_result)
             logging.exception("Failed to generate summary")
-            raise HTTPException(status_code=500, detail="Failed to generate summary")
+            raise http_error
 
         with GENERATION_STATUS_LOCK:
             latest_result = _load_latest_generation_result(job_id, result_data)
@@ -3896,11 +3978,26 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
                 if isinstance(summary_data.get("generation_status"), dict)
                 else "completed"
             )
+            if summary_state == "failed":
+                failure = _summary_failure_from_result(summary_data)
+                latest_status["summary"] = (
+                    previous_summary_status
+                    if had_existing_summary_content and previous_summary_status != "generating"
+                    else "failed"
+                )
+                _set_generation_error(latest_summary, failure.code, "summary")
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _save_job_result(job_id, latest_result)
+                raise HTTPException(
+                    status_code=failure.http_status,
+                    detail=failure.as_detail("summary"),
+                )
             if summary_state == "skipped" and had_existing_summary_content:
                 latest_status["summary"] = previous_summary_status if previous_summary_status != "generating" else "completed"
                 latest_summary["generation_status"] = latest_status
                 _save_job_result(job_id, latest_result)
                 raise HTTPException(status_code=409, detail="summary_model_not_ready")
+            _clear_generation_error(latest_summary)
             latest_summary.update(summary_data)
             latest_summary["topic_sections"] = []
             latest_summary["speaker_context_summaries"] = []
@@ -3992,12 +4089,13 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
                     meeting_context=_meeting_context_from_result_data(result_data),
                 )
             )
-        except Exception:
+        except Exception as exc:
+            http_error = _generation_http_exception(exc, "topic_sections")
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
-                    _mark_generation_failed(job_id, result_data, "topic_sections", "topic_generation_error")
+                    _mark_generation_failed(job_id, result_data, "topic_sections", http_error.detail["code"])
             logging.exception("Failed to generate topic sections")
-            raise HTTPException(status_code=500, detail="Failed to generate topic sections")
+            raise http_error
 
         topic_sections = _valid_generated_topic_sections(topic_sections)
         if not topic_sections:
@@ -4028,7 +4126,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
             _clear_speaker_context_after_topic_change(latest_summary, latest_status)
             _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
-            latest_summary.pop("generation_error_detail", None)
+            _clear_generation_error(latest_summary)
             _save_job_result(job_id, latest_result)
             result_data = latest_result
             summary = latest_summary
@@ -4116,17 +4214,18 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
                 if os.path.exists(_get_job_result_path(job_id)):
                     _restore_topic_section_status_after_custom_failure(job_id, result_data, "not_started")
             raise
-        except Exception:
+        except Exception as exc:
+            http_error = _generation_http_exception(exc, "topic_sections")
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
                     _restore_topic_section_status_after_custom_failure(
                         job_id,
                         result_data,
                         "failed",
-                        "topic_generation_error",
+                        http_error.detail["code"],
                     )
             logging.exception("Failed to generate topic section")
-            raise HTTPException(status_code=500, detail="Failed to generate topic section")
+            raise http_error
 
         if not topic_section:
             with GENERATION_STATUS_LOCK:
@@ -4178,7 +4277,7 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
             _clear_speaker_context_after_topic_change(latest_summary, latest_status)
             _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
-            latest_summary.pop("generation_error_detail", None)
+            _clear_generation_error(latest_summary)
             _save_job_result(job_id, latest_result)
             result_data = latest_result
             summary = latest_summary
@@ -4255,17 +4354,18 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
                     meeting_context=_meeting_context_from_result_data(result_data),
                 )
             )
-        except Exception:
+        except Exception as exc:
+            http_error = _generation_http_exception(exc, "speaker_context_summaries")
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
                     _mark_generation_failed(
                         job_id,
                         result_data,
                         "speaker_context_summaries",
-                        "speaker_context_generation_error",
+                        http_error.detail["code"],
                     )
             logging.exception("Failed to generate speaker context summaries")
-            raise HTTPException(status_code=500, detail="Failed to generate speaker context summaries")
+            raise http_error
 
         if not speaker_context_summaries:
             with GENERATION_STATUS_LOCK:
@@ -4297,7 +4397,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
             latest_status["speaker_context_summaries"] = "completed"
             _mark_meeting_report_outdated(latest_result, latest_status)
             latest_summary["generation_status"] = latest_status
-            latest_summary.pop("generation_error_detail", None)
+            _clear_generation_error(latest_summary)
             _save_job_result(job_id, latest_result)
             result_data = latest_result
             summary = latest_summary
@@ -4382,12 +4482,13 @@ async def generate_output_meeting_report(job_id: str, payload: dict | None = Bod
             )
         except HTTPException:
             raise
-        except Exception:
+        except Exception as exc:
+            http_error = _generation_http_exception(exc, "meeting_report")
             with GENERATION_STATUS_LOCK:
                 if os.path.exists(_get_job_result_path(job_id)):
-                    _mark_generation_failed(job_id, result_data, "meeting_report", "meeting_report_generation_error")
+                    _mark_generation_failed(job_id, result_data, "meeting_report", http_error.detail["code"])
             logging.exception("Failed to generate meeting report")
-            raise HTTPException(status_code=500, detail="Failed to generate meeting report")
+            raise http_error
 
         if not meeting_report or not str(meeting_report.get("content") or "").strip():
             with GENERATION_STATUS_LOCK:
@@ -4423,7 +4524,7 @@ async def generate_output_meeting_report(job_id: str, payload: dict | None = Bod
             latest_result["meeting_report"] = report_payload
             latest_status["meeting_report"] = "completed"
             latest_summary["generation_status"] = latest_status
-            latest_summary.pop("generation_error_detail", None)
+            _clear_generation_error(latest_summary)
             _save_job_result(job_id, latest_result)
             result_data = latest_result
             status = latest_status

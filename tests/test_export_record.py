@@ -820,7 +820,8 @@ class ExportRecordTest(unittest.TestCase):
         result_data = json.loads(output_path.read_text(encoding="utf-8"))
         self.assertEqual(result_data["settings"]["diarization_generation_status"], "failed")
         self.assertEqual(result_data["settings"]["diarization_error_detail"], "diarization_runtime_error")
-        self.assertIn("pyannote failed", result_data["settings"]["diarization_error_message"])
+        self.assertNotIn("pyannote failed", result_data["settings"]["diarization_error_message"])
+        self.assertTrue(result_data["settings"]["diarization_error_message"])
 
     def test_completed_diarization_conflict_does_not_persist_failure(self):
         job_id = "unit_diarization_already_completed"

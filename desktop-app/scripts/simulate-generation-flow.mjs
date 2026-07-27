@@ -87,4 +87,20 @@ assert.equal(
 );
 assert.equal(parseApiErrorBody('', '연결 상태를 확인해 주세요.').message, '연결 상태를 확인해 주세요.');
 
+const structuredTimeout = parseApiErrorBody(JSON.stringify({
+  detail: {
+    code: 'request_timeout',
+    message: 'raw backend message',
+    retryable: true,
+    user_action: 'retry',
+    generation_kind: 'meeting_report',
+  },
+}), 'fallback');
+assert.equal(structuredTimeout.message, '정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.');
+assert.equal(structuredTimeout.detail, 'request_timeout');
+assert.equal(structuredTimeout.code, 'request_timeout');
+assert.equal(structuredTimeout.retryable, true);
+assert.equal(structuredTimeout.userAction, 'retry');
+assert.equal(structuredTimeout.generationKind, 'meeting_report');
+
 console.log('ok - generation flow simulation');

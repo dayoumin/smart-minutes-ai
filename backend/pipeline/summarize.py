@@ -1,11 +1,7 @@
 import json
 import os
 import re
-import urllib.error
-import urllib.request
-
-from ollama_utils import ensure_ollama_server_running, find_ollama_executable, get_ollama_base_url, ollama_subprocess_env
-from process_utils import run_hidden
+from generation_gateway import classify_generation_exception, failure_for_code, generate_ollama_text
 
 
 EMPTY_SUMMARY = {
@@ -246,56 +242,14 @@ def _fallback_extract_summary(transcript_text: str) -> dict:
     }
 
 
-def _generate_with_ollama_http(model_name: str, prompt: str) -> str:
-    ensure_ollama_server_running(timeout_seconds=15)
-    payload = json.dumps({
-        "model": model_name,
-        "prompt": prompt,
-        "stream": False,
-        "format": "json",
-    }).encode("utf-8")
-    request = urllib.request.Request(
-        f"{get_ollama_base_url()}/api/generate",
-        data=payload,
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    with urllib.request.urlopen(request, timeout=600) as response:
-        data = json.loads(response.read().decode("utf-8"))
-    return data.get("response", "")
-
-
-def _generate_with_ollama_cli(model_name: str, prompt: str) -> str:
-    ensure_ollama_server_running(timeout_seconds=15)
-    response = run_hidden(
-        [find_ollama_executable(), "run", model_name],
-        input=prompt,
-        check=True,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        env=ollama_subprocess_env(),
-        timeout=600,
-    )
-    return response.stdout
-
-
 def _generate_summary_once(model_name: str, prompt: str) -> dict:
-    try:
-        result_text = _generate_with_ollama_http(model_name, prompt)
-    except (urllib.error.URLError, TimeoutError, ConnectionError):
-        result_text = _generate_with_ollama_cli(model_name, prompt)
+    result_text = generate_ollama_text(model_name, prompt)
     return _normalize_summary(_parse_llm_json(result_text))
 
 
 def _generate_json_once(model_name_or_path: str, prompt: str) -> dict | list:
     if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
-        try:
-            result_text = _generate_with_ollama_http(model_name_or_path, prompt)
-        except (urllib.error.URLError, TimeoutError, ConnectionError):
-            result_text = _generate_with_ollama_cli(model_name_or_path, prompt)
-        return _parse_llm_json(result_text)
+        return _parse_llm_json(generate_ollama_text(model_name_or_path, prompt))
 
     if not os.path.exists(model_name_or_path):
         raise FileNotFoundError(model_name_or_path)
@@ -942,8 +896,13 @@ def _split_text_for_summary(transcript_text: str, max_chars: int = SUMMARY_CHUNK
         chunks.append("\n".join(current))
     return chunks or [transcript_text]
 
-def _error_summary(title: str, overview: str, status: str = "failed") -> dict:
-    return {
+def _error_summary(
+    title: str,
+    overview: str,
+    status: str = "failed",
+    error_code: str = "generation_internal_error",
+) -> dict:
+    summary = {
         "title": title,
         "overview": overview,
         "topics": [],
@@ -958,6 +917,20 @@ def _error_summary(title: str, overview: str, status: str = "failed") -> dict:
             "speaker_context_summaries": "not_started",
         },
     }
+    if status == "failed":
+        failure = failure_for_code(error_code)
+        summary["generation_error_detail"] = failure.code
+        summary["generation_error"] = failure.as_detail("summary")
+    return summary
+
+
+def _generation_failure_summary(error: BaseException) -> dict:
+    failure = classify_generation_exception(error)
+    return _error_summary(
+        "회의록 (생성 실패)",
+        failure.user_message,
+        error_code=failure.code,
+    )
 
 
 def summarize_meeting(
@@ -991,23 +964,15 @@ def summarize_meeting(
             else:
                 summary = _generate_summary_once(model_name_or_path, prompt)
             return summary if _summary_has_content(summary) else _fallback_extract_summary(transcript_text)
-        except FileNotFoundError:
-            return _error_summary(
-                "회의록 (생성 실패)",
-                "Ollama 실행 파일을 찾을 수 없습니다. Ollama 설치 또는 GGUF 모델 경로 설정이 필요합니다.",
-            )
-        except json.JSONDecodeError:
-            return _error_summary(
-                "회의록 (형식 오류)",
-                "Ollama 모델이 올바른 JSON 형식으로 응답하지 않았습니다.",
-            )
         except Exception as exc:
-            return _error_summary("회의록 (생성 실패)", f"Ollama 요약 중 오류가 발생했습니다: {exc}")
+            return _generation_failure_summary(exc)
 
     if not os.path.exists(model_name_or_path):
+        failure = failure_for_code("model_missing")
         return _error_summary(
             "회의록 (생성 실패)",
-            f"요약 AI 모델 파일을 찾을 수 없습니다: {model_name_or_path}",
+            failure.user_message,
+            error_code=failure.code,
         )
 
     try:
@@ -1019,10 +984,5 @@ def summarize_meeting(
         response = llm(prompt, max_tokens=2048, stop=["```"], echo=False)
         result_text = response["choices"][0]["text"].strip()
         return _normalize_summary(_parse_llm_json(result_text))
-    except json.JSONDecodeError:
-        return _error_summary(
-            "회의록 (형식 오류)",
-            "LLM이 올바른 JSON 형식으로 응답하지 않았습니다.",
-        )
     except Exception as exc:
-        return _error_summary("회의록 (생성 실패)", f"요약 엔진 구동 중 오류가 발생했습니다: {exc}")
+        return _generation_failure_summary(exc)

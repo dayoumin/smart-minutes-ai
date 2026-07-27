@@ -1,4 +1,5 @@
 import ctypes
+import logging
 import os
 import re
 import sys
@@ -62,8 +63,9 @@ def get_stt_device_status() -> dict:
 
     try:
         import torch
-    except Exception as exc:
-        status["gpu_reason"] = f"GPU 확인 중 torch를 불러오지 못했습니다: {exc}"
+    except Exception:
+        logging.exception("Failed to inspect GPU availability")
+        status["gpu_reason"] = "GPU 상태를 확인하지 못해 CPU를 사용합니다."
         return status
 
     gpu_detected = bool(torch.cuda.is_available())

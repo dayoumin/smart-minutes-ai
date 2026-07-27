@@ -26,6 +26,7 @@ const legacyParticipantMeetingId = 'codex-detail-flow-legacy-participant';
 const legacyParticipantJobId = 'codex-detail-flow-legacy-participant-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
 let summaryReady = false;
+let topicSectionsFailureCode = null;
 let releaseTopicSectionsResponse = () => {};
 const topicSectionsResponseDelay = new Promise(resolve => {
   releaseTopicSectionsResponse = resolve;
@@ -749,6 +750,21 @@ const installRoutes = async (page) => {
   await page.route(`**/api/outputs/${jobId}/generate-topic-sections`, async route => {
     markTopicSectionsRequested();
     await topicSectionsResponseDelay;
+    if (topicSectionsFailureCode) {
+      return route.fulfill({
+        status: 504,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          detail: {
+            code: topicSectionsFailureCode,
+            message: 'raw backend detail',
+            retryable: true,
+            user_action: 'retry',
+            generation_kind: 'topic_sections',
+          },
+        }),
+      });
+    }
     return route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -1189,6 +1205,27 @@ const run = async () => {
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
     releaseTopicSectionsResponse();
     await page.getByText('AI 시스템 통제권과 지식 확장 방향을 정리했습니다.').waitFor({ timeout: 10000 });
+    topicSectionsFailureCode = 'request_timeout';
+    await topicButton.click();
+    await page.getByText('정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
+    const preservedTopicRecord = await page.evaluate(async ({ meetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get(meetingId);
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return record;
+    }, { meetingId });
+    assert.equal(preservedTopicRecord.generationStatus.topicSections, 'completed');
+    assert.equal(preservedTopicRecord.topicSections.length, 2);
+    topicSectionsFailureCode = null;
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
     const speakerButton = page.locator('button.detail-action-button[aria-label="참석자별 정리"]');
     assert.equal(await speakerButton.isDisabled(), false);

@@ -1925,6 +1925,28 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 400)
 
+    def test_ollama_model_status_uses_structured_safe_errors(self) -> None:
+        with (
+            patch.object(main, "ensure_ollama_server_running", return_value=True),
+            patch.object(main.subprocess, "run", side_effect=FileNotFoundError("private runtime path")),
+        ):
+            with self.assertRaises(main.HTTPException) as missing_runtime:
+                main._ollama_model_exists_strict("gemma4:e2b")
+
+        self.assertEqual(missing_runtime.exception.detail["code"], "runtime_missing")
+        self.assertNotIn("private runtime path", missing_runtime.exception.detail["message"])
+
+        failed = types.SimpleNamespace(returncode=1, stdout="", stderr="connection refused: private details")
+        with (
+            patch.object(main, "ensure_ollama_server_running", return_value=True),
+            patch.object(main.subprocess, "run", return_value=failed),
+        ):
+            with self.assertRaises(main.HTTPException) as connection_failure:
+                main._ollama_model_exists_strict("gemma4:e2b")
+
+        self.assertEqual(connection_failure.exception.detail["code"], "server_unreachable")
+        self.assertNotIn("private details", connection_failure.exception.detail["message"])
+
     def test_delete_ollama_model_rejects_configured_model(self) -> None:
         with main.OLLAMA_PULL_STATUS_LOCK:
             main.OLLAMA_PULL_STATUS.pop("llama3.2:3b", None)
@@ -5015,7 +5037,7 @@ class AnalyzeApiTest(unittest.TestCase):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
-    def test_generate_summary_marks_skipped_when_summary_model_is_not_ready(self) -> None:
+    def test_generate_summary_returns_model_missing_when_summary_model_is_not_ready(self) -> None:
         output_dir = os.path.join(BACKEND_DIR, "outputs")
         os.makedirs(output_dir, exist_ok=True)
         job_id = "unit_generate_summary_model_skip"
@@ -5047,11 +5069,10 @@ class AnalyzeApiTest(unittest.TestCase):
             ):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
 
-            self.assertEqual(response.status_code, 200, response.text)
-            payload = response.json()
-            self.assertEqual(payload["generation_status"]["summary"], "skipped")
-            self.assertEqual(payload["generation_status"]["topic_sections"], "skipped")
-            self.assertIn("요약 AI", payload["summary"])
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["detail"]["code"], "model_missing")
+            self.assertFalse(response.json()["detail"]["retryable"])
+            self.assertEqual(response.json()["detail"]["user_action"], "open_settings")
             summarize_mock.assert_not_called()
         finally:
             if os.path.exists(output_path):
@@ -5096,13 +5117,63 @@ class AnalyzeApiTest(unittest.TestCase):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
 
             self.assertEqual(response.status_code, 409, response.text)
-            self.assertEqual(response.json()["detail"], "summary_model_not_ready")
+            self.assertEqual(response.json()["detail"]["code"], "model_missing")
+            self.assertEqual(response.json()["detail"]["user_action"], "open_settings")
             summarize_mock.assert_not_called()
             with open(output_path, "r", encoding="utf-8") as f:
                 result_data = json.load(f)
             self.assertEqual(result_data["summary"]["overview"], "기존 요약")
             self.assertEqual(result_data["summary"]["topic_sections"][0]["summary"], "기존 주제 정리")
             self.assertEqual(result_data["summary"]["generation_status"]["summary"], "completed")
+        finally:
+            if os.path.exists(output_path):
+                os.remove(output_path)
+
+    def test_generate_summary_returns_structured_timeout_and_preserves_existing_result(self) -> None:
+        output_dir = os.path.join(BACKEND_DIR, "outputs")
+        os.makedirs(output_dir, exist_ok=True)
+        job_id = "unit_generate_summary_timeout_preserve"
+        output_path = os.path.join(output_dir, f"{job_id}_result.json")
+        failure = main.failure_for_code("request_timeout")
+
+        try:
+            with open(output_path, "w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                        "display_segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
+                        "summary": {
+                            "overview": "기존 요약",
+                            "generation_status": {"summary": "completed"},
+                        },
+                    },
+                    f,
+                    ensure_ascii=False,
+                )
+
+            with (
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}),
+                patch(
+                    "pipeline.summarize.summarize_meeting",
+                    return_value={
+                        "overview": failure.user_message,
+                        "generation_status": {"summary": "failed"},
+                        "generation_error_detail": failure.code,
+                        "generation_error": failure.as_detail("summary"),
+                    },
+                ),
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+
+            self.assertEqual(response.status_code, 504, response.text)
+            self.assertEqual(response.json()["detail"]["code"], "request_timeout")
+            self.assertTrue(response.json()["detail"]["retryable"])
+            self.assertEqual(response.json()["detail"]["user_action"], "retry")
+            with open(output_path, "r", encoding="utf-8") as f:
+                result_data = json.load(f)
+            self.assertEqual(result_data["summary"]["overview"], "기존 요약")
+            self.assertEqual(result_data["summary"]["generation_status"]["summary"], "completed")
+            self.assertEqual(result_data["summary"]["generation_error_detail"], "request_timeout")
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)
@@ -5368,6 +5439,8 @@ class AnalyzeApiTest(unittest.TestCase):
             response = self.client.post(f"/api/outputs/{job_id}/generate-summary", json=payload)
 
         self.assertEqual(response.status_code, 500)
+        self.assertEqual(response.json()["detail"]["code"], "generation_internal_error")
+        self.assertTrue(response.json()["detail"]["retryable"])
         self.assertFalse(os.path.exists(output_path))
 
     def test_generate_topic_sections_rejects_stale_input_change(self) -> None:

@@ -2143,6 +2143,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
         const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
+        const hadCompletedSummaryBeforeRequest = summaryGenerationStatus === 'completed'
+            && Boolean(targetMeeting.summary?.trim());
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -2208,7 +2210,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 setErrorMessage(data.export_error);
             }
         } catch (error) {
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
+            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+                ? 'not_started'
+                : hadCompletedSummaryBeforeRequest ? 'completed' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { summary: nextState }),
             }), targetMeeting.id);
@@ -2360,6 +2364,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
         const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
+        const hadCompletedTopicSectionsBeforeRequest = topicGenerationStatus === 'completed'
+            && Boolean(targetMeeting.topicSections?.some(section => section.topic?.trim()));
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -2419,7 +2425,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 setErrorMessage(data.export_error);
             }
         } catch (error) {
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
+            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+                ? 'not_started'
+                : hadCompletedTopicSectionsBeforeRequest ? 'completed' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { topicSections: nextState }),
             }), targetMeeting.id);
@@ -2543,6 +2551,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
         const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
+        const hadCompletedSpeakerContextBeforeRequest = speakerGenerationStatus === 'completed'
+            && Boolean(targetMeeting.speakerContextSummaries?.length || targetMeeting.participantSummaries?.length);
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -2594,7 +2604,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 setErrorMessage(data.export_error);
             }
         } catch (error) {
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
+            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+                ? 'not_started'
+                : hadCompletedSpeakerContextBeforeRequest ? 'completed' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { speakerContextSummaries: nextState }),
             }), targetMeeting.id);
@@ -2632,6 +2644,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
         const inputFingerprint = buildReportGenerationInputFingerprint(targetMeeting);
+        const hadCompletedMeetingReportBeforeRequest = meetingReportGenerationStatus === 'completed'
+            && Boolean(targetMeeting.meetingReport?.content?.trim() || targetMeeting.meetingReport?.sections?.length);
         try {
             setErrorMessage('');
             setNoticeMessage('');
@@ -2674,7 +2688,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 setErrorMessage(data.export_error);
             }
         } catch (error) {
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
+            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+                ? 'not_started'
+                : hadCompletedMeetingReportBeforeRequest ? 'completed' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: nextState }),
             }), targetMeeting.id);

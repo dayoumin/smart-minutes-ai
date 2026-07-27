@@ -104,7 +104,8 @@
   - 단계별 구현과 검증 기준은 `docs/ollama-reliability-review-plan.md`를 따른다.
   - 2026-07-27 completed: `/api/models/status` is now a probe only. It never starts the Ollama runtime; an explicit model action may start a managed runtime.
   - 2026-07-27 completed: transcript-first is the default. Deferred diarization can use preserved audio later without invalidating the STT resume checkpoint.
-  - Remaining P2: use one generation gateway for Settings, meeting generation, and reports; map runtime-offline, model-missing, connection, and generation failures to the same recovery contract.
+  - 2026-07-27 completed: summary, topic, participant, and report generation now share one Ollama gateway and the same structured recovery contract for missing runtime/model, connection failure, timeout, invalid response, cancellation, and internal failure.
+  - 2026-07-27 completed: explicit generation failures no longer return as successful summaries, completed results stay available after a failed regeneration, and model/storage errors no longer expose raw paths or CLI output in the UI.
   - Remaining P2: define TTL/invalidation for status checks and separate automated versus manual scenarios for pull, stop, restart, and offline PCs.
   - 2026-07-27 completed: repaired primary/detail tab Playwright selectors and added runtime-error retry plus persisted audio-missing regression coverage.
   - Remaining P2: keep backend progress events on user-safe codes/messages; send raw exception details only to logs.

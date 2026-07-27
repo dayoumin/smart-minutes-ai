@@ -1,6 +1,7 @@
 import os
 import sys
 import unittest
+from pathlib import Path
 
 # Ensure backend directory is in path
 sys.path.insert(0, os.path.dirname(__file__))
@@ -9,21 +10,25 @@ from pipeline.transcribe import transcribe_audio
 from model_manager import get_model_spec, model_exists, resolve_model_path
 from main import load_config, BASE_DIR
 
-TEST_AUDIO_PATH = os.path.join(BASE_DIR, "test_audio.wav")
+DEFAULT_REAL_AUDIO_PATH = Path(BASE_DIR).parent / "video" / "portable_video_15s.mp4"
+
+
+def resolve_real_audio_fixture() -> Path:
+    configured_path = os.environ.get("LMO_REAL_AUDIO_FIXTURE", "").strip()
+    return Path(configured_path).expanduser() if configured_path else DEFAULT_REAL_AUDIO_PATH
+
 
 class TranscribeModuleTest(unittest.TestCase):
 
     def setUp(self):
-        """Set up for the test. Ensures a test audio file exists."""
-        if not os.path.exists(TEST_AUDIO_PATH):
-            print(f"Test audio file not found at {TEST_AUDIO_PATH}. Generating...")
-            try:
-                # Assuming generate_test_audio.py is in the same directory
-                import generate_test_audio
-                print("Test audio generated.")
-            except Exception as e:
-                self.fail(f"Failed to generate test audio file: {e}")
-        
+        """Use a real speech sample so an empty transcript is meaningful."""
+        self.test_audio_path = resolve_real_audio_fixture()
+        if not self.test_audio_path.is_file():
+            self.skipTest(
+                "Real speech fixture is unavailable. Set LMO_REAL_AUDIO_FIXTURE "
+                "to a short WAV/MP3/MP4 file containing clear speech."
+            )
+
         self.config = load_config()
         self.stt_config = self.config.get("stt", {})
         self.selected_model_name = self.stt_config.get("selected_model", "faster-whisper-large-v3")
@@ -54,7 +59,7 @@ class TranscribeModuleTest(unittest.TestCase):
 
         try:
             segments = transcribe_audio(
-                wav_path=TEST_AUDIO_PATH,
+                wav_path=str(self.test_audio_path),
                 model_path=model_path,
                 language=self.stt_config.get("language", "ko"),
                 device=self.stt_config.get("device", "auto"),

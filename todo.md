@@ -108,8 +108,8 @@
   - 2026-07-27 completed: explicit generation failures no longer return as successful summaries, completed results stay available after a failed regeneration, and model/storage errors no longer expose raw paths or CLI output in the UI.
   - Remaining P2: define TTL/invalidation for status checks and separate automated versus manual scenarios for pull, stop, restart, and offline PCs.
   - 2026-07-27 completed: repaired primary/detail tab Playwright selectors and added runtime-error retry plus persisted audio-missing regression coverage.
-  - Remaining P2: keep backend progress events on user-safe codes/messages; send raw exception details only to logs.
-  - Remaining P2: replace or validate the real-audio STT smoke fixture so a silent/empty sample is not reported as a product regression.
+  - 2026-07-27 completed: audited backend progress events so user-facing messages stay safe while raw exception details remain in logs.
+  - 2026-07-27 completed: the STT model smoke now uses a real speech fixture from LMO_REAL_AUDIO_FIXTURE or video\portable_video_15s.mp4, and skips clearly when no speech fixture is available.
 - [ ] 0-0-0-4순위: 내장 Ollama runtime 배포 전환
   - 공식 standalone Windows CLI 압축을 `runtime\ollama`에 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다.
   - 앱은 내장 Ollama가 있으면 시스템 설치본보다 우선 사용하고, 서버 포트는 배포 폴더 기준 내부 포트, 모델 저장소는 `models\ollama`를 사용한다.

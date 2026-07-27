@@ -4435,6 +4435,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(second_transcribe_payload["total_audio_seconds"], 100.0)
         self.assertEqual(second_transcribe_payload["completed_chunk_count"], 1)
         self.assertEqual(second_transcribe_payload["completed_audio_seconds"], 30.0)
+        self.assertEqual(second_transcribe_payload["eta_seconds"], 35)
 
     def test_pipeline_eta_ignores_reused_stt_chunks_for_measured_throughput(self) -> None:
         progress_payloads = []

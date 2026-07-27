@@ -6504,7 +6504,10 @@ def process_audio_pipeline(
             if measured_seconds > 0 and elapsed_seconds > 0:
                 audio_seconds_per_real_second = measured_seconds / elapsed_seconds
                 if audio_seconds_per_real_second > 0:
-                    eta_seconds = int(remaining_audio_seconds / audio_seconds_per_real_second)
+                    eta_rate = audio_seconds_per_real_second
+                    if _is_sane_stt_audio_rate(stt_baseline_rate):
+                        eta_rate = min(eta_rate, float(stt_baseline_rate))
+                    eta_seconds = int(remaining_audio_seconds / eta_rate)
             else:
                 eta_seconds = _initial_stt_eta_seconds(remaining_audio_seconds, stt_device, stt_baseline_rate)
             return {

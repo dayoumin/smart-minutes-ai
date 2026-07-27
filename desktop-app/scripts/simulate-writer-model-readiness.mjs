@@ -159,7 +159,7 @@ const run = async () => {
     await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    const infoBanner = page.locator('.status-banner-info').filter({ hasText: '분석 준비가 필요합니다' });
+    const infoBanner = page.locator('.status-banner-info').filter({ hasText: '음성 인식 기본 모델 준비 필요' });
     await infoBanner.waitFor({ state: 'visible', timeout: 10000 });
     await page.getByText('모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(

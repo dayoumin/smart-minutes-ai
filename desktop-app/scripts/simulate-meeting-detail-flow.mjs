@@ -984,7 +984,7 @@ const run = async () => {
 
     await page.getByText('요약 AI 미준비 회의록').first().click();
     await page.getByText('요약 AI가 없어도 대화록은 확인할 수 있습니다.').waitFor({ timeout: 10000 });
-    const skippedOrganizeTab = page.locator('.tab-list').getByRole('button', { name: '기록 정리' });
+    const skippedOrganizeTab = page.locator('.tab-list').getByRole('tab', { name: '기록 정리' });
     assert.equal(await skippedOrganizeTab.isDisabled(), false);
     await skippedOrganizeTab.click();
     await page.getByText('모델 필요').waitFor({ timeout: 10000 });
@@ -1005,14 +1005,14 @@ const run = async () => {
 
     await page.getByText('기존 정리 모델 미준비 회의록').first().click();
     await page.getByText('기존 정리 결과가 있는 대화록입니다.').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     await page.getByText('이미 저장된 전체 요약입니다.').waitFor({ timeout: 10000 });
     await page.getByText('모델 필요').waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
-    await page.locator('.tab-list').getByRole('button', { name: '주제별 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
     await page.getByText('이미 저장된 주제별 정리입니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('button.detail-action-button[aria-label="주제별 정리"]').isDisabled(), true);
-    await page.locator('.tab-list').getByRole('button', { name: '참석자별 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
     await page.getByText('이미 저장된 참석자별 정리입니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('button.detail-action-button[aria-label="참석자별 정리"]').isDisabled(), true);
     await page.getByRole('button', { name: '모델', exact: true }).click();
@@ -1021,11 +1021,11 @@ const run = async () => {
     await page.getByRole('button', { name: '모델', exact: true }).click();
     await page.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
-    await page.locator('.tab-list').getByRole('button', { name: '전체 요약' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();
 
     await page.getByText('원본 음성 누락 회의록').first().click();
     await page.getByText('참석자 구분 원본 음성 누락 확인').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     const topDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
     const detailDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
     const audioRequiredButton = topDiarizationButton;
@@ -1038,21 +1038,20 @@ const run = async () => {
     assert.equal(await detailDiarizationButton.count(), 0);
     await audioRequiredButton.click();
     await audioMissingDiarizationRequested;
-    await page.getByText('참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.').first().waitFor({ timeout: 10000 });
-    await page.getByText('표식 1명').first().waitFor({ timeout: 10000 });
-    await page.getByText('대화록의 참석자 표식이 1명입니다. 추가 구분이 필요하면 원본 음성을 보관한 상태로 다시 분석해 주세요.').waitFor({ timeout: 10000 });
+    await page.getByText('참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 음성 파일을 다시 분석해 주세요.').first().waitFor({ timeout: 10000 });
+    await page.getByText('제외됨', { exact: true }).first().waitFor({ timeout: 10000 });
     assert.equal(await detailDiarizationButton.count(), 0);
 
     await page.getByText('참석자 표식 없는 회의록').first().click();
     await page.getByText('참석자 표식 없는 원본 음성 누락 확인').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     await page.getByText('재실행 불가').first().waitFor({ timeout: 10000 });
     await page.getByText('저장된 음성 파일이 없어 참석자 구분을 다시 실행할 수 없습니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).count(), 0);
 
     await page.getByText('참석자 구분 취소 회의록').first().click();
     await page.getByText('참석자 구분 취소 상태 확인').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).click();
     await cancelDiarizationRequested;
     const cancelRunningButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
@@ -1085,10 +1084,41 @@ const run = async () => {
     assert.equal(cancelledRecord.diarizationApplied, false);
     await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
+    await page.evaluate(async ({ cancelMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get(cancelMeetingId);
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      record.diarizationSkipped = true;
+      record.diarizationSkipReason = 'runtime_error';
+      record.diarizationSkipMessage = '참석자 구분 중 문제가 발생했습니다. 원본 음성과 모델 상태를 확인한 뒤 다시 실행해 주세요.';
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        tx.objectStore('meetings').put(record);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    }, { cancelMeetingId });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByText('참석자 구분 취소 회의록').first().click();
+    await page.getByText('참석자 구분 취소 상태 확인').waitFor({ timeout: 10000 });
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
+    await page.getByText('재실행 필요', { exact: true }).waitFor({ timeout: 10000 });
+    const runtimeRetryButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
+    await runtimeRetryButton.waitFor({ timeout: 10000 });
+    assert.equal(await runtimeRetryButton.isDisabled(), false);
 
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
 
     const diarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
     await diarizationButton.click();
@@ -1128,7 +1158,7 @@ const run = async () => {
     await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
 
-    await page.locator('.tab-list').getByRole('button', { name: '주제별 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
 
     const topicButton = page.locator('button.detail-action-button[aria-label="주제별 정리"]');
     await page.waitForFunction(() => {
@@ -1146,8 +1176,8 @@ const run = async () => {
 
     await page.getByText('다른 회의록').first().click();
     await page.getByRole('heading', { name: '다른 회의록' }).waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
-    await page.locator('.tab-list').getByRole('button', { name: '주제별 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
     assert.equal(await page.getByRole('button', { name: '주제별 정리 중' }).count(), 0);
     const otherTopicButton = page.locator('button.detail-action-button[aria-label="주제별 정리"]');
     assert.equal(await otherTopicButton.isDisabled(), true);
@@ -1155,11 +1185,11 @@ const run = async () => {
 
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
-    await page.locator('.tab-list').getByRole('button', { name: '주제별 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
     releaseTopicSectionsResponse();
     await page.getByText('AI 시스템 통제권과 지식 확장 방향을 정리했습니다.').waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '참석자별 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
     const speakerButton = page.locator('button.detail-action-button[aria-label="참석자별 정리"]');
     assert.equal(await speakerButton.isDisabled(), false);
 
@@ -1189,7 +1219,7 @@ const run = async () => {
     assert.equal(exportBodies[0]?.speakerLabels?.['화자1'], '김검토');
     assert.equal(exportBodies[0]?.displaySegments?.[0]?.text, '사용자가 다듬은 대화록입니다. 통제권과 지식 확장 기준을 길게 설명했습니다.');
 
-    await page.locator('.tab-list').getByRole('button', { name: '대화록' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
     await page.getByRole('button', { name: '대화록 TXT 파일을 다운로드 폴더에 저장' }).click();
     for (let attempt = 0; attempt < 50 && exportCalls.length === 1; attempt += 1) {
       await sleep(100);
@@ -1200,8 +1230,8 @@ const run = async () => {
 
     await page.getByText('기본 별칭 참석자 회의록').first().click();
     await page.getByRole('heading', { name: '기본 별칭 참석자 회의록' }).waitFor({ timeout: 10000 });
-    await page.locator('.tab-list').getByRole('button', { name: '기록 정리' }).click();
-    await page.locator('.tab-list').getByRole('button', { name: '참석자별 정리' }).click();
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
     const legacyCard = page.locator('article.detail-subtle-card').filter({ hasText: '참석자01' });
     assert.equal(await legacyCard.count(), 1);
     await legacyCard.getByText('발언 1회 · 텍스트 비중 100%').waitFor({ timeout: 10000 });

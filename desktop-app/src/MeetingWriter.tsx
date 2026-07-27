@@ -33,6 +33,7 @@ import {
     MeetingTopicSection,
 } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
+import { readApiErrorMessage as readResponseError } from './apiError';
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
@@ -345,19 +346,6 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
     return 'unknown';
 };
 
-const readResponseError = async (response: Response, fallback: string): Promise<string> => {
-    const detailText = await response.text().catch(() => '');
-    if (detailText.startsWith('{')) {
-        try {
-            const parsedDetail = JSON.parse(detailText) as { detail?: string };
-            return parsedDetail.detail || fallback;
-        } catch {
-            return fallback;
-        }
-    }
-    return detailText || fallback;
-};
-
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
 
 const getUserModelLabel = (model: ModelStatus): string => {
@@ -609,7 +597,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [analysisStopRequestedAction, setAnalysisStopRequestedAction] = useState<AnalysisStopAction | null>(null);
     const [statusMessage, setStatusMessage] = useState('');
     const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
-    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(true);
+    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
     const [isSavingDiarizationMode, setIsSavingDiarizationMode] = useState(false);
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
@@ -675,7 +663,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             const response = await fetch(`${apiBase}/api/settings`);
             if (!response.ok) return;
             const data = await response.json() as AnalysisSettingsResponse;
-            setDiarizationDuringAnalysis(data.diarization?.generate_during_analysis ?? true);
+            setDiarizationDuringAnalysis(data.diarization?.generate_during_analysis ?? false);
         } catch {
             // Keep the current local value if settings cannot be read.
         }
@@ -1691,6 +1679,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             formData.append('meeting_purpose', meetingPurpose.trim());
             formData.append('selected_report_template_id', selectedReportTemplate.id);
             formData.append('report_template', JSON.stringify(selectedReportTemplate));
+            const defaultContextTemplate = getContextTemplateById(DEFAULT_CONTEXT_TEMPLATE_ID);
+            formData.append('selected_context_template_id', DEFAULT_CONTEXT_TEMPLATE_ID);
+            formData.append('context_template', JSON.stringify(defaultContextTemplate));
+            formData.append('selected_term_glossary_ids', '[]');
+            formData.append('term_glossaries', '[]');
             formData.append('mode', ANALYSIS_MODE);
             formData.append('job_id', analysisJobId);
             formData.append('file', file as File);

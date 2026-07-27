@@ -9,7 +9,7 @@ from config_normalization import (
     get_summary_option_models,
     normalize_summary_model_name,
 )
-from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env
+from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env, probe_ollama_server
 from process_utils import run_hidden
 
 
@@ -160,13 +160,16 @@ def model_exists(base_dir: str, spec: ModelSpec) -> bool:
     return any(path_has_model_payload(path, spec) for path in candidate_paths(base_dir, spec))
 
 
-def ollama_model_exists(model_name: str) -> bool:
-    return model_name in list_ollama_models()
+def ollama_model_exists(model_name: str, *, start_server: bool = True) -> bool:
+    return model_name in list_ollama_models(start_server=start_server)
 
 
-def list_ollama_models() -> list[str]:
+def list_ollama_models(*, start_server: bool = True) -> list[str]:
     try:
-        ensure_ollama_server_running(timeout_seconds=10)
+        if start_server:
+            ensure_ollama_server_running(timeout_seconds=10)
+        elif not probe_ollama_server(timeout_seconds=2):
+            return []
         result = run_hidden(
             [find_ollama_executable(), "list"],
             check=True,
@@ -188,7 +191,7 @@ def list_ollama_models() -> list[str]:
     return models
 
 
-def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
+def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama: bool = True) -> dict:
     config = config or {"summary": {"model": DEFAULT_SUMMARY_MODEL}}
     summary = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
     configured_model = normalize_summary_model_name(summary.get("model") or DEFAULT_SUMMARY_MODEL)
@@ -199,7 +202,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
     candidate_models = get_summary_candidate_models(config)
     ollama_available = ollama_executable_available()
     ollama_models = []
-    for model in list_ollama_models():
+    for model in list_ollama_models(start_server=start_ollama):
         normalized_model = normalize_summary_model_name(model)
         if normalized_model and normalized_model not in ollama_models:
             ollama_models.append(normalized_model)
@@ -263,7 +266,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict]) -> dict:
     }
 
 
-def get_model_status(base_dir: str, config: Optional[dict] = None) -> Dict:
+def get_model_status(base_dir: str, config: Optional[dict] = None, *, start_ollama: bool = True) -> Dict:
     models = []
     for spec in MODEL_SPECS:
         installed = model_exists(base_dir, spec)
@@ -285,7 +288,7 @@ def get_model_status(base_dir: str, config: Optional[dict] = None) -> Dict:
             "install_options": list(spec.install_options),
             "downloadable": spec.key == "stt_faster_whisper",
         })
-    models.append(_summary_model_status(base_dir, config))
+    models.append(_summary_model_status(base_dir, config, start_ollama=start_ollama))
 
     required_models = [model for model in models if model["required"]]
     return {

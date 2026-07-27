@@ -4,6 +4,7 @@ import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
 import { isTauriRuntime, openSavedFileLocation, toApiUrl } from './apiBase';
+import { readApiErrorInfo as getGenerationErrorInfo, readApiErrorMessage as getGenerationErrorMessage } from './apiError';
 import { Input } from './Input';
 import { StatusBanner } from './StatusBanner';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
@@ -307,82 +308,9 @@ const parseGenerationStartedAt = (value?: string): number | null => {
 
 const speakerToneCount = 6;
 
-interface GenerationErrorInfo {
-    message: string;
-    detail?: string;
-}
-
 interface GenerationRequestError extends Error {
     detail?: string;
 }
-
-const getGenerationErrorInfo = async (response: Response, fallback: string): Promise<GenerationErrorInfo> => {
-    const body = await response.text().catch(() => '');
-    if (!body) return { message: fallback };
-
-    try {
-        const parsed = JSON.parse(body) as { detail?: string };
-        if (parsed.detail === 'Output result not found') {
-            return { message: '분석 원본을 찾지 못했습니다. 다시 정리해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'Transcript segments are required') {
-            return { message: '대화록이 없어 정리할 수 없습니다. 다시 분석해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'summary_input_changed') {
-            return { message: '대화록이 바뀌어 이번 정리는 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'summary_model_not_ready') {
-            return { message: '요약 AI가 준비되지 않았습니다. 대화록은 사용할 수 있고, 요약은 Ollama 모델을 준비한 뒤 다시 실행해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'topic_input_changed') {
-            return { message: '대화록이나 요약이 바뀌어 주제별 정리를 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'speaker_input_changed') {
-            return { message: '대화록이나 주제별 정리가 바뀌어 참석자별 정리를 저장하지 않았습니다. 다시 정리해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'report_input_changed') {
-            return { message: '대화록이나 정리 내용이 바뀌어 이번 보고서는 저장하지 않았습니다. 다시 생성해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'topic_generation_empty') {
-            return { message: '주제별 정리 결과가 비어 있습니다. 요약 내용을 확인한 뒤 다시 정리해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'speaker_context_generation_empty') {
-            return { message: '참석자별 정리 결과가 비어 있습니다. 주제별 정리와 대화록을 확인한 뒤 다시 정리해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'meeting_report_generation_empty') {
-            return { message: '회의록 보고서 결과가 비어 있습니다. 기록 정리와 보고 양식을 확인한 뒤 다시 생성해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'Summary must be generated before meeting report') {
-            return { message: '기록 정리를 먼저 완료한 뒤 보고서를 생성해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'audio_required_for_diarization') {
-            return { message: '참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 다시 분석해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'diarization_model_not_ready') {
-            return { message: '참석자 구분 모델이 준비되지 않았습니다. models 폴더를 확인해 주세요.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'diarization_resource_limit') {
-            return { message: '음성 파일이 너무 길거나 커서 참석자 구분을 실행하지 않았습니다. 대화록은 그대로 사용할 수 있습니다.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'diarization_already_completed') {
-            return { message: '이미 참석자 구분이 완료된 대화록입니다.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'diarization generation is already running') {
-            return { message: '참석자 구분이 이미 진행 중입니다.', detail: parsed.detail };
-        }
-        if (parsed.detail === 'diarization_runtime_error') {
-            return { message: '참석자 구분 실행 중 오류가 발생했습니다. 원본 음성과 참석자 구분 모델 상태를 확인한 뒤 다시 실행해 주세요.', detail: parsed.detail };
-        }
-        return { message: parsed.detail || fallback, detail: parsed.detail };
-    } catch {
-        return { message: body || fallback };
-    }
-};
-
-const getGenerationErrorMessage = async (response: Response, fallback: string): Promise<string> => {
-    const errorInfo = await getGenerationErrorInfo(response, fallback);
-    return errorInfo.message;
-};
 
 const escapeRegExp = (value: string): string => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -2071,10 +1999,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
             if (isAbortError && diarizationStopActionRef.current) {
                 return;
             }
-            if (diarizationProgressJobIdRef.current === targetJobId) {
-                setDiarizationNow(getCurrentTimeMs());
                 const message = error instanceof Error ? error.message : '참석자 구분 실행 중 오류가 발생했습니다.';
                 const detail = error instanceof Error ? (error as GenerationRequestError).detail : undefined;
+            if (diarizationProgressJobIdRef.current === targetJobId) {
+                setDiarizationNow(getCurrentTimeMs());
                 if (detail === 'audio_required_for_diarization') {
                     setAudioSourceUrl('');
                     setAudioAvailability('missing');
@@ -2086,6 +2014,24 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                     status: 'failed',
                 }));
                 showOperationToast(message, 'error');
+            }
+            const skipReasonByDetail: Record<string, string> = {
+                audio_required_for_diarization: 'source_not_preserved',
+                diarization_resource_limit: 'resource_limit',
+                diarization_model_not_ready: 'model_not_ready',
+                diarization_runtime_error: 'runtime_error',
+            };
+            const skipReason = detail ? skipReasonByDetail[detail] : undefined;
+            if (skipReason) {
+                await updateSelectedMeeting(() => ({
+                    diarizationApplied: false,
+                    diarizationRequested: true,
+                    diarizationSkipped: true,
+                    diarizationDeferred: false,
+                    diarizationSkipReason: skipReason,
+                    diarizationSkipMessage: message,
+                    diarizationDeferMessage: '',
+                }), targetMeeting.id);
             }
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
@@ -2318,6 +2264,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const diarizationStopAction = stoppingDiarizationAction ?? diarizationProgress?.action;
     const diarizationStopLabel = diarizationStopAction === 'cancel' ? '취소 중' : '중지 중';
     const diarizationApplied = selectedMeeting?.diarizationApplied;
+    const diarizationRetryable = Boolean(
+        selectedMeeting?.diarizationSkipped
+        && (
+            selectedMeeting?.diarizationSkipReason === 'runtime_error'
+            || selectedMeeting?.diarizationSkipReason === 'model_not_ready'
+        )
+        && audioAvailability === 'available',
+    );
     const diarizationNeedsSourceAudio = Boolean(
         selectedMeeting?.jobId
         && hasTranscriptData
@@ -2329,6 +2283,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (!hasTranscriptData) return { label: '대기', tone: 'neutral' };
         if (diarizationStopRequested) return { label: diarizationStopLabel, tone: 'warning' };
         if (diarizationIsRunning) return { label: '진행 중', tone: 'info' };
+        if (diarizationRetryable && selectedMeeting?.diarizationSkipReason === 'model_not_ready') return { label: '모델 준비 필요', tone: 'warning' };
+        if (diarizationRetryable) return { label: '재실행 필요', tone: 'warning' };
         if (selectedMeeting?.diarizationSkipped) return { label: '제외됨', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
         if (diarizationNeedsSourceAudio && transcriptLooksSingleSpeaker) return { label: '표식 1명', tone: 'neutral' };
@@ -2357,7 +2313,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         selectedMeeting?.jobId
         && hasTranscriptData
         && !selectedMeeting?.diarizationApplied
-        && !selectedMeeting?.diarizationSkipped
+        && (!selectedMeeting?.diarizationSkipped || diarizationRetryable)
         && audioAvailability === 'available'
     );
     const canGenerateTopicSections = Boolean(selectedMeeting?.jobId && hasTranscriptData && summaryGenerationStatus !== 'skipped');

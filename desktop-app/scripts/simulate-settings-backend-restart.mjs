@@ -368,7 +368,7 @@ const run = async () => {
       }));
     });
 
-    await page.getByRole('button', { name: '시스템 설정' }).click();
+    await page.getByRole('button', { name: '앱 설정' }).click();
     const settingsDialog = page.getByRole('dialog', { name: '시스템 설정' });
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
     const generalDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));

@@ -65,6 +65,7 @@ from ollama_utils import (
     get_portable_ollama_runtime_dir,
     ollama_executable_available,
     ollama_subprocess_env,
+    probe_ollama_server,
     using_embedded_ollama,
 )
 from pipeline.transcribe import get_stt_device_status
@@ -227,6 +228,20 @@ def make_analysis_heartbeat(last_progress: dict) -> dict:
 
 
 def _analysis_config_fingerprint(config: dict) -> str:
+    diarization_config = dict(config.get("diarization", {}))
+    # This controls when optional diarization runs, not how STT is produced.
+    # Changing it must not discard a resumable transcription checkpoint.
+    diarization_config.pop("generate_during_analysis", None)
+    return build_config_fingerprint({
+        "stt": config.get("stt", {}),
+        "processing": config.get("processing", {}),
+        "preprocessing": config.get("preprocessing", {}),
+        "diarization": diarization_config,
+    })
+
+
+def _analysis_previous_config_fingerprint(config: dict) -> str:
+    """Fingerprint used immediately before execution policy became resume-neutral."""
     return build_config_fingerprint({
         "stt": config.get("stt", {}),
         "processing": config.get("processing", {}),
@@ -272,8 +287,14 @@ def _analysis_prepared_legacy_config(config: dict) -> dict:
 
 def _analysis_compatible_config_fingerprints(config: dict) -> set[str]:
     prepared_legacy = _analysis_prepared_legacy_config(config)
+    previous_auto = copy.deepcopy(config)
+    previous_auto.setdefault("diarization", {})["generate_during_analysis"] = True
+    previous_manual = copy.deepcopy(config)
+    previous_manual.setdefault("diarization", {})["generate_during_analysis"] = False
     return {
         _analysis_config_fingerprint(config),
+        _analysis_previous_config_fingerprint(previous_auto),
+        _analysis_previous_config_fingerprint(previous_manual),
         _analysis_legacy_config_fingerprint(config),
         _analysis_legacy_config_fingerprint(prepared_legacy),
     }
@@ -315,7 +336,8 @@ def _estimate_diarization_waveform_mb(duration_seconds: float) -> float:
 
 def _diarization_resource_decision(config: dict, source_wav_duration: float, requested_override: bool | None = None) -> dict:
     diarization_config = config.get("diarization", {})
-    requested = bool(diarization_config.get("enabled", True)) if requested_override is None else bool(requested_override)
+    enabled = bool(diarization_config.get("enabled", False))
+    requested = enabled if requested_override is None else bool(requested_override)
     max_duration = int(diarization_config.get("max_duration_seconds") or 0)
     max_waveform_mb = int(diarization_config.get("max_waveform_mb") or 0)
     estimated_waveform_mb = _estimate_diarization_waveform_mb(source_wav_duration)
@@ -403,7 +425,9 @@ def _can_defer_diarization_for_later(config: dict) -> bool:
 
 def _should_generate_diarization_during_analysis(config: dict) -> bool:
     diarization_config = config.get("diarization", {})
-    return bool(diarization_config.get("generate_during_analysis", True))
+    return bool(diarization_config.get("enabled", False)) and bool(
+        diarization_config.get("generate_during_analysis", False)
+    )
 
 
 def _normalize_resume_file_size(value: int | None) -> int | None:
@@ -716,7 +740,10 @@ async def update_settings(payload: dict = Body(...)) -> dict:
             if "enabled" in diarization:
                 target["enabled"] = bool(diarization["enabled"])
             if "generate_during_analysis" in diarization:
-                target["generate_during_analysis"] = bool(diarization["generate_during_analysis"])
+                generate_during_analysis = bool(diarization["generate_during_analysis"])
+                target["generate_during_analysis"] = generate_during_analysis
+                if generate_during_analysis:
+                    target["enabled"] = True
 
         if "stt" in payload:
             stt = payload["stt"] or {}
@@ -760,12 +787,12 @@ async def update_settings(payload: dict = Body(...)) -> dict:
 async def models_status() -> dict:
     try:
         config = load_config()
-        status = get_model_status(BASE_DIR, config)
+        status = get_model_status(BASE_DIR, config, start_ollama=False)
         selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
         diarization_during_analysis = _should_generate_diarization_during_analysis(config)
-        summary_readiness = _summary_model_readiness(config)
+        summary_readiness = _summary_model_readiness(config, start_ollama=False)
         stt_device_status = get_stt_device_status()
         memory_gb = _system_memory_gb()
         required_stt_keys = {"stt_faster_whisper"}
@@ -850,7 +877,7 @@ def _ollama_connection_status(timeout_seconds: int = 3) -> dict:
     server_ready = False
     if executable_available:
         try:
-            server_ready = bool(ensure_ollama_server_running(timeout_seconds=timeout_seconds))
+            server_ready = bool(probe_ollama_server(timeout_seconds))
         except Exception:
             server_ready = False
 
@@ -870,7 +897,9 @@ def _ollama_connection_status(timeout_seconds: int = 3) -> dict:
         "source": source,
         "executable_available": executable_available,
         "server_ready": server_ready,
-        "can_auto_start": source == "managed" and status != "managed_stopped",
+        # Starting a managed runtime is allowed only for an explicit model action;
+        # this status probe itself must remain side-effect free.
+        "can_auto_start": source == "managed",
         "managed_runtime_available": bool(embedded_executable),
         "executable_path": executable_path,
     }
@@ -2760,7 +2789,7 @@ def _save_job_result(job_id: str, result_data: dict) -> None:
         f.write("\n")
 
 
-def _resolve_summary_model(config: dict) -> str:
+def _resolve_summary_model(config: dict, *, start_ollama: bool = True) -> str:
     summary_config = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
     llm_model = str(summary_config.get("model") or DEFAULT_SUMMARY_MODEL).strip()
     if llm_model and llm_model.startswith((".", "..")):
@@ -2770,12 +2799,12 @@ def _resolve_summary_model(config: dict) -> str:
     if llm_model and llm_model.endswith((".gguf", ".bin")):
         return llm_model
     for candidate in get_summary_candidate_models(config):
-        if candidate and ollama_model_exists(candidate):
+        if candidate and (ollama_model_exists(candidate) if start_ollama else ollama_model_exists(candidate, start_server=False)):
             return candidate
     return llm_model
 
 
-def _summary_model_readiness(config: dict) -> dict:
+def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict:
     summary_config = config.get("summary", {})
     if not summary_config.get("enabled", True):
         return {
@@ -2784,7 +2813,7 @@ def _summary_model_readiness(config: dict) -> dict:
             "message": "요약 기능이 꺼져 있어 대화록만 생성했습니다.",
         }
 
-    model_name_or_path = _resolve_summary_model(config)
+    model_name_or_path = _resolve_summary_model(config, start_ollama=start_ollama)
     if not model_name_or_path:
         return {
             "ready": False,
@@ -2802,7 +2831,7 @@ def _summary_model_readiness(config: dict) -> dict:
             "message": "요약 AI 모델 파일이 없어 대화록만 생성했습니다.",
         }
 
-    if ollama_model_exists(model_name_or_path):
+    if ollama_model_exists(model_name_or_path, start_server=start_ollama):
         return {"ready": True, "status": "ready", "message": ""}
 
     return {
@@ -3474,6 +3503,35 @@ def _mark_diarization_failed(job_id: str, result_data: dict, detail: str, messag
     latest_settings["diarization_generation_status"] = "failed"
     latest_settings["diarization_error_detail"] = detail
     latest_settings["diarization_error_message"] = message
+    failure_states = {
+        "diarization_resource_limit": (
+            "resource_limit",
+            "현재 음성 파일은 너무 길거나 커서 참석자 구분을 실행하지 않았습니다. 대화록은 그대로 사용할 수 있습니다.",
+        ),
+        "audio_required_for_diarization": (
+            "source_not_preserved",
+            "참석자 구분에 필요한 원본 음성을 찾지 못했습니다. 음성 파일을 다시 분석해 주세요.",
+        ),
+        "diarization_model_not_ready": (
+            "model_not_ready",
+            "참석자 구분 모델이 준비되지 않았습니다. 설정에서 모델 상태를 확인한 뒤 다시 실행해 주세요.",
+        ),
+        DETAIL_DIARIZATION_RUNTIME_ERROR: (
+            "runtime_error",
+            "참석자 구분 중 문제가 발생했습니다. 원본 음성과 모델 상태를 확인한 뒤 다시 실행해 주세요.",
+        ),
+    }
+    failure_state = failure_states.get(detail)
+    if failure_state:
+        skip_reason, user_message = failure_state
+        latest_settings.update({
+            "diarization_requested": True,
+            "diarization_skipped": True,
+            "diarization_deferred": False,
+            "diarization_skip_reason": skip_reason,
+            "diarization_skip_message": user_message,
+            "diarization_defer_message": "",
+        })
     _save_job_result(job_id, latest_result)
 
 
@@ -6141,12 +6199,15 @@ def process_audio_pipeline(
     except Exception:
         source_wav_duration = float(existing_state.get("source_wav_duration") or 0.0)
     source_wav_size = os.path.getsize(temp_wav_path) if os.path.exists(temp_wav_path) else 0
+    diarization_config = config.get("diarization", {})
+    diarization_enabled = bool(diarization_config.get("enabled", False))
+    diarization_during_analysis = _should_generate_diarization_during_analysis(config)
     diarization_decision = _diarization_resource_decision(
         config,
         source_wav_duration,
-        requested_override=_should_generate_diarization_during_analysis(config),
+        requested_override=diarization_enabled,
     )
-    if diarization_decision.get("run") and not _should_generate_diarization_during_analysis(config):
+    if diarization_decision.get("run") and not diarization_during_analysis:
         if _can_defer_diarization_for_later(config):
             diarization_decision = _defer_diarization_decision(diarization_decision)
         else:

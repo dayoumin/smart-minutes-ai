@@ -102,6 +102,13 @@
   - 상태 조회, 서버 기동, 모델 준비, 실제 추론을 별도 단계로 구분하고 설정/기록 정리/보고서가 같은 상태 계약을 사용하게 한다.
   - 실패한 정리가 완료로 보이지 않게 하고, 기존 대화록과 정상 정리 결과는 보존한다.
   - 단계별 구현과 검증 기준은 `docs/ollama-reliability-review-plan.md`를 따른다.
+  - 2026-07-27 completed: `/api/models/status` is now a probe only. It never starts the Ollama runtime; an explicit model action may start a managed runtime.
+  - 2026-07-27 completed: transcript-first is the default. Deferred diarization can use preserved audio later without invalidating the STT resume checkpoint.
+  - Remaining P2: use one generation gateway for Settings, meeting generation, and reports; map runtime-offline, model-missing, connection, and generation failures to the same recovery contract.
+  - Remaining P2: define TTL/invalidation for status checks and separate automated versus manual scenarios for pull, stop, restart, and offline PCs.
+  - 2026-07-27 completed: repaired primary/detail tab Playwright selectors and added runtime-error retry plus persisted audio-missing regression coverage.
+  - Remaining P2: keep backend progress events on user-safe codes/messages; send raw exception details only to logs.
+  - Remaining P2: replace or validate the real-audio STT smoke fixture so a silent/empty sample is not reported as a product regression.
 - [ ] 0-0-0-4순위: 내장 Ollama runtime 배포 전환
   - 공식 standalone Windows CLI 압축을 `runtime\ollama`에 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다.
   - 앱은 내장 Ollama가 있으면 시스템 설치본보다 우선 사용하고, 서버 포트는 배포 폴더 기준 내부 포트, 모델 저장소는 `models\ollama`를 사용한다.

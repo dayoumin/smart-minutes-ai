@@ -507,7 +507,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await waitForApp(APP_URL);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('회의 제목 *').fill('suppressed resume candidate');
-    await page.getByLabel('회의 목적/정리 맥락 *').fill('재개 후보 숨김 동작을 확인');
+    await page.getByLabel('회의 목적 *').fill('재개 후보 숨김 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
@@ -560,7 +560,7 @@ const runSuppressedActiveCandidateBlocksFreshStartScenario = async (browser, fix
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByLabel('회의 제목 *').fill('suppressed active candidate');
-    await page.getByLabel('회의 목적/정리 맥락 *').fill('진행 중 후보는 억제와 무관하게 차단');
+    await page.getByLabel('회의 목적 *').fill('진행 중 후보는 억제와 무관하게 차단');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('같은 파일의 분석이 이미 진행 중입니다. 완료되거나 취소된 뒤 다시 시도해 주세요.').waitFor({ timeout: 10000 });

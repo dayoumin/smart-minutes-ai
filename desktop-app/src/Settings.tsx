@@ -10,6 +10,7 @@ import {
     setDownloadFormatPreference,
 } from './downloadPreferences';
 import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
+import { readApiErrorMessage } from './apiError';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
@@ -352,9 +353,9 @@ const getOllamaConnectionNotice = (connection?: OllamaConnectionStatus | null): 
     }
     if (connection.status === 'managed_stopped') {
         return {
-            tone: 'warning',
-            heading: '요약 프로그램을 시작하지 못했습니다',
-            message: '앱을 다시 열어도 같으면 회사 보안 정책으로 막혔을 수 있습니다. 관리자에게 요약 프로그램 실행 허용을 요청해 주세요.',
+            tone: 'info',
+            heading: '요약 프로그램은 필요한 작업을 시작할 때 실행됩니다.',
+            message: '모델 받기나 회의 정리를 시작하면 자동으로 실행합니다. 자동 실행에 실패하면 앱을 다시 열고, 계속 같으면 관리자에게 실행 허용을 요청해 주세요.',
         };
     }
     return null;
@@ -419,7 +420,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [ollamaInstallNoticeMessage, setOllamaInstallNoticeMessage] = useState('');
     const [supportContactVisible, setSupportContactVisible] = useState(false);
     const [modelStatusErrorMessage, setModelStatusErrorMessage] = useState('');
-    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(true);
+    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
     const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
@@ -496,7 +497,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [models?.summary_model_recommendation?.model, settings, summaryModelStatus]);
 
     const applySettingsToForm = useCallback((nextSettings: SettingsPayload) => {
-        setDiarizationDuringAnalysis(nextSettings.diarization?.generate_during_analysis ?? true);
+        setDiarizationDuringAnalysis(nextSettings.diarization?.generate_during_analysis ?? false);
         setSttDevice(nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu');
         setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
@@ -648,8 +649,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
             if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `모델 받기 시작 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '음성 인식 모델 받기를 시작하지 못했습니다. 다시 시도해 주세요.'));
             }
             const status = await response.json() as ModelDownloadStatus;
             if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
@@ -690,8 +690,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 body: JSON.stringify({ key: modelKey }),
             });
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `모델 받기 중지 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '음성 인식 모델 받기를 중지하지 못했습니다. 다시 시도해 주세요.'));
             }
             const status = await response.json() as ModelDownloadStatus;
             updateModelDownloadStatus(status);
@@ -775,9 +774,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
                 if (!isCurrentOllamaRuntimeRequest(requestId)) return;
-                throw new Error(body?.detail || `요약 프로그램 받기 시작 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '요약 프로그램 받기를 시작하지 못했습니다. 네트워크 상태를 확인한 뒤 다시 시도해 주세요.'));
             }
             const status = await response.json() as OllamaRuntimeDownloadStatus;
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
@@ -816,9 +814,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
                 if (!isCurrentOllamaRuntimeRequest(requestId)) return;
-                throw new Error(body?.detail || `요약 프로그램 받기 중지 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '요약 프로그램 받기를 중지하지 못했습니다. 다시 시도해 주세요.'));
             }
             const status = await response.json() as OllamaRuntimeDownloadStatus;
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
@@ -903,8 +900,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
             if (!isCurrentPullRequest(targetModel, requestId)) return;
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `모델 받기 시작 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '요약 모델 받기를 시작하지 못했습니다. 모델 이름과 요약 프로그램 상태를 확인해 주세요.'));
             }
             const status = await response.json() as OllamaPullStatus;
             if (!isCurrentPullRequest(targetModel, requestId)) return;
@@ -954,8 +950,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 body: JSON.stringify({ model: targetModel }),
             });
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `모델 받기 중지 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '요약 모델 받기를 중지하지 못했습니다. 다시 시도해 주세요.'));
             }
             const status = await response.json() as OllamaPullStatus;
             updateOllamaPullStatus(status);
@@ -996,8 +991,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 method: 'DELETE',
             });
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `모델 삭제 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '요약 모델을 삭제하지 못했습니다. 사용 중인지 확인한 뒤 다시 시도해 주세요.'));
             }
             const payload = await response.json() as { message?: string };
             const settingsResponse = await fetchWithTimeout(`${base}/api/settings`);
@@ -1035,7 +1029,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             applySettingsToForm(nextSettings);
             lastSavedGeneralKeyRef.current = generalSettingsKey({
                 downloadFormat: getDownloadFormatPreference(),
-                diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? true,
+                diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? false,
                 sttDevice: nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu',
                 preprocessingEnabled: nextSettings.preprocessing?.enabled ?? true,
                 preserveExtractedAudio: nextSettings.privacy?.preserve_extracted_audio ?? true,
@@ -1269,8 +1263,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
 
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `설정 저장 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '설정을 저장하지 못했습니다. 다시 시도해 주세요.'));
             }
 
             const nextSettings = await response.json() as SettingsPayload;
@@ -1333,8 +1326,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
 
             if (!response.ok) {
-                const body = await response.json().catch(() => null);
-                throw new Error(body?.detail || `요약 모델 저장 실패: ${response.status}`);
+                throw new Error(await readApiErrorMessage(response, '사용할 요약 모델을 저장하지 못했습니다. 다시 시도해 주세요.'));
             }
 
             const nextSettings = await response.json() as SettingsPayload;
@@ -1451,7 +1443,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaManagedStopped = ollamaConnection?.status === 'managed_stopped';
     const ollamaMissing = ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable);
     const ollamaAvailable = Boolean(ollamaExecutableAvailable || ollamaRuntimeAvailable || installedSummaryModels.size > 0);
-    const ollamaModelActionsReady = Boolean(ollamaServerReady || (!ollamaManagedStopped && ollamaCanAutoStart));
+    const ollamaModelActionsReady = Boolean(ollamaServerReady || ollamaCanAutoStart);
     const showOllamaRuntimeAction = Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
     const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection);
     const configuredSummaryModel = normalizeSummaryModelName(settings?.summary?.model);

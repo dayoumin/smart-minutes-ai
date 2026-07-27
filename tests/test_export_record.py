@@ -920,7 +920,7 @@ class ExportRecordTest(unittest.TestCase):
     def test_ollama_pull_returns_failed_when_ollama_is_missing(self):
         with (
             patch.object(main, "find_ollama_executable", return_value="ollama"),
-            patch.object(main.shutil, "which", return_value=None),
+            patch.object(main, "_ollama_executable_available", return_value=False),
         ):
             response = self.client.post("/api/models/ollama/pull", json={"model": "gemma4:e2b"})
 

@@ -33,6 +33,10 @@ const {
   listReportTemplates,
 } = await importTsModule('src/meetingKnowledge.ts');
 
+const {
+  parseApiErrorBody,
+} = await importTsModule('src/apiError.ts');
+
 const reportTemplates = listReportTemplates();
 const minutesOutputTemplates = listMinutesOutputTemplates();
 assert.equal(reportTemplates.some((template) => template.id === 'archive-minutes'), false);
@@ -72,5 +76,15 @@ assert.equal(getTranscriptReadyProgressPercent(85, 'Summarizing with Local LLM..
 assert.equal(getTranscriptReadyProgressPercent(95, 'Saving results...'), 100);
 assert.equal(formatTranscriptReadyEstimate(10 * 60_000, 50, 'Transcribing chunk 2/4...'), '약 13:12');
 assert.equal(formatTranscriptReadyEstimate(10 * 60_000, 85, 'Summarizing with Local LLM...'), '대화록 준비됨');
+
+assert.equal(
+  parseApiErrorBody(JSON.stringify({ detail: 'Output result not found' }), 'fallback').message,
+  '분석 원본을 찾지 못했습니다. 음성 파일을 다시 분석해 주세요.',
+);
+assert.equal(
+  parseApiErrorBody(JSON.stringify({ detail: 'Traceback: internal path' }), '다시 시도해 주세요.').message,
+  '다시 시도해 주세요.',
+);
+assert.equal(parseApiErrorBody('', '연결 상태를 확인해 주세요.').message, '연결 상태를 확인해 주세요.');
 
 console.log('ok - generation flow simulation');

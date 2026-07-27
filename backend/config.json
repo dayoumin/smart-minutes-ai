@@ -32,8 +32,8 @@
     "denoise": false
   },
   "diarization": {
-    "enabled": true,
-    "generate_during_analysis": true,
+    "enabled": false,
+    "generate_during_analysis": false,
     "auto_skip_long_audio": true,
     "max_duration_seconds": 9000,
     "max_waveform_mb": 512,

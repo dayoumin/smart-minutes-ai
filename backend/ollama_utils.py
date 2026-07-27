@@ -169,12 +169,20 @@ def ollama_subprocess_env() -> dict[str, str]:
     return env
 
 
-def _ollama_api_ready() -> bool:
+def _ollama_api_ready(timeout_seconds: int = 2) -> bool:
     try:
-        with urllib.request.urlopen(f"{get_ollama_base_url()}/api/tags", timeout=2) as response:
+        with urllib.request.urlopen(
+            f"{get_ollama_base_url()}/api/tags",
+            timeout=max(timeout_seconds, 1),
+        ) as response:
             return 200 <= response.status < 500
     except Exception:
         return False
+
+
+def probe_ollama_server(timeout_seconds: int = 2) -> bool:
+    """Return whether the Ollama API is reachable without starting a runtime."""
+    return _ollama_api_ready(timeout_seconds)
 
 
 def ensure_ollama_server_running(timeout_seconds: int = 15) -> bool:

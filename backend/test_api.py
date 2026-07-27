@@ -23,7 +23,7 @@ import ollama_utils
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from job_checkpoints import atomic_write_json, build_job_checkpoint_paths, load_json_checkpoint
 from main import app, make_analysis_heartbeat, normalize_stt_config, process_audio_pipeline, stream_real_analysis
-from model_manager import MODEL_MARKER_MIN_BYTES, get_model_status, normalize_windows_path, resolve_backend_path
+from model_manager import MODEL_MARKER_MIN_BYTES, get_model_status, list_ollama_models, normalize_windows_path, resolve_backend_path
 from pipeline.audio_preprocess import resolve_preprocessing_plan
 import pipeline.transcribe as transcribe_module
 from pipeline.transcribe import transcribe_audio_fallback_whisper
@@ -921,7 +921,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
             "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
             "preprocessing": {"enabled": True, "normalize_audio": True, "normalization_mode": "auto"},
-            "diarization": {"enabled": True, "generate_during_analysis": False},
+            "diarization": {"enabled": False, "generate_during_analysis": False},
             "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
             "privacy": {"preserve_extracted_audio": True},
         })
@@ -936,7 +936,7 @@ class AnalyzeApiTest(unittest.TestCase):
         ):
             response = self.client.patch(
                 "/api/settings",
-                json={"diarization": {"enabled": True, "generate_during_analysis": True}},
+                json={"diarization": {"generate_during_analysis": True}},
             )
 
         self.assertEqual(response.status_code, 200, response.text)
@@ -1285,10 +1285,91 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertTrue(models["stt_faster_whisper"]["downloadable"])
         self.assertFalse(models["diarization"]["downloadable"])
 
+    def test_list_ollama_models_passive_does_not_start_server(self) -> None:
+        with (
+            patch("model_manager.probe_ollama_server", return_value=False) as probe_server,
+            patch("model_manager.ensure_ollama_server_running") as ensure_server,
+            patch("model_manager.run_hidden") as run_hidden_mock,
+        ):
+            models = list_ollama_models(start_server=False)
+
+        self.assertEqual(models, [])
+        probe_server.assert_called_once_with(timeout_seconds=2)
+        ensure_server.assert_not_called()
+        run_hidden_mock.assert_not_called()
+
+    def test_models_status_uses_passive_ollama_checks(self) -> None:
+        config = main.normalize_app_config({})
+        with (
+            patch.object(main, "load_config", return_value=config),
+            patch.object(main, "get_model_status", return_value={"models": [], "ready": True}) as get_status,
+            patch.object(main, "_summary_model_readiness", return_value={"ready": False, "status": "skipped", "message": ""}) as summary_readiness,
+            patch.object(main, "_ollama_connection_status", return_value={"status": "managed_stopped"}),
+        ):
+            response = self.client.get("/api/models/status")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        get_status.assert_called_once_with(main.BASE_DIR, config, start_ollama=False)
+        summary_readiness.assert_called_once_with(config, start_ollama=False)
+
+    def test_summary_model_readiness_passive_does_not_start_ollama(self) -> None:
+        config = main.normalize_app_config({"summary": {"enabled": True, "model": "gemma4:e2b"}})
+        with (
+            patch.object(main, "_resolve_summary_model", return_value="gemma4:e2b"),
+            patch.object(main, "ollama_model_exists", return_value=False) as model_exists,
+        ):
+            readiness = main._summary_model_readiness(config, start_ollama=False)
+
+        self.assertFalse(readiness["ready"])
+        model_exists.assert_called_once_with("gemma4:e2b", start_server=False)
+
+    def test_manual_diarization_request_applies_limits_when_auto_is_disabled(self) -> None:
+        decision = main._diarization_resource_decision(
+            {
+                "diarization": {
+                    "enabled": False,
+                    "max_duration_seconds": 10,
+                    "max_waveform_mb": 0,
+                }
+            },
+            20.0,
+            requested_override=True,
+        )
+
+        self.assertTrue(decision["requested"])
+        self.assertTrue(decision["skipped"])
+        self.assertFalse(decision["run"])
+        self.assertEqual(decision["skip_reason"], "duration_limit")
+
+    def test_mark_diarization_failed_persists_recovery_state(self) -> None:
+        cases = {
+            "diarization_resource_limit": "resource_limit",
+            "audio_required_for_diarization": "source_not_preserved",
+            "diarization_model_not_ready": "model_not_ready",
+            main.DETAIL_DIARIZATION_RUNTIME_ERROR: "runtime_error",
+        }
+        for detail, expected_reason in cases.items():
+            with self.subTest(detail=detail):
+                result_data = {"settings": {}}
+                with (
+                    patch.object(main, "_get_job_result_path", return_value=TEST_AUDIO_PATH),
+                    patch.object(main, "_load_latest_generation_result", return_value=result_data),
+                    patch.object(main, "_save_job_result") as save_result,
+                ):
+                    main._mark_diarization_failed("unit_failure_state", result_data, detail, "failure")
+
+                saved = save_result.call_args.args[1]
+                self.assertEqual(saved["settings"]["diarization_generation_status"], "failed")
+                self.assertTrue(saved["settings"]["diarization_requested"])
+                self.assertTrue(saved["settings"]["diarization_skipped"])
+                self.assertFalse(saved["settings"]["diarization_deferred"])
+                self.assertEqual(saved["settings"]["diarization_skip_reason"], expected_reason)
+                self.assertTrue(saved["settings"]["diarization_skip_message"])
+
     def test_ollama_connection_status_reports_missing_runtime(self) -> None:
         with (
             patch.object(main, "ollama_executable_available", return_value=False),
-            patch.object(main, "ensure_ollama_server_running") as ensure_server,
+            patch.object(main, "probe_ollama_server") as probe_server,
         ):
             status = main._ollama_connection_status()
 
@@ -1296,7 +1377,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(status["source"], "none")
         self.assertFalse(status["executable_available"])
         self.assertFalse(status["server_ready"])
-        ensure_server.assert_not_called()
+        probe_server.assert_not_called()
 
     def test_ollama_connection_status_reports_system_install_not_running(self) -> None:
         with (
@@ -1304,7 +1385,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch.object(main, "find_embedded_ollama_executable", return_value=""),
             patch.object(main, "find_ollama_executable", return_value=r"C:\Users\User\AppData\Local\Programs\Ollama\ollama.exe"),
             patch.object(main, "using_embedded_ollama", return_value=False),
-            patch.object(main, "ensure_ollama_server_running", return_value=False),
+            patch.object(main, "probe_ollama_server", return_value=False),
         ):
             status = main._ollama_connection_status()
 
@@ -1321,7 +1402,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch.object(main, "find_embedded_ollama_executable", return_value=executable),
             patch.object(main, "find_ollama_executable", return_value=executable),
             patch.object(main, "using_embedded_ollama", return_value=True),
-            patch.object(main, "ensure_ollama_server_running", return_value=True),
+            patch.object(main, "probe_ollama_server", return_value=True),
         ):
             status = main._ollama_connection_status()
 
@@ -1331,21 +1412,21 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertTrue(status["can_auto_start"])
         self.assertTrue(status["managed_runtime_available"])
 
-    def test_ollama_connection_status_reports_managed_runtime_start_failure(self) -> None:
+    def test_ollama_connection_status_reports_managed_runtime_stopped(self) -> None:
         executable = r"D:\Apps\lmo_audio\runtime\ollama\ollama.exe"
         with (
             patch.object(main, "ollama_executable_available", return_value=True),
             patch.object(main, "find_embedded_ollama_executable", return_value=executable),
             patch.object(main, "find_ollama_executable", return_value=executable),
             patch.object(main, "using_embedded_ollama", return_value=True),
-            patch.object(main, "ensure_ollama_server_running", return_value=False),
+            patch.object(main, "probe_ollama_server", return_value=False),
         ):
             status = main._ollama_connection_status()
 
         self.assertEqual(status["status"], "managed_stopped")
         self.assertEqual(status["source"], "managed")
         self.assertFalse(status["server_ready"])
-        self.assertFalse(status["can_auto_start"])
+        self.assertTrue(status["can_auto_start"])
         self.assertTrue(status["managed_runtime_available"])
 
     def test_start_model_download_accepts_stt_only(self) -> None:
@@ -2136,7 +2217,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(readiness["status"], "ready")
 
     def test_summary_model_readiness_accepts_available_gemma4_4b_fallback(self) -> None:
-        def fake_ollama_exists(model_name: str) -> bool:
+        def fake_ollama_exists(model_name: str, *, start_server: bool = True) -> bool:
             return model_name == "gemma4:e4b"
 
         with patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists):
@@ -2155,7 +2236,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "summary": {"enabled": True, "model": "gemma4:e2b"},
         })
 
-        def fake_ollama_exists(model_name: str) -> bool:
+        def fake_ollama_exists(model_name: str, *, start_server: bool = True) -> bool:
             return model_name == "gemma4:e4b"
 
         with (
@@ -2183,7 +2264,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        def fake_ollama_exists(model_name: str) -> bool:
+        def fake_ollama_exists(model_name: str, *, start_server: bool = True) -> bool:
             return model_name == "gemma4:e4b"
 
         with patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists):
@@ -2515,7 +2596,7 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(normalized["stt"]["device"], "cpu")
         self.assertEqual(normalized["processing"]["long_audio_chunk_seconds"], 30)
         self.assertFalse(normalized["diarization"]["enabled"])
-        self.assertTrue(normalized["diarization"]["generate_during_analysis"])
+        self.assertFalse(normalized["diarization"]["generate_during_analysis"])
 
     def test_generic_models_path_migrates_to_default_model_path(self) -> None:
         normalized = normalize_stt_config({
@@ -2787,12 +2868,22 @@ class AnalyzeApiTest(unittest.TestCase):
         async def collect_events() -> list[str]:
             upload = UploadFile(filename="test_audio.wav", file=BytesIO(b"audio bytes"))
             response = await main.analyze_meeting(
-                "테스트 회의",
-                "2026-05-12T10:00",
-                "홍길동",
-                upload,
-                "real",
-                "unit_saved_before_stream",
+                title="테스트 회의",
+                date="2026-05-12T10:00",
+                participants="홍길동",
+                file=upload,
+                mode="real",
+                job_id="unit_saved_before_stream",
+                file_size=None,
+                file_last_modified=None,
+                resume_requested=False,
+                meeting_purpose="",
+                selected_report_template_id="standard-minutes",
+                report_template="",
+                selected_context_template_id="general",
+                context_template="",
+                selected_term_glossary_ids="",
+                term_glossaries="",
             )
             upload.file.close()
             events = []
@@ -3111,7 +3202,7 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(payload["candidates"][0]["completed_chunk_count"], 2)
             self.assertTrue(payload["candidates"][0]["last_progress"]["transcript_ready"])
 
-    def test_analysis_config_fingerprint_ignores_summary_settings(self) -> None:
+    def test_analysis_config_fingerprint_ignores_summary_and_diarization_execution_policy(self) -> None:
         base_config = {
             "paths": {
                 "stt_model": "../models/faster-whisper-large-v3",
@@ -3121,7 +3212,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "stt": {"selected_model": "faster-whisper-large-v3", "device": "cpu"},
             "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
             "preprocessing": {"enabled": True},
-            "diarization": {"enabled": True},
+            "diarization": {"enabled": True, "generate_during_analysis": False},
             "summary": {"enabled": True, "model": "old-model"},
         }
         changed_summary_config = copy.deepcopy(base_config)
@@ -3130,6 +3221,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "model": "new-model",
             "generate_during_analysis": True,
         }
+        changed_summary_config["diarization"]["generate_during_analysis"] = True
         changed_summary_config["paths"]["llm_model"] = "./models/llm/new.gguf"
         changed_summary_config["paths"]["stt_model"] = "D:/resolved/models/faster-whisper-large-v3"
         changed_summary_config["paths"]["diarization_model"] = "D:/resolved/models/diarization"
@@ -3137,6 +3229,10 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(
             main._analysis_config_fingerprint(base_config),
             main._analysis_config_fingerprint(changed_summary_config),
+        )
+        self.assertIn(
+            main._analysis_previous_config_fingerprint(changed_summary_config),
+            main._analysis_compatible_config_fingerprints(base_config),
         )
 
     def test_resume_candidates_accepts_legacy_summary_fingerprint(self) -> None:
@@ -4112,11 +4208,11 @@ class AnalyzeApiTest(unittest.TestCase):
                 result = process_audio_pipeline(TEST_AUDIO_PATH, "unit_diarization_manual_default", config)
 
             settings = result["result_data"]["settings"]
-            self.assertFalse(settings["diarization_requested"])
-            self.assertFalse(settings["diarization_deferred"])
+            self.assertTrue(settings["diarization_requested"])
+            self.assertTrue(settings["diarization_deferred"])
             self.assertFalse(settings["diarization"])
             self.assertFalse(settings["diarization_skipped"])
-            self.assertEqual(settings["diarization_defer_message"], "")
+            self.assertTrue(settings["diarization_defer_message"])
             diarize_mock.assert_not_called()
 
     def test_pipeline_saves_meeting_when_auto_diarization_fails(self) -> None:

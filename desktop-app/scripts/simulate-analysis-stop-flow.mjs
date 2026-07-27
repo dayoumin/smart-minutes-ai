@@ -243,7 +243,7 @@ const runScenario = async (browser, fixture, action) => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
     await page.getByLabel('회의 제목 *').fill(`${action} 분석 중지 테스트`);
-    await page.getByLabel('회의 목적/정리 맥락 *').fill('분석 중 중지와 취소 동작 확인');
+    await page.getByLabel('회의 목적 *').fill('분석 중 중지와 취소 동작 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await analyzeStarted;

@@ -641,7 +641,7 @@ const run = async () => {
     await installRoutes(page, state);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    await page.getByRole('button', { name: '시스템 설정' }).click();
+    await page.getByRole('button', { name: '앱 설정' }).click();
     await page.getByRole('button', { name: '문의 연락처 보기' }).click();
     await page.getByText('문의사항은 아래 이메일로 연락주세요.').waitFor({ state: 'visible', timeout: 10000 });
     await page.getByText('ecomarine@korea.kr').waitFor({ state: 'visible', timeout: 10000 });
@@ -704,17 +704,17 @@ const run = async () => {
       source: 'managed',
       executable_available: true,
       server_ready: false,
-      can_auto_start: false,
+      can_auto_start: true,
       managed_runtime_available: true,
       executable_path: 'runtime\\ollama\\ollama.exe',
     };
     await modelsPanel.getByRole('button', { name: '모델 준비 상태 다시 확인' }).click();
-    await modelsPanel.getByText('요약 프로그램을 시작하지 못했습니다', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('요약 프로그램은 필요한 작업을 시작할 때 실행됩니다.', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.locator('select').selectOption('gemma4:e4b');
     assert.equal(
       await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).count(),
-      0,
-      'managed Ollama start failure should block summary model pull actions',
+      1,
+      'managed Ollama should allow an explicit model pull to start the runtime',
     );
     state.ollamaConnection = {
       status: 'managed_ready',
@@ -726,7 +726,7 @@ const run = async () => {
       executable_path: 'runtime\\ollama\\ollama.exe',
     };
     await modelsPanel.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await modelsPanel.getByText('요약 프로그램을 시작하지 못했습니다', { exact: true }).waitFor({ state: 'hidden', timeout: 10000 });
+    await modelsPanel.getByText('요약 프로그램은 필요한 작업을 시작할 때 실행됩니다.', { exact: true }).waitFor({ state: 'hidden', timeout: 10000 });
     const gemma4e4bInitialLink = modelsPanel.getByRole('link', { name: 'gemma4:e4b 모델 페이지' });
     await gemma4e4bInitialLink.click();
     assert.equal(

@@ -899,10 +899,10 @@ class ExportRecordTest(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
 
-    def test_user_model_download_endpoint_is_not_exposed(self):
+    def test_model_download_endpoint_rejects_legacy_payload(self):
         response = self.client.post("/api/models/download", json={"models": ["stt_primary"]})
 
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual(response.status_code, 400)
 
     def test_model_status_returns_degraded_payload_on_internal_error(self):
         with (
@@ -928,7 +928,7 @@ class ExportRecordTest(unittest.TestCase):
         payload = response.json()
         self.assertFalse(payload["active"])
         self.assertEqual(payload["status"], "failed")
-        self.assertIn("Ollama를 찾지 못했습니다", payload["message"])
+        self.assertIn("요약 프로그램(Ollama)을 찾지 못했습니다", payload["message"])
 
 
 if __name__ == "__main__":

@@ -11,7 +11,7 @@ export interface SidebarProps {
     selectedMeetingId?: string | null;
     onSelectMeeting?: (id: string) => void;
     onCreateMeeting?: () => void;
-    onDeleteMeeting?: (id: string) => void;
+    onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenSettings?: () => void;
     onOpenAsrBenchmark?: () => void;
@@ -97,13 +97,34 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const [showAllRecords, setShowAllRecords] = useState(false);
     const [now, setNow] = useState(() => Date.now());
     const sidebarRef = useRef<HTMLElement | null>(null);
+    const createMeetingButtonRef = useRef<HTMLButtonElement | null>(null);
+    const recordMenuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
+    const recordMenuPanelRefs = useRef(new Map<string, HTMLDivElement>());
+    const pendingRecordMenuFocusRef = useRef<{ recordId: string; fallbackRecordId: string | null } | null>(null);
 
     const loadRecords = async () => {
         try {
             const data = await getAllMeetings();
             setRecords(data);
         } catch {
-            setRecords([]);
+            const pendingFocus = pendingRecordMenuFocusRef.current;
+            pendingRecordMenuFocusRef.current = null;
+            if (!pendingFocus) return;
+            window.requestAnimationFrame(() => {
+                const recordTrigger = recordMenuTriggerRefs.current.get(pendingFocus.recordId);
+                const fallbackTrigger = pendingFocus.fallbackRecordId
+                    ? recordMenuTriggerRefs.current.get(pendingFocus.fallbackRecordId)
+                    : null;
+                if (recordTrigger?.isConnected) {
+                    recordTrigger.focus();
+                    return;
+                }
+                if (fallbackTrigger?.isConnected) {
+                    fallbackTrigger.focus();
+                    return;
+                }
+                createMeetingButtonRef.current?.focus();
+            });
         }
     };
 
@@ -174,17 +195,88 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
             if (target instanceof Element && target.closest('[data-sidebar-record-menu], [data-sidebar-record-menu-trigger]')) return;
             setOpenMenuId(null);
         };
-        const closeMenuWithKeyboard = (event: KeyboardEvent) => {
-            if (event.key === 'Escape') setOpenMenuId(null);
-        };
 
         document.addEventListener('pointerdown', closeMenu, true);
-        window.addEventListener('keydown', closeMenuWithKeyboard);
         return () => {
             document.removeEventListener('pointerdown', closeMenu, true);
-            window.removeEventListener('keydown', closeMenuWithKeyboard);
         };
     }, []);
+
+    const focusRecordMenuTrigger = (recordId: string | null) => {
+        window.requestAnimationFrame(() => {
+            const trigger = recordId ? recordMenuTriggerRefs.current.get(recordId) : null;
+            if (trigger?.isConnected) {
+                trigger.focus();
+                return;
+            }
+            createMeetingButtonRef.current?.focus();
+        });
+    };
+
+    const closeRecordMenu = (recordId: string, restoreFocus = false) => {
+        setOpenMenuId(null);
+        if (restoreFocus) focusRecordMenuTrigger(recordId);
+    };
+
+    useEffect(() => {
+        if (!openMenuId) return;
+        const frame = window.requestAnimationFrame(() => {
+            recordMenuPanelRefs.current
+                .get(openMenuId)
+                ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
+                ?.focus();
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [openMenuId]);
+
+    useEffect(() => {
+        const pendingFocus = pendingRecordMenuFocusRef.current;
+        if (!pendingFocus) return;
+        pendingRecordMenuFocusRef.current = null;
+        const focusRecordId = visibleRecords.some(record => record.id === pendingFocus.recordId)
+            ? pendingFocus.recordId
+            : visibleRecords.some(record => record.id === pendingFocus.fallbackRecordId)
+                ? pendingFocus.fallbackRecordId
+                : null;
+        window.requestAnimationFrame(() => {
+            const trigger = focusRecordId ? recordMenuTriggerRefs.current.get(focusRecordId) : null;
+            if (trigger?.isConnected) {
+                trigger.focus();
+                return;
+            }
+            createMeetingButtonRef.current?.focus();
+        });
+    }, [visibleRecords]);
+
+
+    const handleRecordMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, recordId: string) => {
+        if (event.key === 'Escape') {
+            event.preventDefault();
+            event.stopPropagation();
+            closeRecordMenu(recordId, true);
+            return;
+        }
+        if (event.key === 'Tab') {
+            setOpenMenuId(null);
+            return;
+        }
+
+        const items = Array.from(
+            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'),
+        );
+        if (items.length === 0) return;
+        const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+        let nextIndex: number | null = null;
+        if (event.key === 'ArrowDown') nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
+        if (event.key === 'ArrowUp') nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
+        if (event.key === 'Home') nextIndex = 0;
+        if (event.key === 'End') nextIndex = items.length - 1;
+        if (nextIndex === null) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+        items[nextIndex]?.focus();
+    };
 
     const handleSelectRecord = (id: string) => {
         setOpenMenuId(null);
@@ -192,7 +284,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     };
 
     const handleRenameRecord = async (record: MeetingRecord) => {
-        setOpenMenuId(null);
+        closeRecordMenu(record.id, true);
         const nextTitle = window.prompt('회의록 이름 변경', record.title)?.trim();
         if (!nextTitle || nextTitle === record.title) return;
         await updateMeeting({ ...record, title: nextTitle });
@@ -200,13 +292,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     };
 
     const handleTogglePinned = async (record: MeetingRecord) => {
+        const recordIndex = visibleRecords.findIndex(item => item.id === record.id);
+        const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
         await updateMeeting({ ...record, pinned: !record.pinned });
+        pendingRecordMenuFocusRef.current = { recordId: record.id, fallbackRecordId };
         setOpenMenuId(null);
         window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
     };
 
     const handleDeleteRecord = async (record: MeetingRecord) => {
-        setOpenMenuId(null);
+        const recordIndex = visibleRecords.findIndex(item => item.id === record.id);
+        const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
+        closeRecordMenu(record.id, true);
         if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?\n\n앱 안의 회의 기록과 분석 산출물은 삭제되지만, 다운로드 폴더에 저장한 HWPX/음성 파일은 직접 삭제해야 합니다.`)) return;
         if (record.jobId) {
             const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(record.jobId)}`), {
@@ -223,7 +320,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         }
         await deleteMeeting(record.id);
         window.dispatchEvent(new Event('meetings:updated'));
-        onDeleteMeeting?.(record.id);
+        onDeleteMeeting?.(record.id, fallbackRecordId);
+        focusRecordMenuTrigger(fallbackRecordId);
     };
 
     return (
@@ -233,6 +331,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     <span className="text-lg font-semibold text-foreground">회의 기록</span>
                 </div>
                 <button
+                    ref={createMeetingButtonRef}
                     type="button"
                     className={`sidebar-create-button mb-3 ${activeTab === 'minutes' ? 'sidebar-create-button-active' : ''}`}
                     onClick={() => {
@@ -341,24 +440,46 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         </div>
                                     </button>
                                     <button
+                                        ref={element => {
+                                            if (element) recordMenuTriggerRefs.current.set(record.id, element);
+                                            else recordMenuTriggerRefs.current.delete(record.id);
+                                        }}
                                         type="button"
                                         className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-primary"
                                         onClick={() => setOpenMenuId(openMenuId === record.id ? null : record.id)}
+                                        onKeyDown={event => {
+                                            if (event.key !== 'Escape' || openMenuId !== record.id) return;
+                                            event.preventDefault();
+                                            event.stopPropagation();
+                                            closeRecordMenu(record.id, true);
+                                        }}
                                         data-sidebar-record-menu-trigger
                                         aria-haspopup="menu"
                                         aria-expanded={openMenuId === record.id}
                                         aria-controls={`sidebar-record-menu-${record.id}`}
-                                        title="회의록 메뉴"
-                                        aria-label="회의록 메뉴"
+                                        title={`${record.title}, ${record.date} 회의록 메뉴`}
+                                        aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
                                     >
                                         <MoreVertical size={14} />
                                     </button>
                                 </div>
                                 {openMenuId === record.id && (
-                                    <div id={`sidebar-record-menu-${record.id}`} role="menu" className="menu-panel absolute right-2 top-8 z-20 w-32 text-xs" data-sidebar-record-menu>
+                                    <div
+                                        ref={element => {
+                                            if (element) recordMenuPanelRefs.current.set(record.id, element);
+                                            else recordMenuPanelRefs.current.delete(record.id);
+                                        }}
+                                        id={`sidebar-record-menu-${record.id}`}
+                                        role="menu"
+                                        aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
+                                        className="menu-panel absolute right-2 top-8 z-20 w-32 text-xs"
+                                        data-sidebar-record-menu
+                                        onKeyDown={event => handleRecordMenuKeyDown(event, record.id)}
+                                    >
                                         <button
                                             type="button"
                                             role="menuitem"
+                                            tabIndex={-1}
                                             className="menu-item px-2 py-1.5"
                                             onClick={() => handleTogglePinned(record)}
                                         >
@@ -368,6 +489,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         <button
                                             type="button"
                                             role="menuitem"
+                                            tabIndex={-1}
                                             className="menu-item px-2 py-1.5"
                                             onClick={() => handleRenameRecord(record)}
                                         >
@@ -377,6 +499,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         <button
                                             type="button"
                                             role="menuitem"
+                                            tabIndex={-1}
                                             className="menu-item menu-item-danger px-2 py-1.5"
                                             onClick={() => handleDeleteRecord(record)}
                                         >

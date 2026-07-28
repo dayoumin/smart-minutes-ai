@@ -640,6 +640,43 @@ const seedLegacyParticipantMeeting = async (page) => {
   }, { legacyParticipantMeetingId, legacyParticipantJobId });
 };
 
+
+const seedSidebarMenuMeetings = async (page) => {
+  await page.evaluate(async () => {
+    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const db = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const records = [
+      { id: 'sidebar-old-pinned', date: '2026-04-01 09:00', title: '오래된 고정 회의', pinned: true },
+      { id: 'sidebar-duplicate-later', date: '2026-05-08 00:09', title: '반복 주간회의', pinned: false },
+      { id: 'sidebar-duplicate-earlier', date: '2026-05-08 00:08', title: '반복 주간회의', pinned: false },
+      { id: 'sidebar-recent-filler', date: '2026-05-08 00:07', title: '최근 회의 기록', pinned: false },
+    ].map(record => ({
+      ...record,
+      summary: '',
+      participants: '',
+      meetingPurpose: '',
+      sourceFile: 'sidebar-focus.wav',
+      topics: [],
+      topicSections: [],
+      speakerContextSummaries: [],
+      participantSummaries: [],
+      speakerLabels: {},
+      segments: [],
+    }));
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      const store = tx.objectStore('meetings');
+      records.forEach(record => store.put(record));
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+};
+
 const installRoutes = async (page) => {
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
@@ -955,6 +992,75 @@ const run = async () => {
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
+    const loadErrorContext = await browser.newContext({ viewport: { width: 1200, height: 800 } });
+    const loadErrorPage = await loadErrorContext.newPage();
+    try {
+      await loadErrorPage.addInitScript(() => {
+        window.__meetingDbOriginalOpen = indexedDB.open.bind(indexedDB);
+        window.__meetingDbOpenShouldFail = true;
+        Object.defineProperty(indexedDB, 'open', {
+          configurable: true,
+          value: (...args) => {
+            if (!window.__meetingDbOpenShouldFail) return window.__meetingDbOriginalOpen(...args);
+            const failedRequest = {
+              error: new DOMException('simulated IndexedDB failure', 'UnknownError'),
+              onerror: null,
+              onsuccess: null,
+              onupgradeneeded: null,
+            };
+            queueMicrotask(() => failedRequest.onerror?.(new Event('error')));
+            return failedRequest;
+          },
+        });
+      });
+      await installRoutes(loadErrorPage);
+      await loadErrorPage.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+      const recoveryMeetingId = 'codex-load-error-recovery';
+      await loadErrorPage.evaluate((targetMeetingId) => {
+        window.dispatchEvent(new CustomEvent('meetings:updated', {
+          detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+        }));
+      }, recoveryMeetingId);
+      await loadErrorPage.getByRole('heading', { name: '회의 기록을 불러오지 못했습니다' }).waitFor({ timeout: 10000 });
+      assert.equal(await loadErrorPage.getByRole('heading', { name: '선택된 회의록이 없습니다' }).count(), 0);
+      const retryMeetingLoadButton = loadErrorPage.getByRole('button', { name: '다시 시도', exact: true });
+      await retryMeetingLoadButton.waitFor({ timeout: 10000 });
+      await loadErrorPage.evaluate(async ({ recoveryMeetingId }) => {
+        window.__meetingDbOpenShouldFail = false;
+        const request = indexedDB.open('MeetingHistoryDB', 1);
+        const db = await new Promise((resolve, reject) => {
+          request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains('meetings')) {
+              request.result.createObjectStore('meetings', { keyPath: 'id' });
+            }
+          };
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        await new Promise((resolve, reject) => {
+          const tx = db.transaction('meetings', 'readwrite');
+          tx.objectStore('meetings').put({
+            id: recoveryMeetingId,
+            date: '2026-05-08 00:11',
+            title: '회의 기록 복구 검증',
+            summary: '재시도로 회의 기록을 불러왔습니다.',
+            participants: '',
+            meetingPurpose: '초기 로딩 복구 확인',
+            sourceFile: 'load-recovery.wav',
+            topics: [],
+            segments: [],
+          });
+          tx.oncomplete = resolve;
+          tx.onerror = () => reject(tx.error);
+        });
+        db.close();
+      }, { recoveryMeetingId });
+      await retryMeetingLoadButton.click();
+      await loadErrorPage.getByRole('heading', { name: '회의 기록 복구 검증' }).waitFor({ timeout: 10000 });
+    } finally {
+      await loadErrorContext.close();
+    }
+
     page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
     page.on('request', request => {
       if (request.url().includes('/api/')) {
@@ -996,7 +1102,205 @@ const run = async () => {
     await seedAudioMissingDiarizationMeeting(page);
     await seedUnlabeledAudioMissingMeeting(page);
     await seedLegacyParticipantMeeting(page);
+    await seedSidebarMenuMeetings(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
+
+    const sidebarRecordMenuTriggers = page.locator('[data-sidebar-record-menu-trigger]');
+    await sidebarRecordMenuTriggers.first().waitFor({ timeout: 10000 });
+    const sidebarRecordMenuLabels = await sidebarRecordMenuTriggers.evaluateAll(triggers => triggers.map(trigger => ({
+      label: trigger.getAttribute('aria-label') ?? '',
+      title: trigger.parentElement?.querySelector('button[title]')?.getAttribute('title') ?? '',
+    })));
+    assert.equal(sidebarRecordMenuLabels.every(({ label, title }) => Boolean(title) && label.startsWith(title)), true);
+    assert.equal(new Set(sidebarRecordMenuLabels.map(({ label }) => label)).size, sidebarRecordMenuLabels.length);
+    assert.deepEqual(sidebarRecordMenuLabels.filter(({ title }) => title === '반복 주간회의').map(({ label }) => label).sort(), [
+      '반복 주간회의, 2026-05-08 00:08 회의록 메뉴',
+      '반복 주간회의, 2026-05-08 00:09 회의록 메뉴',
+    ]);
+
+    let sidebarMenuTriggerLabel = '오래된 고정 회의, 2026-04-01 09:00 회의록 메뉴';
+    const sidebarMenuFallbackLabel = '반복 주간회의, 2026-05-08 00:09 회의록 메뉴';
+    const getSidebarMenuTrigger = () => page.getByRole('button', { name: sidebarMenuTriggerLabel, exact: true });
+    const sidebarRecordMenu = page.locator('[data-sidebar-record-menu]');
+    const waitForSidebarMenuTriggerFocus = async () => {
+      const trigger = getSidebarMenuTrigger();
+      await page.waitForFunction(element => document.activeElement === element, await trigger.elementHandle());
+    };
+    const openSidebarRecordMenu = async () => {
+      const trigger = getSidebarMenuTrigger();
+      await trigger.focus();
+      await trigger.press('Enter');
+      await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
+      return sidebarRecordMenu.getByRole('menuitem');
+    };
+
+    let sidebarMenuItems = await openSidebarRecordMenu();
+    assert.equal(await sidebarMenuItems.first().evaluate(element => document.activeElement === element), true);
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await sidebarMenuItems.nth(1).evaluate(element => document.activeElement === element), true);
+    await page.keyboard.press('End');
+    assert.equal(await sidebarMenuItems.last().evaluate(element => document.activeElement === element), true);
+    await page.keyboard.press('Home');
+    assert.equal(await sidebarMenuItems.first().evaluate(element => document.activeElement === element), true);
+    await page.keyboard.press('Escape');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await waitForSidebarMenuTriggerFocus();
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    const renameDialogDismissed = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'prompt');
+          await dialog.dismiss();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await sidebarMenuItems.nth(1).click();
+    await renameDialogDismissed;
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await waitForSidebarMenuTriggerFocus();
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    const deleteDialogDismissed = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'confirm');
+          await dialog.dismiss();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await sidebarMenuItems.last().click();
+    await deleteDialogDismissed;
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await waitForSidebarMenuTriggerFocus();
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    await sidebarMenuItems.first().click();
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await getSidebarMenuTrigger().waitFor({ state: 'detached' });
+    const sidebarMenuFallbackTrigger = page.getByRole('button', { name: sidebarMenuFallbackLabel, exact: true });
+    await page.waitForFunction(element => document.activeElement === element, await sidebarMenuFallbackTrigger.elementHandle());
+    sidebarMenuTriggerLabel = sidebarMenuFallbackLabel;
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    await page.keyboard.press('Tab');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(() => {
+      const activeElement = document.activeElement;
+      return activeElement instanceof HTMLElement && activeElement !== document.body && !activeElement.closest('[data-sidebar-record-menu]');
+    }), true);
+
+    await page.setViewportSize({ width: 800, height: 720 });
+    const narrowSidebarMenuTrigger = page.locator('[data-sidebar-record-menu-trigger]').last();
+    await narrowSidebarMenuTrigger.scrollIntoViewIfNeeded();
+    await narrowSidebarMenuTrigger.click();
+    await sidebarRecordMenu.waitFor({ state: 'visible' });
+    const narrowMenuBounds = await sidebarRecordMenu.evaluate(element => {
+      const bounds = element.getBoundingClientRect();
+      return { left: bounds.left, right: bounds.right, top: bounds.top, bottom: bounds.bottom };
+    });
+    assert.equal(narrowMenuBounds.left >= 0 && narrowMenuBounds.right <= 800, true);
+    assert.equal(narrowMenuBounds.top >= 0 && narrowMenuBounds.bottom <= 720, true);
+    assert.equal(await sidebarRecordMenu.getByRole('menuitem').first().isVisible(), true);
+    await page.keyboard.press('Escape');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await page.setViewportSize({ width: 1200, height: 800 });
+    await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        const store = tx.objectStore('meetings');
+        ['sidebar-old-pinned', 'sidebar-duplicate-later', 'sidebar-duplicate-earlier', 'sidebar-recent-filler'].forEach(id => store.delete(id));
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      window.dispatchEvent(new Event('meetings:updated'));
+    });
+    await page.waitForFunction(() => document.querySelectorAll('[data-sidebar-record-menu-trigger]').length === 8);
+
+
+    const cacheMissMeetingId = 'codex-detail-flow-cache-miss-meeting';
+    await page.evaluate(async ({ cacheMissMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        tx.objectStore('meetings').put({
+          id: cacheMissMeetingId,
+          date: '2026-05-08 00:10',
+          title: '새 회의 전환 검증',
+          summary: '캐시에 없는 새 회의입니다.',
+          participants: '',
+          meetingPurpose: '캐시 미스 전환 확인',
+          sourceFile: 'cache-miss.wav',
+          topics: [],
+          segments: [],
+        });
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      window.__cacheMissSkeletonSeen = false;
+      window.__previousMeetingVisibleDuringSkeleton = false;
+      window.__cacheMissSkeletonObserver = new MutationObserver(() => {
+        if (!document.querySelector('.meeting-detail-shell[aria-busy="true"]')) return;
+        window.__cacheMissSkeletonSeen = true;
+        if (document.querySelector('.meeting-detail-shell')?.textContent?.includes('요약 AI 미준비 회의록')) {
+          window.__previousMeetingVisibleDuringSkeleton = true;
+        }
+      });
+      window.__cacheMissSkeletonObserver.observe(document.body, { childList: true, subtree: true });
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: cacheMissMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, { cacheMissMeetingId });
+    await page.getByRole('heading', { name: '새 회의 전환 검증' }).waitFor({ timeout: 10000 });
+    const cacheMissTransitionState = await page.evaluate(() => {
+      window.__cacheMissSkeletonObserver?.disconnect();
+      return {
+        skeletonSeen: window.__cacheMissSkeletonSeen,
+        previousMeetingVisibleDuringSkeleton: window.__previousMeetingVisibleDuringSkeleton,
+      };
+    });
+    assert.equal(cacheMissTransitionState.skeletonSeen, true);
+    assert.equal(cacheMissTransitionState.previousMeetingVisibleDuringSkeleton, false);
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, skippedMeetingId);
+    await page.getByRole('heading', { name: '요약 AI 미준비 회의록' }).waitFor({ timeout: 10000 });
+    await page.evaluate(async ({ cacheMissMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        tx.objectStore('meetings').delete(cacheMissMeetingId);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      window.dispatchEvent(new Event('meetings:updated'));
+    }, { cacheMissMeetingId });
+
+
 
     await page.getByText('요약 AI 미준비 회의록').first().click();
     await page.getByText('요약 AI가 없어도 대화록은 확인할 수 있습니다.').waitFor({ timeout: 10000 });
@@ -1139,6 +1443,8 @@ const run = async () => {
     const diarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
     await diarizationButton.click();
     await diarizationRequested;
+    await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
+    await page.getByText('경과 시간').waitFor({ timeout: 10000 });
     const stopDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
     await stopDiarizationButton.waitFor({ timeout: 10000 });
     assert.equal(await stopDiarizationButton.isDisabled(), false);
@@ -1174,6 +1480,7 @@ const run = async () => {
     await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
 
+    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
 
     const topicButton = page.locator('button.detail-action-button[aria-label="주제별 정리"]');
@@ -1243,10 +1550,11 @@ const run = async () => {
     await page.getByText('핵심 발언').first().waitFor({ timeout: 10000 });
 
     await page.getByRole('button', { name: '기록 정리 HWPX 파일을 다운로드 폴더에 저장' }).click();
+    await page.getByRole('button', { name: '파일 저장', exact: true }).click();
     for (let attempt = 0; attempt < 50 && exportCalls.length === 0; attempt += 1) {
       await sleep(100);
     }
-    await page.getByText('저장됨', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('button.detail-download-button svg.lucide-check').waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('HWPX 파일을 다운로드 폴더에 저장했습니다.').count(), 0);
 
     assert.deepEqual(exportCalls, ['hwpx:save-copy']);
@@ -1258,12 +1566,303 @@ const run = async () => {
 
     await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
     await page.getByRole('button', { name: '대화록 TXT 파일을 다운로드 폴더에 저장' }).click();
+    await page.getByRole('button', { name: '파일 저장', exact: true }).click();
     for (let attempt = 0; attempt < 50 && exportCalls.length === 1; attempt += 1) {
       await sleep(100);
     }
     assert.deepEqual(exportCalls, ['hwpx:save-copy', 'txt:save-copy']);
     assert.equal(exportBodies[1]?.exportScope, 'transcript');
     assert.match(exportBodies[1]?.title ?? '', /_대화록$/);
+
+    await page.getByRole('button', { name: '대화록 편집' }).click();
+    const unsavedTranscriptDraft = page.getByLabel('김검토 대화록 수정').first();
+    await unsavedTranscriptDraft.fill('저장하지 않은 대화록 편집 내용');
+    await unsavedTranscriptDraft.focus();
+    await page.evaluate((targetMeetingId) => {
+      window.__meetingDetailSkeletonSeen = Boolean(document.querySelector('.meeting-detail-shell[aria-busy="true"]'));
+      window.__meetingDetailSkeletonObserver = new MutationObserver(() => {
+        if (document.querySelector('.meeting-detail-shell[aria-busy="true"]')) {
+          window.__meetingDetailSkeletonSeen = true;
+        }
+      });
+      window.__meetingDetailSkeletonObserver.observe(document.body, { childList: true, subtree: true });
+      window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: targetMeetingId } }));
+    }, meetingId);
+    await sleep(250);
+    const backgroundRefreshState = await page.evaluate(() => {
+      window.__meetingDetailSkeletonObserver?.disconnect();
+      return {
+        skeletonSeen: window.__meetingDetailSkeletonSeen,
+        activeLabel: document.activeElement?.getAttribute('aria-label') ?? '',
+      };
+    });
+    assert.equal(backgroundRefreshState.skeletonSeen, false);
+    assert.equal(backgroundRefreshState.activeLabel, '김검토 대화록 수정');
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    const failedTransitionMeetingId = 'codex-detail-flow-failed-transition';
+    await page.evaluate(() => {
+      window.__guardCancelSkeletonSeen = false;
+      window.__guardCancelSkeletonObserver = new MutationObserver(() => {
+        if (document.querySelector('.meeting-detail-shell[aria-busy="true"]')) {
+          window.__guardCancelSkeletonSeen = true;
+        }
+      });
+      window.__guardCancelSkeletonObserver.observe(document.body, { childList: true, subtree: true });
+    });
+    const cancelledLeaveDialog = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'confirm');
+          assert.match(dialog.message(), /저장되지 않은 변경/);
+          await dialog.dismiss();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, failedTransitionMeetingId);
+    await cancelledLeaveDialog;
+    await sleep(100);
+    const cancelledTransitionState = await page.evaluate(() => {
+      window.__guardCancelSkeletonObserver?.disconnect();
+      return {
+        skeletonSeen: window.__guardCancelSkeletonSeen,
+        activeLabel: document.activeElement?.getAttribute('aria-label') ?? '',
+      };
+    });
+    assert.equal(cancelledTransitionState.skeletonSeen, false);
+    assert.equal(cancelledTransitionState.activeLabel, '김검토 대화록 수정');
+    assert.equal(await page.getByRole('heading', { name: '시뮬레이션 회의록' }).count(), 1);
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    await page.waitForFunction(() => document.querySelector('button[aria-current="page"]')?.getAttribute('title') === '시뮬레이션 회의록');
+    let unexpectedRefreshDialogCount = 0;
+    const handleUnexpectedRefreshDialog = async dialog => {
+      unexpectedRefreshDialogCount += 1;
+      await dialog.dismiss();
+    };
+    page.on('dialog', handleUnexpectedRefreshDialog);
+    await page.evaluate(() => window.dispatchEvent(new Event('meetings:updated')));
+    await sleep(150);
+    page.off('dialog', handleUnexpectedRefreshDialog);
+    assert.equal(unexpectedRefreshDialogCount, 0);
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+
+    const acceptedMissingTargetDialog = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'confirm');
+          await dialog.accept();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, failedTransitionMeetingId);
+    await acceptedMissingTargetDialog;
+    await page.getByText('선택한 회의록을 찾지 못했습니다. 회의 기록을 새로고침한 뒤 다시 시도해 주세요.').waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('button[aria-current="page"]')?.getAttribute('title') === '시뮬레이션 회의록');
+    assert.equal(await page.getByRole('heading', { name: '시뮬레이션 회의록' }).count(), 1);
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    await page.evaluate(() => {
+      window.__failedTransitionOriginalOpen = indexedDB.open.bind(indexedDB);
+      window.__failedTransitionDbOpen = true;
+      Object.defineProperty(indexedDB, 'open', {
+        configurable: true,
+        value: (...args) => {
+          if (!window.__failedTransitionDbOpen) return window.__failedTransitionOriginalOpen(...args);
+          const failedRequest = {
+            error: new DOMException('simulated IndexedDB failure', 'UnknownError'),
+            onerror: null,
+            onsuccess: null,
+            onupgradeneeded: null,
+          };
+          queueMicrotask(() => failedRequest.onerror?.(new Event('error')));
+          return failedRequest;
+        },
+      });
+    });
+    const acceptedLeaveDialog = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'confirm');
+          await dialog.accept();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, failedTransitionMeetingId);
+    await acceptedLeaveDialog;
+    await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('heading', { name: '시뮬레이션 회의록' }).count(), 1);
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    await page.waitForFunction(() => document.querySelector('button[aria-current="page"]')?.getAttribute('title') === '시뮬레이션 회의록');
+    await page.evaluate(() => {
+      window.__failedTransitionDbOpen = false;
+      Object.defineProperty(indexedDB, 'open', {
+        configurable: true,
+        value: window.__failedTransitionOriginalOpen,
+      });
+      delete window.__failedTransitionOriginalOpen;
+      delete window.__failedTransitionDbOpen;
+      window.dispatchEvent(new Event('meetings:updated'));
+    });
+    await sleep(100);
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: {
+          id: targetMeetingId,
+          openHistory: true,
+          detailTab: 'summary',
+        },
+      }));
+    }, meetingId);
+    const organizedDetailTab = page.locator('.tab-list').getByRole('tab', { name: '기록 정리' });
+    await page.waitForFunction(element => element.getAttribute('aria-selected') === 'true', await organizedDetailTab.elementHandle());
+    assert.equal(await organizedDetailTab.getAttribute('aria-selected'), 'true');
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: {
+          id: targetMeetingId,
+          openHistory: true,
+          detailTab: 'script',
+        },
+      }));
+    }, meetingId);
+    const transcriptDetailTab = page.locator('.tab-list').getByRole('tab', { name: '대화록' });
+    await page.waitForFunction(element => element.getAttribute('aria-selected') === 'true', await transcriptDetailTab.elementHandle());
+    assert.equal(await transcriptDetailTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    await page.evaluate(() => {
+      window.__pinRefreshOriginalOpen = indexedDB.open.bind(indexedDB);
+      window.__pinRefreshOpenCount = 0;
+      Object.defineProperty(indexedDB, 'open', {
+        configurable: true,
+        value: (...args) => {
+          window.__pinRefreshOpenCount += 1;
+          if (window.__pinRefreshOpenCount <= 2) return window.__pinRefreshOriginalOpen(...args);
+          const failedRequest = {
+            error: new DOMException('simulated pin refresh failure', 'UnknownError'),
+            onerror: null,
+            onsuccess: null,
+            onupgradeneeded: null,
+          };
+          queueMicrotask(() => failedRequest.onerror?.(new Event('error')));
+          return failedRequest;
+        },
+      });
+    });
+    let nonNavigationDialogCount = 0;
+    const handleNonNavigationDialog = async dialog => {
+      nonNavigationDialogCount += 1;
+      await dialog.dismiss();
+    };
+    page.on('dialog', handleNonNavigationDialog);
+    const otherMeetingMenuTrigger = page.getByRole('button', {
+      name: '다른 회의록, 2026-05-08 00:01 회의록 메뉴',
+      exact: true,
+    });
+    await otherMeetingMenuTrigger.click();
+    await page.getByRole('menuitem', { name: '상단 고정', exact: true }).click();
+    await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '다른 회의록, 2026-05-08 00:01 회의록 메뉴');
+    page.off('dialog', handleNonNavigationDialog);
+    assert.equal(nonNavigationDialogCount, 0);
+    assert.equal(await page.getByRole('heading', { name: '시뮬레이션 회의록' }).count(), 1);
+    assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
+    await page.evaluate(() => {
+      Object.defineProperty(indexedDB, 'open', {
+        configurable: true,
+        value: window.__pinRefreshOriginalOpen,
+      });
+      delete window.__pinRefreshOriginalOpen;
+      delete window.__pinRefreshOpenCount;
+    });
+    await unsavedTranscriptDraft.focus();
+    await page.evaluate(() => window.dispatchEvent(new Event('meetings:updated')));
+    await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').waitFor({ state: 'detached', timeout: 10000 });
+    await sleep(150);
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '김검토 대화록 수정');
+
+    let sidebarLeaveDialogCount = 0;
+    const handleSidebarLeaveDialog = async dialog => {
+      sidebarLeaveDialogCount += 1;
+      assert.equal(dialog.type(), 'confirm');
+      await dialog.accept();
+    };
+    page.on('dialog', handleSidebarLeaveDialog);
+    await page.getByText('다른 회의록').first().click();
+    await page.getByRole('heading', { name: '다른 회의록' }).waitFor({ timeout: 10000 });
+    page.off('dialog', handleSidebarLeaveDialog);
+    assert.equal(sidebarLeaveDialogCount, 1);
+    await page.getByRole('button', { name: '회의 정보 수정' }).click();
+    await page.locator('.meeting-detail-shell').getByRole('textbox', { name: '회의 제목', exact: true }).fill('');
+    await page.getByRole('button', { name: '저장', exact: true }).click();
+    await page.getByText('회의 제목과 일시는 비워둘 수 없습니다.').waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '수정 취소' }).click();
+
+    const staleRequestMeetingId = 'codex-detail-flow-stale-request';
+    await page.evaluate(() => {
+      window.__heldMeetingOpenOriginal = indexedDB.open.bind(indexedDB);
+      window.__heldMeetingOpenRequests = [];
+      Object.defineProperty(indexedDB, 'open', {
+        configurable: true,
+        value: () => {
+          const request = {
+            error: new DOMException('simulated stale IndexedDB failure', 'UnknownError'),
+            onerror: null,
+            onsuccess: null,
+            onupgradeneeded: null,
+          };
+          window.__heldMeetingOpenRequests.push(request);
+          return request;
+        },
+      });
+    });
+    await page.evaluate((targetMeetingId) => {
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, staleRequestMeetingId);
+    await page.waitForFunction(() => (window.__heldMeetingOpenRequests?.length ?? 0) > 0);
+    await page.evaluate((targetMeetingId) => {
+      Object.defineProperty(indexedDB, 'open', {
+        configurable: true,
+        value: window.__heldMeetingOpenOriginal,
+      });
+      window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: targetMeetingId, openHistory: true, detailTab: 'script' },
+      }));
+    }, legacyParticipantMeetingId);
+    await page.getByRole('heading', { name: '기본 별칭 참석자 회의록' }).waitFor({ timeout: 10000 });
+    await page.evaluate(() => {
+      const heldRequests = window.__heldMeetingOpenRequests ?? [];
+      heldRequests.forEach(request => queueMicrotask(() => request.onerror?.(new Event('error'))));
+      delete window.__heldMeetingOpenOriginal;
+      delete window.__heldMeetingOpenRequests;
+    });
+    await sleep(200);
+    assert.equal(await page.getByRole('heading', { name: '기본 별칭 참석자 회의록' }).count(), 1);
+    assert.equal(await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').count(), 0);
+    assert.equal(await page.getByText('회의 제목과 일시는 비워둘 수 없습니다.').count(), 0);
+    assert.equal(await page.locator('.meeting-detail-shell[aria-busy="true"]').count(), 0);
+    await page.waitForFunction(() => document.querySelector('button[aria-current="page"]')?.getAttribute('title') === '기본 별칭 참석자 회의록');
 
     await page.getByText('기본 별칭 참석자 회의록').first().click();
     await page.getByRole('heading', { name: '기본 별칭 참석자 회의록' }).waitFor({ timeout: 10000 });
@@ -1272,6 +1871,32 @@ const run = async () => {
     const legacyCard = page.locator('article.detail-subtle-card').filter({ hasText: '참석자01' });
     assert.equal(await legacyCard.count(), 1);
     await legacyCard.getByText('발언 1회 · 텍스트 비중 100%').waitFor({ timeout: 10000 });
+
+    const legacyDeleteMenuTrigger = page.getByRole('button', {
+      name: '기본 별칭 참석자 회의록, 2026-05-08 00:02 회의록 메뉴',
+      exact: true,
+    });
+    await legacyDeleteMenuTrigger.click();
+    const selectedDeleteDialog = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'confirm');
+          await dialog.accept();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
+    await selectedDeleteDialog;
+    await legacyDeleteMenuTrigger.waitFor({ state: 'detached', timeout: 10000 });
+    const fallbackSelectedRecord = page.locator('button[aria-current="page"]');
+    await fallbackSelectedRecord.waitFor({ timeout: 10000 });
+    const fallbackSelectedTitle = await fallbackSelectedRecord.getAttribute('title');
+    assert.ok(fallbackSelectedTitle);
+    assert.notEqual(fallbackSelectedTitle, '기본 별칭 참석자 회의록');
+    await page.getByRole('heading', { name: fallbackSelectedTitle, exact: true }).waitFor({ timeout: 10000 });
 
     console.log('ok - meeting detail flow simulation');
   } catch (error) {

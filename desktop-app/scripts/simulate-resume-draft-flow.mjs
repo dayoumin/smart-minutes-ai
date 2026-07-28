@@ -261,17 +261,27 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.setInputFiles('#meeting-file-input', {
+      name: '이어하기-전-선택.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('previous selected file'),
+    });
+    await page.getByText('이어하기-전-선택.mp3', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: /미완료 분석 기록 2건/ }).click();
+    page.once('dialog', dialog => dialog.accept());
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '중단된 회의' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('이어하기-전-선택.mp3', { exact: true }).count(), 0);
+    await page.getByRole('button', { name: '음성 파일 선택' }).waitFor({ timeout: 10000 });
     await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
-    await page.getByText('같은 음성/영상 파일 선택 *').waitFor({ timeout: 10000 });
+    await page.getByText('같은 음성 파일 선택 *').waitFor({ timeout: 10000 });
     await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
     assert.equal(await page.locator('#report-template').count(), 0);
     assert.equal(await page.locator('label.topic-chip').count(), 0);
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
+    await expectValue(page, '#meeting-title', '중단된 회의');
     await page.getByText('같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.').waitFor({ timeout: 10000 });
     await page.locator('.app-panel').first().getByRole('button', { name: '이어하기', exact: true }).click();
     await page.getByText('이전 음성 인식 진행분 3개 구간을 재사용했습니다.').waitFor({ timeout: 10000 });
@@ -443,6 +453,7 @@ const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
 const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  page.on('pageerror', error => console.error('suppressed scenario page error:', error));
   let analyzeRequestSnapshot = null;
   let dialogShown = false;
 
@@ -494,7 +505,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
         'data: {"type":"progress","progress":5,"message":"업로드 파일 저장 완료","status":"processing"}',
         '',
         'event: result',
-        'data: {"type":"result","progress":100,"status":"completed","summary":"fresh summary","segments":[],"meeting":{"source_file":"resume-draft-target.mp4","job_id":"fresh-job-001"},"outputs":{"job_id":"fresh-job-001","json":"/api/outputs/fresh-job-001/json","txt":"/api/outputs/fresh-job-001/txt","md":null,"docx":null,"hwpx":null},"resume":{"requested":false,"mode":"fresh_start","message":"","reused_chunk_count":0}}',
+        'data: {"type":"result","progress":100,"status":"completed","summary":"fresh summary","segments":[{"start":"00:00","end":"00:02","speaker":"SPEAKER_00","text":"회의를 시작합니다."}],"generation_status":{"summary":"completed"},"meeting":{"source_file":"resume-draft-target.mp4","job_id":"fresh-job-001"},"outputs":{"job_id":"fresh-job-001","json":"/api/outputs/fresh-job-001/json","txt":"/api/outputs/fresh-job-001/txt","md":null,"docx":null,"hwpx":null},"resume":{"requested":false,"mode":"fresh_start","message":"","reused_chunk_count":0}}',
         '',
         'event: done',
         'data: [DONE]',
@@ -511,8 +522,25 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
+    const completionPanel = page.locator('.writer-panel .writer-completion-panel');
+    await completionPanel.waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'the ready command bar must not compete with the completed result');
+    await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
+    await page.getByText('기록 정리에서 핵심 결과를 확인하세요.', { exact: false }).waitFor({ timeout: 10000 });
+    await page.setInputFiles('#meeting-file-input', {
+      name: '지원하지-않는-완료후-파일.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('not media'),
+    });
+    await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
+    await completionPanel.waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'an invalid replacement must preserve the completed result slot');
     assert.equal(dialogShown, false);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\nfalse/);
+    await page.getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('tab', { name: '기록 정리' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('tab', { name: '기록 정리' }).getAttribute('aria-selected'), 'true');
+    await page.getByText('fresh summary', { exact: true }).waitFor({ timeout: 10000 });
     console.log('ok - suppressed resume candidate scenario');
   } finally {
     await context.close();
@@ -658,7 +686,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
         'data: {"type":"progress","progress":5,"message":"업로드 파일 저장 완료","status":"processing"}',
         '',
         'event: result',
-        'data: {"type":"result","progress":100,"status":"completed","summary":"fresh choice summary","segments":[],"meeting":{"source_file":"resume-draft-target.mp4","job_id":"fresh-choice-new-job"},"outputs":{"job_id":"fresh-choice-new-job","json":"/api/outputs/fresh-choice-new-job/json","txt":"/api/outputs/fresh-choice-new-job/txt","md":null,"docx":null,"hwpx":null},"resume":{"requested":false,"mode":"fresh_start","message":"","reused_chunk_count":0}}',
+        'data: {"type":"result","progress":100,"status":"completed","summary":"정리는 회의 기록에서 별도로 실행할 수 있습니다.","segments":[{"start":"00:00","end":"00:02","speaker":"SPEAKER_00","text":"후속 회의를 시작합니다."}],"generation_status":{"summary":"skipped"},"meeting":{"source_file":"resume-draft-target.mp4","job_id":"fresh-choice-new-job"},"outputs":{"job_id":"fresh-choice-new-job","json":"/api/outputs/fresh-choice-new-job/json","txt":"/api/outputs/fresh-choice-new-job/txt","md":null,"docx":null,"hwpx":null},"resume":{"requested":false,"mode":"fresh_start","message":"","reused_chunk_count":0}}',
         '',
         'event: done',
         'data: [DONE]',
@@ -677,9 +705,18 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByRole('heading', { name: '새 회의록 작성' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
+    await page.getByText('대화록을 확인하고 필요한 정리를 실행하세요.', { exact: false }).waitFor({ timeout: 10000 });
+    const completionPanel = page.locator('.writer-panel .writer-completion-panel');
+    await completionPanel.waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'the completed result should stay in the writer action slot');
+    await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
     assert.equal(dialogShown, false);
     assert.doesNotMatch(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\nfresh-choice-draft-job/);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\nfalse/);
+    await page.getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('tab', { name: '대화록' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('tab', { name: '대화록' }).getAttribute('aria-selected'), 'true');
+    await page.getByText('후속 회의를 시작합니다.', { exact: true }).waitFor({ timeout: 10000 });
     console.log('ok - selected resume can start fresh scenario');
   } catch (error) {
     console.error(error);

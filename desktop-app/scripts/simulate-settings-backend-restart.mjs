@@ -378,8 +378,7 @@ const run = async () => {
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('음성 인식 모델', { exact: true }).first().waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
     const sttDownloadButton = modelsPanel.getByRole('button', { name: new RegExp(`${STT_MODEL_LABEL}.*${DOWNLOAD_LABEL}`) });
     await sttDownloadButton.waitFor({ state: 'visible', timeout: 10000 });
@@ -392,7 +391,7 @@ const run = async () => {
       true,
       'STT download button should poll the model download status API',
     );
-    await modelsPanel.getByText('회의 요약을 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('회의 요약 모델을 바로 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(
       await modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' }).count(),
       0,

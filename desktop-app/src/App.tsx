@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Layout } from './Layout';
 import { MeetingWriter } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
+import type { MeetingDetailOpenRequest, MeetingDetailTab } from './MeetingHistory';
 import { Settings } from './Settings';
 import type { SettingsTab } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
@@ -157,6 +158,7 @@ const seedHermesComparisonMeetings = async (): Promise<string | null> => {
 export const App: React.FC = () => {
     const [activeTab, setActiveTab] = useState('minutes');
     const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
+    const [meetingDetailOpenRequest, setMeetingDetailOpenRequest] = useState<MeetingDetailOpenRequest | null>(null);
     const [resumeDraftSelectionRequest, setResumeDraftSelectionRequest] = useState<{ jobId: string; requestId: number } | null>(null);
     const [closeGuardActive, setCloseGuardActive] = useState(false);
     const closeGuardSourcesRef = useRef(new Map<string, boolean>());
@@ -178,17 +180,20 @@ export const App: React.FC = () => {
 
     const handleCreateMeeting = () => {
         if (!canLeaveCurrentMeeting()) return;
+        setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
         setActiveTab('minutes');
     };
     const handleSelectResumeDraft = (jobId: string) => {
         if (!canLeaveCurrentMeeting()) return;
+        setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
         setActiveTab('minutes');
         setResumeDraftSelectionRequest({ jobId, requestId: Date.now() });
     };
-    const handleDeleteMeeting = (id: string) => {
-        setSelectedMeetingId(current => current === id ? null : current);
+    const handleDeleteMeeting = (id: string, fallbackId: string | null) => {
+        setMeetingDetailOpenRequest(null);
+        setSelectedMeetingId(current => current === id ? fallbackId : current);
     };
     const openSettings = (tab: SettingsTab = 'general') => {
         setSettingsInitialTab(tab);
@@ -262,15 +267,24 @@ export const App: React.FC = () => {
 
     useEffect(() => {
         const handleMeetingsUpdated = (event: Event) => {
-            const detail = (event as CustomEvent<{ id?: string; openHistory?: boolean }>).detail;
+            const detail = (event as CustomEvent<{ id?: string; openHistory?: boolean; detailTab?: MeetingDetailTab }>).detail;
             if (!detail?.id || !detail.openHistory) return;
+            const changesWorkSurface = activeTab !== 'history' || detail.id !== selectedMeetingId;
+            if (changesWorkSurface) {
+                const canOpenMeeting = activeTab === 'minutes' ? writerLeaveGuardRef.current() : leaveGuardRef.current();
+                if (!canOpenMeeting) return;
+            }
+            setMeetingDetailOpenRequest({
+                meetingId: detail.id,
+                detailTab: detail.detailTab ?? 'script',
+            });
             setSelectedMeetingId(detail.id);
             setActiveTab('history');
         };
 
         window.addEventListener('meetings:updated', handleMeetingsUpdated);
         return () => window.removeEventListener('meetings:updated', handleMeetingsUpdated);
-    }, []);
+    }, [activeTab, selectedMeetingId]);
 
     useEffect(() => {
         if (!showAsrBenchmark) return;
@@ -303,7 +317,11 @@ export const App: React.FC = () => {
     }, [showAsrBenchmark]);
 
     const handleTabChange = (tab: string) => {
-        if (tab !== activeTab && !canLeaveCurrentMeeting()) return;
+        if (tab === activeTab) return;
+        if (!canLeaveCurrentMeeting()) return;
+        if (tab === 'history') {
+            setMeetingDetailOpenRequest(null);
+        }
         setActiveTab(tab);
     };
 
@@ -320,7 +338,9 @@ export const App: React.FC = () => {
                 analysisStatus={analysisStatus}
                 showAsrBenchmark={showAsrBenchmark}
                 onSelectMeeting={(id) => {
-                    if (id !== selectedMeetingId && !canLeaveCurrentMeeting()) return;
+                    if (activeTab === 'history' && id === selectedMeetingId) return;
+                    if (!canLeaveCurrentMeeting()) return;
+                    setMeetingDetailOpenRequest(null);
                     setSelectedMeetingId(id);
                     setActiveTab('history');
                 }}
@@ -337,6 +357,7 @@ export const App: React.FC = () => {
                 <div className={activeTab === 'history' ? 'contents' : 'hidden'}>
                     <MeetingHistory
                         selectedMeetingId={selectedMeetingId}
+                        detailOpenRequest={meetingDetailOpenRequest}
                         onOpenSettings={() => openSettings('models')}
                         onCreateMeeting={handleCreateMeeting}
                         onSelectMeetingId={setSelectedMeetingId}

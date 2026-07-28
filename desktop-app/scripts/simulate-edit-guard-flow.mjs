@@ -213,12 +213,14 @@ const run = async () => {
     await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 
     await page.getByRole('button', { name: '기록 정리 HWPX 파일을 다운로드 폴더에 저장' }).click();
+    await page.locator('.detail-download-popover-actions').getByRole('button').last().click();
     await page.getByText(downloadGuardMessage).waitFor({ timeout: 10000 });
     assert.equal(
       apiCalls.some(call => call.includes('/api/export-record/')),
       false,
       `download API should be blocked before request: ${apiCalls.join('\n')}`,
     );
+    await page.keyboard.press('Escape');
 
     await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
     await page.getByRole('button', { name: '저장', exact: true }).click();

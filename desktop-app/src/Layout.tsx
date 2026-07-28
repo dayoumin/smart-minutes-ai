@@ -20,7 +20,7 @@ export interface LayoutProps {
     onTabChange?: (tab: string) => void;
     onSelectMeeting?: (id: string) => void;
     onCreateMeeting?: () => void;
-    onDeleteMeeting?: (id: string) => void;
+    onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenSettings?: () => void;
     analysisStatus?: AnalysisStatus;

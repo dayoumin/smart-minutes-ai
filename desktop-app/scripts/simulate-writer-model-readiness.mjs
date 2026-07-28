@@ -168,11 +168,23 @@ const run = async () => {
       'missing models should be shown as guidance, not an error banner',
     );
 
+    await page.getByLabel('회의 목적 *').fill('모델 미준비 상태에서 시작 차단 확인');
+    await page.setInputFiles('#meeting-file-input', {
+      name: '준비 상태 확인.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('readiness fixture'),
+    });
+    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '준비 상태 확인');
+    const actionBar = page.locator('.writer-action-bar');
+    await actionBar.getByText('분석에 필요한 파일을 준비해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    const blockedStartButton = actionBar.getByRole('button', { name: '준비 필요', exact: true });
+    assert.equal(await blockedStartButton.isDisabled(), true, 'missing required models should disable analysis start');
+
     await page.getByRole('button', { name: '모델 준비' }).click();
     const modelsTab = page.getByRole('tab', { name: '모델' });
     await modelsTab.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsTab.getAttribute('aria-selected'), 'true', 'model guidance should open the models tab');
-    await page.getByText('음성 분석 모델').waitFor({ state: 'visible', timeout: 10000 });
+    await page.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
 
     console.log('ok - writer model readiness simulation');
   } catch (error) {

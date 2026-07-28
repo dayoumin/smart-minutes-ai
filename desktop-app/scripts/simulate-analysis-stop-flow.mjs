@@ -122,6 +122,14 @@ const installBaseRoutes = async (page) => {
       ],
     }),
   }));
+  await page.route('**/api/settings', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      privacy: { preserve_extracted_audio: false },
+    }),
+  }));
+
 
   await page.route('**/api/analyze/resume-candidates', route => route.fulfill({
     status: 200,
@@ -161,6 +169,30 @@ const readLocalStorageJson = async (page, key) => page.evaluate(storageKey => {
 
 const runScenario = async (browser, fixture, action) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  await context.addInitScript(() => {
+    const originalCreateElement = document.createElement.bind(document);
+    window.__meetingMetadataMedia = [];
+    document.createElement = (tagName, options) => {
+      const element = originalCreateElement(tagName, options);
+      if (tagName === 'audio' || tagName === 'video') {
+        element.__testDuration = Number.NaN;
+        Object.defineProperty(element, 'duration', {
+          configurable: true,
+          get: () => element.__testDuration,
+        });
+        element.__testSrc = '';
+        Object.defineProperty(element, 'src', {
+          configurable: true,
+          get: () => element.__testSrc,
+          set: value => {
+            element.__testSrc = value;
+          },
+        });
+        window.__meetingMetadataMedia.push(element);
+      }
+      return element;
+    };
+  });
   const page = await context.newPage();
   let releaseAnalyzeResponse = () => {};
   const analyzeCanFinish = new Promise(resolve => {
@@ -169,6 +201,14 @@ const runScenario = async (browser, fixture, action) => {
   let markAnalyzeStarted = () => {};
   const analyzeStarted = new Promise(resolve => {
     markAnalyzeStarted = resolve;
+  });
+  let releaseModelStatusResponse = () => {};
+  const modelStatusCanFinish = new Promise(resolve => {
+    releaseModelStatusResponse = resolve;
+  });
+  let markModelStatusRequested = () => {};
+  const modelStatusRequested = new Promise(resolve => {
+    markModelStatusRequested = resolve;
   });
   let analyzeJobId = null;
   let cancelRequestCount = 0;
@@ -242,10 +282,108 @@ const runScenario = async (browser, fixture, action) => {
 
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
-    await page.getByLabel('회의 제목 *').fill(`${action} 분석 중지 테스트`);
+    const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
+    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['음성 파일 *', '회의 정보']);
+    await page.getByText('이 PC에서 처리합니다. 분석용 임시 음성은 완료 후 삭제됩니다.', { exact: true }).waitFor({ timeout: 10000 });
+    const titleInput = page.getByLabel('회의 제목 *');
     await page.getByLabel('회의 목적 *').fill('분석 중 중지와 취소 동작 확인');
+    const fileChooserPromise = page.waitForEvent('filechooser');
+    await page.getByRole('button', { name: '음성 파일 선택' }).press('Enter');
+    const fileChooser = await fileChooserPromise;
+    await fileChooser.setFiles(fixture.path);
+    assert.equal(await titleInput.inputValue(), fixture.name.replace(/\.[^.]+$/, ''), 'filename should fill an empty meeting title');
+    await page.setInputFiles('#meeting-file-input', {
+      name: '지원하지-않는-파일.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('not media'),
+    });
+    await page.getByText('지원하지 않는 형식이라 기존 파일을 유지했습니다. 지원하는 음성 파일을 선택해 주세요.').waitFor({ timeout: 10000 });
+    assert.equal(await titleInput.inputValue(), fixture.name.replace(/\.[^.]+$/, ''), 'an invalid replacement should preserve the current title');
+    await page.getByText(fixture.name, { exact: true }).waitFor({ timeout: 10000 });
+    await page.setInputFiles('#meeting-file-input', {
+      name: '교체한 회의.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('replacement audio'),
+    });
+    assert.equal(await titleInput.inputValue(), '교체한 회의', 'replacing a file should refresh an auto-filled title');
+
+    await page.setInputFiles('#meeting-file-input', {
+      name: '이전 메타데이터.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('older metadata'),
+    });
+    await page.setInputFiles('#meeting-file-input', {
+      name: '최신 메타데이터.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('latest metadata'),
+    });
+    await page.evaluate(() => {
+      const [olderMedia, latestMedia] = window.__meetingMetadataMedia.slice(-2);
+      latestMedia.__testDuration = 222;
+      latestMedia.onloadedmetadata?.();
+      olderMedia.__testDuration = 111;
+      olderMedia.onloadedmetadata?.();
+    });
+    const selectedFileCard = page.locator('.selected-file-card');
+    await selectedFileCard.getByText(/3분 42초/).waitFor({ timeout: 10000 });
+    assert.equal(await selectedFileCard.getByText(/1분 51초/).count(), 0, 'stale metadata must not replace the latest duration');
+    await page.setInputFiles('#meeting-file-input', {
+      name: '잘못된-메타데이터-교체.txt',
+      mimeType: 'text/plain',
+      buffer: Buffer.from('invalid metadata replacement'),
+    });
+    await selectedFileCard.getByText(/3분 42초/).waitFor({ timeout: 10000 });
+
+    await page.getByRole('button', { name: '최신 메타데이터.mp3 제거' }).click();
+    assert.equal(await titleInput.inputValue(), '', 'removing a file should clear an auto-filled title');
+
+    const dropZone = page.getByRole('button', { name: '음성 파일 선택' });
+    const dataTransfer = await page.evaluateHandle(() => {
+      const transfer = new DataTransfer();
+      transfer.items.add(new File(['drop audio'], '드롭한 회의.mp3', { type: 'audio/mpeg' }));
+      return transfer;
+    });
+    await dropZone.dispatchEvent('dragenter', { dataTransfer });
+    await page.waitForFunction(() => document.querySelector('.file-drop-zone')?.classList.contains('file-drop-zone-active'));
+    await dropZone.dispatchEvent('drop', { dataTransfer });
+    await dataTransfer.dispose();
+    await page.getByText('드롭한 회의.mp3', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await titleInput.inputValue(), '드롭한 회의', 'dropping a file should update an auto-filled title');
+    await page.getByRole('button', { name: '드롭한 회의.mp3 제거' }).click();
+
+    await page.setInputFiles('#meeting-file-input', {
+      name: '교체한 회의.mp3',
+      mimeType: 'audio/mpeg',
+      buffer: Buffer.from('replacement audio'),
+    });
+    await titleInput.fill(`${action} 분석 중지 테스트`);
+    await page.getByRole('button', { name: '교체한 회의.mp3 제거' }).click();
+    assert.equal(await titleInput.inputValue(), `${action} 분석 중지 테스트`, 'removing a file should preserve a user-edited title');
     await page.setInputFiles('#meeting-file-input', fixture.path);
+    assert.equal(await titleInput.inputValue(), `${action} 분석 중지 테스트`, 'replacing a file should preserve a user-edited title');
+    await page.unroute('**/api/models/status');
+    await page.route('**/api/models/status', async route => {
+      markModelStatusRequested();
+      await modelStatusCanFinish;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ready: true,
+          models: [
+            { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
+          ],
+        }),
+      });
+    });
+
     await page.getByRole('button', { name: '분석 시작' }).click();
+    await modelStatusRequested;
+    const analysisPanel = page.locator('.writer-analysis-panel');
+    await analysisPanel.waitFor({ timeout: 10000 });
+    assert.notEqual((await analysisPanel.innerText()).trim(), '', 'analysis panel should show the current step before model status responds');
+    assert.equal(analyzeJobId, null, 'analysis request should wait for model status');
+    releaseModelStatusResponse();
     await analyzeStarted;
     await page.getByRole('button', { name: '중지/취소' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '중지/취소' }).click();

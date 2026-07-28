@@ -135,9 +135,10 @@ const installRoutes = async (page, exportCalls, exportBodies) => {
   await page.route('**/api/outputs/**/audio', route => route.fulfill({ status: 404, body: '' }));
 
   for (const format of ['hwpx', 'txt']) {
-    await page.route(`**/api/export-record/${format}/save-copy`, route => {
+    await page.route(`**/api/export-record/${format}/save-copy`, async route => {
       exportCalls.push(`${format}:save-copy`);
       exportBodies.push(JSON.parse(route.request().postData() ?? '{}'));
+      if (format === 'txt') await sleep(1900);
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -268,28 +269,80 @@ const run = async () => {
 
     await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
     await page.getByRole('button', { name: '기록 정리 HWPX 파일을 다운로드 폴더에 저장' }).click();
-    await page.getByText('저장됨', { exact: true }).waitFor({ timeout: 10000 });
+    const organizedSaveButton = page.locator('button.detail-download-button').first();
+    const filenameEditor = page.locator('.detail-download-popover');
+    const filenameInput = filenameEditor.locator('input');
+    await filenameInput.waitFor({ timeout: 10000 });
+    await page.waitForFunction(element => document.activeElement === element, await filenameInput.elementHandle());
+    assert.equal(await filenameInput.evaluate(element => document.activeElement === element), true);
+    assert.equal(await organizedSaveButton.getAttribute('aria-controls'), await filenameEditor.getAttribute('id'));
+    const selection = await filenameInput.evaluate(element => ({
+      start: element.selectionStart,
+      end: element.selectionEnd,
+      length: element.value.length,
+    }));
+    assert.equal(selection.start, 0);
+    assert.equal(selection.end, selection.length);
+    await filenameInput.press('Escape');
+    await filenameEditor.waitFor({ state: 'detached' });
+    await page.waitForFunction(element => document.activeElement === element, await organizedSaveButton.elementHandle());
+    assert.equal(await organizedSaveButton.evaluate(element => document.activeElement === element), true);
+
+    await organizedSaveButton.press('Enter');
+    await filenameInput.waitFor({ timeout: 10000 });
+    await filenameInput.fill(' custom:/export?name. ');
+    await filenameInput.dispatchEvent('keydown', {
+      key: 'Enter',
+      code: 'Enter',
+      isComposing: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    await sleep(100);
+    assert.equal(exportCalls.length, 0);
+    await filenameInput.press('Enter');
+    await page.waitForFunction(element => element.querySelector('svg')?.classList.contains('lucide-check'), await organizedSaveButton.elementHandle());
     for (let attempt = 0; attempt < 50 && exportCalls.length < 1; attempt += 1) {
       await sleep(100);
     }
+    await page.waitForFunction(element => document.activeElement === element, await organizedSaveButton.elementHandle());
+    assert.equal(await organizedSaveButton.evaluate(element => document.activeElement === element), true);
 
     await page.getByRole('tab', { name: '대화록', exact: true }).click();
-    const transcriptSaveButton = page.locator('button.detail-download-button').filter({ hasText: '대화록 저장' });
+    const transcriptSaveButton = page.locator('button.detail-download-button').first();
     await transcriptSaveButton.waitFor({ timeout: 10000 });
     await transcriptSaveButton.click();
+    await filenameInput.waitFor({ timeout: 10000 });
+    const activeTab = page.locator('[role="tab"][aria-selected="true"]');
+    await activeTab.click();
+    await filenameEditor.waitFor({ state: 'detached' });
+    assert.equal(await activeTab.evaluate(element => document.activeElement === element), true);
+
+    await transcriptSaveButton.click();
+    await filenameInput.fill('custom-export-name');
+    await page.locator('.detail-download-popover-actions button').last().click();
+    await page.waitForFunction(element => element.querySelector('svg')?.classList.contains('animate-spin'), await transcriptSaveButton.elementHandle());
+    await sleep(1700);
+    assert.equal(await transcriptSaveButton.locator('svg.animate-spin').count(), 1);
     for (let attempt = 0; attempt < 50 && exportCalls.length < 2; attempt += 1) {
       await sleep(100);
     }
+    await page.waitForFunction(element => document.activeElement === element, await transcriptSaveButton.elementHandle());
+    await page.waitForFunction(element => element.querySelector('svg')?.classList.contains('lucide-check'), await transcriptSaveButton.elementHandle());
+    assert.equal(await transcriptSaveButton.evaluate(element => document.activeElement === element), true);
 
     await page.getByRole('tab', { name: '보고서', exact: true }).click();
-    const reportSaveButton = page.locator('button.detail-download-button').filter({ hasText: '보고서 저장' });
+    const reportSaveButton = page.locator('button.detail-download-button').first();
     await reportSaveButton.waitFor({ timeout: 10000 });
     await reportSaveButton.click();
+    await page.locator('[role="dialog"] input').fill('custom-export-name');
+    await page.locator('[role="dialog"] button').last().click();
     for (let attempt = 0; attempt < 50 && exportCalls.length < 3; attempt += 1) {
       await sleep(100);
     }
 
     assert.deepEqual(exportCalls, ['hwpx:save-copy', 'txt:save-copy', 'hwpx:save-copy']);
+    assert.deepEqual(exportBodies.map(body => body.downloadFilename), ['custom--export-name', 'custom-export-name', 'custom-export-name']);
     assert.equal(exportBodies[0].exportScope, 'organized');
     assert.match(exportBodies[0].title, /_기록정리$/);
     assert.equal(exportBodies[1].exportScope, 'transcript');

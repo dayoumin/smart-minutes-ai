@@ -18,6 +18,34 @@ const getLayoutMetrics = async (locator) => locator.evaluate(element => {
   };
 });
 
+const SETTINGS_FOCUSABLE_SELECTOR = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+const getSettingsFocusState = async (page) => page.evaluate((selector) => {
+  const dialog = document.querySelector('[role="dialog"]');
+  const focusableElements = Array.from(dialog?.querySelectorAll(selector) ?? []).filter(element => (
+    element.getAttribute('aria-hidden') !== 'true'
+    && element.getClientRects().length > 0
+  ));
+  return {
+    activeIndex: focusableElements.indexOf(document.activeElement),
+    count: focusableElements.length,
+    dialogContainsActive: Boolean(dialog?.contains(document.activeElement)),
+  };
+}, SETTINGS_FOCUSABLE_SELECTOR);
+
+const focusSettingsBoundary = async (page, boundary) => page.evaluate(({ selector, boundary: targetBoundary }) => {
+  const dialog = document.querySelector('[role="dialog"]');
+  if (!dialog) return;
+  const focusableElements = Array.from(dialog.querySelectorAll(selector)).filter(element => (
+    element.getAttribute('aria-hidden') !== 'true'
+    && element.getClientRects().length > 0
+  ));
+  const target = targetBoundary === 'first'
+    ? focusableElements[0]
+    : focusableElements[focusableElements.length - 1];
+  target?.focus();
+}, { selector: SETTINGS_FOCUSABLE_SELECTOR, boundary });
+
 const assertHeightDeltaAtMost = (before, after, maxDelta, message) => {
   const delta = after.scrollHeight - before.scrollHeight;
   assert.equal(
@@ -641,7 +669,22 @@ const run = async () => {
     await installRoutes(page, state);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    await page.getByRole('button', { name: '앱 설정' }).click();
+    const settingsButton = page.getByRole('button', { name: '앱 설정' });
+    await settingsButton.click();
+    const settingsDialog = page.getByRole('dialog', { name: '시스템 설정' });
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => document.querySelector('[role="dialog"]')?.contains(document.activeElement));
+    let focusState = await getSettingsFocusState(page);
+    assert.equal(focusState.dialogContainsActive, true, 'opening settings should move focus inside the dialog');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '설정 닫기');
+    await focusSettingsBoundary(page, 'last');
+    await page.keyboard.press('Tab');
+    focusState = await getSettingsFocusState(page);
+    assert.equal(focusState.activeIndex, 0, 'Tab on the last control should wrap to the first dialog control');
+    await focusSettingsBoundary(page, 'first');
+    await page.keyboard.press('Shift+Tab');
+    focusState = await getSettingsFocusState(page);
+    assert.equal(focusState.activeIndex, focusState.count - 1, 'Shift+Tab on the first control should wrap to the last dialog control');
     await page.getByRole('button', { name: '문의 연락처 보기' }).click();
     await page.getByText('문의사항은 아래 이메일로 연락주세요.').waitFor({ state: 'visible', timeout: 10000 });
     await page.getByText('ecomarine@korea.kr').waitFor({ state: 'visible', timeout: 10000 });
@@ -675,7 +718,7 @@ const run = async () => {
     await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText('모델 받기를 중지하고 있습니다.').count(), 0, 'STT stopping state should not add duplicate helper copy');
     assert.deepEqual(state.sttStopRequests, ['stt_faster_whisper']);
-    await modelsPanel.getByText('회의 요약을 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('회의 요약 모델을 바로 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(
       await modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' }).count(),
       0,
@@ -710,6 +753,7 @@ const run = async () => {
     };
     await modelsPanel.getByRole('button', { name: '모델 준비 상태 다시 확인' }).click();
     await modelsPanel.getByText('요약 프로그램은 필요한 작업을 시작할 때 실행됩니다.', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await modelsPanel.getByText('받을 모델의 받기를 누르면 요약 프로그램을 자동으로 시작합니다.', { exact: false }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.locator('select').selectOption('gemma4:e4b');
     assert.equal(
       await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).count(),
@@ -848,6 +892,10 @@ const run = async () => {
     const confirmMessages = await page.evaluate(() => window.__confirmMessages);
     assert.equal(confirmMessages.some(message => message.includes('Ollama 저장소에서 삭제할까요')), true, 'PC delete should ask for file-delete confirmation');
     assert.equal(confirmMessages.some(message => message.includes('추가한 모델 목록에서 제거할까요')), true, 'list removal should ask for list confirmation');
+    await page.keyboard.press('Escape');
+    await settingsDialog.waitFor({ state: 'hidden', timeout: 10000 });
+    assert.equal(await settingsButton.evaluate(button => button === document.activeElement), true, 'closing settings should restore focus to its trigger');
+
 
     console.log('ok - settings model management simulation');
   } catch (error) {

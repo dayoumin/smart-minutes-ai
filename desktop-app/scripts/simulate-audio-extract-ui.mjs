@@ -103,7 +103,7 @@ const startServer = async () => {
   return child;
 };
 
-const installRoutes = async (page) => {
+const installRoutes = async (page, getPrivacySettings) => {
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -119,7 +119,9 @@ const installRoutes = async (page) => {
   await page.route('**/api/settings', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({}),
+    body: JSON.stringify({
+      privacy: getPrivacySettings(),
+    }),
   }));
 
   await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({
@@ -134,12 +136,16 @@ const run = async () => {
   let browser = null;
   let page = null;
   let extractRequests = 0;
+  let privacySettings = {
+    preserve_extracted_audio: true,
+    auto_save_audio_copy: false,
+  };
 
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await installRoutes(page);
+    await installRoutes(page, () => privacySettings);
     await page.addInitScript(() => {
       window.__openedSavedPath = null;
       window.__TAURI__ = {
@@ -174,6 +180,96 @@ const run = async () => {
 
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     await page.getByRole('heading', { name: '새 회의록 작성' }).waitFor({ timeout: 10000 });
+    const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
+    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['음성 파일 *', '회의 정보']);
+    await page.getByText('이 PC에서 처리합니다. 분석용 음성은 앱에서 회의록과 함께 관리합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    const desktopLayout = await page.evaluate(() => {
+      const dropZone = document.querySelector('.file-drop-zone')?.getBoundingClientRect();
+      const support = document.querySelector('.writer-file-support')?.getBoundingClientRect();
+      return {
+        dropZoneLeft: dropZone?.left ?? 0,
+        supportLeft: support?.left ?? 0,
+        horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    assert.ok(Math.abs(desktopLayout.dropZoneLeft - desktopLayout.supportLeft) <= 2, 'file guidance should stay aligned with the upload control on desktop');
+    assert.ok(desktopLayout.horizontalOverflow <= 2, 'desktop writer should not overflow horizontally');
+
+    await page.setViewportSize({ width: 800, height: 720 });
+    const compactHorizontalOverflow = await page.evaluate(() => (
+      document.documentElement.scrollWidth - document.documentElement.clientWidth
+    ));
+    assert.ok(compactHorizontalOverflow <= 2, 'compact writer should not overflow horizontally');
+    await page.setViewportSize({ width: 1280, height: 900 });
+    privacySettings = {
+      preserve_extracted_audio: true,
+      auto_save_audio_copy: true,
+    };
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    const autoSavePrivacyMessage = '이 PC에서 처리합니다. 앱에서 관리하고 다운로드 폴더에도 사본을 저장합니다. 다운로드한 사본은 앱에서 삭제되지 않습니다.';
+    await page.getByText(autoSavePrivacyMessage, { exact: true }).waitFor({ timeout: 10000 });
+
+    await page.unroute('**/api/settings');
+    let releaseStaleSettings = () => {};
+    const staleSettingsCanFinish = new Promise(resolve => {
+      releaseStaleSettings = resolve;
+    });
+    let markStaleSettingsRequested = () => {};
+    const staleSettingsRequested = new Promise(resolve => {
+      markStaleSettingsRequested = resolve;
+    });
+    let markStaleSettingsFulfilled = () => {};
+    const staleSettingsFulfilled = new Promise(resolve => {
+      markStaleSettingsFulfilled = resolve;
+    });
+    let settingsRequestCount = 0;
+    await page.route('**/api/settings', async route => {
+      settingsRequestCount += 1;
+      if (settingsRequestCount === 1) {
+        markStaleSettingsRequested();
+        await staleSettingsCanFinish;
+        const staleResponse = await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            privacy: { preserve_extracted_audio: true, auto_save_audio_copy: true },
+          }),
+        });
+        markStaleSettingsFulfilled();
+        return staleResponse;
+      }
+      if (settingsRequestCount === 2) {
+        return route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            privacy: { preserve_extracted_audio: false, auto_save_audio_copy: false },
+          }),
+        });
+      }
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: 'settings unavailable' }),
+      });
+    });
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await staleSettingsRequested;
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await page.getByText('이 PC에서 처리합니다. 분석용 임시 음성은 완료 후 삭제됩니다.', { exact: true }).waitFor({ timeout: 10000 });
+    const staleSettingsResponseFinished = page.waitForResponse(response => (
+      response.url().endsWith('/api/settings') && response.status() === 200
+    )).then(response => response.finished());
+    releaseStaleSettings();
+    await staleSettingsFulfilled;
+    await staleSettingsResponseFinished;
+    await page.evaluate(() => new Promise(resolve => {
+      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
+    }));
+    assert.equal(await page.getByText(autoSavePrivacyMessage, { exact: true }).count(), 0, 'a stale settings response must not replace the latest privacy message');
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await page.getByText('이 PC에서 처리합니다. 음성 보관 방식은 앱 설정을 따릅니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '음성 추출', exact: true }).waitFor({ timeout: 10000 });
 
     await page.locator('input[accept="video/*,.mp4,.mov,.mkv,.avi,.webm"]').setInputFiles({
       name: 'meeting-demo.mp4',
@@ -182,14 +278,14 @@ const run = async () => {
     });
 
     await page.getByText('영상 선택됨').waitFor({ timeout: 10000 });
-    await page.getByText('다운로드를 누르면 선택한 영상을 WAV 파일로 저장합니다.').waitFor({ timeout: 10000 });
+    await page.getByText('저장을 누르면 선택한 영상의 WAV 사본을 다운로드 폴더에 저장합니다.').waitFor({ timeout: 10000 });
 
-    const downloadButton = page.getByRole('button', { name: '다운로드' });
-    await downloadButton.waitFor({ timeout: 10000 });
-    await downloadButton.click();
+    const saveButton = page.getByRole('button', { name: '저장', exact: true });
+    await saveButton.waitFor({ timeout: 10000 });
+    await saveButton.click();
 
-    await page.getByText('오디오 추출 중').waitFor({ timeout: 10000 });
-    await page.getByText('오디오 저장 완료').waitFor({ timeout: 10000 });
+    await page.getByText('음성 추출 중').waitFor({ timeout: 10000 });
+    await page.getByText('음성 추출 완료').waitFor({ timeout: 10000 });
     await page.getByText(/다운로드 폴더에 WAV 파일을 저장했습니다/).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '폴더 열기' }).click();
 

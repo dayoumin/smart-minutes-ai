@@ -26,6 +26,11 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Read `docs/design.md` before changing repeated UI surfaces.
 - Prefer user-facing terms such as `음성 파일`, `회의 요약`, and `대화록`.
 - Do not add redundant eyebrow labels, decorative section markers, or repeated helper text to the first meeting-writing screen when the title/control already explains the purpose.
+- Refer to the user product as the desktop app. Use portable release only for the copied or zipped `lmo_audio` folder used on another PC.
+- When explaining Ollama, distinguish system Ollama from app-managed Ollama. Do not describe either as a Python virtual environment.
+- Distinguish the Vite development web UI from the desktop app executable. They share UI source, but web verification does not prove desktop-only behavior.
+- Default product and UI scope is the Windows Tauri desktop app. Optimize wide desktop and the supported narrow desktop window; do not turn narrow-width QA into mobile navigation, PWA, SaaS, or remote web product work unless the user explicitly asks for that scope.
+- Treat browser, Vite, and Playwright runs as verification surfaces for the desktop UI by default. Do not infer authorization to implement or prioritize a web edition from browser-based testing alone.
 - Avoid exposing implementation terms such as model names, server details, or pipeline names in common user flows.
 - Do not render temporary success/info notices as inline banners that push page content down or resize the current work surface. Transient feedback such as "saved" or "completed" should use a toast, overlay, inline chip with stable reserved space, or another non-layout-shifting pattern.
 - Keep durable guidance inline only when the user must read it to decide the next action, such as errors, warnings, skipped/partial results, required setup, or recovery instructions.

@@ -749,8 +749,13 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(stt_model["install_url"], "https://huggingface.co/Systran/faster-whisper-large-v3")
         self.assertEqual(diarization_model["install_url"], "https://huggingface.co/pyannote/speaker-diarization-community-1")
         llm_model = next(model for model in models_response.json()["models"] if model["key"] == "llm")
-        self.assertEqual(llm_model["install_command"], "ollama run gemma4:e2b")
-        self.assertEqual(llm_model["install_url"], "https://ollama.com/library/gemma4%3Ae2b")
+        configured_model = settings_response.json()["summary"]["model"]
+        self.assertEqual(llm_model["configured_model"], configured_model)
+        self.assertEqual(llm_model["install_command"], f"ollama run {configured_model}")
+        self.assertEqual(
+            llm_model["install_url"],
+            f"https://ollama.com/library/{configured_model.replace(':', '%3A')}",
+        )
         install_commands = {option["command"] for option in llm_model["install_options"] if option.get("command")}
         self.assertIn("ollama run gemma4:e2b", install_commands)
         self.assertIn("ollama run gemma4:e4b", install_commands)
@@ -1300,17 +1305,49 @@ class AnalyzeApiTest(unittest.TestCase):
 
     def test_models_status_uses_passive_ollama_checks(self) -> None:
         config = main.normalize_app_config({})
+        model_status = {"models": [], "ready": True}
+        connection_status = {"status": "managed_stopped"}
         with (
             patch.object(main, "load_config", return_value=config),
-            patch.object(main, "get_model_status", return_value={"models": [], "ready": True}) as get_status,
-            patch.object(main, "_summary_model_readiness", return_value={"ready": False, "status": "skipped", "message": ""}) as summary_readiness,
-            patch.object(main, "_ollama_connection_status", return_value={"status": "managed_stopped"}),
+            patch.object(main, "get_model_status", return_value=model_status) as get_status,
+            patch.object(main, "_summary_model_readiness_from_status", return_value={"ready": False, "status": "skipped", "message": ""}) as summary_readiness,
+            patch.object(main, "_ollama_connection_status", return_value=connection_status),
         ):
             response = self.client.get("/api/models/status")
 
         self.assertEqual(response.status_code, 200, response.text)
         get_status.assert_called_once_with(main.BASE_DIR, config, start_ollama=False)
-        summary_readiness.assert_called_once_with(config, start_ollama=False)
+        summary_readiness.assert_called_once_with(config, model_status, connection_status)
+
+    def test_summary_readiness_from_status_distinguishes_stopped_runtime(self) -> None:
+        config = main.normalize_app_config({"summary": {"enabled": True, "model": "gemma4:e2b"}})
+        model_status = {
+            "models": [{"key": "llm", "configured_model": "gemma4:e2b", "installed": False}],
+        }
+
+        readiness = main._summary_model_readiness_from_status(
+            config,
+            model_status,
+            {"status": "managed_stopped"},
+        )
+
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["reason"], "server_unreachable")
+
+    def test_summary_readiness_from_status_accepts_installed_model(self) -> None:
+        config = main.normalize_app_config({"summary": {"enabled": True, "model": "gemma4:e2b"}})
+        model_status = {
+            "models": [{"key": "llm", "configured_model": "gemma4:e2b", "installed": True}],
+        }
+
+        readiness = main._summary_model_readiness_from_status(
+            config,
+            model_status,
+            {"status": "managed_ready"},
+        )
+
+        self.assertTrue(readiness["ready"])
+        self.assertEqual(readiness["status"], "ready")
 
     def test_summary_model_readiness_passive_does_not_start_ollama(self) -> None:
         config = main.normalize_app_config({"summary": {"enabled": True, "model": "gemma4:e2b"}})
@@ -2324,6 +2361,14 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(llm_model["configured_model"], "llama3.2:3b")
         self.assertEqual(llm_model["install_command"], "ollama run llama3.2:3b")
         self.assertEqual(llm_model["install_options"][0]["model"], "llama3.2:3b")
+
+    def test_export_download_title_prefers_custom_filename(self) -> None:
+        title = main._export_download_title(
+            {"exportScope": "organized", "downloadFilename": "사용자 지정 파일명"},
+            "원래 제목",
+        )
+
+        self.assertEqual(title, "사용자 지정 파일명")
 
     def test_save_copy_rejects_missing_origin(self) -> None:
         response = self.client.post("/api/export-record/txt/save-copy", json={"title": "테스트 회의"})

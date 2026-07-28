@@ -37,15 +37,22 @@ import {
     saveReportTemplate,
 } from './meetingKnowledge';
 
+export type MeetingDetailTab = 'summary' | 'script' | 'report';
+
+export interface MeetingDetailOpenRequest {
+    meetingId: string;
+    detailTab: MeetingDetailTab;
+}
+
 interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
+    detailOpenRequest?: MeetingDetailOpenRequest | null;
     onCreateMeeting?: () => void;
     onSelectMeetingId?: (id: string | null) => void;
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
     onOpenSettings?: () => void;
 }
 
-type DetailTab = 'summary' | 'script' | 'report';
 type OrganizeTab = 'summary' | 'topics' | 'speakers';
 type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries' | 'meetingReport';
 type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
@@ -99,6 +106,11 @@ type TemplateUndoToast = {
 interface ModelsStatusResponse {
     summary_ready?: boolean;
     summary_message?: string;
+    ollama_connection?: {
+        status?: string;
+        can_auto_start?: boolean;
+        managed_runtime_available?: boolean;
+    };
 }
 
 interface GenerateSummaryResponse {
@@ -523,8 +535,8 @@ const SpeakerLabelPanel = ({
                                 <button
                                     type="button"
                                     className="speaker-label-input-action"
-                                    title="이름 저장"
-                                    aria-label={`${speakerName} 이름 저장`}
+                                    title="참석자 이름 저장"
+                                    aria-label={`${speakerName} 참석자 이름 저장`}
                                     onClick={() => { void onSave(); }}
                                     disabled={!hasChanges}
                                 >
@@ -882,17 +894,25 @@ const getMeetingReportTemplateName = (meeting: MeetingRecord | null | undefined)
     return report.templateId;
 };
 
-export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingId, onCreateMeeting, onSelectMeetingId, onRegisterLeaveGuard, onOpenSettings }) => {
+export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
+    selectedMeetingId,
+    detailOpenRequest,
+    onCreateMeeting,
+    onSelectMeetingId,
+    onRegisterLeaveGuard,
+    onOpenSettings,
+}) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
+    const [loadErrorMessage, setLoadErrorMessage] = useState('');
     const [noticeMessage, setNoticeMessage] = useState('');
     const [noticeToast, setNoticeToast] = useState<AppToastMessage | null>(null);
     const [savedFileToast, setSavedFileToast] = useState<SavedFileToast | null>(null);
     const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
     const [templateUndoToast, setTemplateUndoToast] = useState<TemplateUndoToast | null>(null);
     const [selectedMeeting, setSelectedMeeting] = useState<MeetingRecord | null>(null);
-    const [detailTab, setDetailTab] = useState<DetailTab>('script');
+    const [detailTab, setDetailTab] = useState<MeetingDetailTab>('script');
     const [organizeTab, setOrganizeTab] = useState<OrganizeTab>('summary');
     const [isEditing, setIsEditing] = useState(false);
     const [editTitle, setEditTitle] = useState('');
@@ -920,6 +940,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const [collapsedSpeakerSummaryKeys, setCollapsedSpeakerSummaryKeys] = useState<Record<string, boolean>>({});
     const [summaryModelReady, setSummaryModelReady] = useState<boolean | null>(null);
     const [summaryModelMessage, setSummaryModelMessage] = useState('');
+    const [summaryRuntimeCanAutoStart, setSummaryRuntimeCanAutoStart] = useState(false);
     const [isSpeakerLabelPanelOpen, setIsSpeakerLabelPanelOpen] = useState(false);
     const [contextTemplates, setContextTemplates] = useState(() => listContextTemplates());
     const [isContextTemplateModalOpen, setIsContextTemplateModalOpen] = useState(false);
@@ -960,6 +981,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const currentSelectedMeetingIdRef = useRef<string | null>(null);
     const selectedMeetingRef = useRef<MeetingRecord | null>(null);
     const recordsRef = useRef<MeetingRecord[]>([]);
+    const loadRecordsRequestIdRef = useRef(0);
     const meetingUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
     const hydratedMeetingIdRef = useRef<string | null>(null);
     const canLeaveMeetingRef = useRef<(nextMeetingId: string | null) => boolean>(() => true);
@@ -1048,33 +1070,53 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         return () => window.clearTimeout(timeoutId);
     }, [savedFileToast]);
 
-    const loadRecords = React.useCallback(async (event?: Event) => {
+    const loadRecords = React.useCallback(async () => {
+        const requestedMeetingId = selectedMeetingId;
+        const currentMeetingBeforeLoad = selectedMeetingRef.current;
+        const requestId = ++loadRecordsRequestIdRef.current;
+        const requestedMeetingIsCached = Boolean(
+            requestedMeetingId && recordsRef.current.some(record => record.id === requestedMeetingId),
+        );
+        const changesSelectedMeeting = Boolean(
+            requestedMeetingId && requestedMeetingId !== currentMeetingBeforeLoad?.id,
+        );
+        const shouldShowBlockingLoadingState = recordsRef.current.length === 0 && currentMeetingBeforeLoad === null
+            || Boolean(changesSelectedMeeting && !requestedMeetingIsCached);
         try {
-            setIsLoading(true);
-            setErrorMessage('');
+            setIsLoading(shouldShowBlockingLoadingState);
+            if (shouldShowBlockingLoadingState || changesSelectedMeeting) setLoadErrorMessage('');
+            if (changesSelectedMeeting) setErrorMessage('');
             const data = await getAllMeetings();
+            if (requestId !== loadRecordsRequestIdRef.current) return;
             const sorted = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-            const nextSelectedId = (event as CustomEvent<{ id?: string }> | undefined)?.detail?.id;
             const currentMeeting = selectedMeetingRef.current;
-            const nextMeeting = nextSelectedId
-                ? sorted.find(record => record.id === nextSelectedId) ?? currentMeeting ?? null
-                : selectedMeetingId
-                    ? sorted.find(record => record.id === selectedMeetingId) ?? currentMeeting ?? null
-                    : currentMeeting && sorted.some(record => record.id === currentMeeting.id)
-                        ? sorted.find(record => record.id === currentMeeting.id) ?? currentMeeting
-                        : sorted[0] ?? null;
-            if (currentMeeting?.id !== (nextMeeting?.id ?? null) && !canLeaveMeetingRef.current(nextMeeting?.id ?? null)) {
+            const nextMeeting = requestedMeetingId
+                ? sorted.find(record => record.id === requestedMeetingId)
+                    ?? (currentMeeting?.id === requestedMeetingId ? currentMeeting : null)
+                : currentMeeting && sorted.some(record => record.id === currentMeeting.id)
+                    ? sorted.find(record => record.id === currentMeeting.id) ?? currentMeeting
+                    : sorted[0] ?? null;
+            if (requestedMeetingId && !nextMeeting) {
+                setLoadErrorMessage('선택한 회의록을 찾지 못했습니다. 회의 기록을 새로고침한 뒤 다시 시도해 주세요.');
                 setRecords(sorted);
+                if (currentMeetingBeforeLoad) onSelectMeetingId?.(currentMeetingBeforeLoad.id);
                 return;
             }
             setRecords(sorted);
             setSelectedMeeting(nextMeeting);
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '회의 기록을 불러오지 못했습니다.');
+            setLoadErrorMessage('');
+        } catch {
+            if (requestId !== loadRecordsRequestIdRef.current) return;
+            setLoadErrorMessage('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
+            if (currentMeetingBeforeLoad) {
+                onSelectMeetingId?.(currentMeetingBeforeLoad.id);
+            } else if (shouldShowBlockingLoadingState) {
+                setSelectedMeeting(null);
+            }
         } finally {
-            setIsLoading(false);
+            if (requestId === loadRecordsRequestIdRef.current && shouldShowBlockingLoadingState) setIsLoading(false);
         }
-    }, [selectedMeetingId]);
+    }, [onSelectMeetingId, selectedMeetingId]);
 
     useEffect(() => {
         void loadRecords();
@@ -1086,7 +1128,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         if (!selectedMeetingId) return;
         const nextMeeting = records.find(record => record.id === selectedMeetingId);
         if (!nextMeeting) return;
-        if (!canLeaveMeetingRef.current(nextMeeting.id)) return;
         setSelectedMeeting(nextMeeting);
     }, [records, selectedMeetingId]);
 
@@ -1106,6 +1147,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }, [selectedMeeting?.id]);
 
     useEffect(() => {
+        const request = detailOpenRequest;
+        if (!request || request.meetingId !== selectedMeeting?.id) return;
+        setDetailTab(request.detailTab);
+    }, [detailOpenRequest, selectedMeeting?.id]);
+
+    useEffect(() => {
         let cancelled = false;
         const loadSummaryModelStatus = async () => {
             try {
@@ -1115,10 +1162,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                 if (cancelled) return;
                 setSummaryModelReady(Boolean(payload.summary_ready));
                 setSummaryModelMessage(payload.summary_message || '');
+                const ollamaConnection = payload.ollama_connection;
+                setSummaryRuntimeCanAutoStart(Boolean(
+                    !payload.summary_ready
+                    && ollamaConnection?.status === 'managed_stopped'
+                    && ollamaConnection.can_auto_start
+                    && ollamaConnection.managed_runtime_available
+                ));
             } catch {
                 if (cancelled) return;
                 setSummaryModelReady(null);
                 setSummaryModelMessage('');
+                setSummaryRuntimeCanAutoStart(false);
             }
         };
         const syncSummaryModelStatus = () => {
@@ -2330,13 +2385,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
         selectedMeeting?.topicSections,
     );
     const canCreateSpeakerContext = baseCanCreateSpeakerContext && !topicSectionsOutdated;
-    const summaryModelUnavailable = summaryModelReady === false
-        || (summaryModelReady !== true && summaryGenerationStatus === 'skipped');
+    const summaryModelUnavailable = !summaryRuntimeCanAutoStart && (
+        summaryModelReady === false
+        || (summaryModelReady !== true && summaryGenerationStatus === 'skipped')
+    );
     const canOpenOrganizeTab = hasTranscriptData;
     const organizeTabDisabledMessage = !hasTranscriptData
         ? '대화록이 있어야 기록 정리를 사용할 수 있습니다.'
         : '';
-    const organizeModelGuidanceMessage = summaryModelMessage || '정리 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
+    const organizeModelGuidanceMessage = summaryRuntimeCanAutoStart
+        ? '정리를 누르면 이 PC의 요약 프로그램을 자동으로 시작합니다. 시작에 실패하면 모델 설정을 확인해 주세요.'
+        : summaryModelMessage || '정리 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
     const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
     const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;
     const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;
@@ -2740,7 +2799,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     const appliedContextLabel = activeContextTemplate.id !== 'general' && hasGeneratedSummary && !summaryOutdated
         ? activeContextTemplate.name
         : '';
-    const detailKeyboardTabs: KeyboardTabTarget<DetailTab>[] = [
+    const detailKeyboardTabs: KeyboardTabTarget<MeetingDetailTab>[] = [
         { value: 'script', id: 'meeting-detail-tab-script', select: () => setDetailTab('script') },
         { value: 'summary', id: 'meeting-detail-tab-summary', disabled: !canOpenOrganizeTab, select: () => setDetailTab('summary') },
         { value: 'report', id: 'meeting-detail-tab-report', disabled: !canOpenReportTab, select: () => setDetailTab('report') },
@@ -3609,16 +3668,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
     }
 
     if (!selectedMeeting) {
+        const hasLoadError = Boolean(loadErrorMessage);
         return (
             <div className="meeting-detail-shell">
                 <div className="app-panel meeting-empty-panel">
-                    <h2>선택된 회의록이 없습니다</h2>
-                    <p>왼쪽 회의 기록에서 회의록을 선택하거나 새 회의록을 작성하세요.</p>
-                    {onCreateMeeting && (
+                    <h2>{hasLoadError ? '회의 기록을 불러오지 못했습니다' : '선택된 회의록이 없습니다'}</h2>
+                    <p>{hasLoadError ? loadErrorMessage : '왼쪽 회의 기록에서 회의록을 선택하거나 새 회의록을 작성하세요.'}</p>
+                    {hasLoadError ? (
+                        <Button onClick={() => void loadRecords()}>
+                            다시 시도
+                        </Button>
+                    ) : onCreateMeeting ? (
                         <Button onClick={onCreateMeeting}>
                             새 회의록 작성
                         </Button>
-                    )}
+                    ) : null}
                 </div>
             </div>
         );
@@ -3626,9 +3690,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
 
     return (
         <div className="meeting-detail-shell">
-            {errorMessage && (
+            {(loadErrorMessage || errorMessage) && (
                 <StatusBanner tone="error" className="mb-4">
-                    {errorMessage}
+                    {loadErrorMessage || errorMessage}
                 </StatusBanner>
             )}
             {(noticeToast || operationToast || templateUndoToast) && (
@@ -3820,6 +3884,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         {diarizationStatusTitle}
                                     </div>
                                 )}
+                                {showDiarizationProgress && diarizationProgressPanel}
                             </>
                         )}
                     </div>
@@ -3879,10 +3944,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                             aria-labelledby="meeting-detail-tab-summary"
                             className="space-y-6"
                         >
-                            {summaryModelUnavailable && (
+                            {(summaryModelUnavailable || summaryRuntimeCanAutoStart) && (
                                 <StatusBanner
-                                    tone="warning"
-                                    heading="모델 필요"
+                                    tone={summaryRuntimeCanAutoStart ? 'info' : 'warning'}
+                                    heading={summaryRuntimeCanAutoStart ? '정리 준비' : '모델 필요'}
                                     className="mb-4"
                                     action={onOpenSettings ? (
                                         <Button variant="outline" onClick={onOpenSettings}>
@@ -3893,13 +3958,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                     {organizeModelGuidanceMessage}
                                 </StatusBanner>
                             )}
-                            {showDiarizationProgress && (
-                                <section className="detail-action-row">
-                                    <h3 className="section-title mb-3">대화록</h3>
-                                    {diarizationProgressPanel}
-                                </section>
-                            )}
-
                             <section className="detail-work-surface">
                                 <div className="detail-command-bar">
                                     <div className="detail-command-primary">
@@ -4053,7 +4111,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                             meeting={selectedMeeting}
                                             scope="organized"
                                             presentation="button"
-                                            label="기록 정리 저장"
+                                            label="기록 정리 파일 저장"
                                             className="detail-context-button"
                                             onNotice={setNoticeMessage}
                                             onError={setErrorMessage}
@@ -4469,7 +4527,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                         meeting={selectedMeeting}
                                         scope="report"
                                         presentation="button"
-                                        label="보고서 저장"
+                                        label="보고서 파일 저장"
                                         className="detail-context-button"
                                         onNotice={setNoticeMessage}
                                         onError={setErrorMessage}
@@ -4591,7 +4649,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                     meeting={selectedMeeting}
                                                     scope="transcript"
                                                     presentation="button"
-                                                    label="대화록 저장"
+                                                    label="대화록 파일 저장"
                                                     onNotice={setNoticeMessage}
                                                     onError={setErrorMessage}
                                                     onSaved={showSavedFileToast}
@@ -4610,7 +4668,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({ selectedMeetingI
                                                 <>
                                                     <Button variant="outline" onClick={handleSaveSpeakerLabels} disabled={!hasSpeakerLabelChanges}>
                                                         <Save size={15} />
-                                                        이름 저장
+                                                        참석자 이름 저장
                                                     </Button>
                                                     <Button variant="outline" onClick={handleCancelSpeakerLabelEdit}>
                                                         취소

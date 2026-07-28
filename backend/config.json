@@ -32,8 +32,8 @@
     "denoise": false
   },
   "diarization": {
-    "enabled": false,
-    "generate_during_analysis": false,
+    "enabled": true,
+    "generate_during_analysis": true,
     "auto_skip_long_audio": true,
     "max_duration_seconds": 9000,
     "max_waveform_mb": 512,
@@ -45,7 +45,7 @@
     "generate_during_analysis": false,
     "mode": "meeting_minutes",
     "provider": "ollama",
-    "model": "gemma4:e2b",
+    "model": "gemma4:e4b",
     "model_options": [
       {
         "model": "gemma4:e2b",
@@ -66,7 +66,8 @@
         "description": "Ollama에서 Gemma 4 모델을 비교합니다.",
         "url": "https://ollama.com/library/gemma4"
       }
-    ]
+    ],
+    "user_models": []
   },
   "export_templates": {
     "use_custom_template": false,

@@ -873,3 +873,111 @@ python scripts\run_long_audio_pipeline_eval.py --source "video\test (4).mp4" --d
 - 대화록 진행분은 참석자 구분이 끝나기 전에도 보존되지만, 회의 기록 화면 전환은 전체 분석 완료 뒤 일어난다. 긴 파일 안내 문구는 이 차이를 구분해 편집자가 “저장 기준”과 “화면 전환 기준”을 혼동하지 않도록 한다.
 - 별도 참석자 구분 화면은 backend가 30% 단일 이벤트만 오래 유지하는 구간에서 elapsed 기반 추정 진행률을 보조 표시한다. 이 값은 실제 backend 완료율이 아니므로 UI 라벨에 `추정`을 붙여 정확도 한계를 드러낸다.
 - ETA는 초기 파일 길이, 청크 처리 실측, STT 실행 fingerprint, backend ETA 이벤트를 함께 사용한다. 컴퓨터 성능 차이는 초반 실측 이후 보정되지만, 음성 추출과 STT/참석자 구분은 비용 구조가 달라 한 숫자로 조기 확정하지 않는다.
+## 2026-07-17 현재 STT/참석자 구분 모델과 배포 조건 재확인
+
+- 현재 소스 설정과 `releases/lmo_audio` 배포 설정의 STT 기본 모델은 `faster-whisper-large-v3`, 기본 장치는 CPU다.
+- 포터블 모델 폴더의 Whisper 가중치는 약 3.09GB이며, `backend/pipeline/transcribe.py`가 `faster_whisper.WhisperModel`로 로드한다.
+- 기본 Whisper와 faster-whisper는 음성 인식과 타임스탬프를 제공하지만 화자 분리를 직접 제공하지 않는다.
+- 참석자 구분은 `pyannote/speaker-diarization-community-1`이 화자 구간을 만들고, `backend/pipeline/align_speakers.py`가 Whisper 세그먼트와 화자 구간을 정렬하는 별도 단계다.
+- 현재 기본값은 `diarization.enabled=true`, `diarization.generate_during_analysis=true`다. 일반 분석은 대화록 생성 뒤 참석자 구분까지 이어서 실행하며, 필요할 때 회의 기록의 참석자 구분 실행으로 다시 실행할 수 있다.
+- pyannote 실행 코드는 남아 있는 부가기능이며 단순한 미사용 설정은 아니다. 회의 기록 UI, `generate-diarization` API, 포터블 모델과 관련 테스트가 함께 존재한다.
+- `pyannote.audio` 코드는 MIT 라이선스다.
+- 현재 사용하는 Community-1 모델은 CC BY 4.0이지만 Hugging Face gated 모델이다. 최초 다운로드에는 모델 페이지에서 사용자 조건 동의, 연락처 공유, 개인 계정의 접근 토큰이 필요하다.
+- 승인 후 모델 전체를 로컬 폴더에 저장해 오프라인으로 실행할 수 있다. 현재 포터블 배포본도 로컬 모델 폴더를 사용하며 실행 중 Hugging Face fallback을 사용하지 않는다.
+- 모델 재배포 시에는 모델 출처, CC BY 4.0 링크, 변경 여부와 포함 구성 요소의 고지 사항을 함께 제공해야 한다. 현재 배포본에 모델 README와 Python 패키지 라이선스는 포함되어 있지만, 사용자에게 보이는 통합 `THIRD_PARTY_NOTICES` 제공 여부는 별도 릴리스 점검 항목으로 남긴다.
+- 이 항목은 법률 자문이 아니라 공식 라이선스와 모델 카드 기준의 기술·배포 기록이다. 외부 공개 웹 배포에서 모델을 자체 호스팅하기 전에는 gated 접근 조건과 재배포 고지 방식을 별도로 검토한다.
+
+References:
+- https://github.com/pyannote/pyannote-audio/blob/main/LICENSE
+- https://huggingface.co/pyannote/speaker-diarization-community-1
+- https://huggingface.co/docs/hub/models-gated
+- https://creativecommons.org/licenses/by/4.0/
+
+## 2026-07-17 브라우저 CPU/WASM Whisper small PoC
+
+목적:
+
+- 내장 GPU 또는 GPU 사용이 제한된 업무용 PC를 기준으로 브라우저 로컬
+  STT가 가능한지 확인한다.
+- 긴 파일을 내부 청크로 나누어 처리할 때 처리시간, 메모리, 문장 누락
+  위험을 함께 확인한다.
+
+환경:
+
+- AMD Ryzen 7 9800X3D, 16 logical processors, RAM 31.1GB
+- Headless Chrome 147
+- Transformers.js 3.8.1
+- `onnx-community/whisper-small`, q8, WASM CPU
+- 한국어 Hermes 60초와 TV 토론 60초/10분
+
+결과:
+
+| 조건 | 샘플 | 처리시간 | RTF |
+|---|---|---:|---:|
+| Cross-Origin Isolation 없음, 1 thread | Hermes 60초 | 44.33초 | 0.74 |
+| Cross-Origin Isolation 없음, 1 thread | 토론 60초 | 34.27초 | 0.57 |
+| Cross-Origin Isolation, 4 threads | Hermes 60초 | 23.72초 | 0.40 |
+| Cross-Origin Isolation, 4 threads | 토론 60초 | 16.75초 | 0.28 |
+| Cross-Origin Isolation, 4 threads, 1분 작업 단위 | 토론 10분 | 227.22초 | 0.38 |
+| Chrome CPU 4배 제한, 4 threads | Hermes 60초 | 89.72초 | 1.50 |
+| Chrome CPU 4배 제한, 4 threads | 토론 60초 | 59.16초 | 0.99 |
+
+추가 관찰:
+
+- 최초 모델 다운로드와 초기화는 약 24~34초, 캐시 재사용 초기화는
+  8.62초였다.
+- 브라우저 프로필의 모델·WASM·코드 캐시는 약 302.7MB였다.
+- 10분 테스트의 관찰 최대 브라우저 working set은 약 1.15GB였다.
+- 10분 파일은 1분 단위 10개 작업으로 완주했고 각 작업은
+  16.60~27.25초였다.
+- 60초 바깥 청크 안에서 Transformers.js의 30초 내부 청크 기능만
+  사용한 토론 결과는 317자였고, 약 43초 이후 발언이 누락됐다.
+- 30초 청크를 5초 겹쳐 직접 순차 처리하자 20.75초에 441자가 생성됐고
+  43~60초 발언이 복구됐다. 겹친 5초의 중복 문장은 별도 병합이 필요하다.
+
+판단:
+
+- 웹 기본 경로는 WebGPU가 아니라 `Whisper small q8 + WASM CPU`로
+  설계할 수 있다. WebGPU는 사용 가능한 PC의 선택적 가속 경로로 둔다.
+- 긴 파일도 브라우저에서 처리할 수 있으나, 단순히 큰 바깥 청크로 나누는
+  것만으로는 부족하다. 30초 작업 창, 5초 겹침, 타임스탬프 기반 중복 제거,
+  청크별 IndexedDB checkpoint가 필요하다.
+- 서버는 Cross-Origin Isolation을 구성해 WASM 다중 스레드를 사용할 수
+  있어야 한다. 그렇지 않으면 이번 샘플에서도 처리시간이 약 1.6~2.0배
+  늘었다.
+- 권장 여부는 CPU 이름만으로 결정하지 않는다. 첫 30~60초 실제 처리의
+  RTF를 측정하고 전체 예상 시간을 계산해 사용자에게 보여 준다.
+- Chrome CPU 제한은 저사양 PC의 근사치일 뿐이다. 실제 기관 PC의 구형
+  Intel CPU, 메모리 8/16GB 환경 검증과 브라우저 WASM 화자분리 측정은
+  별도로 남아 있다.
+## 2026-07-17 웹 목표 PC 메모리 기준 보정
+
+- 앞선 Ryzen 7 9800X3D/31.1GB 결과는 현재 개발 PC에서 실행한 PoC
+  측정값이며 제품 권장 사양이 아니다. CPU 정보는 Node `os.cpus()`와
+  `os.totalmem()`으로 현재 실행 환경을 읽어 기록했다.
+- 2026년 국내 조달 업무용 PC 규격 사례는 일반형 DDR5 16GB 이상,
+  상위형 32GB 이상을 요구한다. 현재 Dell 업무용 데스크톱 기본 구성도
+  16GB가 중심이며 Microsoft Copilot+ PC 최소 메모리도 16GB다.
+- 반면 조달청 고시상 데스크톱컴퓨터 내용연수는 5년, 노트북컴퓨터는
+  6년이다. 따라서 신규 구매 기준은 16GB여도 기관의 실제 설치 기반에는
+  8GB 장비가 남아 있을 것으로 본다.
+- 제품 검증 기준은 `8GB 지원 하한, 16GB 권장, 32GB 상위 후보`로 둔다.
+- 8GB에서는 small q8만 제공하고 STT, 화자분리, 요약 모델을 동시에
+  유지하지 않는다. 오디오도 30초 작업 창 중심으로 읽고 청크 완료 즉시
+  저장·해제한다.
+- 현재 1.15GB 관찰값만으로 8GB 지원을 확정하지 않는다. 실제 8GB/16GB
+  기관 PC에서 Windows, 백신, Office가 실행된 상태의 working set, swap,
+  처리시간, 탭 종료 여부를 다시 측정해야 한다.
+
+References:
+- https://www.g2b.go.kr/pn/pnp/pnpe/UntyAtchFile/downloadFile.do?bidPbancNo=R26BK01526618&bidPbancOrd=000&fileSeq=3&fileType=&prcmBsneSeCd=01
+- https://www.law.go.kr/LSW/flDownload.do?flSeq=147336025
+- https://www.dell.com/en-us/shop/desktop-computers/scr/desktops/business/appref%3Ddell-pro-product-line
+- https://www.microsoft.com/en-us/windows/windows-11-specifications
+
+## 2026-07-27 real-video smoke and STT ETA validation
+
+- `video\portable_video_15s.mp4` completed through real STT in 32.6 seconds, local Ollama summary in 52.7 seconds, and diarization in 34.9 seconds. Two speech segments and JSON/TXT/MD/DOCX/HWPX plus preserved WAV were verified.
+- `video\videoplayback.mp4` (104.6 seconds, four STT chunks) completed twice. The first run took 138.2 seconds and changed ETA from 206 to 56, 37, and 15 seconds, which was too optimistic after early chunks.
+- Live measured throughput is now capped by the stored same-fingerprint baseline for ETA purposes. A post-change run completed in 63.6 seconds with ETA 177, 126, 75, and 24 seconds, avoiding the abrupt optimistic drop. The runs had different warm/runtime state, so elapsed times are not a quality benchmark.
+- `backend/test_transcribe.py` no longer treats a generated 440 Hz tone as a speech fixture. It uses `LMO_REAL_AUDIO_FIXTURE` or `video\portable_video_15s.mp4`, and skips with an explicit reason when no real speech sample is available.

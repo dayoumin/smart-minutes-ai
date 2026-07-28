@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, Play, RefreshCw, Settings, Square, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, Play, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -36,7 +36,7 @@ import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } f
 import { readApiErrorMessage as readResponseError } from './apiError';
 import { ProgressBar } from './ProgressBar';
 import { StatusBanner } from './StatusBanner';
-import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
+import { formatAnalysisDuration, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
 import {
     ContextTemplate,
@@ -274,6 +274,7 @@ type AudioExtractNotice = { tone: 'success' | 'error'; message: string; savedPat
 
 interface CompletionNotice {
     meetingId: string;
+    detailTab: 'summary' | 'script';
     elapsedMs: number;
     note?: string;
     autoSaveNote?: string;
@@ -282,6 +283,10 @@ interface CompletionNotice {
 interface AnalysisSettingsResponse {
     diarization?: {
         generate_during_analysis?: boolean;
+    };
+    privacy?: {
+        preserve_extracted_audio?: boolean;
+        auto_save_audio_copy?: boolean;
     };
 }
 
@@ -335,6 +340,12 @@ const ACCEPTED_MEETING_MEDIA = [
 const getFileExtension = (filename: string): string => {
     const match = filename.toLowerCase().match(/\.[^.]+$/);
     return match ? match[0] : '';
+};
+
+const getMeetingTitleFromFilename = (filename: string): string => {
+    const extension = getFileExtension(filename);
+    const filenameWithoutExtension = extension ? filename.slice(0, -extension.length) : filename;
+    return filenameWithoutExtension.trim() || filename.trim();
 };
 
 const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
@@ -587,6 +598,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [meetingPurpose, setMeetingPurpose] = useState('');
     const [selectedReportTemplateId, setSelectedReportTemplateId] = useState(DEFAULT_REPORT_TEMPLATE_ID);
     const [file, setFile] = useState<File | null>(null);
+    const [isFileDragActive, setIsFileDragActive] = useState(false);
     const [isAnalyzing, setIsAnalyzing] = useState(false);
     const [progress, setProgress] = useState(0);
     const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
@@ -607,6 +619,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [errorMessage, setErrorMessage] = useState('');
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
+    const [preserveExtractedAudio, setPreserveExtractedAudio] = useState<boolean | null>(null);
+    const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState<boolean | null>(null);
     const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
     const [readinessMessage, setReadinessMessage] = useState('');
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
@@ -625,6 +639,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         [selectedReportTemplateId],
     );
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const autoDerivedTitleRef = useRef<string | null>(null);
+    const fileDragDepthRef = useRef(0);
+    const fileMetadataRequestRef = useRef(0);
+    const fileMetadataCleanupRef = useRef<(() => void) | null>(null);
+    const analysisSettingsRequestRef = useRef(0);
     const videoFileInputRef = useRef<HTMLInputElement | null>(null);
     const analysisInFlightRef = useRef(false);
     const analysisAbortControllerRef = useRef<AbortController | null>(null);
@@ -636,6 +655,24 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const cleanupRetryInFlightRef = useRef(false);
     const diarizationModeSaveRequestRef = useRef(0);
     const diarizationModeSaveInFlightRef = useRef(false);
+    const invalidateFileMetadata = React.useCallback(() => {
+        fileMetadataRequestRef.current += 1;
+        fileMetadataCleanupRef.current?.();
+        fileMetadataCleanupRef.current = null;
+    }, []);
+    const clearSelectedFileState = React.useCallback(() => {
+        invalidateFileMetadata();
+        setFile(null);
+        setFileDurationSeconds(null);
+        if (fileInputRef.current) {
+            fileInputRef.current.value = '';
+        }
+    }, [invalidateFileMetadata]);
+
+    useEffect(() => () => {
+        invalidateFileMetadata();
+    }, [invalidateFileMetadata]);
+
     const updateAnalysisEtaSeconds = React.useCallback((nextEtaSeconds: number | null) => {
         setAnalysisEtaSeconds(currentEtaSeconds => {
             if (nextEtaSeconds === null) {
@@ -658,14 +695,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     }, []);
 
     const loadAnalysisSettings = React.useCallback(async () => {
+        const requestId = analysisSettingsRequestRef.current + 1;
+        analysisSettingsRequestRef.current = requestId;
         try {
             const apiBase = await getApiBase();
             const response = await fetch(`${apiBase}/api/settings`);
-            if (!response.ok) return;
+            if (!response.ok) throw new Error(`settings=${response.status}`);
             const data = await response.json() as AnalysisSettingsResponse;
+            if (analysisSettingsRequestRef.current !== requestId) return;
             setDiarizationDuringAnalysis(data.diarization?.generate_during_analysis ?? false);
+            setPreserveExtractedAudio(data.privacy?.preserve_extracted_audio ?? true);
+            setAutoSaveAudioCopy(data.privacy?.auto_save_audio_copy ?? false);
         } catch {
-            // Keep the current local value if settings cannot be read.
+            if (analysisSettingsRequestRef.current !== requestId) return;
+            setPreserveExtractedAudio(null);
+            setAutoSaveAudioCopy(null);
         }
     }, []);
 
@@ -738,6 +782,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         return () => {
             window.removeEventListener('focus', handleSettingsUpdated);
             window.removeEventListener('analysis:settings-updated', handleSettingsUpdated);
+            analysisSettingsRequestRef.current += 1;
         };
     }, [loadAnalysisSettings]);
 
@@ -1041,14 +1086,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const resumeAwaitingFile = Boolean(selectedResumeDraft && !file);
     const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
     const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
+    const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
     const startButtonDisabled = isAnalyzing
         || isExtractingAudio
         || Boolean(matchingActiveDraft)
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
+        || hasBlockingReadinessIssue
         || missingFields.length > 0;
 
-    const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
     const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
     const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
 
@@ -1235,11 +1281,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
     const clearResumeDraftSelection = () => {
         clearResumeSelectionOnly();
-        setFile(null);
-        setFileDurationSeconds(null);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = '';
-        }
+        clearSelectedFileState();
     };
 
     const handleStartFreshFromResume = () => {
@@ -1251,6 +1293,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     };
 
     const handleResumeDraftPrepare = React.useCallback((draft: AnalysisResumeDraft) => {
+        clearSelectedFileState();
+        autoDerivedTitleRef.current = null;
         setTitle(draft.title);
         setDate(draft.date);
         setMeetingPurpose(draft.meetingPurpose || draft.participants || '');
@@ -1267,7 +1311,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         updateAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
-    }, [updateAnalysisEtaSeconds]);
+    }, [clearSelectedFileState, updateAnalysisEtaSeconds]);
 
     const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
     const resumeDraftSelectionRequestId = resumeDraftSelectionRequest?.requestId;
@@ -1351,42 +1395,110 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         }
     };
 
-    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const selectMeetingFile = (selectedFile: File | null) => {
         if (isExtractingAudio) return;
-        const selectedFile = e.target.files?.[0] ?? null;
         setErrorMessage('');
         setStatusMessage('');
         setProgress(0);
-        setFileDurationSeconds(null);
-        setCompletionNotice(null);
-        setFile(selectedFile);
 
         const selectedKind = selectedFile ? getFileKind(selectedFile) : 'unknown';
-        if (!selectedFile || selectedKind === 'unknown') return;
+        if (!selectedFile) {
+            setCompletionNotice(null);
+            clearSelectedFileState();
+            if (autoDerivedTitleRef.current && title === autoDerivedTitleRef.current) {
+                autoDerivedTitleRef.current = null;
+                setTitle('');
+            }
+            return;
+        }
+        if (selectedKind === 'unknown') {
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+            setErrorMessage(file
+                ? '지원하지 않는 형식이라 기존 파일을 유지했습니다. 지원하는 음성 파일을 선택해 주세요.'
+                : '지원하는 음성 파일을 선택해 주세요. 영상 파일도 사용할 수 있습니다.');
+            return;
+        }
+        setCompletionNotice(null);
+        invalidateFileMetadata();
+        const metadataRequestId = fileMetadataRequestRef.current;
+        setFile(selectedFile);
+        setFileDurationSeconds(null);
+        const derivedTitle = getMeetingTitleFromFilename(selectedFile.name);
+        if (!title.trim() || title === autoDerivedTitleRef.current) {
+            autoDerivedTitleRef.current = derivedTitle;
+            setTitle(derivedTitle);
+        }
 
         const media = document.createElement(selectedKind === 'video' ? 'video' : 'audio');
         const objectUrl = URL.createObjectURL(selectedFile);
         media.preload = 'metadata';
+        let metadataCleanedUp = false;
+        const cleanupMetadata = () => {
+            if (metadataCleanedUp) return;
+            metadataCleanedUp = true;
+            media.onloadedmetadata = null;
+            media.onerror = null;
+            URL.revokeObjectURL(objectUrl);
+            if (fileMetadataCleanupRef.current === cleanupMetadata) {
+                fileMetadataCleanupRef.current = null;
+            }
+        };
+        fileMetadataCleanupRef.current = cleanupMetadata;
         media.onloadedmetadata = () => {
-            if (Number.isFinite(media.duration)) {
+            if (fileMetadataRequestRef.current === metadataRequestId && Number.isFinite(media.duration)) {
                 setFileDurationSeconds(media.duration);
             }
-            URL.revokeObjectURL(objectUrl);
+            cleanupMetadata();
         };
-        media.onerror = () => URL.revokeObjectURL(objectUrl);
+        media.onerror = cleanupMetadata;
         media.src = objectUrl;
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        selectMeetingFile(e.target.files?.[0] ?? null);
+    };
+
+    const handleMeetingFileDragEnter = (event: React.DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        if (isAnalyzing || isExtractingAudio) return;
+        fileDragDepthRef.current += 1;
+        setIsFileDragActive(true);
+    };
+
+    const handleMeetingFileDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        if (isAnalyzing || isExtractingAudio) return;
+        event.dataTransfer.dropEffect = 'copy';
+    };
+
+    const handleMeetingFileDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        if (isAnalyzing || isExtractingAudio) return;
+        fileDragDepthRef.current = Math.max(0, fileDragDepthRef.current - 1);
+        if (fileDragDepthRef.current === 0) setIsFileDragActive(false);
+    };
+
+    const handleMeetingFileDrop = (event: React.DragEvent<HTMLDivElement>) => {
+        event.preventDefault();
+        fileDragDepthRef.current = 0;
+        setIsFileDragActive(false);
+        if (isAnalyzing || isExtractingAudio) return;
+        selectMeetingFile(event.dataTransfer.files?.[0] ?? null);
     };
 
     const clearFile = () => {
         if (isExtractingAudio) return;
-        setFile(null);
-        setFileDurationSeconds(null);
+        setIsFileDragActive(false);
+        clearSelectedFileState();
         setErrorMessage('');
         setStatusMessage('');
         setProgress(0);
         setCompletionNotice(null);
-        if (fileInputRef.current) {
-            fileInputRef.current.value = '';
+        if (autoDerivedTitleRef.current && title === autoDerivedTitleRef.current) {
+            autoDerivedTitleRef.current = null;
+            setTitle('');
         }
     };
 
@@ -1875,21 +1987,26 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             setStatusMessage('회의록을 저장했습니다.');
             setCompletionNotice({
                 meetingId: newRecord.id,
+                detailTab: (() => {
+                    const summary = finalData.summary?.trim();
+                    const summaryStatus = finalData.generationStatus?.summary
+                        ?? finalData.generation_status?.summary;
+                    return summary && (!summaryStatus || summaryStatus === 'completed')
+                        ? 'summary'
+                        : 'script';
+                })(),
                 elapsedMs: completedElapsedMs,
                 note: getCompletionResumeNote(finalData.resume),
                 autoSaveNote: getAutoSaveCompletionNote(finalData),
             });
+            autoDerivedTitleRef.current = null;
             setTitle('');
             setMeetingPurpose('');
             setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
             const nextInitialDate = new Date().toISOString().slice(0, 16);
             setInitialDateValue(nextInitialDate);
             setDate(nextInitialDate);
-            setFile(null);
             clearResumeDraftSelection();
-            if (fileInputRef.current) {
-                fileInputRef.current.value = '';
-            }
         } catch (error) {
             if (analysisCancelledRef.current || (error instanceof DOMException && error.name === 'AbortError')) {
                 const requestedStopAction = analysisStopActionRef.current;
@@ -2049,13 +2166,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         if (matchingActiveDraft) return '진행 중';
         if (selectedResumeDraftUnavailable) return '이어하기 불가';
         if (resumeSelectionActive && !resumeReady) return '같은 파일 선택';
+        if (hasBlockingReadinessIssue) return '준비 필요';
         if (resumeReady) return '이어하기';
         return '분석 시작';
     })();
 
     const handleOpenCompletedMeeting = () => {
         if (!completionNotice) return;
-        window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: completionNotice.meetingId, openHistory: true } }));
+        window.dispatchEvent(new CustomEvent('meetings:updated', {
+            detail: {
+                id: completionNotice.meetingId,
+                openHistory: true,
+                detailTab: completionNotice.detailTab,
+            },
+        }));
         setCompletionNotice(null);
         setStatusMessage('');
     };
@@ -2088,11 +2212,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 ? 'info'
                 : 'neutral';
     const audioExtractStatusHeading = isExtractingAudio
-        ? '오디오 추출 중'
+        ? '음성 추출 중'
         : audioExtractSaved
-            ? '오디오 저장 완료'
+            ? '음성 추출 완료'
             : audioExtractFailed
-                ? '오디오 추출 실패'
+                ? '음성 추출 실패'
                 : '영상 선택됨';
     const audioExtractStatusMessage = isExtractingAudio
         ? `선택한 영상에서 음성만 추출하고 있습니다. 소요 시간 ${audioExtractElapsedLabel}`
@@ -2100,26 +2224,36 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             ? `${audioExtractMessage} 소요 시간 ${audioExtractElapsedLabel}`
             : audioExtractFailed
                 ? audioExtractMessage
-                : '다운로드를 누르면 선택한 영상을 WAV 파일로 저장합니다.';
+                : '저장을 누르면 선택한 영상의 WAV 사본을 다운로드 폴더에 저장합니다.';
     const selectedFileMeta = file
         ? [
             fileKind === 'video' ? '영상' : fileKind === 'audio' ? '음성' : '파일',
             formatFileSize(file.size),
             fileDurationSeconds ? formatDuration(fileDurationSeconds) : null,
         ].filter(Boolean).join(' · ')
-        : '음성/영상 파일을 선택해 주세요.';
+        : '음성 파일을 선택해 주세요.';
     const selectedFileGuidance = file
         ? getSelectedFileProcessingGuidance(fileDurationSeconds, diarizationDuringAnalysis)
         : null;
+    const filePrivacyMessage = preserveExtractedAudio === true && autoSaveAudioCopy === true
+        ? '이 PC에서 처리합니다. 앱에서 관리하고 다운로드 폴더에도 사본을 저장합니다. 다운로드한 사본은 앱에서 삭제되지 않습니다.'
+        : preserveExtractedAudio === false
+        ? '이 PC에서 처리합니다. 분석용 임시 음성은 완료 후 삭제됩니다.'
+        : preserveExtractedAudio === true
+            ? '이 PC에서 처리합니다. 분석용 음성은 앱에서 회의록과 함께 관리합니다.'
+            : '이 PC에서 처리합니다. 음성 보관 방식은 앱 설정을 따릅니다.';
+
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
-    const effectiveAnalysisEtaSeconds = getAdjustedEtaSeconds(analysisEtaSeconds, analysisEtaReceivedAt, analysisNow);
-    const transcriptEstimateLabel = formatTranscriptReadyEstimate(
-        elapsedMs,
-        progressPercent,
-        rawStatusMessage || currentStatusMessage,
-        transcriptReady,
-        effectiveAnalysisEtaSeconds,
-    );
+    const startActionSummary = (() => {
+        if (isExtractingAudio) return '음성을 추출하고 있습니다.';
+        if (matchingActiveDraft) return '같은 파일의 분석이 이미 진행 중입니다.';
+        if (selectedResumeDraftUnavailable) return '이 분석 기록은 이어서 진행할 수 없습니다.';
+        if (resumeSelectionActive && !resumeReady) return '같은 음성 파일을 선택해 주세요.';
+        if (readinessState === 'missing-models') return '분석에 필요한 파일을 준비해 주세요.';
+        if (readinessState === 'error') return '분석 준비 상태를 확인할 수 없습니다. 아래 안내에서 다시 확인해 주세요.';
+        if (missingFields.length > 0) return `필수 입력: ${missingFields.join(', ')}`;
+        return `${selectedFileMeta} · ${diarizationDuringAnalysis ? '참석자 구분 포함' : '대화록 먼저 생성'}`;
+    })();
     const transcriptProgressPercent = getTranscriptReadyProgressPercent(
         progressPercent,
         rawStatusMessage || currentStatusMessage,
@@ -2174,27 +2308,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
                 <section className="writer-section">
                     <div className="writer-section-heading">
-                        <h3>회의 정보</h3>
-                    </div>
-                    <div className="writer-field-grid">
-                        <div className="writer-field writer-field-wide">
-                            <label htmlFor="meeting-title">회의 제목 *</label>
-                            <Input id="meeting-title" value={title} onChange={e => setTitle(e.target.value)} placeholder="예: 2026년 상반기 기획 회의" disabled={isAnalyzing} />
-                        </div>
-                        <div className="writer-field">
-                            <label htmlFor="meeting-date">일시 *</label>
-                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
-                        </div>
-                        <div className="writer-field">
-                            <label htmlFor="meeting-purpose">회의 목적 *</label>
-                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
-                        </div>
-                    </div>
-                </section>
-
-                <section className="writer-section">
-                    <div className="writer-section-heading">
-                        <h3>{resumeSelectionActive ? '같은 음성/영상 파일 선택 *' : '음성/영상 파일 *'}</h3>
+                        <h3>{resumeSelectionActive ? '같은 음성 파일 선택 *' : '음성 파일 *'}</h3>
                     </div>
                     <input
                         type="file"
@@ -2215,57 +2329,79 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         aria-hidden="true"
                         tabIndex={-1}
                     />
-                    <div
-                        role="button"
-                        tabIndex={isAnalyzing || isExtractingAudio ? -1 : 0}
-                        aria-controls="meeting-file-input"
-                        aria-disabled={isAnalyzing || isExtractingAudio}
-                        className={`file-drop-zone ${file ? 'file-drop-zone-selected' : ''}`}
-                        onClick={() => {
-                            if (!isAnalyzing && !isExtractingAudio) fileInputRef.current?.click();
-                        }}
-                        onKeyDown={(event) => {
-                            if (isAnalyzing || isExtractingAudio) return;
-                            if (event.key === 'Enter' || event.key === ' ') {
-                                event.preventDefault();
-                                fileInputRef.current?.click();
-                            }
-                        }}
-                    >
-                        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="flex min-w-0 items-center gap-3">
+                    {!file ? (
+                        <div
+                            role="button"
+                            tabIndex={isAnalyzing || isExtractingAudio ? -1 : 0}
+                            aria-controls="meeting-file-input"
+                            aria-disabled={isAnalyzing || isExtractingAudio}
+                            aria-label="음성 파일 선택"
+                            className={`file-drop-zone ${isFileDragActive ? 'file-drop-zone-active' : ''}`}
+                            onClick={() => {
+                                if (!isAnalyzing && !isExtractingAudio) fileInputRef.current?.click();
+                            }}
+                            onKeyDown={(event) => {
+                                if (isAnalyzing || isExtractingAudio) return;
+                                if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    fileInputRef.current?.click();
+                                }
+                            }}
+                            onDragEnter={handleMeetingFileDragEnter}
+                            onDragOver={handleMeetingFileDragOver}
+                            onDragLeave={handleMeetingFileDragLeave}
+                            onDrop={handleMeetingFileDrop}
+                        >
+                            <div className="file-drop-zone-empty">
                                 <div className="file-upload-icon">
-                                    <UploadCloud size={20} />
+                                    <UploadCloud size={21} />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                    <div className="text-sm font-semibold text-foreground">음성 파일을 놓으세요</div>
+                                    <div className="mt-1 text-xs text-muted-foreground">MP3, WAV, M4A 등 주요 형식과 영상 파일을 지원합니다.</div>
+                                </div>
+                                <span className="file-drop-zone-action" aria-hidden="true">파일 선택</span>
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="selected-file-card">
+                            <div className="selected-file-main">
+                                <div className="file-upload-icon">
+                                    <FileAudio size={20} />
                                 </div>
                                 <div className="min-w-0">
-                                    <div className="truncate text-sm font-medium text-foreground">
-                                        {file ? file.name : '선택된 파일 없음'}
+                                    <div className="truncate text-sm font-semibold text-foreground" title={file.name}>
+                                        {file.name}
                                     </div>
-                                    <div className="mt-1 text-xs text-muted-foreground">
-                                        {selectedFileMeta}
-                                    </div>
+                                    <div className="mt-1 text-xs text-muted-foreground">{selectedFileMeta}</div>
                                 </div>
                             </div>
-                            <div className="flex shrink-0 gap-2">
-                                {file && !isAnalyzing && (
+                            <div className="selected-file-actions">
+                                <Button
+                                    variant="outline"
+                                    className="detail-action-button"
+                                    onClick={() => fileInputRef.current?.click()}
+                                    disabled={isAnalyzing || isExtractingAudio}
+                                >
+                                    파일 바꾸기
+                                </Button>
+                                {!isAnalyzing && (
                                     <IconButton
                                         variant="outline"
-                                        className="border-border text-muted-foreground hover:bg-muted/70 hover:text-foreground"
                                         icon={<X size={16} />}
-                                        onClick={(event) => {
-                                            event.stopPropagation();
-                                            clearFile();
-                                        }}
-                                        onKeyDown={(event) => {
-                                            event.stopPropagation();
-                                        }}
-                                        disabled={isAnalyzing || isExtractingAudio}
-                                        aria-label="음성 파일 제거"
-                                        title="음성 파일 제거"
+                                        onClick={clearFile}
+                                        disabled={isExtractingAudio}
+                                        aria-label={`${file.name} 제거`}
+                                        title="파일 제거"
                                     />
                                 )}
                             </div>
                         </div>
+                    )}
+                    <div className="writer-file-support">
+                    <div className="writer-file-privacy-note">
+                        <ShieldCheck size={15} aria-hidden="true" />
+                        <span>{filePrivacyMessage}</span>
                     </div>
                     {selectedFileGuidance && (
                         <div className="detail-inline-note">
@@ -2288,60 +2424,222 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
                         </div>
                     )}
-                </section>
-
-                {!isAnalyzing && (
-                    <div className="writer-action-bar">
-                        {!resumeSelectionActive ? (
-                            <div className="writer-secondary-actions">
+                    {!resumeSelectionActive && !isAnalyzing && (
+                        <div className="writer-file-tools">
+                            <Button
+                                variant="outline"
+                                className="detail-action-button"
+                                onClick={handleSelectVideoForAudioExtract}
+                                disabled={isExtractingAudio}
+                                title="음성을 추출할 영상 파일을 선택합니다."
+                            >
+                                <FileAudio size={15} />
+                                {hasAudioExtractFile ? audioExtractSaved ? '다른 영상' : '영상 변경' : '음성 추출'}
+                            </Button>
+                            {hasAudioExtractFile ? (
                                 <Button
                                     variant="outline"
                                     className="detail-action-button"
-                                    onClick={handleSelectVideoForAudioExtract}
-                                    disabled={isExtractingAudio}
-                                    title="오디오를 추출할 영상 파일을 선택합니다."
+                                    onClick={handleExtractAudioCopy}
+                                    disabled={isExtractingAudio || audioExtractSaved}
+                                    title={audioExtractButtonTitle}
                                 >
-                                    <UploadCloud size={15} />
-                                    {hasAudioExtractFile ? audioExtractSaved ? '다른 영상' : '영상 변경' : '오디오 추출'}
+                                    {isExtractingAudio ? (
+                                        <Loader2 size={15} className="animate-spin" />
+                                    ) : audioExtractSaved ? (
+                                        <CheckCircle2 size={15} />
+                                    ) : (
+                                        <FolderOpen size={15} />
+                                    )}
+                                    {isExtractingAudio ? '저장 중' : audioExtractSaved ? '저장됨' : audioExtractFailed ? '다시 저장' : '저장'}
                                 </Button>
-                                {hasAudioExtractFile ? (
-                                    <Button
-                                        variant="outline"
-                                        className="detail-action-button"
-                                        onClick={handleExtractAudioCopy}
-                                        disabled={isExtractingAudio || audioExtractSaved}
-                                        title={audioExtractButtonTitle}
-                                    >
-                                        {isExtractingAudio ? (
-                                            <Loader2 size={15} className="animate-spin" />
-                                        ) : audioExtractSaved ? (
-                                            <CheckCircle2 size={15} />
-                                        ) : (
-                                            <FileAudio size={15} />
-                                        )}
-                                        {isExtractingAudio ? '추출 중' : audioExtractSaved ? '완료' : audioExtractFailed ? '다시 다운로드' : '다운로드'}
-                                    </Button>
-                                ) : null}
-                                <span
-                                    title="영상 파일을 고른 뒤 다운로드를 누르면 회의록 없이 WAV 파일만 저장합니다."
-                                    aria-label="오디오 추출 도움말"
-                                    className="inline-flex items-center text-muted-foreground"
-                                    tabIndex={0}
-                                >
-                                    <CircleHelp size={14} />
-                                </span>
+                            ) : null}
+                            <span
+                                title="영상에서 음성만 WAV 파일로 저장합니다. 회의록 분석은 시작하지 않습니다."
+                                aria-label="음성 추출 도움말"
+                                className="inline-flex text-muted-foreground"
+                                tabIndex={0}
+                            >
+                                <CircleHelp size={14} />
+                            </span>
+                        </div>
+                    )}
+                    </div>
+                </section>
+
+                <section className="writer-section writer-info-section">
+                    <div className="writer-section-heading">
+                        <h3>회의 정보</h3>
+                    </div>
+                    <div className="writer-field-grid">
+                        <div className="writer-field writer-field-wide">
+                            <label htmlFor="meeting-title">회의 제목 *</label>
+                            <Input
+                                id="meeting-title"
+                                value={title}
+                                onChange={event => {
+                                    autoDerivedTitleRef.current = null;
+                                    setTitle(event.target.value);
+                                }}
+                                placeholder="예: 2026년 상반기 기획 회의"
+                                disabled={isAnalyzing}
+                            />
+                        </div>
+                        <div className="writer-field">
+                            <label htmlFor="meeting-date">일시 *</label>
+                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
+                        </div>
+                        <div className="writer-field">
+                            <label htmlFor="meeting-purpose">회의 목적 *</label>
+                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
+                        </div>
+                    </div>
+                </section>
+
+                {showAnalysisPanel && (
+                <div className="writer-analysis-panel border-primary/20 bg-primary/5 p-4">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="flex min-w-0 flex-1 gap-3">
+                            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
+                                {progressPercent >= 100 ? <CheckCircle2 size={18} /> : <FileAudio size={18} />}
                             </div>
-                        ) : (
-                            <div />
+                            <div className="min-w-0 flex-1">
+                                <div className="text-sm font-semibold text-foreground">
+                                    {currentStatusMessage}
+                                </div>
+                                {analysisStalled && (
+                                    <div className="mt-1 text-xs text-muted-foreground">
+                                        현재 단계가 계속 진행 중입니다.
+                                    </div>
+                                )}
+                                <ProgressBar
+                                    value={transcriptProgressPercent}
+                                    size="sm"
+                                    tone={errorMessage ? 'error' : 'primary'}
+                                    className="mt-3"
+                                    label="대화록 생성률"
+                                />
+                            </div>
+                        </div>
+                        <div className="flex shrink-0 flex-col gap-3 text-left sm:text-right">
+                            <div className="flex flex-wrap gap-5 sm:justify-end">
+                                <div>
+                                    <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                                        <span>경과 시간</span>
+                                        <span title="분석을 시작한 뒤 지난 시간입니다." className="inline-flex items-center">
+                                            <CircleHelp size={13} />
+                                        </span>
+                                    </div>
+                                    <div className="mt-1 text-sm font-semibold text-primary">{elapsedLabel}</div>
+                                </div>
+                            </div>
+                            {analysisPhase === 'analyzing' && !isAnalysisStopConfirmOpen && !analysisStopRequestedAction && (
+                                <Button
+                                    variant="outline"
+                                    className="h-8 px-3 text-xs sm:self-end"
+                                    onClick={handleOpenAnalysisStopConfirm}
+                                    disabled={isRequestingAnalysisStop}
+                                    title="분석을 중지하거나 취소합니다."
+                                >
+                                    <Square size={13} aria-hidden="true" />
+                                    중지/취소
+                                </Button>
+                            )}
+                            {analysisStopRequestedAction && (
+                                <div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground sm:self-end">
+                                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
+                                    {analysisStopRequestedAction === 'stop' ? '중지 중' : '취소 중'}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                    {analysisProgressGuidance && (
+                        <div className="detail-inline-note mt-3">
+                            {analysisProgressGuidance}
+                        </div>
+                    )}
+                    {isAnalysisStopConfirmOpen && (
+                        <div className="analysis-stop-panel" role="group" aria-label="분석 중지 또는 취소 방식 선택">
+                            <div className="min-w-0 flex-1">
+                                <div className="text-sm font-semibold text-foreground">분석을 어떻게 처리할까요?</div>
+                                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
+                                    중지하면 같은 파일로 이어서 진행할 수 있고, 취소하면 이어하기 기록을 남기지 않습니다.
+                                </div>
+                            </div>
+                            <div className="analysis-stop-actions">
+                                <Button
+                                    variant="outline"
+                                    onClick={() => handleStopAnalysis('stop')}
+                                    disabled={isRequestingAnalysisStop}
+                                    aria-label="이어하기 기록을 남기고 분석 중지"
+                                    title="이어서 진행할 수 있게 중지"
+                                >
+                                    {isRequestingAnalysisStop && analysisStopRequestedAction === 'stop' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
+                                    중지
+                                </Button>
+                                <Button
+                                    variant="outline"
+                                    onClick={() => handleStopAnalysis('cancel')}
+                                    disabled={isRequestingAnalysisStop}
+                                    aria-label="이어하기 기록을 남기지 않고 분석 취소"
+                                    title="이어하기 기록을 남기지 않음"
+                                >
+                                    {isRequestingAnalysisStop && analysisStopRequestedAction === 'cancel' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                    취소
+                                </Button>
+                                <Button
+                                    variant="primary"
+                                    onClick={() => setIsAnalysisStopConfirmOpen(false)}
+                                    disabled={isRequestingAnalysisStop}
+                                >
+                                    계속
+                                </Button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
+
+                {completionNotice && (
+                    <StatusBanner
+                        tone="success"
+                        heading="분석이 완료되었습니다"
+                        className="writer-completion-panel"
+                        action={(
+                            <Button onClick={handleOpenCompletedMeeting}>
+                                결과 보기
+                            </Button>
                         )}
+                    >
+                        <div>
+                            소요 시간 {formatAnalysisDuration(completionNotice.elapsedMs)}.{' '}
+                            {completionNotice.detailTab === 'summary'
+                                ? '기록 정리에서 핵심 결과를 확인하세요.'
+                                : '대화록을 확인하고 필요한 정리를 실행하세요.'}
+                        </div>
+                        {completionNotice.note && (
+                            <div className="mt-2 text-sm text-muted-foreground">{completionNotice.note}</div>
+                        )}
+                        {completionNotice.autoSaveNote && (
+                            <div className="mt-2 text-sm text-muted-foreground">{completionNotice.autoSaveNote}</div>
+                        )}
+                    </StatusBanner>
+                )}
+                {!showAnalysisPanel && !completionNotice && (
+                <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
+                        <div className="writer-action-context">
+                            <div className="writer-action-label">{isAnalyzing ? '분석 진행' : '분석 준비'}</div>
+                            <div className="writer-action-summary">{isAnalyzing ? '분석 작업이 진행 중입니다. 아래에서 현재 단계와 경과 시간을 확인할 수 있습니다.' : startActionSummary}</div>
+                        </div>
                         <div className="writer-primary-actions">
-                            <div className="analysis-mode-control">
+                            {!isAnalyzing && (
+                                <div className="analysis-mode-control">
                                 <label className="analysis-mode-toggle">
                                     <input
                                         type="checkbox"
                                         checked={diarizationDuringAnalysis}
                                         onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
-                                        disabled={isSavingDiarizationMode || isAnalyzing}
+                                        disabled={isSavingDiarizationMode}
                                     />
                                     <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
                                 </label>
@@ -2353,9 +2651,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 >
                                     <CircleHelp size={14} />
                                 </button>
-                            </div>
+                                </div>
+                            )}
                             <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonDisabled}>
-                                {buttonLabel}
+                                {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+                                {isAnalyzing ? '분석 중' : buttonLabel}
                             </Button>
                         </div>
                     </div>
@@ -2583,138 +2883,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 </StatusBanner>
             )}
 
-            {completionNotice && (
-                <StatusBanner
-                    tone="success"
-                    heading="분석이 완료되었습니다"
-                    action={(
-                        <Button onClick={handleOpenCompletedMeeting}>
-                            결과 보기
-                        </Button>
-                    )}
-                >
-                    <div>소요 시간 {formatAnalysisDuration(completionNotice.elapsedMs)}. 결과 보기를 눌러 회의록을 확인하세요.</div>
-                    {completionNotice.note && (
-                        <div className="mt-2 text-sm text-muted-foreground">{completionNotice.note}</div>
-                    )}
-                    {completionNotice.autoSaveNote && (
-                        <div className="mt-2 text-sm text-muted-foreground">{completionNotice.autoSaveNote}</div>
-                    )}
-                </StatusBanner>
-            )}
-
-            {showAnalysisPanel && (
-                <div className="app-panel border-primary/20 bg-primary/5 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex min-w-0 flex-1 gap-3">
-                            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                                {progressPercent >= 100 ? <CheckCircle2 size={18} /> : <Loader2 size={18} className="animate-spin" />}
-                            </div>
-                            <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold text-foreground">
-                                    {currentStatusMessage}
-                                </div>
-                                {analysisStalled && (
-                                    <div className="mt-1 text-xs text-muted-foreground">
-                                        현재 단계가 계속 진행 중입니다.
-                                    </div>
-                                )}
-                                <ProgressBar
-                                    value={transcriptProgressPercent}
-                                    size="sm"
-                                    tone={errorMessage ? 'error' : 'primary'}
-                                    className="mt-3"
-                                    label="대화록 생성률"
-                                />
-                            </div>
-                        </div>
-                        <div className="flex shrink-0 flex-col gap-3 text-left sm:text-right">
-                            <div className="flex flex-wrap gap-5 sm:justify-end">
-                                <div>
-                                    <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                        <span>경과 시간</span>
-                                        <span title="분석을 시작한 뒤 지난 시간입니다." className="inline-flex items-center">
-                                            <CircleHelp size={13} />
-                                        </span>
-                                    </div>
-                                    <div className="mt-1 text-sm font-semibold text-primary">{elapsedLabel}</div>
-                                </div>
-                                <div>
-                                    <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                        <span>대화록 예상</span>
-                                        <span title="대화록이 저장될 때까지의 추정 시간입니다. 참석자 구분과 기록 정리는 포함하지 않습니다." className="inline-flex items-center">
-                                            <CircleHelp size={13} />
-                                        </span>
-                                    </div>
-                                    <div className="mt-1 text-sm font-semibold text-foreground">{transcriptEstimateLabel}</div>
-                                </div>
-                            </div>
-                            {!isAnalysisStopConfirmOpen && !analysisStopRequestedAction && (
-                                <Button
-                                    variant="outline"
-                                    className="h-8 px-3 text-xs sm:self-end"
-                                    onClick={handleOpenAnalysisStopConfirm}
-                                    disabled={isRequestingAnalysisStop}
-                                    title="분석을 중지하거나 취소합니다."
-                                >
-                                    <Square size={13} aria-hidden="true" />
-                                    중지/취소
-                                </Button>
-                            )}
-                            {analysisStopRequestedAction && (
-                                <div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground sm:self-end">
-                                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-                                    {analysisStopRequestedAction === 'stop' ? '중지 중' : '취소 중'}
-                                </div>
-                            )}
-                        </div>
-                    </div>
-                    {analysisProgressGuidance && (
-                        <div className="detail-inline-note mt-3">
-                            {analysisProgressGuidance}
-                        </div>
-                    )}
-                    {isAnalysisStopConfirmOpen && (
-                        <div className="analysis-stop-panel" role="group" aria-label="분석 중지 또는 취소 방식 선택">
-                            <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold text-foreground">분석을 어떻게 처리할까요?</div>
-                                <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                    중지하면 같은 파일로 이어서 진행할 수 있고, 취소하면 이어하기 기록을 남기지 않습니다.
-                                </div>
-                            </div>
-                            <div className="analysis-stop-actions">
-                                <Button
-                                    variant="outline"
-                                    onClick={() => handleStopAnalysis('stop')}
-                                    disabled={isRequestingAnalysisStop}
-                                    aria-label="이어하기 기록을 남기고 분석 중지"
-                                    title="이어서 진행할 수 있게 중지"
-                                >
-                                    {isRequestingAnalysisStop && analysisStopRequestedAction === 'stop' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <Pause size={13} aria-hidden="true" />}
-                                    중지
-                                </Button>
-                                <Button
-                                    variant="outline"
-                                    onClick={() => handleStopAnalysis('cancel')}
-                                    disabled={isRequestingAnalysisStop}
-                                    aria-label="이어하기 기록을 남기지 않고 분석 취소"
-                                    title="이어하기 기록을 남기지 않음"
-                                >
-                                    {isRequestingAnalysisStop && analysisStopRequestedAction === 'cancel' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                                    취소
-                                </Button>
-                                <Button
-                                    variant="primary"
-                                    onClick={() => setIsAnalysisStopConfirmOpen(false)}
-                                    disabled={isRequestingAnalysisStop}
-                                >
-                                    계속
-                                </Button>
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
 
             {showProgressBar && !showAnalysisPanel && (
                 <ProgressBar value={transcriptProgressPercent} tone={errorMessage ? 'error' : 'primary'} label="대화록 생성률" />

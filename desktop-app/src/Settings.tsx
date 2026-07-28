@@ -447,10 +447,27 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const restoredOllamaPullsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
     const currentGeneralKeyRef = useRef('');
+    const dialogRef = useRef<HTMLDivElement | null>(null);
+    const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+    const previouslyFocusedElementRef = useRef<HTMLElement | null>(
+        typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
+    );
+
 
     useEffect(() => {
         setActiveTab(initialTab);
     }, [initialTab]);
+
+    useEffect(() => {
+        const previouslyFocusedElement = previouslyFocusedElementRef.current;
+        const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            if (previouslyFocusedElement?.isConnected) {
+                previouslyFocusedElement.focus();
+            }
+        };
+    }, []);
 
     const analysisModels = useMemo(
         () => (models?.models || []).filter(
@@ -1198,6 +1215,33 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.key === 'Tab') {
+                const dialog = dialogRef.current;
+                if (!dialog) return;
+                const focusableElements = Array.from(dialog.querySelectorAll<HTMLElement>(
+                    'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+                )).filter(element => (
+                    element.getAttribute('aria-hidden') !== 'true'
+                    && element.getClientRects().length > 0
+                ));
+                if (focusableElements.length === 0) {
+                    event.preventDefault();
+                    dialog.focus();
+                    return;
+                }
+                const firstElement = focusableElements[0];
+                const lastElement = focusableElements[focusableElements.length - 1];
+                const activeElement = document.activeElement;
+                if (event.shiftKey && (activeElement === firstElement || !dialog.contains(activeElement))) {
+                    event.preventDefault();
+                    lastElement.focus();
+                } else if (!event.shiftKey && (activeElement === lastElement || !dialog.contains(activeElement))) {
+                    event.preventDefault();
+                    firstElement.focus();
+                }
+                return;
+            }
+
             if (event.key !== 'Escape') return;
             if (openSummaryModelMenu) {
                 setOpenSummaryModelMenu('');
@@ -1269,6 +1313,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(nextSettings);
             setDownloadFormatPreference(downloadFormat);
+            window.dispatchEvent(new Event('analysis:settings-updated'));
             await loadModelsStatus(base, { surfaceErrors: false });
             if (currentGeneralKeyRef.current === requestKey) {
                 applySettingsToForm(nextSettings);
@@ -1442,7 +1487,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaSystemStopped = ollamaConnection?.status === 'system_stopped';
     const ollamaManagedStopped = ollamaConnection?.status === 'managed_stopped';
     const ollamaMissing = ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable);
-    const ollamaAvailable = Boolean(ollamaExecutableAvailable || ollamaRuntimeAvailable || installedSummaryModels.size > 0);
     const ollamaModelActionsReady = Boolean(ollamaServerReady || ollamaCanAutoStart);
     const showOllamaRuntimeAction = Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
     const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection);
@@ -1466,26 +1510,26 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
-    const modelPreparationGuide = ollamaModelActionsReady
-        ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
+    const modelPreparationGuide = ollamaManagedStopped
+        ? '1. 음성 인식 모델을 준비합니다. 2. 받을 모델의 받기를 누르면 요약 프로그램을 자동으로 시작합니다. 3. 회의 요약 모델 준비가 끝날 때까지 기다립니다.'
+        : ollamaModelActionsReady
+            ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
         : ollamaSystemStopped
             ? '1. 음성 인식 모델을 준비합니다. 2. Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인합니다. 3. 회의 요약 모델을 받습니다.'
-        : ollamaManagedStopped
-            ? '1. 음성 인식 모델을 준비합니다. 2. 앱을 다시 열고 준비 상태를 확인합니다. 3. 계속 같으면 관리자에게 실행 허용을 요청합니다.'
         : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램을 받습니다. 3. 회의 요약 모델을 받습니다.';
     const summaryModelOllamaHelp = modelStatusCanAutoRetry
-        ? (ollamaAvailable
-            ? '마지막 확인 기준으로 요약 프로그램은 설치되어 있습니다. 준비 상태를 다시 확인해 주세요.'
-            : '요약 프로그램 준비 상태를 다시 확인해 주세요.')
-        : ollamaModelActionsReady
-            ? (selectedSummaryInstalled
-                ? '회의 요약을 사용할 수 있습니다.'
-                : '요약 프로그램은 설치되어 있습니다. 아래에서 회의 요약 모델을 받아 주세요.')
-            : ollamaSystemStopped
-                ? 'Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인해 주세요.'
-            : ollamaManagedStopped
-                ? '요약 프로그램을 시작하지 못했습니다. 앱을 다시 열어도 같으면 관리자 확인이 필요합니다.'
-            : (ollamaRuntimeStatusMessage || '회의 요약을 사용하려면 요약 프로그램을 먼저 받아 주세요.');
+        ? '준비 상태 확인이 지연되고 있습니다. 아래에는 마지막으로 확인한 상태를 표시합니다.'
+        : selectedSummaryInstalled
+            ? '회의 요약 모델을 바로 사용할 수 있습니다.'
+            : installedSummaryModels.size > 0
+                ? '이 PC에 다른 회의 요약 모델이 있습니다. 아래 목록에서 사용할 모델을 선택해 주세요.'
+                : ollamaManagedStopped
+                    ? '요약 프로그램은 이 PC에 있지만 현재 중지되어 있어 회의 요약 모델 보유 여부를 아직 확인하지 못했습니다. 모델 받기를 누르면 프로그램을 자동으로 시작해 확인합니다.'
+                    : ollamaSystemStopped
+                        ? 'Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인해 주세요.'
+                        : ollamaModelActionsReady
+                            ? '요약 프로그램은 준비됐지만 회의 요약 모델이 없습니다. 아래에서 모델을 받아 주세요.'
+                            : (ollamaRuntimeStatusMessage || '회의 요약을 사용하려면 요약 프로그램을 먼저 준비해 주세요.');
     const ollamaInstallNotice = ollamaInstallPrompted
         ? (ollamaInstallNoticeMessage || OLLAMA_INSTALL_OPENED_NOTICE)
         : '';
@@ -1509,6 +1553,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 aria-modal="true"
                 aria-labelledby="settings-dialog-title"
                 className="relative flex h-[88vh] max-h-[760px] min-h-[360px] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl"
+                ref={dialogRef}
+                tabIndex={-1}
             >
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
@@ -1558,6 +1604,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
                             aria-label="설정 닫기"
                             title="닫기"
+                            ref={closeButtonRef}
                         >
                             <X size={18} />
                         </button>
@@ -1754,7 +1801,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             <div className="rounded-md border border-border bg-muted/20 p-4">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="flex flex-col gap-1">
-                                        <div className="text-base font-semibold text-foreground">음성 분석 모델</div>
+                                        <div className="text-base font-semibold text-foreground">음성 인식 모델</div>
                                         <div className="text-xs text-muted-foreground">
                                             {isCheckingModels
                                                 ? '환경 확인 중'
@@ -1896,8 +1943,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 ) : (
                                     <div className="mt-3 rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">
                                         {modelStatusErrorMessage || errorMessage
-                                            ? '모델 파일이 없다는 뜻은 아닙니다. 앱 안의 분석 프로그램 연결이 회복되면 자동으로 다시 확인합니다.'
-                                            : '음성 분석 모델 상태를 아직 확인하지 못했습니다.'}
+                                            ? '음성 인식 모델 상태 확인이 지연되고 있습니다. 모델을 다시 받을 필요는 없으며, 잠시 후 다시 확인해 주세요.'
+                                            : '음성 인식 모델 상태를 아직 확인하지 못했습니다.'}
                                     </div>
                                 )}
                             </div>
@@ -2028,6 +2075,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             </select>
                                         </div>
                                         <span className="mt-2 block truncate text-xs text-muted-foreground">{summaryModelHint}</span>
+                                        {models?.summary_model_recommendation?.message && (
+                                            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
+                                                {models.summary_model_recommendation.message}
+                                            </span>
+                                        )}
                                     </label>
                                 )}
                                 {summaryModelOptions.length > 0 && (

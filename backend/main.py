@@ -788,13 +788,16 @@ async def update_settings(payload: dict = Body(...)) -> dict:
 async def models_status() -> dict:
     try:
         config = load_config()
-        status = get_model_status(BASE_DIR, config, start_ollama=False)
+        status, stt_device_status, ollama_connection = await asyncio.gather(
+            asyncio.to_thread(get_model_status, BASE_DIR, config, start_ollama=False),
+            asyncio.to_thread(get_stt_device_status),
+            asyncio.to_thread(_ollama_connection_status),
+        )
+        summary_readiness = _summary_model_readiness_from_status(config, status, ollama_connection)
         selected_stt = "faster-whisper-large-v3"
         selected_device = config.get("stt", {}).get("device", "cpu")
         diarization_enabled = bool(config.get("diarization", {}).get("enabled", False))
         diarization_during_analysis = _should_generate_diarization_during_analysis(config)
-        summary_readiness = _summary_model_readiness(config, start_ollama=False)
-        stt_device_status = get_stt_device_status()
         memory_gb = _system_memory_gb()
         required_stt_keys = {"stt_faster_whisper"}
         for model in status.get("models", []):
@@ -816,7 +819,7 @@ async def models_status() -> dict:
         status["summary_model_recommendation"] = _summary_model_recommendation(config, memory_gb)
         status["stt_device_status"] = stt_device_status
         status["ollama_runtime_status"] = _ollama_runtime_snapshot()
-        status["ollama_connection"] = _ollama_connection_status()
+        status["ollama_connection"] = ollama_connection
         if selected_device == "cuda" and not stt_device_status.get("gpu_usable"):
             status["ready"] = False
             errors = list(status.get("errors") or [])
@@ -2811,6 +2814,49 @@ def _resolve_summary_model(config: dict, *, start_ollama: bool = True) -> str:
         if candidate and (ollama_model_exists(candidate) if start_ollama else ollama_model_exists(candidate, start_server=False)):
             return candidate
     return llm_model
+
+
+def _summary_model_readiness_from_status(config: dict, status: dict, ollama_connection: dict) -> dict:
+    summary_config = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
+    if not summary_config.get("enabled", True):
+        return {
+            "ready": False,
+            "status": "skipped",
+            "message": "요약 기능이 꺼져 있어 대화록만 생성했습니다.",
+            "reason": "generation_disabled",
+        }
+
+    llm_status = next((model for model in status.get("models", []) if model.get("key") == "llm"), {})
+    if llm_status.get("installed"):
+        return {"ready": True, "status": "ready", "message": ""}
+
+    configured_model = str(
+        llm_status.get("configured_model")
+        or summary_config.get("model")
+        or DEFAULT_SUMMARY_MODEL
+    ).strip()
+    local_model = bool(
+        configured_model.startswith((".", ".."))
+        or os.path.isabs(configured_model)
+        or configured_model.endswith((".gguf", ".bin"))
+    )
+    connection_status = str(ollama_connection.get("status") or "")
+    if local_model or connection_status in {"managed_ready", "system_ready"}:
+        reason = "model_missing"
+        message = "회의 요약 모델이 준비되지 않아 대화록만 생성합니다. 설정에서 회의 요약 모델을 준비해 주세요."
+    elif connection_status in {"managed_stopped", "system_stopped"}:
+        reason = "server_unreachable"
+        message = "요약 프로그램이 중지되어 모델 상태를 확인하지 못했습니다. 대화록은 계속 생성할 수 있습니다."
+    else:
+        reason = "runtime_missing"
+        message = "요약 프로그램이 준비되지 않아 대화록만 생성합니다. 설정에서 요약 프로그램을 준비해 주세요."
+
+    return {
+        "ready": False,
+        "status": "skipped",
+        "reason": reason,
+        "message": message,
+    }
 
 
 def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict:
@@ -4914,6 +4960,10 @@ def _normalize_export_scope(value) -> str:
 
 
 def _export_download_title(payload: dict, base_title: str) -> str:
+    custom_filename = str(payload.get("downloadFilename") or payload.get("download_filename") or "").strip()
+    if custom_filename:
+        return custom_filename
+
     suffixes = {
         "transcript": "대화록",
         "organized": "기록정리",

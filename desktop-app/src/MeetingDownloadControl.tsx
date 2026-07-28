@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Download, Loader2 } from 'lucide-react';
+import { Button } from './Button';
+import { Input } from './Input';
 import { MeetingRecord, MeetingSegment } from './meetingRepository';
 import {
     DownloadFormat,
@@ -226,10 +228,11 @@ const buildFallbackText = (meeting: MeetingRecord, scope: DownloadScope): string
     return buildFullText(meeting);
 };
 
-const buildExportPayload = (meeting: MeetingRecord, scope: DownloadScope) => ({
+const buildExportPayload = (meeting: MeetingRecord, scope: DownloadScope, downloadFilename: string) => ({
     ...meeting,
     title: scopedMeetingTitle(meeting, scope),
     exportScope: scope,
+    downloadFilename: safeFileName(downloadFilename),
     displaySegments: transcriptSegmentsForExport(meeting),
 });
 
@@ -269,16 +272,76 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
     beforeDownload,
     disabled = false,
 }) => {
+    const defaultDownloadFilename = safeFileName(scopedMeetingTitle(meeting, scope));
     const [downloadState, setDownloadState] = useState<'idle' | 'downloading' | 'saved'>('idle');
     const [preferredDownloadKind, setPreferredDownloadKind] = useState<DownloadFormat>(() => getDownloadFormatPreference());
+    const [isFileNameEditorOpen, setIsFileNameEditorOpen] = useState(false);
+    const [downloadFilename, setDownloadFilename] = useState(() => defaultDownloadFilename);
     const isMountedRef = useRef(true);
     const savedTimerRef = useRef<number | null>(null);
+    const pendingDownloadFocusRestoreRef = useRef(false);
+    const controlRef = useRef<HTMLDivElement | null>(null);
+    const triggerRef = useRef<HTMLButtonElement | null>(null);
+    const popoverRef = useRef<HTMLDivElement | null>(null);
+    const fileNameEditorId = `meeting-download-filename-editor-${React.useId()}`;
+    const fileNameInputId = `${fileNameEditorId}-input`;
     const isDownloading = downloadState === 'downloading';
     const downloadKind = resolveDownloadKind(preferredDownloadKind, scope);
     const scopeLabel = scopeLabels[scope];
     const buttonLabel = label ?? (scope === 'full' ? '전체 저장' : `${scopeLabel} 저장`);
 
+    useEffect(() => {
+        setDownloadFilename(defaultDownloadFilename);
+        setIsFileNameEditorOpen(false);
+    }, [defaultDownloadFilename, meeting.id]);
+
+    useEffect(() => {
+        if (!isFileNameEditorOpen) return;
+
+        const focusFrame = window.requestAnimationFrame(() => {
+            const input = popoverRef.current?.querySelector<HTMLInputElement>('input');
+            input?.focus();
+            input?.select();
+        });
+        const handlePointerDown = (event: PointerEvent) => {
+            if (event.target instanceof Node && !controlRef.current?.contains(event.target)) {
+                setIsFileNameEditorOpen(false);
+            }
+        };
+        document.addEventListener('pointerdown', handlePointerDown);
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            document.removeEventListener('pointerdown', handlePointerDown);
+        };
+    }, [isFileNameEditorOpen]);
+
+    const restoreTriggerFocus = () => {
+        window.requestAnimationFrame(() => {
+            if (triggerRef.current?.isConnected) triggerRef.current.focus();
+        });
+    };
+
+    const closeFileNameEditor = (restoreFocus: boolean) => {
+        setIsFileNameEditorOpen(false);
+        if (restoreFocus) restoreTriggerFocus();
+    };
+    useEffect(() => {
+        if (downloadState === 'downloading' || !pendingDownloadFocusRestoreRef.current) return;
+
+        pendingDownloadFocusRestoreRef.current = false;
+        const focusFrame = window.requestAnimationFrame(() => {
+            if (triggerRef.current?.isConnected) triggerRef.current.focus();
+        });
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+        };
+    }, [downloadState]);
+
     const updateDownloading = (nextDownloading: boolean) => {
+        if (nextDownloading && savedTimerRef.current) {
+            window.clearTimeout(savedTimerRef.current);
+            savedTimerRef.current = null;
+        }
         if (isMountedRef.current) {
             setDownloadState(nextDownloading ? 'downloading' : 'idle');
         }
@@ -300,12 +363,14 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
                 window.clearTimeout(savedTimerRef.current);
             }
             savedTimerRef.current = window.setTimeout(() => {
+                savedTimerRef.current = null;
                 if (isMountedRef.current) setDownloadState('idle');
             }, 1600);
         }
     };
 
     useEffect(() => {
+        isMountedRef.current = true;
         return () => {
             isMountedRef.current = false;
             if (savedTimerRef.current) {
@@ -328,7 +393,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
     const downloadLocalText = () => {
         downloadBlob(
             buildFallbackText(meeting, scope),
-            `${safeFileName(scopedMeetingTitle(meeting, scope))}.txt`,
+            `${safeFileName(downloadFilename)}.txt`,
             'text/plain;charset=utf-8;',
         );
         markSaved(null);
@@ -356,7 +421,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
             const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}/save-copy`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(buildExportPayload(meeting, scope)),
+                body: JSON.stringify(buildExportPayload(meeting, scope, downloadFilename)),
             });
             if (!response.ok) return false;
             const data = await response.json().catch(() => null) as SaveCopyResponse | null;
@@ -371,10 +436,14 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
         if (isDownloading || disabled) return;
         if (beforeDownload && !beforeDownload()) return;
 
+        const shouldRestoreTriggerFocus = isFileNameEditorOpen;
+        pendingDownloadFocusRestoreRef.current = shouldRestoreTriggerFocus;
+        setIsFileNameEditorOpen(false);
+
         updateDownloading(true);
         onNotice?.('');
         onError?.('');
-        const fallbackName = `${safeFileName(scopedMeetingTitle(meeting, scope))}.${extensionByKind[downloadKind]}`;
+        const fallbackName = `${safeFileName(downloadFilename)}.${extensionByKind[downloadKind]}`;
 
         try {
             if (await trySaveCopyToDownloads()) {
@@ -384,7 +453,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
             const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}`), {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(buildExportPayload(meeting, scope)),
+                body: JSON.stringify(buildExportPayload(meeting, scope, downloadFilename)),
             });
 
             if (response.ok) {
@@ -434,17 +503,66 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
             : `${scopeLabel} ${downloadFormatLabels[downloadKind]} 파일을 다운로드 폴더에 저장`;
 
     return presentation === 'button' ? (
-        <button
-            type="button"
-            className={`btn btn-outline detail-download-button ${className}`}
-            onClick={handleDownload}
-            disabled={isDownloading || disabled}
-            title={title}
-            aria-label={title}
-        >
-            {icon}
-            {isDownloading ? '저장 중' : downloadState === 'saved' ? '저장됨' : buttonLabel}
-        </button>
+        <div ref={controlRef} className="detail-download-control">
+            <button
+                ref={triggerRef}
+                type="button"
+                className={'btn btn-outline detail-download-button ' + className}
+                onClick={() => {
+                    if (isFileNameEditorOpen) closeFileNameEditor(false);
+                    else setIsFileNameEditorOpen(true);
+                }}
+                disabled={isDownloading || disabled}
+                title={title}
+                aria-label={title}
+                aria-expanded={isFileNameEditorOpen}
+                aria-haspopup="dialog"
+                aria-controls={fileNameEditorId}
+            >
+                {icon}
+                {isDownloading ? '저장 중' : downloadState === 'saved' ? '저장됨' : buttonLabel}
+            </button>
+            {isFileNameEditorOpen && (
+                <div
+                    ref={popoverRef}
+                    id={fileNameEditorId}
+                    className="detail-download-popover"
+                    role="dialog"
+                    aria-label={scopeLabel + ' 파일 이름 지정'}
+                    onKeyDown={event => {
+                        if (event.key === 'Escape') {
+                            event.preventDefault();
+                            event.stopPropagation();
+                            closeFileNameEditor(true);
+                        } else if (
+                            event.key === 'Enter'
+                            && !event.nativeEvent.isComposing
+                            && event.nativeEvent.keyCode !== 229
+                            && event.target instanceof HTMLInputElement
+                            && downloadFilename.trim()
+                        ) {
+                            event.preventDefault();
+                            void handleDownload();
+                        }
+                    }}
+                >
+                    <label className="detail-download-filename-label" htmlFor={fileNameInputId}>파일 이름</label>
+                    <div className="detail-download-filename-row">
+                        <Input
+                            id={fileNameInputId}
+                            value={downloadFilename}
+                            onChange={event => setDownloadFilename(event.target.value)}
+                            aria-label="파일 이름"
+                        />
+                        <span className="detail-download-extension">.{extensionByKind[downloadKind]}</span>
+                    </div>
+                    <div className="detail-download-popover-actions">
+                        <Button variant="outline" onClick={() => closeFileNameEditor(true)}>취소</Button>
+                        <Button onClick={() => { void handleDownload(); }} disabled={!downloadFilename.trim()}>파일 저장</Button>
+                    </div>
+                </div>
+            )}
+        </div>
     ) : (
         <div className="flex overflow-hidden rounded-md border border-input bg-background shadow-sm transition-shadow focus-within:ring-2 focus-within:ring-primary/30">
             <button

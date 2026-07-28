@@ -651,6 +651,30 @@
     @apply inline-flex h-10 items-center gap-2 whitespace-nowrap;
   }
 
+  .detail-download-control {
+    @apply relative;
+  }
+
+  .detail-download-popover {
+    @apply absolute right-0 top-[calc(100%+0.5rem)] z-30 w-[min(22rem,calc(100vw-2rem))] rounded-[var(--radius-card)] border border-border bg-background p-4 shadow-lg;
+  }
+
+  .detail-download-filename-label {
+    @apply mb-2 block text-xs font-semibold text-foreground;
+  }
+
+  .detail-download-filename-row {
+    @apply flex items-center gap-2;
+  }
+
+  .detail-download-extension {
+    @apply shrink-0 text-sm text-muted-foreground;
+  }
+
+  .detail-download-popover-actions {
+    @apply mt-3 flex justify-end gap-2;
+  }
+
   .analysis-mode-control {
     @apply inline-flex min-h-10 items-center gap-1.5 rounded-md border border-transparent px-2 text-left text-muted-foreground transition-colors;
   }
@@ -788,7 +812,7 @@
   }
 
   .writer-shell {
-    @apply mx-auto flex h-full w-full max-w-[75rem] flex-col gap-4 pt-0;
+    @apply mx-auto flex h-full w-full max-w-[1500px] flex-col gap-4 pt-0;
   }
 
   .writer-header {
@@ -801,7 +825,7 @@
   }
 
   .writer-panel {
-    @apply flex flex-col gap-5 p-4 sm:p-5;
+    @apply flex flex-col gap-4 p-4 sm:p-5;
     background-color: var(--refero-chalk);
     border-color: var(--refero-hairline);
     box-shadow: none;
@@ -835,7 +859,7 @@
   }
 
   .writer-section {
-    @apply grid gap-3 border-t pt-4 first:border-t-0 first:pt-0 lg:grid-cols-[9rem_minmax(0,1fr)];
+    @apply grid gap-3 border-t pt-3 first:border-t-0 first:pt-0 lg:grid-cols-[9rem_minmax(0,1fr)];
     border-color: var(--refero-hairline);
   }
 
@@ -866,15 +890,19 @@
   }
 
   .file-drop-zone {
-    @apply border p-4 transition-colors sm:p-5;
-    border-color: var(--refero-hairline);
-    border-radius: 14px;
+    @apply cursor-pointer border border-dashed p-4 transition-colors;
+    border-color: var(--refero-smoke);
+    border-radius: 12px;
     background-color: var(--refero-chalk);
   }
 
   .file-drop-zone:hover {
-    border-color: var(--refero-smoke);
+    border-color: var(--refero-graphite);
     background-color: var(--refero-mist);
+  }
+
+  .file-drop-zone[aria-disabled="true"] {
+    @apply cursor-default opacity-60;
   }
 
   .file-drop-zone:focus-visible {
@@ -883,9 +911,36 @@
     border-color: var(--refero-graphite);
   }
 
-  .file-drop-zone-selected {
+  .file-drop-zone-active {
     border-color: var(--refero-graphite);
+    background-color: var(--refero-mist);
+    box-shadow: inset 0 0 0 1px var(--refero-graphite);
+  }
+
+  .file-drop-zone-empty {
+    @apply flex flex-col gap-4 sm:flex-row sm:items-center;
+  }
+
+  .file-drop-zone-action {
+    @apply inline-flex min-h-10 shrink-0 items-center justify-center rounded-[10px] border px-4 text-xs font-semibold;
+    border-color: var(--refero-hairline);
     background-color: var(--refero-chalk);
+    color: var(--refero-graphite);
+  }
+
+  .selected-file-card {
+    @apply flex flex-col gap-4 border p-4 sm:flex-row sm:items-center sm:justify-between;
+    border-color: var(--refero-graphite);
+    border-radius: 12px;
+    background-color: var(--refero-chalk);
+  }
+
+  .selected-file-main {
+    @apply flex min-w-0 items-center gap-3;
+  }
+
+  .selected-file-actions {
+    @apply flex shrink-0 items-center gap-2;
   }
 
   .file-upload-icon {
@@ -896,13 +951,41 @@
     color: var(--refero-graphite);
   }
 
-  .writer-action-bar {
-    @apply flex flex-col gap-3 border-t pt-4 lg:flex-row lg:items-center lg:justify-between;
-    border-color: var(--refero-hairline);
+  .writer-file-support {
+    @apply grid gap-3 lg:col-start-2;
   }
 
-  .writer-secondary-actions {
+  .writer-file-tools {
     @apply flex min-w-0 flex-wrap items-center gap-2;
+  }
+
+  .writer-file-privacy-note {
+    @apply flex items-start gap-2 text-xs leading-relaxed text-muted-foreground;
+  }
+
+  .writer-file-privacy-note svg {
+    @apply mt-0.5 shrink-0;
+    color: var(--refero-graphite);
+  }
+
+  .writer-action-bar {
+    @apply flex flex-col gap-4 border p-3 sm:p-4 lg:flex-row lg:items-center lg:justify-between;
+    border-color: var(--refero-hairline);
+    border-radius: 12px;
+    background-color: var(--refero-mist);
+  }
+
+  .writer-action-context {
+    @apply min-w-0 flex-1;
+  }
+
+  .writer-action-label {
+    @apply text-xs font-semibold;
+    color: var(--refero-graphite);
+  }
+
+  .writer-action-summary {
+    @apply mt-1 text-xs leading-relaxed text-muted-foreground;
   }
 
   .writer-primary-actions {
@@ -1490,15 +1573,31 @@
   }
 
   .script-list {
-    @apply grid gap-2;
+    @apply grid gap-0 overflow-hidden border-y;
+    border-color: var(--speaker-turn-border);
   }
 
   .script-row {
-    @apply p-3 md:grid-cols-[9.25rem_1fr];
+    @apply rounded-none border-0 px-2 py-4 md:grid-cols-[8.5rem_minmax(0,1fr)] md:px-3;
+    background-color: transparent;
+    border-bottom: 1px solid var(--speaker-turn-border);
+    box-shadow: none;
+  }
+
+  .script-row:last-child {
+    border-bottom: 0;
+  }
+
+  .script-row.speaker-turn-warning {
+    box-shadow: inset 3px 0 0 var(--status-error-progress);
   }
 
   .script-meta {
-    @apply grid content-start gap-1.5;
+    @apply flex flex-wrap content-start items-center gap-x-3 gap-y-1 md:grid md:items-start md:gap-1.5;
+  }
+
+  .script-meta .speaker-label {
+    @apply mb-0;
   }
 
   .script-time-range {
@@ -1514,7 +1613,8 @@
   }
 
   .script-text {
-    @apply min-h-10 whitespace-pre-wrap px-3.5 py-2.5 text-[15px] leading-7;
+    @apply min-h-0 whitespace-pre-wrap rounded-none px-0 py-0 text-[15px] leading-7;
+    background-color: transparent;
   }
 
   .script-edit-textarea {

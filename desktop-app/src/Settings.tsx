@@ -1539,7 +1539,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const renderDismissButton = (label: string, onClick: () => void) => (
         <button
             type="button"
-            className="inline-flex h-6 w-6 items-center justify-center rounded-md text-current opacity-70 transition-opacity hover:opacity-100"
+            className="icon-button btn-ghost h-6 w-6 text-current opacity-70 transition-opacity hover:opacity-100"
             aria-label={label}
             onClick={onClick}
         >
@@ -1552,13 +1552,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="settings-dialog-title"
-                className="relative flex h-[88vh] max-h-[760px] min-h-[360px] w-full max-w-3xl flex-col overflow-hidden rounded-lg border border-border bg-background shadow-xl"
+                className="settings-dialog relative flex w-full max-w-3xl flex-col overflow-hidden border border-border bg-background"
                 ref={dialogRef}
                 tabIndex={-1}
             >
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
-                        <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">시스템 설정</h2>
+                        <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">앱 설정</h2>
                     </div>
                     <div className="relative flex items-center gap-2">
                         <div className="relative">
@@ -1576,19 +1576,19 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             {supportContactVisible && (
                                 <div
                                     role="status"
-                                    className="absolute right-0 top-[calc(100%+0.5rem)] z-30 w-60 rounded-md border border-[var(--color-neutral-200)] bg-[var(--color-neutral-50)] px-3 py-2 text-xs text-[var(--color-neutral-900)] shadow-sm"
+                                    className="floating-panel absolute right-0 top-[calc(100%+0.5rem)] z-30 w-60 px-3 py-2 text-xs"
                                 >
                                     <div className="flex items-start justify-between gap-2">
                                         <div className="min-w-0">
-                                            <p className="text-[var(--color-neutral-700)]">문의사항은 아래 이메일로 연락주세요.</p>
-                                            <div className="mt-2 flex items-center gap-2 font-semibold text-[var(--color-neutral-900)]">
-                                                <Mail size={15} className="shrink-0 text-[var(--color-neutral-700)]" aria-hidden="true" />
+                                            <p className="text-muted-foreground">문의사항은 아래 이메일로 연락주세요.</p>
+                                            <div className="mt-2 flex items-center gap-2 font-semibold text-foreground">
+                                                <Mail size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
                                                 <span className="truncate">{getSupportContactEmail()}</span>
                                             </div>
                                         </div>
                                         <button
                                             type="button"
-                                            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-[var(--color-neutral-600)] transition-colors hover:bg-[var(--color-neutral-100)] hover:text-[var(--color-neutral-900)]"
+                                            className="icon-button btn-ghost h-5 w-5 shrink-0"
                                             aria-label="문의 연락처 닫기"
                                             onClick={() => setSupportContactVisible(false)}
                                         >
@@ -1601,7 +1601,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                         <button
                             type="button"
                             onClick={onClose}
-                            className="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
+                            className="icon-button btn-ghost h-9 w-9"
                             aria-label="설정 닫기"
                             title="닫기"
                             ref={closeButtonRef}
@@ -1611,7 +1611,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     </div>
                 </div>
 
-                <div className="tab-list px-5" role="tablist" aria-label="시스템 설정">
+                <div className="tab-list px-5" role="tablist" aria-label="앱 설정">
                     {tabs.map(tab => (
                         <button
                             key={tab.key}
@@ -1650,155 +1650,175 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     </div>
                 )}
 
-                <div className="min-h-0 flex-1 overflow-y-auto p-5 custom-scrollbar">
+                <div className="settings-content custom-scrollbar">
                     {activeTab === 'general' && (
-                        <section id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab" className="flex flex-col gap-3">
-                            {saveState !== 'idle' && (
-                                <div className="flex justify-end text-xs text-muted-foreground">
-                                    {saveState === 'saving' ? '저장 중' : '저장됨'}
+                        <section id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab" className="settings-page">
+                            <div className="settings-page-heading">
+                                <div>
+                                    <h3>일반 설정</h3>
+                                    <p>분석 방식과 파일 보관 기준을 정합니다.</p>
                                 </div>
-                            )}
-
-                            <div className="grid gap-3 lg:grid-cols-2">
-                                <label className="rounded-md border border-border bg-muted/20 p-3">
-                                    <span className="block text-sm font-medium text-foreground">다운로드 형식</span>
-                                    <select
-                                        value={downloadFormat}
-                                        onChange={event => setDownloadFormat(event.target.value as DownloadFormat)}
-                                        className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2"
-                                    >
-                                        <option value="hwpx">HWPX</option>
-                                        <option value="docx">DOCX</option>
-                                        <option value="txt">TXT</option>
-                                        <option value="md">MD</option>
-                                    </select>
-                                </label>
-
-                                <label className="rounded-md border border-border bg-muted/20 p-3">
-                                    <span className="block text-sm font-medium text-foreground">분석 장치</span>
-                                    <select
-                                        value={sttDevice}
-                                        onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
-                                        className="mt-2 w-full rounded-md border border-input bg-background px-3 py-2"
-                                    >
-                                        <option value="cpu">CPU 기본 사용</option>
-                                        <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
-                                    </select>
-                                    <span className="mt-1 block text-xs text-muted-foreground">
-                                        {gpuStatusText}
-                                    </span>
-                                </label>
+                                <span className="settings-save-state" role="status" aria-live="polite">
+                                    {saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장됨' : ''}
+                                </span>
                             </div>
 
-                            <div className="grid gap-3 lg:grid-cols-2">
-                                <label
-                                    className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3"
-                                    title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
-                                >
-                                    <input
-                                        type="checkbox"
-                                        className="mt-1"
-                                        checked={diarizationDuringAnalysis}
-                                        onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
-                                    />
-                                    <span className="grid gap-1">
-                                        <span className="block text-sm font-medium text-foreground">참석자 구분까지 이어서 실행</span>
-                                        <span className="text-xs text-muted-foreground">
-                                            켜면 전체 완료까지 더 걸릴 수 있고, 끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행합니다.
+                            <div className="settings-group">
+                                <h4>파일</h4>
+                                <div className="settings-list">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">다운로드 형식</span>
+                                            <span className="settings-row-description">회의 요약을 받을 때 사용할 기본 형식입니다.</span>
                                         </span>
-                                    </span>
+                                        <select
+                                            value={downloadFormat}
+                                            onChange={event => setDownloadFormat(event.target.value as DownloadFormat)}
+                                            className="select-field settings-row-select"
+                                        >
+                                            <option value="hwpx">HWPX</option>
+                                            <option value="docx">DOCX</option>
+                                            <option value="txt">TXT</option>
+                                            <option value="md">MD</option>
+                                        </select>
                                     </label>
-
-                                <label className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
-                                    <input
-                                        type="checkbox"
-                                        className="mt-1"
-                                        checked={preprocessingEnabled}
-                                        onChange={event => setPreprocessingEnabled(event.target.checked)}
-                                    />
-                                    <span>
-                                        <span className="block text-sm font-medium text-foreground">음성 정리</span>
-                                        <span className="text-xs text-muted-foreground">분석하기 좋은 형태로 정리합니다.</span>
-                                    </span>
-                                </label>
-
-                                <div className="rounded-md border border-border bg-muted/20 p-3">
-                                    <label className="flex items-start gap-3">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">회의 요약 HWPX 자동 저장</span>
+                                            <span className="settings-row-description">요약이 만들어지면 다운로드 폴더에도 저장합니다.</span>
+                                        </span>
                                         <input
                                             type="checkbox"
-                                            className="mt-1"
+                                            className="settings-switch"
+                                            checked={autoSaveHwpxCopy}
+                                            onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
+                                        />
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="settings-group">
+                                <h4>분석</h4>
+                                <div className="settings-list">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">분석 장치</span>
+                                            <span className="settings-row-description">{gpuStatusText}</span>
+                                        </span>
+                                        <select
+                                            value={sttDevice}
+                                            onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
+                                            className="select-field settings-row-select"
+                                        >
+                                            <option value="cpu">CPU 기본 사용</option>
+                                            <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
+                                        </select>
+                                    </label>
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">음성 정리</span>
+                                            <span className="settings-row-description">분석하기 좋은 형태로 정리합니다.</span>
+                                        </span>
+                                        <input
+                                            type="checkbox"
+                                            className="settings-switch"
+                                            checked={preprocessingEnabled}
+                                            onChange={event => setPreprocessingEnabled(event.target.checked)}
+                                        />
+                                    </label>
+                                    <label
+                                        className="settings-row"
+                                        title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
+                                    >
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">참석자 구분까지 이어서 실행</span>
+                                            <span className="settings-row-description">끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행할 수 있습니다.</span>
+                                        </span>
+                                        <input
+                                            type="checkbox"
+                                            className="settings-switch"
+                                            checked={diarizationDuringAnalysis}
+                                            onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
+                                        />
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div className="settings-group">
+                                <h4>보관</h4>
+                                <div className="settings-list">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">음성 재생 파일 보관</span>
+                                            <span className="settings-row-description">다시 듣기와 나중에 참석자 구분에 사용합니다.</span>
+                                        </span>
+                                        <input
+                                            type="checkbox"
+                                            className="settings-switch"
                                             checked={preserveExtractedAudio}
                                             onChange={event => setPreserveExtractedAudio(event.target.checked)}
                                         />
-                                        <span>
-                                            <span className="block text-sm font-medium text-foreground">음성 재생 파일 보관</span>
-                                            <span className="text-xs text-muted-foreground">다시 듣기와 나중에 참석자 구분에 사용합니다.</span>
-                                        </span>
                                     </label>
-                                    <label className="mt-3 flex items-start gap-3 border-t border-border/70 pt-3">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">음성 파일 자동 저장</span>
+                                            <span className="settings-row-description">보관한 음성을 다운로드 폴더에도 저장합니다.</span>
+                                        </span>
                                         <input
                                             type="checkbox"
-                                            className="mt-1"
+                                            className="settings-switch"
                                             checked={preserveExtractedAudio && autoSaveAudioCopy}
                                             onChange={event => setAutoSaveAudioCopy(event.target.checked)}
                                             disabled={!preserveExtractedAudio}
                                         />
-                                        <span>
-                                            <span className="block text-sm font-medium text-foreground">음성 파일 자동 저장</span>
-                                            <span className="text-xs text-muted-foreground">보관한 음성을 다운로드 폴더에도 저장합니다.</span>
-                                        </span>
                                     </label>
                                 </div>
-
-                                <label className="flex items-start gap-3 rounded-md border border-border bg-muted/20 p-3">
-                                    <input
-                                        type="checkbox"
-                                        className="mt-1"
-                                        checked={autoSaveHwpxCopy}
-                                        onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
-                                    />
-                                        <span>
-                                            <span className="block text-sm font-medium text-foreground">회의 요약 HWPX 자동 저장</span>
-                                            <span className="text-xs text-muted-foreground">요약이 만들어지면 HWPX 파일을 다운로드 폴더에 저장합니다.</span>
-                                        </span>
-                                    </label>
                             </div>
 
                             {isTauriRuntime() && (
-                                <div className="flex flex-col gap-3 rounded-md border border-border bg-background p-3 sm:flex-row sm:items-center sm:justify-between">
-                                    <div>
-                                        <div className="text-sm font-medium text-foreground">분석 기능 재시작</div>
-                                        <p className="mt-1 text-xs text-muted-foreground">
-                                            모델 상태가 계속 갱신되지 않을 때만 눌러 주세요. 보통은 자동으로 다시 확인합니다.
-                                        </p>
-                                        {analysisActive && (
-                                            <p className="mt-2 text-xs text-muted-foreground">
-                                                진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.
-                                            </p>
-                                        )}
+                                <div className="settings-group">
+                                    <h4>문제 해결</h4>
+                                    <div className="settings-list">
+                                        <div className="settings-row">
+                                            <span className="settings-row-copy">
+                                                <span className="settings-row-title">분석 기능 재시작</span>
+                                                <span className="settings-row-description">
+                                                    모델 상태가 계속 갱신되지 않을 때만 사용합니다.
+                                                    {analysisActive ? ' 진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : ''}
+                                                </span>
+                                            </span>
+                                            <Button
+                                                variant="outline"
+                                                className="shrink-0"
+                                                onClick={() => void handleRestartBackend()}
+                                                disabled={!canRestartBackend}
+                                                title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 기능을 다시 시작합니다.'}
+                                            >
+                                                <RefreshCw size={16} className={isRestartingBackend ? 'animate-spin' : ''} />
+                                                {isRestartingBackend ? '재시작 중' : '재시작'}
+                                            </Button>
+                                        </div>
                                     </div>
-                                    <Button
-                                        variant="outline"
-                                        onClick={() => void handleRestartBackend()}
-                                        disabled={!canRestartBackend}
-                                        title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 기능을 다시 시작합니다.'}
-                                    >
-                                        <RefreshCw size={16} className={isRestartingBackend ? 'animate-spin' : ''} />
-                                        {isRestartingBackend ? '재시작 중...' : '재시작'}
-                                    </Button>
                                 </div>
                             )}
                         </section>
                     )}
 
                     {activeTab === 'models' && (
-                        <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="flex flex-col gap-4">
+                        <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="settings-page">
+                            <div className="settings-page-heading">
+                                <div>
+                                    <h3>모델 관리</h3>
+                                    <p>음성 인식과 회의 요약에 필요한 모델을 준비합니다.</p>
+                                </div>
+                            </div>
+
                             <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
                                 <span className="font-semibold text-foreground">처음 준비:</span>{' '}
                                 {modelPreparationGuide}
                             </div>
 
-                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                            <div className="settings-panel">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="flex flex-col gap-1">
                                         <div className="text-base font-semibold text-foreground">음성 인식 모델</div>
@@ -1949,7 +1969,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 )}
                             </div>
 
-                            <div className="rounded-md border border-border bg-muted/20 p-4">
+                            <div className="settings-panel">
                                 <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                                     <div className="flex flex-col gap-1">
                                         <div className="text-base font-semibold text-foreground">회의 요약 모델</div>
@@ -2065,7 +2085,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <select
                                                 value={summaryModelInput}
                                                 onChange={event => setSummaryModelInput(event.target.value)}
-                                                className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                                className="select-field"
                                             >
                                                 {summaryModelOptions.map(option => (
                                                     <option key={option.model} value={option.model}>
@@ -2340,7 +2360,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                 setCustomSummaryModelNotice('');
                                             }}
                                             placeholder="예: llama3.2:3b"
-                                            className="w-full rounded-md border border-input bg-background px-3 py-2"
+                                            className="input-field"
                                         />
                                         <Button
                                             variant={customSummaryInstalled ? 'primary' : 'outline'}

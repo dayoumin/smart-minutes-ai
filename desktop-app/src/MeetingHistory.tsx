@@ -3627,10 +3627,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 <div className="app-panel-header">
                     <div className="meeting-detail-heading">
                         <div className="meeting-skeleton-line meeting-skeleton-title" />
-                        <div className="meeting-meta-grid">
+                        <div className="meeting-meta-grid meeting-meta-grid-with-source">
                             <div className="meeting-skeleton-card" />
                             <div className="meeting-skeleton-card" />
-                            <div className="meeting-skeleton-card sm:col-span-2" />
+                            <div className="meeting-skeleton-card" />
                         </div>
                     </div>
                 </div>
@@ -3727,8 +3727,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             )}
 
             <article className="app-panel overflow-hidden">
-                <div className="app-panel-header flex flex-col gap-4 border-b border-border p-5">
-                    <div className="grid gap-4">
+                <div className="app-panel-header meeting-detail-overview">
+                    <div className="meeting-detail-overview-main">
                         <div className="flex items-start justify-between gap-4">
                             {isEditing ? (
                                 <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-foreground">
@@ -3818,7 +3818,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                         ) : (
                             <>
                                 <div className="meeting-detail-heading">
-                                    <div className="meeting-meta-grid">
+                                    <div className={`meeting-meta-grid${selectedMeeting.sourceFile ? ' meeting-meta-grid-with-source' : ''}`}>
                                         <div className="meeting-meta-item">
                                             <span className="meeting-meta-label">일시</span>
                                             <span className="meeting-meta-value">{selectedMeeting.date}</span>
@@ -3828,56 +3828,58 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             <span className="meeting-meta-value">{selectedMeeting.meetingPurpose || selectedMeeting.participants || '-'}</span>
                                         </div>
                                         {selectedMeeting.sourceFile && (
-                                            <div className="meeting-meta-item sm:col-span-2">
+                                            <div className="meeting-meta-item meeting-meta-item-source">
                                                 <span className="meeting-meta-label">원본 파일</span>
                                                 <span className="meeting-meta-value">{selectedMeeting.sourceFile}</span>
                                             </div>
                                         )}
                                     </div>
                                 </div>
-                                <div className="meeting-status-grid">
-                                    <div className="meeting-status-item">
-                                        <span className="meeting-status-title">대화록</span>
-                                        <span className={`status-pill status-${hasTranscriptData ? 'success' : 'neutral'}`}>
-                                            {hasTranscriptData ? '완료' : '대기'}
-                                        </span>
-                                    </div>
-                                    <div className="meeting-status-item" title={diarizationStatusTitle}>
-                                        <span className="meeting-status-title">참석자 구분</span>
-                                        <span className="meeting-status-actions">
-                                            <span className={`status-pill status-${diarizationStatus.tone}`}>
-                                                {diarizationStatus.label}
+                                <div className="meeting-runtime-row">
+                                    <div className="meeting-status-grid">
+                                        <div className="meeting-status-item">
+                                            <span className="meeting-status-title">대화록</span>
+                                            <span className={`status-pill status-${hasTranscriptData ? 'success' : 'neutral'}`}>
+                                                {hasTranscriptData ? '완료' : '대기'}
                                             </span>
-                                            {(canGenerateDiarization || diarizationIsRunning) && (
-                                                <Button
-                                                    variant="outline"
-                                                    className="meeting-status-run-button"
-                                                    aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                                    title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                                    disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : generatingKind !== null}
-                                                    onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
-                                                >
-                                                    {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                                    {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
-                                                </Button>
-                                            )}
-                                        </span>
+                                        </div>
+                                        <div className="meeting-status-item" title={diarizationStatusTitle}>
+                                            <span className="meeting-status-title">참석자 구분</span>
+                                            <span className="meeting-status-actions">
+                                                <span className={`status-pill status-${diarizationStatus.tone}`}>
+                                                    {diarizationStatus.label}
+                                                </span>
+                                                {(canGenerateDiarization || diarizationIsRunning) && (
+                                                    <Button
+                                                        variant="outline"
+                                                        className="meeting-status-run-button"
+                                                        aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                        title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                        disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : generatingKind !== null}
+                                                        onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
+                                                    >
+                                                        {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
+                                                        {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
+                                                    </Button>
+                                                )}
+                                            </span>
+                                        </div>
                                     </div>
+                                    {audioSourceUrl && (
+                                        <audio
+                                            className="meeting-audio-player"
+                                            aria-label="추출 음성"
+                                            controls
+                                            crossOrigin="anonymous"
+                                            preload="metadata"
+                                            src={audioSourceUrl}
+                                        />
+                                    )}
                                 </div>
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note mt-3">
                                         {toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.')}
                                     </div>
-                                )}
-                                {audioSourceUrl && (
-                                    <audio
-                                        className="mt-3 h-9 w-full max-w-xl"
-                                        aria-label="추출 음성"
-                                        controls
-                                        crossOrigin="anonymous"
-                                        preload="metadata"
-                                        src={audioSourceUrl}
-                                    />
                                 )}
                                 {diarizationStatusTitle && !selectedMeeting.diarizationSkipped && (
                                     <div className="status-note mt-3">
@@ -4657,7 +4659,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
                                                     disabled={isDownloading || !displaySegments.length}
                                                 />
-                                                <Button variant="outline" onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
+                                                <Button onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
                                                     <Edit3 size={15} />
                                                     대화록 편집
                                                 </Button>
@@ -4675,7 +4677,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     </Button>
                                                 </>
                                             ) : (
-                                                <Button variant="outline" onClick={() => setIsSpeakerLabelPanelOpen(true)}>
+                                                <Button variant="ghost" onClick={() => setIsSpeakerLabelPanelOpen(true)}>
                                                     <Edit3 size={15} />
                                                     이름 변경
                                                 </Button>

@@ -135,11 +135,16 @@
   --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-card-hover: 0 8px 24px rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(30, 64, 175, 0.16);
   --shadow-brand: 0 4px 14px rgba(30, 64, 175, 0.20);
+  --shadow-control: 0 1px 2px rgba(15, 23, 42, 0.06);
+  --shadow-overlay: 0 18px 48px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.08);
 
   /* Effects */
   --blur-glass: 20px;
+  --focus-ring-color: color-mix(in srgb, var(--brand-primary) 72%, transparent);
+  --focus-ring-soft: color-mix(in srgb, var(--brand-primary) 16%, transparent);
   --radius-card: 0.5rem;
   --radius-btn: 0.5rem;
+  --radius-dialog: 0.625rem;
   --radius-pill: 999px;
 }
 
@@ -226,6 +231,8 @@
   --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.40), 0 0 0 1.5px rgba(255, 255, 255, 0.08);
   --shadow-card-hover: 0 8px 32px rgba(0, 0, 0, 0.60), 0 0 0 1.5px rgba(96, 165, 250, 0.30);
   --shadow-brand: 0 4px 20px rgba(96, 165, 250, 0.30);
+  --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-overlay: 0 20px 54px rgba(0, 0, 0, 0.56), 0 2px 10px rgba(0, 0, 0, 0.38);
 }
 
 /* ── 4. TAILWIND THEME MAPPING ────────────────────────────── */
@@ -282,6 +289,11 @@
 
   * {
     box-sizing: border-box;
+  }
+
+  :where(button, a[href], input, select, textarea, [role=tab], [role=menuitem]):focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
   }
 }
 
@@ -381,11 +393,12 @@
 
   /* Buttons */
   .btn {
-    @apply inline-flex items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-btn)] text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50 h-10 px-4 py-2;
+    @apply inline-flex h-10 items-center justify-center gap-2 whitespace-nowrap rounded-[var(--radius-btn)] px-4 py-2 text-sm font-medium transition-[background-color,border-color,color,box-shadow] disabled:pointer-events-none disabled:opacity-50;
   }
 
   .btn-primary {
-    @apply bg-primary text-primary-foreground shadow-sm;
+    @apply bg-primary text-primary-foreground;
+    box-shadow: var(--shadow-control);
   }
 
   .btn-primary:hover {
@@ -393,7 +406,8 @@
   }
 
   .btn-secondary {
-    @apply bg-secondary text-primary-foreground shadow-sm;
+    @apply bg-secondary text-primary-foreground;
+    box-shadow: var(--shadow-control);
   }
 
   .btn-secondary:hover {
@@ -401,12 +415,159 @@
   }
 
   .btn-outline {
-    @apply border border-input bg-transparent shadow-sm hover:bg-accent hover:text-accent-foreground;
+    @apply border border-input bg-transparent hover:bg-accent hover:text-accent-foreground;
+    box-shadow: var(--shadow-control);
+  }
+
+  .btn-ghost {
+    @apply bg-transparent text-muted-foreground shadow-none hover:text-foreground;
+  }
+
+  .btn-ghost:hover { background-color: var(--surface-action-hover-bg); }
+
+  .icon-button {
+    @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-btn)] p-0 text-muted-foreground transition-colors;
   }
 
   /* Inputs */
   .input-field {
-    @apply flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:border-primary disabled:cursor-not-allowed disabled:opacity-50 transition-colors duration-200;
+    @apply flex h-10 w-full rounded-[var(--radius-btn)] border border-input bg-background px-3 py-2 text-sm file:border-0 file:bg-transparent file:text-sm file:font-medium placeholder:text-muted disabled:cursor-not-allowed disabled:opacity-50;
+    box-shadow: var(--shadow-control);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .select-field {
+    @apply h-10 w-full rounded-[var(--radius-btn)] border border-input bg-background px-3 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50;
+    box-shadow: var(--shadow-control);
+    transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  }
+
+  .input-field:focus-visible,
+  .select-field:focus-visible {
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+    outline: none;
+  }
+
+  .settings-dialog {
+    height: min(720px, calc(100vh - 2rem));
+    border-radius: var(--radius-dialog);
+    box-shadow: var(--shadow-overlay);
+  }
+
+  .settings-content {
+    @apply min-h-0 flex-1 overflow-y-auto px-5 py-4;
+    background-color: var(--bg-page);
+  }
+
+  .settings-page {
+    @apply mx-auto flex w-full max-w-2xl flex-col gap-5;
+  }
+
+  .settings-page-heading {
+    @apply flex min-h-11 items-start justify-between gap-4;
+  }
+
+  .settings-page-heading h3 {
+    @apply text-base font-semibold text-foreground;
+  }
+
+  .settings-page-heading p {
+    @apply mt-1 text-xs text-muted-foreground;
+  }
+
+  .settings-save-state {
+    @apply min-h-4 shrink-0 text-xs text-muted-foreground;
+  }
+
+  .settings-group {
+    @apply grid gap-2;
+  }
+
+  .settings-group > h4 {
+    @apply px-1 text-xs font-semibold text-muted-foreground;
+  }
+
+  .settings-list,
+  .settings-panel {
+    @apply overflow-hidden rounded-[var(--radius-card)] border border-border bg-background;
+    box-shadow: var(--shadow-control);
+  }
+
+  .settings-panel {
+    @apply p-4;
+  }
+
+  .settings-row {
+    @apply flex min-h-16 items-center justify-between gap-5 border-b border-border/70 px-4 py-3 last:border-b-0;
+  }
+
+  .settings-row-copy {
+    @apply min-w-0 flex-1;
+  }
+
+  .settings-row-title {
+    @apply block text-sm font-medium text-foreground;
+  }
+
+  .settings-row-description {
+    @apply mt-1 block text-xs leading-relaxed text-muted-foreground;
+  }
+
+  .settings-row-select {
+    @apply w-48 shrink-0;
+  }
+
+  .settings-switch {
+    @apply relative h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full border border-border-strong transition-colors disabled:cursor-not-allowed disabled:opacity-45;
+    background-color: var(--border-strong);
+  }
+
+  .settings-switch::after {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: var(--radius-pill);
+    background-color: var(--color-neutral-0);
+    box-shadow: var(--shadow-control);
+    content: '';
+    transition: transform 0.2s ease;
+  }
+
+  .settings-switch:checked {
+    border-color: var(--brand-primary);
+    background-color: var(--brand-primary);
+  }
+
+  .settings-switch:checked::after {
+    transform: translateX(16px);
+  }
+
+  .settings-switch:focus-visible {
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+    outline: none;
+  }
+
+  @media (max-width: 639px) {
+    .settings-content {
+      @apply px-4;
+    }
+
+    .settings-row {
+      @apply items-start gap-3;
+    }
+
+    .settings-row-select {
+      @apply w-40;
+    }
+  }
+
+
+  .floating-panel {
+    @apply rounded-[var(--radius-card)] border border-border bg-background;
+    box-shadow: var(--shadow-overlay);
   }
 
   /* Status surfaces */
@@ -537,6 +698,10 @@
     @apply flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted/40;
   }
 
+  .sidebar-utility-button:focus-visible {
+    outline-offset: -2px;
+  }
+
   .sidebar-utility-button-active {
     background-color: var(--brand-primary-soft);
     color: var(--brand-primary);
@@ -607,16 +772,24 @@
     @apply grid gap-3;
   }
 
+  .meeting-detail-overview {
+    @apply p-0;
+  }
+
+  .meeting-detail-overview-main {
+    @apply grid gap-4 px-5 pb-4 pt-5;
+  }
+
   .meeting-detail-title {
     @apply break-words text-xl font-semibold leading-snug text-foreground;
   }
 
   .meeting-meta-grid {
-    @apply grid gap-2 text-sm sm:grid-cols-2;
+    @apply grid overflow-hidden rounded-[var(--radius-card)] border border-border/80 bg-background text-sm;
   }
 
   .meeting-meta-item {
-    @apply grid gap-1 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2;
+    @apply grid min-w-0 gap-1 border-b border-border/70 px-3 py-2.5 last:border-b-0;
   }
 
   .meeting-meta-label {
@@ -628,11 +801,11 @@
   }
 
   .meeting-status-grid {
-    @apply mt-3 grid gap-2 sm:grid-cols-2;
+    @apply flex min-w-0 flex-wrap items-center gap-2;
   }
 
   .meeting-status-item {
-    @apply flex min-h-10 items-center justify-between gap-3 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-xs;
+    @apply inline-flex min-h-9 items-center gap-2 rounded-full border border-border/80 bg-background px-3 py-1.5 text-xs;
   }
 
   .meeting-status-title {
@@ -647,6 +820,14 @@
     @apply relative flex shrink-0 flex-wrap items-center justify-end gap-2;
   }
 
+  .meeting-runtime-row {
+    @apply flex flex-col gap-3 border-t border-border/70 pt-3;
+  }
+
+  .meeting-audio-player {
+    @apply h-9 w-full max-w-lg;
+  }
+
   .detail-download-button {
     @apply inline-flex h-10 items-center gap-2 whitespace-nowrap;
   }
@@ -656,7 +837,8 @@
   }
 
   .detail-download-popover {
-    @apply absolute right-0 top-[calc(100%+0.5rem)] z-30 w-[min(22rem,calc(100vw-2rem))] rounded-[var(--radius-card)] border border-border bg-background p-4 shadow-lg;
+    @apply absolute right-0 top-[calc(100%+0.5rem)] z-30 w-[min(22rem,calc(100vw-2rem))] rounded-[var(--radius-card)] border border-border bg-background p-4;
+    box-shadow: var(--shadow-overlay);
   }
 
   .detail-download-filename-label {
@@ -701,7 +883,9 @@
   }
 
   .meeting-detail-shell {
-    @apply mx-auto w-full max-w-[1500px];
+    @apply mx-auto w-full max-w-[82.5rem];
+    container-name: meeting-detail;
+    container-type: inline-size;
   }
 
   .meeting-skeleton-line,
@@ -776,7 +960,7 @@
   }
 
   .detail-main-nav {
-    @apply flex flex-col gap-3 pt-4 lg:flex-row lg:items-center lg:justify-between;
+    @apply flex flex-col gap-3 border-t border-border bg-surface px-5 py-3 lg:flex-row lg:items-center lg:justify-between;
   }
 
   .detail-search-field {
@@ -788,11 +972,11 @@
   }
 
   .tab-button {
-    @apply border-b-2 border-transparent px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground;
+    @apply border-b-2 border-transparent px-4 py-2 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50;
   }
 
   .tab-button-active {
-    @apply border-primary text-primary;
+    @apply border-primary text-primary hover:text-primary;
   }
 
   .detail-mode-switch {
@@ -812,7 +996,9 @@
   }
 
   .writer-shell {
-    @apply mx-auto flex h-full w-full max-w-[1500px] flex-col gap-4 pt-0;
+    @apply mx-auto flex h-full w-full max-w-[72rem] flex-col gap-4 pt-0;
+    container-name: writer;
+    container-type: inline-size;
   }
 
   .writer-header {
@@ -848,14 +1034,14 @@
 
   .writer-panel .input-field {
     border-color: var(--refero-hairline);
-    border-radius: 10px;
+    border-radius: var(--radius-btn);
     background-color: var(--refero-chalk);
     color: var(--refero-graphite);
     box-shadow: none;
   }
 
   .writer-panel .input-field:focus-visible {
-    border-color: var(--refero-graphite);
+    border-color: var(--brand-primary);
   }
 
   .writer-section {
@@ -873,7 +1059,7 @@
   }
 
   .writer-field-grid {
-    @apply grid gap-3 md:grid-cols-2;
+    @apply grid gap-3;
   }
 
   .writer-field {
@@ -881,7 +1067,17 @@
   }
 
   .writer-field-wide {
-    @apply md:col-span-2;
+    @apply min-w-0;
+  }
+
+  @container writer (min-width: 52rem) {
+    .writer-field-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .writer-field-wide {
+      grid-column: 1 / -1;
+    }
   }
 
   .writer-field label {
@@ -892,7 +1088,7 @@
   .file-drop-zone {
     @apply cursor-pointer border border-dashed p-4 transition-colors;
     border-color: var(--refero-smoke);
-    border-radius: 12px;
+    border-radius: var(--radius-card);
     background-color: var(--refero-chalk);
   }
 
@@ -906,7 +1102,7 @@
   }
 
   .file-drop-zone:focus-visible {
-    outline: 2px solid var(--refero-graphite);
+    outline: 2px solid var(--focus-ring-color);
     outline-offset: 2px;
     border-color: var(--refero-graphite);
   }
@@ -922,7 +1118,7 @@
   }
 
   .file-drop-zone-action {
-    @apply inline-flex min-h-10 shrink-0 items-center justify-center rounded-[10px] border px-4 text-xs font-semibold;
+    @apply inline-flex min-h-10 shrink-0 items-center justify-center rounded-[var(--radius-btn)] border px-4 text-xs font-semibold;
     border-color: var(--refero-hairline);
     background-color: var(--refero-chalk);
     color: var(--refero-graphite);
@@ -931,7 +1127,7 @@
   .selected-file-card {
     @apply flex flex-col gap-4 border p-4 sm:flex-row sm:items-center sm:justify-between;
     border-color: var(--refero-graphite);
-    border-radius: 12px;
+    border-radius: var(--radius-card);
     background-color: var(--refero-chalk);
   }
 
@@ -946,7 +1142,7 @@
   .file-upload-icon {
     @apply flex h-10 w-10 shrink-0 items-center justify-center border;
     border-color: var(--refero-hairline);
-    border-radius: 10px;
+    border-radius: var(--radius-btn);
     background-color: var(--refero-mist);
     color: var(--refero-graphite);
   }
@@ -971,7 +1167,7 @@
   .writer-action-bar {
     @apply flex flex-col gap-4 border p-3 sm:p-4 lg:flex-row lg:items-center lg:justify-between;
     border-color: var(--refero-hairline);
-    border-radius: 12px;
+    border-radius: var(--radius-card);
     background-color: var(--refero-mist);
   }
 
@@ -1012,11 +1208,29 @@
   }
 
   .detail-work-surface {
-    @apply rounded-[var(--radius-card)] border border-border/70 bg-surface p-4 shadow-sm;
+    @apply rounded-[var(--radius-card)] border border-border/70 bg-surface p-4;
   }
 
   .detail-command-bar {
     @apply mb-4 flex min-h-14 flex-col gap-3 border-b border-border/70 pb-3 xl:flex-row xl:items-center xl:justify-between;
+  }
+
+  @container meeting-detail (min-width: 52rem) {
+    .meeting-meta-grid {
+      grid-template-columns: minmax(9rem, 0.55fr) minmax(18rem, 1.45fr);
+    }
+
+    .meeting-meta-grid-with-source {
+      grid-template-columns: minmax(9rem, 0.55fr) minmax(18rem, 1.45fr) minmax(12rem, 1fr);
+    }
+
+    .meeting-meta-item {
+      @apply border-b-0 border-r last:border-r-0;
+    }
+
+    .meeting-runtime-row {
+      @apply flex-row items-center justify-between;
+    }
   }
 
   .detail-command-primary {
@@ -1057,7 +1271,7 @@
 
   .detail-context-menu {
     @apply absolute right-0 top-12 z-30 min-w-36 rounded-[var(--radius-card)] border border-border bg-background p-1;
-    box-shadow: var(--shadow-card-hover);
+    box-shadow: var(--shadow-overlay);
   }
 
   .detail-context-menu button {
@@ -1184,8 +1398,8 @@
   }
 
   .context-template-modal {
-    @apply w-full max-w-xl rounded-[var(--radius-card)] border border-border bg-background p-5;
-    box-shadow: var(--shadow-card-hover);
+    @apply w-full max-w-xl rounded-[var(--radius-dialog)] border border-border bg-background p-5;
+    box-shadow: var(--shadow-overlay);
   }
 
   .context-template-confirm-modal {
@@ -1398,7 +1612,8 @@
   }
 
   .menu-panel {
-    @apply rounded-[var(--radius-card)] border border-border bg-background p-1 text-sm shadow-lg;
+    @apply rounded-[var(--radius-card)] border border-border bg-background p-1 text-sm;
+    box-shadow: var(--shadow-overlay);
   }
 
   .menu-meta {

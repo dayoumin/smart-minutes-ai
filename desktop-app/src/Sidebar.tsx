@@ -445,7 +445,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                             else recordMenuTriggerRefs.current.delete(record.id);
                                         }}
                                         type="button"
-                                        className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-background hover:text-primary"
+                                        className="icon-button btn-ghost h-6 w-6 shrink-0"
                                         onClick={() => setOpenMenuId(openMenuId === record.id ? null : record.id)}
                                         onKeyDown={event => {
                                             if (event.key !== 'Escape' || openMenuId !== record.id) return;

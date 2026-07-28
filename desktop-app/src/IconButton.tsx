@@ -5,20 +5,22 @@ export interface IconButtonProps extends Omit<ButtonProps, 'children'> {
     icon: React.ReactNode;
 }
 
-export const IconButton: React.FC<IconButtonProps> = ({
+export const IconButton = React.forwardRef<HTMLButtonElement, IconButtonProps>(({
     icon,
     className = '',
     variant = 'outline',
     ...props
-}) => {
+}, ref) => {
     return (
         <Button
+            ref={ref}
             variant={variant}
-            className={`inline-flex h-10 w-10 items-center justify-center p-0 ${className}`}
+            className={`icon-button ${className}`}
             {...props}
         >
             {icon}
         </Button>
     );
-};
+});
 
+IconButton.displayName = 'IconButton';

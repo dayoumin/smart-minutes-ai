@@ -671,7 +671,7 @@ const run = async () => {
 
     const settingsButton = page.getByRole('button', { name: '앱 설정' });
     await settingsButton.click();
-    const settingsDialog = page.getByRole('dialog', { name: '시스템 설정' });
+    const settingsDialog = page.getByRole('dialog', { name: '앱 설정' });
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.querySelector('[role="dialog"]')?.contains(document.activeElement));
     let focusState = await getSettingsFocusState(page);

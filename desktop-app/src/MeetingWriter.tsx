@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, Play, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -276,6 +276,8 @@ interface CompletionNotice {
     meetingId: string;
     detailTab: 'summary' | 'script';
     elapsedMs: number;
+    title: string;
+    sourceFilename: string;
     note?: string;
     autoSaveNote?: string;
 }
@@ -414,24 +416,6 @@ const formatResumeUpdatedAt = (value?: string): string => {
         hour: '2-digit',
         minute: '2-digit',
     });
-};
-
-const getResumeDraftStatusLabel = (status: AnalysisResumeDraftStatus): string => {
-    if (status === 'active') return '진행 중이던 분석';
-    if (status === 'completed') return '정리됨';
-    if (status === 'unavailable') return '이어하기 불가';
-    if (status === 'stopped') return '중단됨';
-    if (status === 'cancelled') return '사용자 취소';
-    return '오류로 중단';
-};
-
-const getResumeDraftTone = (status: AnalysisResumeDraftStatus): 'info' | 'warning' | 'error' | 'success' => {
-    if (status === 'active') return 'info';
-    if (status === 'completed') return 'success';
-    if (status === 'unavailable') return 'warning';
-    if (status === 'stopped') return 'warning';
-    if (status === 'cancelled') return 'warning';
-    return 'error';
 };
 
 const canResumeDraft = (draft: AnalysisResumeDraft): boolean => (
@@ -609,7 +593,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [analysisStopRequestedAction, setAnalysisStopRequestedAction] = useState<AnalysisStopAction | null>(null);
     const [statusMessage, setStatusMessage] = useState('');
     const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
-    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
+    const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(true);
     const [isSavingDiarizationMode, setIsSavingDiarizationMode] = useState(false);
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
@@ -703,11 +687,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             if (!response.ok) throw new Error(`settings=${response.status}`);
             const data = await response.json() as AnalysisSettingsResponse;
             if (analysisSettingsRequestRef.current !== requestId) return;
-            setDiarizationDuringAnalysis(data.diarization?.generate_during_analysis ?? false);
+            setDiarizationDuringAnalysis(data.diarization?.generate_during_analysis ?? true);
             setPreserveExtractedAudio(data.privacy?.preserve_extracted_audio ?? true);
             setAutoSaveAudioCopy(data.privacy?.auto_save_audio_copy ?? false);
-        } catch {
+        } catch (error) {
             if (analysisSettingsRequestRef.current !== requestId) return;
+            await writeFrontendLog(`analysis settings load error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             setPreserveExtractedAudio(null);
             setAutoSaveAudioCopy(null);
         }
@@ -733,6 +718,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             window.dispatchEvent(new Event('analysis:settings-updated'));
         } catch (error) {
             if (diarizationModeSaveRequestRef.current === requestId) {
+                await writeFrontendLog(`diarization setting save error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                 setDiarizationDuringAnalysis(!checked);
                 setErrorMessage(error instanceof Error ? error.message : '참석자 구분 실행 방식을 저장하지 못했습니다.');
             }
@@ -1027,7 +1013,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         if (!title.trim()) fields.push('회의 제목');
         if (!date) fields.push('일시');
         if (!meetingPurpose.trim()) fields.push('회의 목적');
-        if (!file) fields.push('음성 파일');
+        if (!file) fields.push('영상·음성 파일');
         return fields;
     }, [date, file, meetingPurpose, title]);
 
@@ -1056,20 +1042,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const activeResumeDrafts = useMemo(
         () => resumeDrafts.filter(draft => draft.status === 'active'),
         [resumeDrafts],
-    );
-
-    const activeResumeDraftKeys = useMemo(
-        () => new Set(activeResumeDrafts.map(draft => getResumeDraftKey(draft))),
-        [activeResumeDrafts],
-    );
-
-    const resumableResumeDrafts = useMemo(
-        () => resumeDrafts.filter(
-            draft => draft.status !== 'active'
-                && canResumeDraft(draft)
-                && !activeResumeDraftKeys.has(getResumeDraftKey(draft)),
-        ),
-        [activeResumeDraftKeys, resumeDrafts],
     );
 
     const resumeDraftFileMismatch = useMemo(() => {
@@ -1996,6 +1968,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         : 'script';
                 })(),
                 elapsedMs: completedElapsedMs,
+                title: newRecord.title,
+                sourceFilename: file?.name || newRecord.sourceFile || '음성 파일',
                 note: getCompletionResumeNote(finalData.resume),
                 autoSaveNote: getAutoSaveCompletionNote(finalData),
             });
@@ -2046,6 +2020,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 return;
             }
             const message = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
+            await writeFrontendLog(`analysis failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             saveResumeDraft('failed', {
                 stage: 'failed',
                 lastMessage: rawStatusMessage || statusMessage,
@@ -2184,12 +2159,25 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setStatusMessage('');
     };
 
+    const handleReturnToAnalysisInput = () => {
+        setAnalysisPhase('idle');
+        setErrorMessage('');
+        setStatusMessage('');
+        setRawStatusMessage('');
+        setProgress(0);
+        updateAnalysisEtaSeconds(null);
+        window.requestAnimationFrame(() => {
+            document.getElementById('meeting-title')?.focus();
+        });
+    };
+
     const showProgressBar = isAnalyzing;
     const fileKind = file ? getFileKind(file) : null;
     const hasAudioExtractFile = Boolean(audioExtractFile);
     const audioExtractSaved = audioExtractNotice?.tone === 'success';
     const audioExtractFailed = audioExtractNotice?.tone === 'error';
-    const showAnalysisPanel = isAnalyzing;
+    const showAnalysisFailure = !isAnalyzing && analysisPhase === 'error' && Boolean(errorMessage);
+    const showAnalysisPanel = isAnalyzing || showAnalysisFailure;
     const progressPercent = Math.min(100, Math.max(0, progress));
     const elapsedMs = analysisStartedAt ? analysisNow - analysisStartedAt : 0;
     const elapsedLabel = formatAnalysisDuration(elapsedMs);
@@ -2236,24 +2224,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         ? getSelectedFileProcessingGuidance(fileDurationSeconds, diarizationDuringAnalysis)
         : null;
     const filePrivacyMessage = preserveExtractedAudio === true && autoSaveAudioCopy === true
-        ? '이 PC에서 처리합니다. 앱에서 관리하고 다운로드 폴더에도 사본을 저장합니다. 다운로드한 사본은 앱에서 삭제되지 않습니다.'
+        ? '분석용 음성을 회의록과 함께 보관하고 다운로드 폴더에도 사본을 저장합니다.'
         : preserveExtractedAudio === false
-        ? '이 PC에서 처리합니다. 분석용 임시 음성은 완료 후 삭제됩니다.'
+        ? '분석용 임시 음성은 완료 후 삭제됩니다.'
         : preserveExtractedAudio === true
-            ? '이 PC에서 처리합니다. 분석용 음성은 앱에서 회의록과 함께 관리합니다.'
-            : '이 PC에서 처리합니다. 음성 보관 방식은 앱 설정을 따릅니다.';
+            ? '분석용 음성을 회의록과 함께 보관합니다.'
+            : null;
 
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
-    const startActionSummary = (() => {
-        if (isExtractingAudio) return '음성을 추출하고 있습니다.';
-        if (matchingActiveDraft) return '같은 파일의 분석이 이미 진행 중입니다.';
-        if (selectedResumeDraftUnavailable) return '이 분석 기록은 이어서 진행할 수 없습니다.';
-        if (resumeSelectionActive && !resumeReady) return '같은 음성 파일을 선택해 주세요.';
-        if (readinessState === 'missing-models') return '분석에 필요한 파일을 준비해 주세요.';
-        if (readinessState === 'error') return '분석 준비 상태를 확인할 수 없습니다. 아래 안내에서 다시 확인해 주세요.';
-        if (missingFields.length > 0) return `필수 입력: ${missingFields.join(', ')}`;
-        return `${selectedFileMeta} · ${diarizationDuringAnalysis ? '참석자 구분 포함' : '대화록 먼저 생성'}`;
-    })();
     const transcriptProgressPercent = getTranscriptReadyProgressPercent(
         progressPercent,
         rawStatusMessage || currentStatusMessage,
@@ -2264,6 +2242,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         transcriptReady,
         diarizationDuringAnalysis,
     );
+    const writerHeading = completionNotice
+        ? '분석 완료'
+        : showAnalysisFailure
+            ? '분석을 마치지 못했습니다'
+            : showAnalysisPanel
+                ? '분석 진행'
+                : resumeSelectionActive
+                    ? '이어하기'
+                    : '새 회의록';
 
     return (
         <div className="writer-shell">
@@ -2277,11 +2264,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             )}
             <div className="writer-header">
                 <div>
-                    <h2 className="writer-title">{resumeSelectionActive ? '이어하기' : '새 회의록 작성'}</h2>
+                    <h2 className="writer-title">{writerHeading}</h2>
                 </div>
             </div>
 
-            <div className="app-panel writer-panel">
+            <div className={`app-panel writer-panel ${!showAnalysisPanel && !completionNotice ? 'writer-panel-idle' : ''}`}>
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <span>이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.</span>
@@ -2306,9 +2293,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     </div>
                 )}
 
+                {!showAnalysisPanel && !completionNotice && (<div className="writer-input-grid">
                 <section className="writer-section">
                     <div className="writer-section-heading">
-                        <h3>{resumeSelectionActive ? '같은 음성 파일 선택 *' : '음성 파일 *'}</h3>
+                        <h3>{resumeSelectionActive ? '같은 영상·음성 파일 선택 *' : '영상·음성 파일 *'}</h3>
                     </div>
                     <input
                         type="file"
@@ -2335,7 +2323,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             tabIndex={isAnalyzing || isExtractingAudio ? -1 : 0}
                             aria-controls="meeting-file-input"
                             aria-disabled={isAnalyzing || isExtractingAudio}
-                            aria-label="음성 파일 선택"
+                            aria-label="영상 또는 음성 파일 선택"
                             className={`file-drop-zone ${isFileDragActive ? 'file-drop-zone-active' : ''}`}
                             onClick={() => {
                                 if (!isAnalyzing && !isExtractingAudio) fileInputRef.current?.click();
@@ -2354,13 +2342,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         >
                             <div className="file-drop-zone-empty">
                                 <div className="file-upload-icon">
-                                    <UploadCloud size={21} />
+                                    <UploadCloud size={22} />
                                 </div>
-                                <div className="min-w-0 flex-1">
-                                    <div className="text-sm font-semibold text-foreground">음성 파일을 놓으세요</div>
-                                    <div className="mt-1 text-xs text-muted-foreground">MP3, WAV, M4A 등 주요 형식과 영상 파일을 지원합니다.</div>
+                                <div className="file-drop-copy min-w-0">
+                                    <div className="file-drop-title">영상 또는 음성 파일을 놓아주세요</div>
                                 </div>
                                 <span className="file-drop-zone-action" aria-hidden="true">파일 선택</span>
+                                <div className="file-drop-format-list" aria-label="지원 형식">
+                                    {['MP4', 'MOV', 'WAV', 'MP3', 'M4A'].map(format => (
+                                        <span key={format}>{format}</span>
+                                    ))}
+                                </div>
                             </div>
                         </div>
                     ) : (
@@ -2399,10 +2391,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         </div>
                     )}
                     <div className="writer-file-support">
-                    <div className="writer-file-privacy-note">
-                        <ShieldCheck size={15} aria-hidden="true" />
-                        <span>{filePrivacyMessage}</span>
-                    </div>
+                    {filePrivacyMessage && (
+                        <div className="writer-file-privacy-note">
+                            <ShieldCheck size={15} aria-hidden="true" />
+                            <span>{filePrivacyMessage}</span>
+                        </div>
+                    )}
                     {selectedFileGuidance && (
                         <div className="detail-inline-note">
                             {selectedFileGuidance}
@@ -2467,7 +2461,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     </div>
                 </section>
 
-                <section className="writer-section writer-info-section">
+                <div className="writer-info-column">
+                    <section className="writer-section writer-info-section">
                     <div className="writer-section-heading">
                         <h3>회의 정보</h3>
                     </div>
@@ -2494,24 +2489,94 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
                         </div>
                     </div>
-                </section>
+                    </section>
+                    <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
+                        <div className="writer-primary-actions">
+                            {!isAnalyzing && (
+                                <div className="analysis-mode-control">
+                                    <label className="analysis-mode-toggle">
+                                        <input
+                                            type="checkbox"
+                                            checked={diarizationDuringAnalysis}
+                                            onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
+                                            disabled={isSavingDiarizationMode}
+                                        />
+                                        <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
+                                    </label>
+                                    <button
+                                        type="button"
+                                        title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."
+                                        aria-label="참석자 구분 실행 방식 도움말"
+                                        className="inline-flex text-muted-foreground"
+                                    >
+                                        <CircleHelp size={14} />
+                                    </button>
+                                </div>
+                            )}
+                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonDisabled}>
+                                {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+                                {isAnalyzing ? '분석 중' : buttonLabel}
+                            </Button>
+                        </div>
+                    </div>
+                </div>
+                </div>)}
 
                 {showAnalysisPanel && (
-                <div className="writer-analysis-panel border-primary/20 bg-primary/5 p-4">
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex min-w-0 flex-1 gap-3">
-                            <div className="mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-md bg-primary text-primary-foreground">
-                                {progressPercent >= 100 ? <CheckCircle2 size={18} /> : <FileAudio size={18} />}
+                <div className={`writer-analysis-panel ${showAnalysisFailure ? 'writer-analysis-panel-error' : ''}`}>
+                    <div className="writer-analysis-file">
+                        <div className="writer-analysis-file-icon">
+                            <FileAudio size={20} aria-hidden="true" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                            <div className="writer-analysis-title">{title || '새 회의록'}</div>
+                            <div className="writer-analysis-meta">
+                                {file?.name ? `${file.name} · ${selectedFileMeta}` : selectedFileMeta}
+                            </div>
+                        </div>
+                    </div>
+                    {showAnalysisFailure ? (
+                        <div className="writer-analysis-result" role="alert">
+                            <div className="writer-analysis-status-icon writer-analysis-status-icon-error">
+                                <AlertCircle size={18} aria-hidden="true" />
                             </div>
                             <div className="min-w-0 flex-1">
-                                <div className="text-sm font-semibold text-foreground">
-                                    {currentStatusMessage}
+                                <div className="writer-analysis-result-title">분석을 마치지 못했습니다</div>
+                                <div className="writer-analysis-result-message break-words">{errorMessage}</div>
+                                <div className="writer-analysis-result-actions">
+                                    <Button variant="primary" onClick={handleStartAnalysis}>
+                                        <RefreshCw size={14} aria-hidden="true" />
+                                        다시 시도
+                                    </Button>
+                                    <Button variant="outline" onClick={handleReturnToAnalysisInput}>
+                                        입력 확인
+                                    </Button>
                                 </div>
-                                {analysisStalled && (
-                                    <div className="mt-1 text-xs text-muted-foreground">
-                                        현재 단계가 계속 진행 중입니다.
+                            </div>
+                        </div>
+                    ) : (
+                    <>
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between" aria-live="polite">
+                        <div className="flex min-w-0 flex-1 gap-3">
+                            <div className={`writer-analysis-status-icon ${analysisStalled ? 'writer-analysis-status-icon-warning' : ''}`}>
+                                {analysisStalled
+                                    ? <AlertCircle size={18} aria-hidden="true" />
+                                    : progressPercent >= 100
+                                        ? <CheckCircle2 size={18} aria-hidden="true" />
+                                        : <Loader2 size={18} className="animate-spin" aria-hidden="true" />}
+                            </div>
+                            <div className="min-w-0 flex-1">
+                                <div className="writer-analysis-status-row">
+                                    <div className="text-sm font-semibold text-foreground">
+                                        {currentStatusMessage}
                                     </div>
-                                )}
+                                    <span className="writer-analysis-percent">{Math.round(transcriptProgressPercent)}%</span>
+                                </div>
+                                <div className="writer-analysis-state-note">
+                                    {analysisStalled && (
+                                        <span>현재 단계가 예상보다 오래 걸리고 있습니다. 진행 상태가 바뀌는지 잠시 확인해 주세요.</span>
+                                    )}
+                                </div>
                                 <ProgressBar
                                     value={transcriptProgressPercent}
                                     size="sm"
@@ -2530,7 +2595,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                             <CircleHelp size={13} />
                                         </span>
                                     </div>
-                                    <div className="mt-1 text-sm font-semibold text-primary">{elapsedLabel}</div>
+                                    <div className="writer-analysis-elapsed">{elapsedLabel}</div>
                                 </div>
                             </div>
                             {analysisPhase === 'analyzing' && !isAnalysisStopConfirmOpen && !analysisStopRequestedAction && (
@@ -2546,7 +2611,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 </Button>
                             )}
                             {analysisStopRequestedAction && (
-                                <div className="inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground sm:self-end">
+                                <div className="writer-analysis-stop-requested sm:self-end">
                                     <Loader2 size={13} className="animate-spin" aria-hidden="true" />
                                     {analysisStopRequestedAction === 'stop' ? '중지 중' : '취소 중'}
                                 </div>
@@ -2597,6 +2662,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             </div>
                         </div>
                     )}
+                    </>
+                    )}
                 </div>
             )}
 
@@ -2611,6 +2678,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             </Button>
                         )}
                     >
+                        <div className="writer-completion-record">
+                            <span className="break-words font-semibold text-foreground">{completionNotice.title}</span>
+                            <span className="break-all text-sm text-muted-foreground">{completionNotice.sourceFilename}</span>
+                        </div>
                         <div>
                             소요 시간 {formatAnalysisDuration(completionNotice.elapsedMs)}.{' '}
                             {completionNotice.detailTab === 'summary'
@@ -2624,41 +2695,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <div className="mt-2 text-sm text-muted-foreground">{completionNotice.autoSaveNote}</div>
                         )}
                     </StatusBanner>
-                )}
-                {!showAnalysisPanel && !completionNotice && (
-                <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
-                        <div className="writer-action-context">
-                            <div className="writer-action-label">{isAnalyzing ? '분석 진행' : '분석 준비'}</div>
-                            <div className="writer-action-summary">{isAnalyzing ? '분석 작업이 진행 중입니다. 아래에서 현재 단계와 경과 시간을 확인할 수 있습니다.' : startActionSummary}</div>
-                        </div>
-                        <div className="writer-primary-actions">
-                            {!isAnalyzing && (
-                                <div className="analysis-mode-control">
-                                <label className="analysis-mode-toggle">
-                                    <input
-                                        type="checkbox"
-                                        checked={diarizationDuringAnalysis}
-                                        onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
-                                        disabled={isSavingDiarizationMode}
-                                    />
-                                    <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
-                                </label>
-                                <button
-                                    type="button"
-                                    title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."
-                                    aria-label="참석자 구분 실행 방식 도움말"
-                                    className="inline-flex text-muted-foreground"
-                                >
-                                    <CircleHelp size={14} />
-                                </button>
-                                </div>
-                            )}
-                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonDisabled}>
-                                {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-                                {isAnalyzing ? '분석 중' : buttonLabel}
-                            </Button>
-                        </div>
-                    </div>
                 )}
                 {audioExtractStatusVisible && (
                     <StatusBanner
@@ -2676,152 +2712,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     </StatusBanner>
                 )}
             </div>
-
-            {(activeResumeDrafts.length > 0 || resumableResumeDrafts.length > 0) && !isAnalyzing && (
-                <div className="app-panel resume-drafts-panel p-4 sm:p-5">
-                    {activeResumeDrafts.length > 0 && (
-                        <div>
-                            <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                                <span>진행 중이던 분석 기록</span>
-                                <span
-                                    title="다른 창이나 이전 실행에서 아직 끝나지 않은 분석입니다."
-                                    className="inline-flex items-center text-muted-foreground"
-                                >
-                                    <CircleHelp size={14} />
-                                </span>
-                            </div>
-                            <div className="mt-1 text-xs text-muted-foreground">
-                                실제로 진행 중이면 삭제되지 않고, 오래된 기록은 정리할 수 있습니다.
-                            </div>
-                            <div className="mt-3 grid gap-2">
-                                {activeResumeDrafts.map(draft => {
-                                    const isSelected = selectedResumeDraftId === draft.jobId;
-                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
-                                    return (
-                                    <div
-                                        key={draft.jobId}
-                                        className={`resume-draft-card status-info ${isSelected ? 'resume-draft-card-selected' : ''}`}
-                                    >
-                                        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                            <button
-                                                type="button"
-                                                className="min-w-0 flex-1 text-left"
-                                                onClick={() => handleResumeDraftPrepare(draft)}
-                                            >
-                                                <div className="flex items-center gap-2">
-                                                    <div className="truncate text-sm font-semibold text-foreground">{draft.title || '진행 중인 분석'}</div>
-                                                    {isSelected && <span className="status-pill status-info">선택됨</span>}
-                                                </div>
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    <span className="status-pill status-info">{getResumeDraftStatusLabel(draft.status)}</span>
-                                                    <span className="ml-2">{draft.sourceFilename}</span>
-                                                </div>
-                                                <div className="mt-1 text-xs text-muted-foreground">
-                                                    {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
-                                                </div>
-                                            </button>
-                                            <IconButton
-                                                variant="outline"
-                                                icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                                                onClick={() => handleDeleteResumeDraft(draft)}
-                                                disabled={isDeleting}
-                                                aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
-                                                title="분석 기록 삭제"
-                                            />
-                                        </div>
-                                    </div>
-                                );
-                                })}
-                            </div>
-                        </div>
-                    )}
-                    {resumableResumeDrafts.length > 0 && (
-                        <div className={activeResumeDrafts.length > 0 ? 'mt-5 border-t border-border pt-5' : ''}>
-                            <div className="flex items-start justify-between gap-3">
-                                <div className="flex items-center gap-1.5 text-sm font-semibold text-foreground">
-                                    <span>이전 분석 기록</span>
-                                    <span
-                                        title="같은 파일을 선택하면 이전 진행분 재사용을 시도합니다."
-                                        className="inline-flex items-center text-muted-foreground"
-                                    >
-                                        <CircleHelp size={14} />
-                                    </span>
-                                </div>
-                            </div>
-                            <div className="mt-3 grid gap-2">
-                                {resumableResumeDrafts.map(draft => {
-                                    const isSelected = selectedResumeDraftId === draft.jobId;
-                                    const toneClass = getResumeDraftTone(draft.status);
-                                    const draftCanResume = canResumeDraft(draft);
-                                    const unavailableReason = getResumeUnavailableReasonLabel(draft);
-                                    const showUnavailableBadge = !draftCanResume && draft.status !== 'completed';
-                                    const isDeleting = deletingResumeDraftIds.has(draft.jobId);
-                                    const detailTextClass = draft.status === 'completed'
-                                        ? 'text-muted-foreground'
-                                        : 'text-destructive';
-                                    return (
-                                        <div
-                                            key={draft.jobId}
-                                            className={`resume-draft-card status-${toneClass} ${isSelected ? 'resume-draft-card-selected' : ''}`}
-                                        >
-                                            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                                <button
-                                                    type="button"
-                                                    className="min-w-0 flex-1 text-left"
-                                                    onClick={() => handleResumeDraftPrepare(draft)}
-                                                >
-                                                    <div className="flex items-center gap-2">
-                                                        <div className="truncate text-sm font-semibold text-foreground">{draft.title || '이전 분석'}</div>
-                                                        {isSelected && (
-                                                            <span className="status-pill status-info">{resumeReady ? '이어하기 준비' : '같은 파일 필요'}</span>
-                                                        )}
-                                                        {showUnavailableBadge && (
-                                                            <span className={`status-pill status-${toneClass}`}>이어하기 불가</span>
-                                                        )}
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-muted-foreground">
-                                                        <span className={`status-pill status-${toneClass}`}>{getResumeDraftStatusLabel(draft.status)}</span>
-                                                        <span className="ml-2">{draft.sourceFilename}</span>
-                                                    </div>
-                                                    <div className="mt-1 text-xs text-muted-foreground">
-                                                        {formatResumeUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${translateStatusMessage(draft.lastMessage)}` : ''}
-                                                    </div>
-                                                    {draft.errorMessage && (
-                                                        <div className={`mt-1 text-xs ${detailTextClass}`}>{draft.errorMessage}</div>
-                                                    )}
-                                                    {!draft.errorMessage && unavailableReason && (
-                                                        <div className="mt-1 text-xs text-muted-foreground">{unavailableReason}</div>
-                                                    )}
-                                                </button>
-                                                <div className="flex shrink-0 gap-2">
-                                                    {draftCanResume && (
-                                                        <IconButton
-                                                            variant={isSelected ? 'secondary' : 'outline'}
-                                                            icon={<Play size={16} />}
-                                                            onClick={() => handleResumeDraftPrepare(draft)}
-                                                            disabled={isDeleting}
-                                                            aria-label={isSelected ? '이어하기 선택됨' : '이어하기'}
-                                                            title={isSelected ? '이어하기 선택됨' : '이어하기'}
-                                                        />
-                                                    )}
-                                                    <IconButton
-                                                        variant="outline"
-                                                        icon={isDeleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                                                        onClick={() => handleDeleteResumeDraft(draft)}
-                                                        disabled={isDeleting}
-                                                        aria-label={`${draft.title || draft.sourceFilename} 분석 기록 삭제`}
-                                                        title="분석 기록 삭제"
-                                                    />
-                                                </div>
-                                            </div>
-                                        </div>
-                                    );
-                                })}
-                            </div>
-                        </div>
-                    )}
-                </div>
-            )}
 
             {hasBlockingReadinessIssue && (
                 <StatusBanner tone={readinessBannerTone}>
@@ -2871,7 +2761,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 </StatusBanner>
             )}
 
-            {errorMessage && (
+            {errorMessage && !showAnalysisFailure && (
                 <StatusBanner tone="error">
                     {errorMessage}
                 </StatusBanner>

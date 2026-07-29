@@ -29,7 +29,7 @@ export interface LayoutProps {
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
     return (
-        <div className="flex h-screen min-w-[320px] flex-col bg-background text-foreground overflow-hidden">
+        <div className="barorok-app-frame flex min-w-[320px] flex-col text-foreground overflow-hidden">
             <Header />
             <div className="flex min-h-0 flex-1 flex-col lg:flex-row">
                 <Sidebar
@@ -43,7 +43,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onOpenAsrBenchmark={showAsrBenchmark ? () => onTabChange?.('asr-benchmark') : undefined}
                     analysisStatus={analysisStatus}
                 />
-                <main className="flex-1 overflow-auto bg-page p-4 custom-scrollbar sm:p-6">
+                <main className="barorok-workspace flex-1 overflow-auto p-4 custom-scrollbar sm:p-6">
                     {children}
                 </main>
             </div>

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from copy import deepcopy
 from typing import Any
 
@@ -55,6 +56,19 @@ def _safe_int(value: Any, default: int) -> int:
 def normalize_summary_model_name(model: Any) -> str:
     model_name = str(model or "").strip()
     return SUMMARY_MODEL_ALIASES.get(model_name, model_name)
+
+
+def is_local_summary_model_path(model: Any) -> bool:
+    model_path = str(model or "").strip()
+    return bool(
+        model_path
+        and (
+            model_path.startswith(".")
+            or os.path.isabs(model_path)
+            or "\\" in model_path
+            or model_path.lower().endswith((".gguf", ".bin"))
+        )
+    )
 
 
 def normalize_summary_model_options(options: Any) -> list[dict[str, str]]:
@@ -270,8 +284,8 @@ def normalize_app_config(config: dict) -> dict:
         paths["stt_model"] = DEFAULT_STT_MODEL_PATH
 
     stt["chunk_seconds"] = max(1, _safe_int(stt.get("chunk_seconds"), DEFAULT_STT_CHUNK_SECONDS))
-    diarization["enabled"] = bool(diarization.get("enabled", False))
-    diarization["generate_during_analysis"] = bool(diarization.get("generate_during_analysis", False))
+    diarization["enabled"] = bool(diarization.get("enabled", True))
+    diarization["generate_during_analysis"] = bool(diarization.get("generate_during_analysis", True))
     diarization["auto_skip_long_audio"] = bool(diarization.get("auto_skip_long_audio", True))
     diarization["max_duration_seconds"] = max(
         60,

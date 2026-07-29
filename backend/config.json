@@ -45,7 +45,7 @@
     "generate_during_analysis": false,
     "mode": "meeting_minutes",
     "provider": "ollama",
-    "model": "gemma4:e4b",
+    "model": "gemma4:e2b",
     "model_options": [
       {
         "model": "gemma4:e2b",

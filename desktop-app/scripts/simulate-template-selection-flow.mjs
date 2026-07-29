@@ -156,12 +156,15 @@ const installRoutes = async (page) => {
 
 const seedMeeting = async (page) => {
   await page.evaluate(async ({ meetingId, otherMeetingId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -214,7 +217,7 @@ const seedMeeting = async (page) => {
 };
 
 const readMeeting = async (page) => page.evaluate(async ({ meetingId }) => {
-  const request = indexedDB.open('MeetingHistoryDB', 1);
+  const request = indexedDB.open('MeetingHistoryDB', 2);
   const db = await new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -230,7 +233,7 @@ const readMeeting = async (page) => page.evaluate(async ({ meetingId }) => {
 }, { meetingId });
 
 const patchMeeting = async (page, patch) => page.evaluate(async ({ meetingId, patch }) => {
-  const request = indexedDB.open('MeetingHistoryDB', 1);
+  const request = indexedDB.open('MeetingHistoryDB', 2);
   const db = await new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -272,6 +275,13 @@ const run = async () => {
     await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
     await page.getByLabel('이번 정리 기준 선택', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('tab', { name: '전체 요약', exact: true }).waitFor({ timeout: 10000 });
+    const organizeCommandLayout = await page.locator('#meeting-detail-panel-summary .detail-command-bar').evaluate(bar => {
+      const primary = bar.querySelector('.detail-command-primary')?.getBoundingClientRect();
+      const actions = bar.querySelector('.detail-command-actions')?.getBoundingClientRect();
+      return { primaryTop: primary?.top ?? 0, actionsTop: actions?.top ?? 0 };
+    });
+    assert.ok(organizeCommandLayout.actionsTop > organizeCommandLayout.primaryTop, '1280px summary controls should use the content-width two-row layout');
+    assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).evaluate(button => button.classList.contains('detail-action-button-primary')), true);
     assert.equal(await page.getByLabel('후속 산출물 형식 선택').count(), 0);
     assert.equal(await page.getByText('대화 보관용 회의록').count(), 0);
 
@@ -329,7 +339,7 @@ const run = async () => {
     await editContextDialog.locator('textarea').fill('수정된 보고 안건과 후속 조치 중심으로 정리한다.');
     await editContextDialog.getByRole('button', { name: '저장', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -372,7 +382,7 @@ const run = async () => {
     await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
     await page.getByRole('dialog', { name: '정리 맥락 삭제' }).getByRole('button', { name: '삭제', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -391,7 +401,7 @@ const run = async () => {
     await page.getByText('정리 맥락을 삭제했습니다.', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '되돌리기', exact: true }).click();
     await page.waitForFunction(async ({ meetingId, customContextId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -417,7 +427,7 @@ const run = async () => {
     await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
     await page.getByRole('dialog', { name: '정리 맥락 삭제' }).getByRole('button', { name: '삭제', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -436,7 +446,7 @@ const run = async () => {
 
     await contextSelect.selectOption('lmo-review');
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -481,7 +491,15 @@ const run = async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('템플릿 선택 검증 회의록').first().click();
     await page.getByRole('tab', { name: '보고서', exact: true }).click();
-    await page.getByLabel('보고서 생성 준비').getByText('보고 양식을 선택한 뒤 생성합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: '보고서', exact: true }).waitFor({ timeout: 10000 });
+    const reportCommandLayout = await page.locator('#meeting-detail-panel-report .detail-command-bar').evaluate(bar => {
+      const primary = bar.querySelector('.detail-command-primary')?.getBoundingClientRect();
+      const actions = bar.querySelector('.detail-command-actions')?.getBoundingClientRect();
+      return { primaryTop: primary?.top ?? 0, actionsTop: actions?.top ?? 0 };
+    });
+    assert.ok(reportCommandLayout.actionsTop > reportCommandLayout.primaryTop, '1280px report controls should use the content-width two-row layout');
+    await page.getByText('보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('[aria-label="보고서 생성 준비"]').count(), 0);
     await page.getByRole('button', { name: '보고 양식 메뉴', exact: true }).click();
     const initialReportMenu = page.getByRole('menu', { name: '보고 양식 메뉴', exact: true });
     await initialReportMenu.waitFor({ timeout: 10000 });
@@ -495,7 +513,7 @@ const run = async () => {
     await reportTextareas.nth(1).fill('보고 개요\n후속 조치');
     await reportDialog.getByRole('button', { name: '저장', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -542,7 +560,7 @@ const run = async () => {
     await reportDeleteDialog.getByText('삭제 검증 보고 양식', { exact: true }).waitFor({ timeout: 10000 });
     await reportDeleteDialog.getByRole('button', { name: '삭제', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -570,7 +588,7 @@ const run = async () => {
     await page.getByText('다른 회의 정리', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '되돌리기', exact: true }).click();
     await page.waitForFunction(async ({ meetingId, otherMeetingId, customReportTemplateId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);

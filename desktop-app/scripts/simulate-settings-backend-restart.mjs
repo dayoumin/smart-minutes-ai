@@ -368,8 +368,8 @@ const run = async () => {
       }));
     });
 
-    await page.getByRole('button', { name: '앱 설정' }).click();
-    const settingsDialog = page.getByRole('dialog', { name: '앱 설정' });
+    await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
+    const settingsDialog = page.getByRole('dialog', { name: '설정' });
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
     const generalDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));
     await page.getByRole('tab', { name: '모델' }).click();

@@ -1,9 +1,14 @@
 import React from 'react';
+import { AudioLines } from 'lucide-react';
 
 export const Header: React.FC = () => {
     return (
-        <header className="h-16 border-b border-border flex items-center gap-4 px-4 bg-surface shadow-sm z-10 relative sm:px-6">
-            <h1 className="min-w-0 truncate text-lg font-semibold text-foreground">AI 회의록 도우미</h1>
+        <header className="app-header">
+            <span className="app-brand-mark" aria-hidden="true"><AudioLines size={19} /></span>
+            <span className="app-brand-copy">
+                <strong>바로록</strong>
+                <small>개인용 로컬 회의록</small>
+            </span>
         </header>
     );
 };

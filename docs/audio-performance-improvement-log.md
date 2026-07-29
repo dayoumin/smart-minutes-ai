@@ -893,6 +893,14 @@ References:
 - https://huggingface.co/docs/hub/models-gated
 - https://creativecommons.org/licenses/by/4.0/
 
+## 2026-07-29 대화록 우선 기본 흐름 재확정
+
+- 신규 설치와 설정 필드가 누락된 복구 경로의 기본값은 `diarization.enabled=false`, `diarization.generate_during_analysis=false`다.
+- 일반 분석은 STT 대화록을 먼저 완료하고, 참석자 구분은 원본 음성을 보존한 회의 기록에서 사용자가 별도로 실행한다.
+- 기본 요약 모델은 `gemma4:e2b`이며, 메모리가 충분한 PC에서 `gemma4:e4b`를 권장할 수 있지만 자동으로 선택을 바꾸지는 않는다.
+- 업데이트 패키지는 기존 `backend/config.json`을 보존한다. 기존 설치에서 사용자가 선택한 참석자 구분 또는 요약 모델 설정은 강제 변경하지 않으며, 신규 기본값은 신규 설치와 누락 필드 복구에만 적용한다.
+- 위 정책은 2026-06-10과 2026-07-17 항목의 당시 기본값 기록보다 최신인 현재 기준이다.
+
 ## 2026-07-17 브라우저 CPU/WASM Whisper small PoC
 
 목적:

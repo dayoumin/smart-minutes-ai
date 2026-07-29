@@ -174,9 +174,11 @@ export const App: React.FC = () => {
     const [backendTaskActive, setBackendTaskActive] = useState(false);
     const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
-    const canLeaveCurrentMeeting = () => (
-        activeTab === 'minutes' ? writerLeaveGuardRef.current() : leaveGuardRef.current()
-    );
+    const canLeaveCurrentMeeting = () => {
+        if (activeTab === 'minutes') return writerLeaveGuardRef.current();
+        if (activeTab === 'history') return leaveGuardRef.current();
+        return true;
+    };
 
     const handleCreateMeeting = () => {
         if (!canLeaveCurrentMeeting()) return;

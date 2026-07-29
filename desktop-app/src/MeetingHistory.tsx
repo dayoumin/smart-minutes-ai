@@ -453,6 +453,7 @@ interface OrganizeRunButtonProps {
     icon: React.ReactNode;
     label: string;
     className?: string;
+    variant?: 'primary' | 'outline';
     onClick: () => void | Promise<void>;
 }
 
@@ -463,11 +464,12 @@ const OrganizeRunButton = ({
     icon,
     label,
     className = '',
+    variant = 'primary',
     onClick,
 }: OrganizeRunButtonProps) => (
     <Button
-        variant="outline"
-        className={`detail-action-button ${className}`}
+        variant={variant}
+        className={`detail-action-button ${variant === 'primary' ? 'detail-action-button-primary' : ''} ${className}`}
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => { void onClick(); }}
@@ -3401,16 +3403,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             ? '참석자별 정리를 다시 한 뒤 보고서를 생성할 수 있습니다.'
                             : '';
     const canShowAnyMeetingReport = hasGeneratedMeetingReport && Boolean(selectedMeeting?.meetingReport);
-    const reportReadinessItems = [
-        !hasGeneratedSummary
-            ? '기록 정리 탭에서 전체 요약을 먼저 만듭니다.'
-            : summaryOutdated
-                ? '기록 정리 탭에서 전체 요약을 다시 정리합니다.'
-                : '',
-        topicSectionsOutdated ? '주제별 정리가 이전 기준이면 주제별 정리를 다시 실행합니다.' : '',
-        speakerContextOutdated ? '참석자별 정리가 이전 기준이면 참석자별 정리를 다시 실행합니다.' : '',
-        '보고 양식을 선택한 뒤 생성합니다.',
-    ].filter((item): item is string => Boolean(item));
     const isCurrentTopicGenerationRequest = Boolean(
         topicGenerationIntent?.meetingId
         && selectedMeeting?.id
@@ -3726,10 +3718,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 </div>
             )}
 
-            <article className="app-panel overflow-hidden">
+            <article className="app-panel meeting-detail-frame overflow-hidden">
                 <div className="app-panel-header meeting-detail-overview">
                     <div className="meeting-detail-overview-main">
-                        <div className="flex items-start justify-between gap-4">
+                        <div className="meeting-detail-title-row">
                             {isEditing ? (
                                 <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-foreground">
                                     회의 제목
@@ -3830,12 +3822,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         {selectedMeeting.sourceFile && (
                                             <div className="meeting-meta-item meeting-meta-item-source">
                                                 <span className="meeting-meta-label">원본 파일</span>
-                                                <span className="meeting-meta-value">{selectedMeeting.sourceFile}</span>
+                                                <span
+                                                    className="meeting-meta-value meeting-meta-value-source"
+                                                    title={selectedMeeting.sourceFile}
+                                                >
+                                                    {selectedMeeting.sourceFile}
+                                                </span>
                                             </div>
                                         )}
                                     </div>
                                 </div>
-                                <div className="meeting-runtime-row">
+                                <div className={`meeting-runtime-row${audioSourceUrl ? '' : ' meeting-runtime-row-status-only'}`}>
                                     <div className="meeting-status-grid">
                                         <div className="meeting-status-item">
                                             <span className="meeting-status-title">대화록</span>
@@ -4169,9 +4166,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             ) : (
                                                 <InlineStateNote>검색과 일치하는 전체 요약이 없습니다.</InlineStateNote>
                                             )
-                                        ) : (
+                                        ) : summaryModelUnavailable ? null : (
                                             <InlineStateNote>
-                                                전체 요약을 정리하면 주요 내용, 결정사항, 할 일을 여기에서 확인할 수 있습니다.
+                                                전체 요약이 없습니다. 정리를 실행해 주세요.
                                             </InlineStateNote>
                                         )}
                                         {hasResultHighlights && (
@@ -4282,15 +4279,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     ))}
                                                 </div>
                                             </>
-                                        ) : (
+                                        ) : !topicActionBlockedMessage ? (
                                             <InlineStateNote>
                                                 {isFiltering
                                                     ? '검색과 일치하는 주제별 정리가 없습니다.'
                                                     : hasCompletedEmptyTopicSections
                                                         ? '주제별 정리 내용이 없습니다. 대화록을 확인해 주세요.'
-                                                        : '주제별 정리를 하면 각 주제의 논의 내용이 여기에 표시됩니다.'}
+                                                        : '주제별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
                                             </InlineStateNote>
-                                        )}
+                                        ) : null}
                                         {shouldShowCustomTopicInput && (
                                             <div className="detail-control-card">
                                                 <Input
@@ -4308,6 +4305,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 />
                                                 <OrganizeRunButton
                                                     className="h-10 sm:w-24"
+                                                    variant="outline"
                                                     ariaLabel={customTopicButtonAriaLabel}
                                                     disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                     onClick={handleGenerateCustomTopicSection}
@@ -4421,17 +4419,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     ))}
                                                 </div>
                                             </>
-                                        ) : (
+                                        ) : !speakerActionBlockedMessage ? (
                                             <InlineStateNote>
                                                 {isFiltering
                                                     ? '검색과 일치하는 참석자별 정리가 없습니다.'
                                                     : hasCompletedEmptySpeakerContext
                                                         ? '참석자별 정리 내용이 없습니다. 참석자 구분을 확인해 주세요.'
-                                                        : speakerActionBlockedMessage
-                                                            ? speakerActionBlockedMessage
-                                                            : '참석자별 정리를 하면 참석자별 요약과 핵심 발언이 여기에 표시됩니다.'}
+                                                        : '참석자별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
                                             </InlineStateNote>
-                                        )}
+                                        ) : null}
                                     </div>
                                 )}
                             </section>
@@ -4446,13 +4442,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             aria-labelledby="meeting-detail-tab-report"
                             className="detail-work-surface"
                         >
-                            <div className="detail-command-bar">
-                                <div className="detail-command-primary">
-                                    <div className="flex flex-wrap items-center gap-2">
-                                        <h3 className="section-title">회의록 보고서</h3>
-                                        <span className="detail-output-chip">{reportOutputTemplate.name}</span>
-                                    </div>
-                                </div>
+                            <div className="detail-command-bar detail-command-bar-actions-only">
                                 <div className="detail-command-actions">
                                     <label className="detail-inline-select">
                                         <span>보고 양식</span>
@@ -4540,9 +4530,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                     />
                                 </div>
                             </div>
-                            <p className="detail-section-caption detail-section-caption-standalone">
-                                기록 정리를 바탕으로 보고 양식에 맞춰 다시 가공하는 산출물입니다.
-                            </p>
                             {reportTemplateError && (
                                 <div className="detail-context-inline-error" role="status">
                                     {reportTemplateError}
@@ -4597,18 +4584,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                     </div>
                                 </div>
                             )}
-                            {!hasGeneratedMeetingReport && !reportActionBlockedMessage && !meetingReportIsGenerating && (
+                            {!hasGeneratedMeetingReport && !reportActionBlockedMessage && !meetingReportIsGenerating && !meetingReportGenerationFailed && (
                                 <InlineStateNote>
                                     보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.
                                 </InlineStateNote>
-                            )}
-                            {!hasGeneratedMeetingReport && !meetingReportIsGenerating && reportReadinessItems.length > 0 && (
-                                <div className="detail-report-checklist" aria-label="보고서 생성 준비">
-                                    <div className="detail-report-checklist-title">생성 전 확인</div>
-                                    <ul>
-                                        {reportReadinessItems.map(item => <li key={item}>{item}</li>)}
-                                    </ul>
-                                </div>
                             )}
                         </section>
                     )}
@@ -4621,10 +4600,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             className="detail-work-surface"
                         >
                             <div className="mb-4 flex flex-col gap-3">
-                                <div className="detail-command-bar">
-                                    <div className="detail-command-primary">
-                                        <h3 className="section-title">대화록</h3>
-                                    </div>
+                                <div className="detail-command-bar detail-command-bar-actions-only">
                                     <div className="detail-command-actions">
                                         {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
                                             <Button variant="outline" onClick={handleRevertTranscript}>
@@ -4679,7 +4655,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             ) : (
                                                 <Button variant="ghost" onClick={() => setIsSpeakerLabelPanelOpen(true)}>
                                                     <Edit3 size={15} />
-                                                    이름 변경
+                                                    참석자 이름 변경
                                                 </Button>
                                             )
                                         )}

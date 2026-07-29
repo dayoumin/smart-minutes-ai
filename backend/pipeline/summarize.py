@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from config_normalization import is_local_summary_model_path
 from generation_gateway import classify_generation_exception, failure_for_code, generate_ollama_text
 
 
@@ -248,11 +249,11 @@ def _generate_summary_once(model_name: str, prompt: str) -> dict:
 
 
 def _generate_json_once(model_name_or_path: str, prompt: str) -> dict | list:
-    if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
+    if not os.path.exists(model_name_or_path) and not is_local_summary_model_path(model_name_or_path):
         return _parse_llm_json(generate_ollama_text(model_name_or_path, prompt))
 
     if not os.path.exists(model_name_or_path):
-        raise FileNotFoundError(model_name_or_path)
+        raise failure_for_code("model_missing")
 
     from llama_cpp import Llama
 
@@ -952,7 +953,7 @@ def summarize_meeting(
 
     prompt = _build_prompt(transcript_text, meeting_context=meeting_context)
 
-    if not os.path.exists(model_name_or_path) and not model_name_or_path.endswith((".gguf", ".bin")):
+    if not os.path.exists(model_name_or_path) and not is_local_summary_model_path(model_name_or_path):
         try:
             print(f"[LLM] Generating summary with Ollama model: {model_name_or_path} ...")
             if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:

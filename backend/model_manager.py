@@ -7,6 +7,7 @@ from config_normalization import (
     get_summary_candidate_models,
     get_summary_model_options,
     get_summary_option_models,
+    is_local_summary_model_path,
     normalize_summary_model_name,
 )
 from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env, probe_ollama_server
@@ -220,17 +221,19 @@ def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama
     installed_path = ""
     installed_models: list[str] = []
     for model in status_model_names:
-        candidate_path = resolve_backend_path(base_dir, model) if model.startswith((".", "..")) or (model.endswith((".gguf", ".bin")) and not os.path.isabs(model)) else model
-        if os.path.exists(candidate_path) or (not model.endswith((".gguf", ".bin")) and model in ollama_model_set):
+        local_model = is_local_summary_model_path(model)
+        candidate_path = resolve_backend_path(base_dir, model) if local_model and not os.path.isabs(model) else model
+        if os.path.exists(candidate_path) or (not local_model and model in ollama_model_set):
             installed_models.append(model)
 
     for model in candidate_models:
-        candidate_path = resolve_backend_path(base_dir, model) if model.startswith((".", "..")) or (model.endswith((".gguf", ".bin")) and not os.path.isabs(model)) else model
+        local_model = is_local_summary_model_path(model)
+        candidate_path = resolve_backend_path(base_dir, model) if local_model and not os.path.isabs(model) else model
         if os.path.exists(candidate_path):
             installed_model = model
             installed_path = candidate_path
             break
-        if not model.endswith((".gguf", ".bin")) and model in ollama_model_set:
+        if not local_model and model in ollama_model_set:
             installed_model = model
             installed_path = f"ollama:{model}"
             break
@@ -239,14 +242,18 @@ def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama
     first_actionable_option = next((option for option in visible_options if option.get("url") or option.get("command")), {})
     install_url = (primary_option or first_actionable_option).get("url", "")
     install_command = (primary_option or first_actionable_option).get("command", "")
-    if not install_command and configured_model and not configured_model.endswith((".gguf", ".bin")):
+    if not install_command and configured_model and not is_local_summary_model_path(configured_model):
         install_command = f"ollama run {configured_model}"
 
     return {
         "key": "llm",
         "label": configured_model or "Ollama summary model",
         "repo_id": None,
-        "path": installed_path or (f"ollama:{configured_model}" if configured_model and not configured_model.endswith((".gguf", ".bin")) else configured_model),
+        "path": installed_path or (
+            f"ollama:{configured_model}"
+            if configured_model and not is_local_summary_model_path(configured_model)
+            else configured_model
+        ),
         "installed": bool(installed_model),
         "installed_model": installed_model,
         "installed_models": installed_models,

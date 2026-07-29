@@ -154,12 +154,15 @@ const installRoutes = async (page, exportCalls, exportBodies) => {
 
 const seedMeeting = async (page) => {
   await page.evaluate(async ({ meetingId, jobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const database = request.result;
         if (!database.objectStoreNames.contains('meetings')) {
           database.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!database.objectStoreNames.contains('folders')) {
+          database.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);

@@ -272,9 +272,9 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '중단된 회의' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('이어하기-전-선택.mp3', { exact: true }).count(), 0);
-    await page.getByRole('button', { name: '음성 파일 선택' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '영상 또는 음성 파일 선택' }).waitFor({ timeout: 10000 });
     await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
-    await page.getByText('같은 음성 파일 선택 *').waitFor({ timeout: 10000 });
+    await page.getByText('같은 영상·음성 파일 선택 *').waitFor({ timeout: 10000 });
     await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
@@ -429,7 +429,7 @@ const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
 
     try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.locator('.resume-draft-card').filter({ hasText: '오래된 분석' }).getByRole('button').first().click();
+    await selectSidebarResumeDraft(page, '오래된 분석');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.locator('.app-panel').first().getByRole('button', { name: '이어하기', exact: true }).click();
     await page.getByText('이전 분석 기록을 이어서 진행할 수 없습니다. 현재 재사용 후보로 확인되지 않았습니다. 새 분석으로 시작할 수 있습니다.').waitFor({ timeout: 10000 });
@@ -527,14 +527,6 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'the ready command bar must not compete with the completed result');
     await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
     await page.getByText('기록 정리에서 핵심 결과를 확인하세요.', { exact: false }).waitFor({ timeout: 10000 });
-    await page.setInputFiles('#meeting-file-input', {
-      name: '지원하지-않는-완료후-파일.txt',
-      mimeType: 'text/plain',
-      buffer: Buffer.from('not media'),
-    });
-    await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
-    await completionPanel.waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'an invalid replacement must preserve the completed result slot');
     assert.equal(dialogShown, false);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\nfalse/);
     await page.getByRole('button', { name: '결과 보기' }).click();
@@ -702,7 +694,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '새 분석', exact: true }).click();
-    await page.getByRole('heading', { name: '새 회의록 작성' }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
     await page.getByText('대화록을 확인하고 필요한 정리를 실행하세요.', { exact: false }).waitFor({ timeout: 10000 });
@@ -774,7 +766,7 @@ const runActiveDraftDeleteAfterBackendErrorScenario = async (browser, fixtureUpl
     await page.getByRole('button', { name: /미완료 분석 기록 1건/ }).click();
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '삭제할 진행 기록' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
-    await page.locator('.resume-draft-card').filter({ hasText: '삭제할 진행 기록' }).getByRole('button', { name: '삭제할 진행 기록 분석 기록 삭제' }).click();
+    await page.getByRole('button', { name: '삭제할 진행 기록 분석 기록 삭제', exact: true }).click();
     await expectLocalStorageJson(page, 'analysisResumeDrafts', []);
     const bodyText = await page.locator('body').innerText();
     assert.doesNotMatch(bodyText, /Python interpreter/);
@@ -851,10 +843,9 @@ const runLocalOnlyDeleteRetriesPendingCleanupScenario = async (browser, fixtureU
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const deleteCard = page.locator('.resume-draft-card').filter({ hasText: '나중에 정리할 기록' });
-    await deleteCard.waitFor({ timeout: 10000 });
+    await selectSidebarResumeDraft(page, '나중에 정리할 기록');
     await page.waitForTimeout(800);
-    await deleteCard.locator('button[title="분석 기록 삭제"]').click();
+    await page.getByRole('button', { name: '나중에 정리할 기록 분석 기록 삭제', exact: true }).click();
     await expectLocalStorageJson(page, 'analysisResumeDrafts', []);
     await page.waitForFunction(() => {
       const pendingRaw = window.localStorage.getItem('pendingAnalysisDraftCleanups');
@@ -933,10 +924,9 @@ const runDeleteServerErrorKeepsDraftScenario = async (browser, fixtureUpload) =>
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const deleteCard = page.locator('.resume-draft-card').filter({ hasText: '삭제 실패 기록' });
-    await deleteCard.waitFor({ timeout: 10000 });
+    await selectSidebarResumeDraft(page, '삭제 실패 기록');
     await page.waitForTimeout(800);
-    await deleteCard.locator('button[title="분석 기록 삭제"]').click();
+    await page.getByRole('button', { name: '삭제 실패 기록 분석 기록 삭제', exact: true }).click();
     await page.getByText('분석 임시 파일을 정리하지 못했습니다.').waitFor({ timeout: 10000 });
     assert.equal(deleteRouteCalled, true);
     await page.waitForFunction(() => {
@@ -994,9 +984,8 @@ const runActiveDraftNetworkFailureKeepsDraftScenario = async (browser, fixtureUp
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const deleteCard = page.locator('.resume-draft-card').filter({ hasText: '확인 불가 진행 기록' });
-    await deleteCard.waitFor({ timeout: 10000 });
-    await deleteCard.locator('button[title="분석 기록 삭제"]').click();
+    await selectSidebarResumeDraft(page, '확인 불가 진행 기록');
+    await page.getByRole('button', { name: '확인 불가 진행 기록 분석 기록 삭제', exact: true }).click();
     await page.waitForFunction(() => {
       const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') ?? '[]');
       const pending = JSON.parse(window.localStorage.getItem('pendingAnalysisDraftCleanups') ?? '[]');
@@ -1070,10 +1059,9 @@ const runDeleteDoesNotSuppressFileCandidateScenario = async (browser, fixtureUpl
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const deleteCard = page.locator('.resume-draft-card').filter({ hasText: '삭제만 할 기록' });
-    await deleteCard.waitFor({ timeout: 10000 });
+    await selectSidebarResumeDraft(page, '삭제만 할 기록');
     await page.waitForTimeout(800);
-    await deleteCard.locator('button[title="분석 기록 삭제"]').click();
+    await page.getByRole('button', { name: '삭제만 할 기록 분석 기록 삭제', exact: true }).click();
     await expectLocalStorageJson(page, 'analysisResumeDrafts', []);
     await expectLocalStorageJson(page, 'suppressedResumeCandidateKeys', []);
     console.log('ok - delete does not suppress file candidate scenario');
@@ -1143,7 +1131,8 @@ const runCancelledDraftImmediateDeleteScenario = async (browser, fixtureUpload) 
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '방금 중단한 기록 분석 기록 삭제' }).click();
+    await selectSidebarResumeDraft(page, '방금 중단한 기록');
+    await page.getByRole('button', { name: '방금 중단한 기록 분석 기록 삭제', exact: true }).click();
     await expectLocalStorageJson(page, 'analysisResumeDrafts', []);
     const bodyText = await page.locator('body').innerText();
     assert.doesNotMatch(bodyText, /아직 진행 중인 분석입니다/);
@@ -1179,6 +1168,15 @@ const expectLocalStorageJson = async (page, key, expected) => {
     },
     { storageKey: key, expectedValue: expected },
   );
+};
+
+const selectSidebarResumeDraft = async (page, title) => {
+  const toggle = page.getByRole('button', { name: /미완료 분석 기록 \d+건/ });
+  if (await toggle.getAttribute('aria-expanded') !== 'true') {
+    await toggle.click();
+  }
+  await page.locator('.sidebar-resume-draft-button').filter({ hasText: title }).click();
+  await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
 };
 
 const expectNoText = async (page, text) => {

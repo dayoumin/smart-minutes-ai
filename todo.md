@@ -1,4 +1,31 @@
 # 0. Immediate queue
+- [ ] 2026-07-29 바로록 데스크톱·웹 제품 전환
+  - 상위 계획과 결정 기록: `docs/barorok-desktop-web-redesign-plan.html`.
+  - 작업 브랜치: `codex/barorok-desktop-web-redesign`.
+  - 1차 구현은 사용자 표시명·해양 브랜드 토큰·제한된 데스크톱 프레임·공통 앱 셸·새 기록 화면으로 제한하고, 기존 분석/이어하기/기록 조회 기능을 재사용한다.
+  - 데스크톱과 웹은 `desktop-app`의 React UI를 공유하며 별도 `web-app` 복제본을 만들지 않는다.
+  - 1인용 범위를 유지하고 조직, 초대, 권한, 공유, 과금, 공동 편집은 구현하지 않는다.
+  - 웹 로컬 엔진은 데스크톱 완료 게이트 후 `docs/web-local-engine-followup-plan.md`에 따라 별도 단계로 착수한다.
+  - 화면 단위 typecheck/lint/관련 Playwright/반응형 검증 후 agent 큰 관점·작은 관점 검토를 거친다.
+  - 2026-07-29 방향 정정: 왼쪽 사이드바가 폴더와 회의록 목록을 소유하고, 오른쪽 작업면에는 새 기록·분석 진행·선택한 회의록 상세만 표시한다. 양쪽에 회의록 목록을 중복하지 않는다.
+  - 데스크톱은 최대 1360px 앱 프레임과 좌우 16~48px·상하 16~32px의 유동 여백을 적용하고, 1024px 이하에서만 화면을 채운다.
+  - 폴더 생성·이동·이름 변경·삭제와 삭제 시 회의록의 폴더 연결 해제는 같은 IndexedDB 저장 계약으로 구현한다.
+  - 2026-07-29 완료: 브랜드 헤더, 제한된 앱 프레임, 왼쪽 폴더·회의록 탐색, 폴더 저장 계약을 적용했다.
+  - 2026-07-29 완료: 새 기록의 분석 시작 전 화면을 참고 이미지 기반의 집중형 업로드·회의 정보·실행 바로 정리했다. 높은 창은 중앙형, 800px 이하 낮은 창은 가로형 업로드를 사용하며 1024×720과 1280×720에서 시작 버튼 노출과 가로 overflow 0을 확인했다.
+  - 2026-07-29 정리: 사이드바의 중복 `회의 기록` 제목과 `전체 기록`·`미분류` 분류 UI를 제거했다. 기본 상태에서는 회의록을 바로 보여주고, 사용자가 만든 폴더만 표시하며 폴더 만들기·선택·관리는 유지한다.
+  - 디자인 시스템 배경 계층: 앱 프레임·탐색·작업 캔버스는 `--barorok-mist`, 헤더·입력·읽기 작업면은 흰 표면을 사용한다.
+  - 2026-07-29 완료: 분석 진행 상태의 진행률·경과 시간·장시간 정체·중지/취소 요청·실패 복구·완료·이어하기를 같은 바로록 작업면으로 정리했다. 1280×720에서 중지 동작과 가로 overflow 0, 실패 후 입력 보존, 완료 후 결과 진입을 집중 시뮬레이션으로 확인했다.
+  - 2026-07-29 완료: 중지 API가 `cancel_requested: false`를 반환하면 중지 기록을 만들지 않고 분석을 유지하며, 중지 버튼을 다시 활성화하는 회귀 시뮬레이션을 추가했다.
+  - 2026-07-29 완료: `기록 정리`와 `보고서` 탭의 command bar를 실제 콘텐츠 폭 기준으로 전환하고, 생성·재생성만 주 동작으로 강조했다. 중복 제목·준비 체크리스트·충돌하는 빈 안내를 줄였으며 1280×720 실제 화면과 관련 시뮬레이션, agent 큰/작은 관점 검토에서 P0·P1 없음과 가로 overflow 0을 확인했다.
+  - 2026-07-29 완료: 설정 화면을 896px 모달과 768px 한 열 설정 레일로 정리하고 표시명을 `설정`으로 통일했다. 지속 오류는 본문을 가리는 overlay 대신 설정 내용 안의 복구 안내로 옮겼으며 파일·분석·보관·문제 해결과 모델 관리·재시작 기능을 유지했다.
+  - 2026-07-29 완료: 공유 React UI의 새 기록 → 분석 진행 → 회의 상세 → 설정 통합 게이트를 통과했다. 1280×720 실제 화면에서 앱 프레임·주요 동작 노출·설정 포커스 복귀·가로 overflow 0을 확인했고, 폴더 이동의 키보드 접근·IndexedDB 저장·필터 반영도 집중 시뮬레이션으로 고정했다.
+  - 2026-07-29 완료: 사이드바의 절대 날짜를 `오늘`·`2일`·`1주`·`2개월` 경과 시간으로 바꾸고, 회의록·폴더 관리 세로점은 hover·키보드 focus·열림 상태에서만 표시하도록 정리했다. 폴더 생성·이름 변경·삭제·이동·필터·포커스 복원 전체 수명주기를 집중 시뮬레이션으로 검증했다.
+  - 2026-07-29 완료: 앱 프레임 상한을 1360px로 낮추고, 상세 메타의 일시·원본 파일 표시를 안정화했다. 대화록·보고서 탭의 중복 제목을 제거하고 `참석자 이름 변경`으로 동작 대상을 명확히 했으며, 새 기록 작업면의 옅은 배경을 바로록 표면 토큰으로 통합했다.
+  - 2026-07-29 완료: `폴더 만들기`에서 잘못 노출되던 관리 메뉴를 제거하고 실제 폴더 행에 `상단 고정`·`이름 변경`·`삭제` 메뉴를 배치했다. 폴더 고정 상태는 IndexedDB에 저장하고, 기존 회의록 고정과 함께 각 목록에서 우선 정렬한다. 집중 시뮬레이션으로 폴더 고정·이름 변경·삭제와 회의록 고정·이동·키보드 메뉴 회귀를 확인했다.
+  - 2026-07-29 완료: 폴더 메뉴에 마우스로 누르는 `위로 이동`·`아래로 이동`을 추가하고, 고정 폴더/일반 폴더 그룹 안의 수동 순서를 IndexedDB에 저장한다. 그룹의 첫·마지막 폴더에서는 불가능한 방향을 비활성화하며, 집중 시뮬레이션으로 클릭 이동·저장·고정 전환을 확인했다.
+  - 2026-07-29 완료: 폴더 이름 행을 마우스로 끌어 같은 고정 그룹 안에서 순서를 바꾸는 드래그 이동과 삽입선 피드백을 추가했다. 폴더·회의록 탐색을 하나의 세로 스크롤 영역으로 묶고 선택 결과 이동·스크롤 경계 밖 floating 메뉴·연속 드래그 방지를 적용했으며, 회의록 고정은 최신 DB 레코드의 `pinned`만 변경하도록 데이터 보존 계약을 강화했다.
+  - 배포 전 결정 필요: IndexedDB v2를 사용한 뒤 DB v1 기반 구버전 앱으로 되돌리는 롤백을 지원할지 정한다. 지원한다면 폴더 저장소 분리 또는 호환 백업·복구 증거가 필요하고, 지원하지 않는다면 업데이트 안내에 이전 버전 복귀 제한을 명시한다. 마지막 확인: 2026-07-29.
+  - 다음 단계: 실제 `releases\lmo_audio\lmo_audio.exe`를 기준으로 portable 데스크톱 게이트를 수행한다. sidecar 시작, 모델 경로, 음성·영상 파일 선택과 분석, 중지·이어하기, 참석자 구분, 요약, 저장·폴더 열기, 내보내기, backend 재시작, 종료 guard를 확인한 뒤에만 웹 로컬 엔진 단계로 넘어간다.
 - [ ] 2026-07-29 회사 PC 첫 작업: 균형형 landing-inspired 기능 작업면 적용
   - 홍보용 랜딩 페이지나 설명 문구를 추가하는 작업이 아니다. 랜딩 페이지의 여백, 비례, 초점, 레이어링만 기능 중심 회의 작업면에 적용한다.
   - 현재 상세 화면은 메타, 상태, 탭, 명령, 본문이 비슷한 간격과 테두리 강도로 연속되어 시각적 대·중·소 계층이 약하다. 단순히 모든 간격을 넓히지 말고 큰 덩어리 사이 여백과 내부 밀도를 분리한다.
@@ -7,6 +34,7 @@
   - 데스크톱 앱과 향후 웹 버전이 공유할 수 있는 구조로 구현한다. 웹 중심형의 과도한 여백, 모바일 내비게이션, 마케팅 hero·소개 문구·기능 홍보 블록은 범위에서 제외한다.
   - 먼저 회의 상세 화면 한 곳에 적용해 현재형과 비교한 뒤, 승인된 리듬을 새 회의록 작성·기록 정리·보고서 화면으로 확장한다.
   - 검증은 1024/1280/1440/1920px 실제 콘텐츠 폭, 긴 제목·긴 목적·원본 파일 없음, 상태 실행 중·완료·오류, 검색과 command bar 줄바꿈, 키보드 포커스, 가로 overflow 0을 포함한다.
+  - 2026-07-29 진행: 회의 상세 제목 계층, 가벼운 메타 스트립, 상태·음성 집중 표면을 1차 적용했다. 1024/1280/1440/1920px 캡처와 가로 overflow 0, 전체 회의 상세 Playwright 시뮬레이션, 타입 검사, 변경 파일 lint, 웹 빌드로 확인했다.
   - 이 작업이 끝나면 기존 다음 순위인 기록 정리·보고서 탭의 command bar, 결과 카드, 빈 상태, 생성/재생성 상태 통일을 이어서 진행한다.
 - [ ] 2026-09-07 Windows/Codex guidance review
   - Re-check recurring Windows/Codex issues in `AGENTS.md`.
@@ -42,7 +70,10 @@
   - 2026-07-28 진행: 회의 전환 guard를 App 한 곳으로 통합하고, 같은 회의 background refresh·캐시 미스 skeleton·최신 요청 우선·로드 오류 복구·선택 삭제 fallback을 agent 큰/작은 관점과 Playwright 시뮬레이션으로 고정했다.
   - 2026-07-28 진행: 대화록의 카드/본문 버블 중첩을 hairline 기반 scan-list로 바꾸고 1280/800/640px에서 가로 overflow 0, 반응형 열 전환, 본문 줄바꿈을 실제 렌더링으로 확인했다.
   - 2026-07-29 진행: 작성 화면 1152px·회의 상세 1320px 콘텐츠 레일, 실제 콘텐츠 폭 기준 열 전환, 설정 화면의 파일/분석/보관/문제 해결 그룹, 회의 상세 메타 스트립·상태/재생 행·주 동작 계층을 적용했다.
-  - 다음 1순위: 기록 정리와 보고서 탭의 command bar, 결과 카드, 빈 상태, 생성/재생성 상태를 대화록 탭과 같은 작업면 체계로 통일하고 1024/1280/1440/1920px에서 검증한다.
+  - 2026-07-29 진행: 기록 정리와 보고서 탭의 command bar를 콘텐츠 폭 64rem 기준으로 전환하고, 결과/빈 상태와 생성·재생성 동작 계층을 통일했다. 1280×720 실제 화면, 보고서 경계 흐름, 템플릿 선택 흐름, 타입·lint로 검증했다.
+  - 2026-07-29 진행: 설정 화면의 폭과 정보 레일을 넓히고 지속 오류를 본문 안으로 이동했다. 표시명과 다운로드 설명을 사용자 용어로 정리하고 설정 재시작·모델 관리 시뮬레이션, 타입·lint, 실제 1280×720 화면으로 확인했다.
+  - 2026-07-29 완료: 공유 React UI 통합 게이트와 화면 간격·용어·포커스·낮은 창 overflow 마감을 완료했다.
+  - 다음 1순위: 실제 portable `lmo_audio.exe`에서 sidecar·모델·파일 시스템·내보내기·재시작·종료 guard까지 확인하는 데스크톱 런타임 게이트를 수행한다.
 - [ ] 2026-06-12 Airepoto 참고 회의록 완성도 강화 1차 계획
   - 세부 계획 원본: `docs/airepoto-reference-adoption-plan.md`.
   - 1차 범위는 내부 기본 회의록 기준, 분야별 용어의 후속 정리/보정 단계 적용, 대화 보관용 회의록/보고서용 정리 회의록 후속 산출물 개념 정리, 긴 회의 안정성 보강으로 잡는다.
@@ -119,6 +150,7 @@
   - 2026-07-27 completed: transcript-first is the default. Deferred diarization can use preserved audio later without invalidating the STT resume checkpoint.
   - 2026-07-27 completed: summary, topic, participant, and report generation now share one Ollama gateway and the same structured recovery contract for missing runtime/model, connection failure, timeout, invalid response, cancellation, and internal failure.
   - 2026-07-27 completed: explicit generation failures no longer return as successful summaries, completed results stay available after a failed regeneration, and model/storage errors no longer expose raw paths or CLI output in the UI.
+  - 2026-07-29 completed: new installs and missing-field recovery now keep transcript-first analysis and `gemma4:e2b` aligned; update packages continue to preserve explicit existing settings. Missing local model paths use `model_missing` instead of the Ollama runtime recovery path.
   - Remaining P2: define TTL/invalidation for status checks and separate automated versus manual scenarios for pull, stop, restart, and offline PCs.
   - 2026-07-27 completed: repaired primary/detail tab Playwright selectors and added runtime-error retry plus persisted audio-missing regression coverage.
   - 2026-07-27 completed: audited backend progress events so user-facing messages stay safe while raw exception details remain in logs.

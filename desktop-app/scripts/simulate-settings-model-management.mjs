@@ -87,15 +87,19 @@ const stopServer = async (child) => {
   if (!child || child.exitCode !== null) return;
 
   if (process.platform === 'win32') {
-    await new Promise(resolve => {
-      const killer = spawn(
-        process.env.ComSpec ?? 'cmd.exe',
-        ['/d', '/s', '/c', `taskkill /pid ${child.pid} /t /f`],
-        { stdio: 'ignore', windowsHide: true },
-      );
-      killer.on('exit', resolve);
-      killer.on('error', resolve);
-    });
+    await Promise.race([
+      new Promise(resolve => {
+        const killer = spawn(
+          process.env.ComSpec ?? 'cmd.exe',
+          ['/d', '/s', '/c', `taskkill /pid ${child.pid} /t /f`],
+          { stdio: 'ignore', windowsHide: true },
+        );
+        killer.on('exit', resolve);
+        killer.on('error', resolve);
+      }),
+      sleep(5000),
+    ]);
+    if (child.exitCode === null) child.kill();
     return;
   }
 
@@ -669,9 +673,9 @@ const run = async () => {
     await installRoutes(page, state);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    const settingsButton = page.getByRole('button', { name: '앱 설정' });
+    const settingsButton = page.getByRole('complementary').getByRole('button', { name: '설정' });
     await settingsButton.click();
-    const settingsDialog = page.getByRole('dialog', { name: '앱 설정' });
+    const settingsDialog = page.getByRole('dialog', { name: '설정' });
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.querySelector('[role="dialog"]')?.contains(document.activeElement));
     let focusState = await getSettingsFocusState(page);
@@ -685,10 +689,27 @@ const run = async () => {
     await page.keyboard.press('Shift+Tab');
     focusState = await getSettingsFocusState(page);
     assert.equal(focusState.activeIndex, focusState.count - 1, 'Shift+Tab on the first control should wrap to the last dialog control');
+    await page.setViewportSize({ width: 1024, height: 720 });
+    const compactViewportMetrics = await page.evaluate(() => ({
+      overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      closeVisible: Boolean(document.querySelector('[aria-label="설정 닫기"]')?.getBoundingClientRect().width),
+    }));
+    assert.equal(compactViewportMetrics.overflowX, 0, 'settings should not overflow horizontally at 1024x720');
+    assert.equal(compactViewportMetrics.closeVisible, true, 'settings close button should remain visible at 1024x720');
+    await page.setViewportSize({ width: 1360, height: 900 });
     await page.getByRole('button', { name: '문의 연락처 보기' }).click();
     await page.getByText('문의사항은 아래 이메일로 연락주세요.').waitFor({ state: 'visible', timeout: 10000 });
     await page.getByText('ecomarine@korea.kr').waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByRole('button', { name: '문의 연락처 닫기' }).click();
+    await page.keyboard.press('Escape');
+    await page.getByText('문의사항은 아래 이메일로 연락주세요.').waitFor({ state: 'hidden', timeout: 10000 });
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    const generalTab = page.getByRole('tab', { name: '일반' });
+    const modelTab = page.getByRole('tab', { name: '모델' });
+    await generalTab.focus();
+    await page.keyboard.press('ArrowRight');
+    assert.equal(await modelTab.getAttribute('aria-selected'), 'true', 'ArrowRight should select the next settings tab');
+    await page.keyboard.press('ArrowLeft');
+    assert.equal(await generalTab.getAttribute('aria-selected'), 'true', 'ArrowLeft should select the previous settings tab');
     await page.getByRole('tab', { name: '모델' }).click();
     const modelsPanel = page.locator('#settings-models-panel');
     await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
@@ -905,7 +926,10 @@ const run = async () => {
     }
     throw error;
   } finally {
-    await browser?.close().catch(() => undefined);
+    await Promise.race([
+      browser?.close().catch(() => undefined) ?? Promise.resolve(),
+      sleep(5000),
+    ]);
     await stopServer(server);
   }
 };

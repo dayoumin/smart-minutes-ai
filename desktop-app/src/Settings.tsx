@@ -1243,6 +1243,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
 
             if (event.key !== 'Escape') return;
+            if (supportContactVisible) {
+                setSupportContactVisible(false);
+                return;
+            }
             if (openSummaryModelMenu) {
                 setOpenSummaryModelMenu('');
                 return;
@@ -1257,7 +1261,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             document.body.style.overflow = previousOverflow;
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [onClose, openSummaryModelMenu]);
+    }, [onClose, openSummaryModelMenu, supportContactVisible]);
 
     const saveGeneralSettings = useCallback(async () => {
         if (!settings) {
@@ -1451,6 +1455,20 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         { key: 'general', label: '일반' },
         { key: 'models', label: '모델' },
     ];
+    const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, tabIndex: number) => {
+        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
+        event.preventDefault();
+        const nextIndex = event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+                ? tabs.length - 1
+                : event.key === 'ArrowLeft'
+                    ? (tabIndex - 1 + tabs.length) % tabs.length
+                    : (tabIndex + 1) % tabs.length;
+        const nextTab = tabs[nextIndex];
+        setActiveTab(nextTab.key);
+        window.requestAnimationFrame(() => document.getElementById(`settings-${nextTab.key}-tab`)?.focus());
+    };
     const canRestartBackend = isTauriRuntime() && !analysisActive && !isLoading && !isSaving && !isRestartingBackend;
     const gpuUsable = Boolean(models?.stt_device_status?.gpu_usable);
     const gpuDetected = Boolean(models?.stt_device_status?.gpu_detected);
@@ -1552,13 +1570,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="settings-dialog-title"
-                className="settings-dialog relative flex w-full max-w-3xl flex-col overflow-hidden border border-border bg-background"
+                className="settings-dialog relative flex w-full max-w-4xl flex-col overflow-hidden border border-border bg-background"
                 ref={dialogRef}
                 tabIndex={-1}
             >
                 <div className="flex items-center justify-between border-b border-border px-5 py-4">
                     <div>
-                        <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">앱 설정</h2>
+                        <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">설정</h2>
                     </div>
                     <div className="relative flex items-center gap-2">
                         <div className="relative">
@@ -1611,8 +1629,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     </div>
                 </div>
 
-                <div className="tab-list px-5" role="tablist" aria-label="앱 설정">
-                    {tabs.map(tab => (
+                <div className="tab-list px-5" role="tablist" aria-label="설정">
+                    {tabs.map((tab, tabIndex) => (
                         <button
                             key={tab.key}
                             type="button"
@@ -1620,7 +1638,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             role="tab"
                             aria-selected={activeTab === tab.key}
                             aria-controls={`settings-${tab.key}-panel`}
+                            tabIndex={activeTab === tab.key ? 0 : -1}
                             onClick={() => setActiveTab(tab.key)}
+                            onKeyDown={event => handleTabKeyDown(event, tabIndex)}
                             className={`tab-button py-3 ${activeTab === tab.key ? 'tab-button-active' : ''}`}
                         >
                             {tab.label}
@@ -1628,9 +1648,20 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     ))}
                 </div>
 
-                {(showGlobalErrorMessage || message) && (
-                    <div className="absolute right-5 top-[8.5rem] z-20 flex w-[calc(100%-2.5rem)] max-w-md flex-col gap-2">
-                        {showGlobalErrorMessage && (
+                {message && (
+                    <div className="absolute right-5 top-[8.5rem] z-20 w-[calc(100%-2.5rem)] max-w-md">
+                        <StatusBanner
+                            tone="neutral"
+                            action={renderDismissButton('설정 안내 닫기', () => setMessage(''))}
+                        >
+                            {message}
+                        </StatusBanner>
+                    </div>
+                )}
+
+                <div className="settings-content custom-scrollbar">
+                    {showGlobalErrorMessage && (
+                        <div className="settings-page sticky top-0 z-10 mb-4">
                             <StatusBanner
                                 tone="error"
                                 heading={errorHeading}
@@ -1638,19 +1669,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             >
                                 {errorMessage}
                             </StatusBanner>
-                        )}
-                        {message && (
-                            <StatusBanner
-                                tone="neutral"
-                                action={renderDismissButton('설정 안내 닫기', () => setMessage(''))}
-                            >
-                                {message}
-                            </StatusBanner>
-                        )}
-                    </div>
-                )}
-
-                <div className="settings-content custom-scrollbar">
+                        </div>
+                    )}
                     {activeTab === 'general' && (
                         <section id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab" className="settings-page">
                             <div className="settings-page-heading">
@@ -1669,7 +1689,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     <label className="settings-row">
                                         <span className="settings-row-copy">
                                             <span className="settings-row-title">다운로드 형식</span>
-                                            <span className="settings-row-description">회의 요약을 받을 때 사용할 기본 형식입니다.</span>
+                                            <span className="settings-row-description">회의록을 저장할 때 기본으로 사용할 형식입니다.</span>
                                         </span>
                                         <select
                                             value={downloadFormat}

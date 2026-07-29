@@ -34,6 +34,7 @@ from config_normalization import (
     get_summary_candidate_models,
     get_summary_model_options,
     get_summary_option_models,
+    is_local_summary_model_path,
     normalize_summary_model_name,
     normalize_app_config,
     remove_summary_user_model,
@@ -2808,7 +2809,7 @@ def _resolve_summary_model(config: dict, *, start_ollama: bool = True) -> str:
         llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
     if llm_model and os.path.exists(llm_model):
         return llm_model
-    if llm_model and llm_model.endswith((".gguf", ".bin")):
+    if is_local_summary_model_path(llm_model):
         return llm_model
     for candidate in get_summary_candidate_models(config):
         if candidate and (ollama_model_exists(candidate) if start_ollama else ollama_model_exists(candidate, start_server=False)):
@@ -2835,11 +2836,7 @@ def _summary_model_readiness_from_status(config: dict, status: dict, ollama_conn
         or summary_config.get("model")
         or DEFAULT_SUMMARY_MODEL
     ).strip()
-    local_model = bool(
-        configured_model.startswith((".", ".."))
-        or os.path.isabs(configured_model)
-        or configured_model.endswith((".gguf", ".bin"))
-    )
+    local_model = is_local_summary_model_path(configured_model)
     connection_status = str(ollama_connection.get("status") or "")
     if local_model or connection_status in {"managed_ready", "system_ready"}:
         reason = "model_missing"
@@ -2881,7 +2878,7 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
     if os.path.exists(model_name_or_path):
         return {"ready": True, "status": "ready", "message": ""}
 
-    if model_name_or_path.endswith((".gguf", ".bin")):
+    if is_local_summary_model_path(model_name_or_path):
         return {
             "ready": False,
             "status": "skipped",

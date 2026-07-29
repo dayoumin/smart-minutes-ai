@@ -103,4 +103,22 @@ assert.equal(structuredTimeout.retryable, true);
 assert.equal(structuredTimeout.userAction, 'retry');
 assert.equal(structuredTimeout.generationKind, 'meeting_report');
 
+const structuredMissingModel = parseApiErrorBody(JSON.stringify({
+  detail: {
+    code: 'model_missing',
+    message: 'raw local model path',
+    retryable: false,
+    user_action: 'open_settings',
+    generation_kind: 'topic_sections',
+  },
+}), 'fallback');
+assert.equal(
+  structuredMissingModel.message,
+  '사용할 요약 모델을 찾지 못했습니다. 설정에서 모델을 준비한 뒤 다시 시도해 주세요.',
+);
+assert.equal(structuredMissingModel.detail, 'model_missing');
+assert.equal(structuredMissingModel.retryable, false);
+assert.equal(structuredMissingModel.userAction, 'open_settings');
+assert.equal(structuredMissingModel.generationKind, 'topic_sections');
+
 console.log('ok - generation flow simulation');

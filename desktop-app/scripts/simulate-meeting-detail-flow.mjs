@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
 import net from 'node:net';
+import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
@@ -8,6 +10,8 @@ import { chromium } from 'playwright';
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
+const designCaptureDir = process.env.MEETING_DETAIL_CAPTURE_DIR;
+const designCaptureOnly = process.env.MEETING_DETAIL_CAPTURE_ONLY === '1';
 const meetingId = 'codex-detail-flow-simulation';
 const jobId = 'codex-detail-flow-job';
 const skippedMeetingId = 'codex-detail-flow-summary-skipped';
@@ -172,12 +176,15 @@ const startServer = async () => {
 
 const seedMeeting = async (page) => {
   await page.evaluate(async ({ meetingId, jobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -252,12 +259,15 @@ const seedMeeting = async (page) => {
 
 const seedSkippedSummaryMeeting = async (page) => {
   await page.evaluate(async ({ skippedMeetingId, skippedJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -304,12 +314,15 @@ const seedSkippedSummaryMeeting = async (page) => {
 
 const seedExistingContentModelMissingMeeting = async (page) => {
   await page.evaluate(async ({ existingContentModelMissingMeetingId, existingContentModelMissingJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -373,12 +386,15 @@ const seedExistingContentModelMissingMeeting = async (page) => {
 
 const seedOtherMeeting = async (page) => {
   await page.evaluate(async ({ otherMeetingId, otherJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -425,12 +441,15 @@ const seedOtherMeeting = async (page) => {
 
 const seedDiarizationCancelMeeting = async (page) => {
   await page.evaluate(async ({ cancelMeetingId, cancelJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -477,12 +496,15 @@ const seedDiarizationCancelMeeting = async (page) => {
 
 const seedAudioMissingDiarizationMeeting = async (page) => {
   await page.evaluate(async ({ audioMissingMeetingId, audioMissingJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -529,12 +551,15 @@ const seedAudioMissingDiarizationMeeting = async (page) => {
 
 const seedUnlabeledAudioMissingMeeting = async (page) => {
   await page.evaluate(async ({ unlabeledAudioMissingMeetingId, unlabeledAudioMissingJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -581,12 +606,15 @@ const seedUnlabeledAudioMissingMeeting = async (page) => {
 
 const seedLegacyParticipantMeeting = async (page) => {
   await page.evaluate(async ({ legacyParticipantMeetingId, legacyParticipantJobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -643,7 +671,13 @@ const seedLegacyParticipantMeeting = async (page) => {
 
 const seedSidebarMenuMeetings = async (page) => {
   await page.evaluate(async () => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const folder = {
+      id: 'sidebar-review-folder',
+      name: '통합 검수 폴더',
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z',
+    };
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onsuccess = () => resolve(request.result);
       request.onerror = () => reject(request.error);
@@ -653,6 +687,13 @@ const seedSidebarMenuMeetings = async (page) => {
       { id: 'sidebar-duplicate-later', date: '2026-05-08 00:09', title: '반복 주간회의', pinned: false },
       { id: 'sidebar-duplicate-earlier', date: '2026-05-08 00:08', title: '반복 주간회의', pinned: false },
       { id: 'sidebar-recent-filler', date: '2026-05-08 00:07', title: '최근 회의 기록', pinned: false },
+      {
+        id: 'sidebar-relative-time',
+        date: '2026-05-08 00:06',
+        title: '경과 시간 검수 회의',
+        pinned: false,
+        createdAt: new Date(Date.now() - (2 * 86_400_000)).toISOString(),
+      },
     ].map(record => ({
       ...record,
       summary: '',
@@ -667,9 +708,11 @@ const seedSidebarMenuMeetings = async (page) => {
       segments: [],
     }));
     await new Promise((resolve, reject) => {
-      const tx = db.transaction('meetings', 'readwrite');
-      const store = tx.objectStore('meetings');
-      records.forEach(record => store.put(record));
+      const tx = db.transaction(['meetings', 'folders'], 'readwrite');
+      const meetingStore = tx.objectStore('meetings');
+      const folderStore = tx.objectStore('folders');
+      records.forEach(record => meetingStore.put(record));
+      folderStore.put(folder);
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
@@ -1027,11 +1070,14 @@ const run = async () => {
       await retryMeetingLoadButton.waitFor({ timeout: 10000 });
       await loadErrorPage.evaluate(async ({ recoveryMeetingId }) => {
         window.__meetingDbOpenShouldFail = false;
-        const request = indexedDB.open('MeetingHistoryDB', 1);
+        const request = indexedDB.open('MeetingHistoryDB', 2);
         const db = await new Promise((resolve, reject) => {
           request.onupgradeneeded = () => {
             if (!request.result.objectStoreNames.contains('meetings')) {
               request.result.createObjectStore('meetings', { keyPath: 'id' });
+            }
+            if (!request.result.objectStoreNames.contains('folders')) {
+              request.result.createObjectStore('folders', { keyPath: 'id' });
             }
           };
           request.onsuccess = () => resolve(request.result);
@@ -1105,11 +1151,177 @@ const run = async () => {
     await seedSidebarMenuMeetings(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
 
+    assert.equal(
+      await page.locator('.sidebar-folder-toolbar [data-sidebar-folder-menu-trigger]').count(),
+      0,
+      'folder create action should not render a management menu',
+    );
+    await page.getByRole('button', { name: '폴더 만들기', exact: true }).click();
+    await page.getByLabel('새 폴더 이름').fill('UI 검수 폴더');
+    await page.getByRole('button', { name: '만들기', exact: true }).click();
+    const createdFolderButton = page.getByRole('button', { name: 'UI 검수 폴더', exact: true });
+    await createdFolderButton.waitFor({ state: 'visible' });
+    let folderMenuName = 'UI 검수 폴더';
+    const getFolderMenuTrigger = () => page.getByRole('button', { name: `${folderMenuName} 폴더 메뉴`, exact: true });
+    const folderMenu = page.locator('[data-sidebar-folder-menu]');
+    const openFolderMenu = async () => {
+      const trigger = getFolderMenuTrigger();
+      await trigger.focus();
+      await trigger.press('Enter');
+      await folderMenu.waitFor({ state: 'visible' });
+    };
+    const folderOrderBeforeMove = await page.locator('.sidebar-folder-list .sidebar-folder-button span').allTextContents();
+    const createdFolderIndexBeforeMove = folderOrderBeforeMove.indexOf('UI 검수 폴더');
+    const previousFolderName = folderOrderBeforeMove[createdFolderIndexBeforeMove - 1];
+    assert.ok(createdFolderIndexBeforeMove > 0 && previousFolderName);
+    await openFolderMenu();
+    assert.equal(
+      await folderMenu.getByRole('menuitem', { name: '아래로 이동', exact: true }).isDisabled(),
+      true,
+      'last folder in the group should not move further down',
+    );
+    const moveFolderUp = folderMenu.getByRole('menuitem', { name: '위로 이동', exact: true });
+    assert.equal(await moveFolderUp.isDisabled(), false);
+    await moveFolderUp.click();
+    await folderMenu.waitFor({ state: 'detached' });
+    await page.waitForFunction(({ movedName, targetName }) => {
+      const names = Array.from(document.querySelectorAll('.sidebar-folder-list .sidebar-folder-button span'))
+        .map(element => element.textContent?.trim());
+      return names.indexOf(movedName) === names.indexOf(targetName) - 1;
+    }, { movedName: 'UI 검수 폴더', targetName: previousFolderName });
+    const folderOrderAfterMove = await page.locator('.sidebar-folder-list .sidebar-folder-button span').allTextContents();
+    assert.equal(folderOrderAfterMove.indexOf('UI 검수 폴더'), createdFolderIndexBeforeMove - 1);
+    assert.equal(folderOrderAfterMove[createdFolderIndexBeforeMove], previousFolderName);
+
+    const previousFolderButton = page.getByRole('button', { name: previousFolderName, exact: true });
+    await createdFolderButton.dragTo(previousFolderButton, {
+      targetPosition: { x: 40, y: 28 },
+    });
+    await page.waitForFunction(({ movedName, targetName }) => {
+      const names = Array.from(document.querySelectorAll('.sidebar-folder-list .sidebar-folder-button span'))
+        .map(element => element.textContent?.trim());
+      return names.indexOf(movedName) === names.indexOf(targetName) + 1;
+    }, { movedName: 'UI 검수 폴더', targetName: previousFolderName });
+    assert.equal(await page.evaluate(async ({ previousFolderName }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const folders = await new Promise((resolve, reject) => {
+        const tx = db.transaction('folders', 'readonly');
+        const getRequest = tx.objectStore('folders').getAll();
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      const movedFolder = folders.find(folder => folder.name === 'UI 검수 폴더');
+      const previousFolder = folders.find(folder => folder.name === previousFolderName);
+      return Number.isFinite(movedFolder?.sortOrder)
+        && Number.isFinite(previousFolder?.sortOrder)
+        && movedFolder.sortOrder > previousFolder.sortOrder;
+    }, { previousFolderName }), true, 'mouse-dragged folder order should persist');
+    await openFolderMenu();
+    await folderMenu.getByRole('menuitem', { name: '상단 고정', exact: true }).click();
+    await folderMenu.waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const folder = await new Promise((resolve, reject) => {
+        const tx = db.transaction('folders', 'readonly');
+        const getRequest = tx.objectStore('folders').get(
+          Array.from(document.querySelectorAll('[data-sidebar-folder-menu-trigger]'))
+            .find(trigger => trigger.getAttribute('aria-label') === 'UI 검수 폴더 폴더 메뉴')
+            ?.getAttribute('aria-controls')
+            ?.replace('sidebar-folder-menu-', ''),
+        );
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return folder?.pinned === true;
+    }), true, 'folder pin state should persist');
+    await openFolderMenu();
+    const renameFolderDialog = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'prompt');
+          await dialog.accept('UI 검수 폴더 변경');
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await folderMenu.getByRole('menuitem', { name: '이름 변경', exact: true }).click();
+    await renameFolderDialog;
+    folderMenuName = 'UI 검수 폴더 변경';
+    const renamedFolderButton = page.getByRole('button', { name: 'UI 검수 폴더 변경', exact: true });
+    await renamedFolderButton.waitFor({ state: 'visible' });
+    await openFolderMenu();
+    const deleteFolderDialog = new Promise((resolve, reject) => {
+      page.once('dialog', async dialog => {
+        try {
+          assert.equal(dialog.type(), 'confirm');
+          await dialog.accept();
+          resolve();
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    await folderMenu.getByRole('menuitem', { name: '삭제', exact: true }).click();
+    await deleteFolderDialog;
+    await renamedFolderButton.waitFor({ state: 'detached' });
+
+    const relativeTimeRecordButton = page.getByTitle('경과 시간 검수 회의', { exact: true });
+    const relativeTimeRecordRow = relativeTimeRecordButton.locator('xpath=..');
+    const relativeTimeAge = relativeTimeRecordRow.locator('[data-sidebar-record-age]');
+    await relativeTimeAge.getByText('2일', { exact: true }).waitFor({ timeout: 10000 });
+    await relativeTimeRecordRow.hover();
+    await page.waitForFunction(
+      element => getComputedStyle(element).opacity === '0',
+      await relativeTimeAge.elementHandle(),
+    );
+    await page.waitForFunction(
+      element => getComputedStyle(element).opacity === '1',
+      await relativeTimeRecordRow.locator('[data-sidebar-record-menu-trigger]').elementHandle(),
+    );
+    await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        tx.objectStore('meetings').delete('sidebar-relative-time');
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      window.dispatchEvent(new Event('meetings:updated'));
+    });
+    await relativeTimeRecordButton.waitFor({ state: 'detached' });
+
     const sidebarRecordMenuTriggers = page.locator('[data-sidebar-record-menu-trigger]');
     await sidebarRecordMenuTriggers.first().waitFor({ timeout: 10000 });
+    await page.getByRole('main').hover();
+    await page.waitForFunction(
+      element => getComputedStyle(element).opacity === '0',
+      await sidebarRecordMenuTriggers.first().elementHandle(),
+    );
+    await sidebarRecordMenuTriggers.first().locator('xpath=..').hover();
+    await page.waitForFunction(
+      element => getComputedStyle(element).opacity === '1',
+      await sidebarRecordMenuTriggers.first().elementHandle(),
+    );
     const sidebarRecordMenuLabels = await sidebarRecordMenuTriggers.evaluateAll(triggers => triggers.map(trigger => ({
       label: trigger.getAttribute('aria-label') ?? '',
-      title: trigger.parentElement?.querySelector('button[title]')?.getAttribute('title') ?? '',
+      title: trigger.closest('.group')?.querySelector('button[title]:not([data-sidebar-record-menu-trigger])')?.getAttribute('title') ?? '',
     })));
     assert.equal(sidebarRecordMenuLabels.every(({ label, title }) => Boolean(title) && label.startsWith(title)), true);
     assert.equal(new Set(sidebarRecordMenuLabels.map(({ label }) => label)).size, sidebarRecordMenuLabels.length);
@@ -1134,6 +1346,60 @@ const run = async () => {
       return sidebarRecordMenu.getByRole('menuitem');
     };
 
+    await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        const store = tx.objectStore('meetings');
+        const getRequest = store.get('sidebar-recent-filler');
+        getRequest.onsuccess = () => {
+          store.put({
+            ...getRequest.result,
+            summary: '백그라운드에서 갱신된 최신 요약',
+            updatedAt: new Date().toISOString(),
+          });
+        };
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+    });
+    const pinPreservationTrigger = page.getByRole('button', {
+      name: '최근 회의 기록, 2026-05-08 00:07 회의록 메뉴',
+      exact: true,
+    });
+    const openPinPreservationMenu = async () => {
+      await pinPreservationTrigger.focus();
+      await pinPreservationTrigger.press('Enter');
+      await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
+      return sidebarRecordMenu.getByRole('menuitem');
+    };
+    let pinPreservationItems = await openPinPreservationMenu();
+    await pinPreservationItems.first().click();
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    assert.equal(await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get('sidebar-recent-filler');
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return record?.summary === '백그라운드에서 갱신된 최신 요약' && record?.pinned === true;
+    }), true, 'pinning should patch only pinned and preserve the latest meeting data');
+    pinPreservationItems = await openPinPreservationMenu();
+    await pinPreservationItems.first().click();
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+
     let sidebarMenuItems = await openSidebarRecordMenu();
     assert.equal(await sidebarMenuItems.first().evaluate(element => document.activeElement === element), true);
     await page.keyboard.press('ArrowDown');
@@ -1145,6 +1411,42 @@ const run = async () => {
     await page.keyboard.press('Escape');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     await waitForSidebarMenuTriggerFocus();
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    await page.keyboard.press('Tab');
+    assert.equal(await sidebarMenuItems.nth(1).evaluate(element => document.activeElement === element), true);
+    await page.keyboard.press('Tab');
+    const sidebarFolderSelect = sidebarRecordMenu.getByLabel('오래된 고정 회의 폴더');
+    assert.equal(await sidebarFolderSelect.evaluate(element => document.activeElement === element), true);
+    await sidebarFolderSelect.selectOption('sidebar-review-folder');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await waitForSidebarMenuTriggerFocus();
+    assert.equal(await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const record = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get('sidebar-old-pinned');
+        getRequest.onsuccess = () => resolve(getRequest.result);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return record?.folderId === 'sidebar-review-folder';
+    }), true, 'keyboard folder move should persist the selected folder');
+    const reviewFolderButton = page.getByRole('button', { name: '통합 검수 폴더', exact: true });
+    await reviewFolderButton.click();
+    await getSidebarMenuTrigger().waitFor({ state: 'visible' });
+    sidebarMenuItems = await openSidebarRecordMenu();
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await sidebarRecordMenu.getByLabel('오래된 고정 회의 폴더').selectOption('');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    const createMeetingButton = page.getByRole('button', { name: '새 기록', exact: true });
+    await page.waitForFunction(element => document.activeElement === element, await createMeetingButton.elementHandle());
+    await reviewFolderButton.click();
 
     sidebarMenuItems = await openSidebarRecordMenu();
     const renameDialogDismissed = new Promise((resolve, reject) => {
@@ -1190,16 +1492,87 @@ const run = async () => {
 
     sidebarMenuItems = await openSidebarRecordMenu();
     await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
+    await page.keyboard.press('Tab');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     assert.equal(await page.evaluate(() => {
       const activeElement = document.activeElement;
       return activeElement instanceof HTMLElement && activeElement !== document.body && !activeElement.closest('[data-sidebar-record-menu]');
     }), true);
 
+    await page.evaluate(async () => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('folders', 'readwrite');
+        const store = tx.objectStore('folders');
+        Array.from({ length: 18 }, (_, index) => ({
+          id: `sidebar-overflow-folder-${index}`,
+          name: `스크롤 검수 폴더 ${String(index + 1).padStart(2, '0')}`,
+          createdAt: '2026-05-08T00:00:00.000Z',
+          updatedAt: '2026-05-08T00:00:00.000Z',
+          sortOrder: 100 + index,
+        })).forEach(folder => store.put(folder));
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      window.dispatchEvent(new Event('meetings:updated'));
+    });
+    await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).waitFor({ state: 'attached' });
     await page.setViewportSize({ width: 800, height: 720 });
+    const sidebarContentScroll = page.locator('.sidebar-content-scroll');
+    assert.equal(await sidebarContentScroll.evaluate(element => element.scrollHeight > element.clientHeight), true);
+    const lastOverflowFolderMenuTrigger = page.getByRole('button', {
+      name: '스크롤 검수 폴더 18 폴더 메뉴',
+      exact: true,
+    });
+    await sidebarContentScroll.evaluate(element => {
+      element.scrollTop = element.scrollHeight;
+    });
+    await lastOverflowFolderMenuTrigger.focus();
+    await lastOverflowFolderMenuTrigger.press('Enter');
+    await folderMenu.waitFor({ state: 'visible' });
+    assert.equal(await folderMenu.getByRole('menuitem').last().isVisible(), true);
+    const lastFolderMenuBounds = await page.evaluate(() => {
+      const menu = document.querySelector('[data-sidebar-folder-menu]')?.getBoundingClientRect();
+      return menu
+        ? {
+            inside: menu.top >= 0
+              && menu.left >= 0
+              && menu.right <= window.innerWidth
+              && menu.bottom <= window.innerHeight,
+            menuTop: menu.top,
+            menuBottom: menu.bottom,
+          }
+        : { inside: false };
+    });
+    assert.equal(
+      lastFolderMenuBounds.inside,
+      true,
+      `last folder menu should stay inside the viewport: ${JSON.stringify(lastFolderMenuBounds)}`,
+    );
+    await page.keyboard.press('Escape');
+    await folderMenu.waitFor({ state: 'detached' });
+    await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).click();
+    await page.waitForFunction(() => {
+      const scroll = document.querySelector('.sidebar-content-scroll')?.getBoundingClientRect();
+      const emptyState = Array.from(document.querySelectorAll('[data-sidebar-records] div'))
+        .find(element => element.textContent?.trim() === '이 폴더에는 회의록이 없습니다.')
+        ?.getBoundingClientRect();
+      return Boolean(scroll && emptyState && emptyState.top >= scroll.top && emptyState.bottom <= scroll.bottom);
+    });
+    await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).click();
+    await page.waitForFunction(() => document.querySelectorAll('[data-sidebar-record-menu-trigger]').length > 0);
+
     const narrowSidebarMenuTrigger = page.locator('[data-sidebar-record-menu-trigger]').last();
     await narrowSidebarMenuTrigger.scrollIntoViewIfNeeded();
-    await narrowSidebarMenuTrigger.click();
+    await narrowSidebarMenuTrigger.focus();
+    await narrowSidebarMenuTrigger.press('Enter');
     await sidebarRecordMenu.waitFor({ state: 'visible' });
     const narrowMenuBounds = await sidebarRecordMenu.evaluate(element => {
       const bounds = element.getBoundingClientRect();
@@ -1212,15 +1585,19 @@ const run = async () => {
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     await page.setViewportSize({ width: 1200, height: 800 });
     await page.evaluate(async () => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
       });
       await new Promise((resolve, reject) => {
-        const tx = db.transaction('meetings', 'readwrite');
+        const tx = db.transaction(['meetings', 'folders'], 'readwrite');
         const store = tx.objectStore('meetings');
         ['sidebar-old-pinned', 'sidebar-duplicate-later', 'sidebar-duplicate-earlier', 'sidebar-recent-filler'].forEach(id => store.delete(id));
+        const folderStore = tx.objectStore('folders');
+        folderStore.delete('sidebar-review-folder');
+        Array.from({ length: 18 }, (_, index) => `sidebar-overflow-folder-${index}`)
+          .forEach(id => folderStore.delete(id));
         tx.oncomplete = resolve;
         tx.onerror = () => reject(tx.error);
       });
@@ -1232,7 +1609,7 @@ const run = async () => {
 
     const cacheMissMeetingId = 'codex-detail-flow-cache-miss-meeting';
     await page.evaluate(async ({ cacheMissMeetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -1284,8 +1661,27 @@ const run = async () => {
       }));
     }, skippedMeetingId);
     await page.getByRole('heading', { name: '요약 AI 미준비 회의록' }).waitFor({ timeout: 10000 });
+    if (designCaptureDir) {
+      await mkdir(designCaptureDir, { recursive: true });
+      for (const width of [1024, 1280, 1440, 1920]) {
+        await page.setViewportSize({ width, height: 900 });
+        const horizontalOverflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        assert.equal(horizontalOverflow, 0, `${width}px viewport should not overflow horizontally`);
+        await page.screenshot({
+          path: resolve(designCaptureDir, `meeting-detail-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.setViewportSize({ width: 1200, height: 800 });
+      if (designCaptureOnly) {
+        console.log(`ok - meeting detail design capture: ${designCaptureDir}`);
+        return;
+      }
+    }
     await page.evaluate(async ({ cacheMissMeetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -1385,7 +1781,7 @@ const run = async () => {
     releaseCancelDiarizationResponse();
     assert.deepEqual(cancelDiarizationStopBodies, [{ action: 'cancel' }]);
     const cancelledRecord = await page.evaluate(async ({ cancelMeetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -1405,7 +1801,7 @@ const run = async () => {
     await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).isDisabled(), false);
     await page.evaluate(async ({ cancelMeetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -1438,6 +1834,29 @@ const run = async () => {
 
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
+    const sourceFileValue = page.locator('.meeting-meta-value-source');
+    assert.equal(await sourceFileValue.getAttribute('title'), 'simulation.mp4');
+    const sourceFileStyle = await sourceFileValue.evaluate(element => ({
+      overflow: getComputedStyle(element).overflow,
+      textOverflow: getComputedStyle(element).textOverflow,
+      whiteSpace: getComputedStyle(element).whiteSpace,
+    }));
+    assert.deepEqual(sourceFileStyle, {
+      overflow: 'hidden',
+      textOverflow: 'ellipsis',
+      whiteSpace: 'nowrap',
+    });
+    assert.equal(
+      await page.locator('#meeting-detail-panel-script').getByRole('heading', { name: '대화록', exact: true }).count(),
+      0,
+    );
+    await page.getByRole('button', { name: '참석자 이름 변경', exact: true }).waitFor({ state: 'visible' });
+    const reportTab = page.locator('.tab-list').getByRole('tab', { name: '보고서' });
+    await reportTab.click();
+    assert.equal(
+      await page.locator('#meeting-detail-panel-report').getByRole('heading', { name: '보고서', exact: true }).count(),
+      0,
+    );
     await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
 
     const diarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
@@ -1460,7 +1879,7 @@ const run = async () => {
     releaseDiarizationResponse();
     assert.deepEqual(diarizationStopBodies, [{ action: 'defer' }]);
     const deferredRecord = await page.evaluate(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -1516,7 +1935,7 @@ const run = async () => {
     await topicButton.click();
     await page.getByText('정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
     const preservedTopicRecord = await page.evaluate(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -1778,7 +2197,8 @@ const run = async () => {
       name: '다른 회의록, 2026-05-08 00:01 회의록 메뉴',
       exact: true,
     });
-    await otherMeetingMenuTrigger.click();
+    await otherMeetingMenuTrigger.focus();
+    await otherMeetingMenuTrigger.press('Enter');
     await page.getByRole('menuitem', { name: '상단 고정', exact: true }).click();
     await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '다른 회의록, 2026-05-08 00:01 회의록 메뉴');
@@ -1876,7 +2296,8 @@ const run = async () => {
       name: '기본 별칭 참석자 회의록, 2026-05-08 00:02 회의록 메뉴',
       exact: true,
     });
-    await legacyDeleteMenuTrigger.click();
+    await legacyDeleteMenuTrigger.focus();
+    await legacyDeleteMenuTrigger.press('Enter');
     const selectedDeleteDialog = new Promise((resolve, reject) => {
       page.once('dialog', async dialog => {
         try {

@@ -239,12 +239,15 @@ const seedMeeting = async (page) => {
       },
     ]));
 
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);
@@ -324,7 +327,7 @@ const seedMeeting = async (page) => {
 };
 
 const readMeeting = async (page) => page.evaluate(async ({ meetingId }) => {
-  const request = indexedDB.open('MeetingHistoryDB', 1);
+  const request = indexedDB.open('MeetingHistoryDB', 2);
   const db = await new Promise((resolve, reject) => {
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error);
@@ -380,7 +383,7 @@ const run = async () => {
     await reportButton.click();
     await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -408,7 +411,7 @@ const run = async () => {
     const reportSelect = page.getByLabel('보고 양식 선택', { exact: true });
     await reportSelect.selectOption('custom-report-edge');
     await page.waitForFunction(async ({ meetingId }) => {
-      const request = indexedDB.open('MeetingHistoryDB', 1);
+      const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
         request.onerror = () => reject(request.error);
@@ -430,6 +433,13 @@ const run = async () => {
 
     await reportButton.click();
     await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(
+      await page.getByText(
+        '보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.',
+        { exact: true },
+      ).count(),
+      0,
+    );
     record = await readMeeting(page);
     assert.equal(record.generationStatus.meetingReport, 'failed');
     assert.equal(record.selectedReportTemplateId, 'custom-report-edge');

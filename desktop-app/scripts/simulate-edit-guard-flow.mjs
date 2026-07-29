@@ -96,12 +96,15 @@ const startServer = async () => {
 
 const seedMeeting = async (page) => {
   await page.evaluate(async ({ meetingId, jobId }) => {
-    const request = indexedDB.open('MeetingHistoryDB', 1);
+    const request = indexedDB.open('MeetingHistoryDB', 2);
     const db = await new Promise((resolve, reject) => {
       request.onupgradeneeded = () => {
         const db = request.result;
         if (!db.objectStoreNames.contains('meetings')) {
           db.createObjectStore('meetings', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('folders')) {
+          db.createObjectStore('folders', { keyPath: 'id' });
         }
       };
       request.onsuccess = () => resolve(request.result);

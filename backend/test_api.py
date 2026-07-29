@@ -767,6 +767,23 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("system_profile", models_response.json())
         self.assertIn("summary_model_recommendation", models_response.json())
 
+    def test_repository_default_config_matches_canonical_generation_defaults(self) -> None:
+        repository_config = json.loads((Path(BACKEND_DIR) / "config.json").read_text(encoding="utf-8"))
+        normalized_defaults = main.normalize_app_config({})
+
+        self.assertTrue(repository_config["diarization"]["enabled"])
+        self.assertTrue(repository_config["diarization"]["generate_during_analysis"])
+        self.assertEqual(repository_config["summary"]["model"], "gemma4:e2b")
+        self.assertEqual(
+            repository_config["diarization"]["enabled"],
+            normalized_defaults["diarization"]["enabled"],
+        )
+        self.assertEqual(
+            repository_config["diarization"]["generate_during_analysis"],
+            normalized_defaults["diarization"]["generate_during_analysis"],
+        )
+        self.assertEqual(repository_config["summary"]["model"], normalized_defaults["summary"]["model"])
+
     def test_summary_model_recommendation_prefers_4b_for_roomy_pc(self) -> None:
         config = main.normalize_app_config({
             "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
@@ -2335,6 +2352,21 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(resolved_model, "custom-summary:latest")
         self.assertIn("custom-summary:latest", readiness["message"])
 
+    def test_summary_model_readiness_treats_missing_extensionless_absolute_path_as_local(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            missing_model = str(Path(tmp) / "summary-model")
+            config = main.normalize_app_config({
+                "summary": {"enabled": True, "model": missing_model},
+                "paths": {},
+            })
+
+            with patch.object(main, "ollama_model_exists") as model_exists:
+                readiness = main._summary_model_readiness(config, start_ollama=False)
+
+        self.assertFalse(readiness["ready"])
+        self.assertEqual(readiness["reason"], "model_missing")
+        model_exists.assert_not_called()
+
     def test_model_status_uses_summary_model_options_from_config(self) -> None:
         config = main.normalize_app_config({
             "summary": {
@@ -2662,8 +2694,8 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(normalized["stt"]["chunk_seconds"], 30)
         self.assertEqual(normalized["stt"]["device"], "cpu")
         self.assertEqual(normalized["processing"]["long_audio_chunk_seconds"], 30)
-        self.assertFalse(normalized["diarization"]["enabled"])
-        self.assertFalse(normalized["diarization"]["generate_during_analysis"])
+        self.assertTrue(normalized["diarization"]["enabled"])
+        self.assertTrue(normalized["diarization"]["generate_during_analysis"])
 
     def test_generic_models_path_migrates_to_default_model_path(self) -> None:
         normalized = normalize_stt_config({

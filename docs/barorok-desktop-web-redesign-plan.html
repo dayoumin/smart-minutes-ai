@@ -1,0 +1,606 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>바로록 데스크톱·웹 제품 전환 계획</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #071827;
+      --navy: #08243a;
+      --ocean: #056b78;
+      --cyan: #2ac0ce;
+      --blue: #1f67e8;
+      --paper: #f5f7f8;
+      --surface: #ffffff;
+      --line: #d9e2e7;
+      --muted: #5d6b77;
+      --success: #0b7a64;
+      --warning: #8a5b00;
+      --shadow: 0 18px 50px rgba(7, 24, 39, 0.08);
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      font-family: "Malgun Gothic", "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: var(--paper);
+      line-height: 1.65;
+    }
+    .layout {
+      display: grid;
+      grid-template-columns: 280px minmax(0, 1fr);
+      min-height: 100vh;
+    }
+    nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 30px 24px;
+      color: #eaf7fa;
+      background:
+        radial-gradient(circle at 15% 0%, rgba(42, 192, 206, 0.25), transparent 30%),
+        linear-gradient(165deg, #071827 0%, #082f48 62%, #064c59 100%);
+    }
+    nav .brand {
+      margin: 0 0 8px;
+      font-size: 25px;
+      font-weight: 800;
+      letter-spacing: -0.04em;
+    }
+    nav p {
+      margin: 0 0 28px;
+      color: #acd3da;
+      font-size: 13px;
+    }
+    nav a {
+      display: block;
+      padding: 8px 0;
+      color: #d9eef2;
+      text-decoration: none;
+      font-size: 14px;
+    }
+    nav a:hover { color: #ffffff; }
+    main {
+      width: min(1180px, 100%);
+      padding: 42px clamp(24px, 5vw, 72px) 80px;
+    }
+    .back {
+      display: inline-block;
+      margin-bottom: 24px;
+      color: var(--ocean);
+      text-decoration: none;
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: clamp(30px, 5vw, 58px);
+      border-radius: 18px;
+      color: #ffffff;
+      background:
+        radial-gradient(circle at 82% -10%, rgba(117, 229, 236, 0.36), transparent 36%),
+        repeating-radial-gradient(circle at 86% 18%, transparent 0 36px, rgba(183, 239, 242, 0.08) 37px 38px),
+        linear-gradient(135deg, #071827 0%, #07506b 58%, #087f89 100%);
+      box-shadow: var(--shadow);
+    }
+    .hero::after {
+      content: "";
+      position: absolute;
+      inset: auto -8% -80px 35%;
+      height: 180px;
+      border-top: 1px solid rgba(199, 244, 246, 0.28);
+      border-radius: 50%;
+      transform: rotate(-5deg);
+    }
+    .eyebrow {
+      margin: 0 0 14px;
+      color: #9ee9ee;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+    }
+    h1 {
+      max-width: 820px;
+      margin: 0;
+      font-size: clamp(34px, 5vw, 58px);
+      line-height: 1.13;
+      letter-spacing: -0.055em;
+    }
+    .hero p:last-child {
+      max-width: 740px;
+      margin: 22px 0 0;
+      color: #d4edf0;
+      font-size: 17px;
+    }
+    section {
+      margin-top: 44px;
+      scroll-margin-top: 24px;
+    }
+    h2 {
+      margin: 0 0 16px;
+      font-size: 25px;
+      letter-spacing: -0.03em;
+    }
+    h3 {
+      margin: 0 0 8px;
+      font-size: 17px;
+    }
+    p { margin: 8px 0; }
+    .lead {
+      max-width: 820px;
+      color: var(--muted);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      padding: 20px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      box-shadow: 0 8px 24px rgba(7, 24, 39, 0.035);
+    }
+    .card p, .card li { color: var(--muted); }
+    .decision {
+      border-top: 3px solid var(--ocean);
+    }
+    .tag {
+      display: inline-block;
+      margin-bottom: 12px;
+      padding: 4px 9px;
+      border-radius: 999px;
+      color: #075865;
+      background: #dff5f5;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .tag.hold {
+      color: var(--warning);
+      background: #fff3d6;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+    }
+    th, td {
+      padding: 14px 16px;
+      border-bottom: 1px solid var(--line);
+      text-align: left;
+      vertical-align: top;
+      font-size: 14px;
+    }
+    th {
+      color: #24404e;
+      background: #edf3f5;
+    }
+    tr:last-child td { border-bottom: 0; }
+    ul, ol {
+      margin: 10px 0 0;
+      padding-left: 22px;
+    }
+    li + li { margin-top: 6px; }
+    code {
+      padding: 2px 5px;
+      border-radius: 4px;
+      background: #e9eef1;
+      font-family: Consolas, monospace;
+      font-size: 0.92em;
+    }
+    pre {
+      overflow: auto;
+      margin: 14px 0 0;
+      padding: 18px;
+      border-radius: 10px;
+      color: #d8f1f3;
+      background: #071827;
+      line-height: 1.55;
+    }
+    .gate {
+      display: grid;
+      grid-template-columns: 34px minmax(0, 1fr);
+      gap: 12px;
+      padding: 15px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .gate:last-child { border-bottom: 0; }
+    .number {
+      display: grid;
+      width: 30px;
+      height: 30px;
+      place-items: center;
+      border-radius: 50%;
+      color: #ffffff;
+      background: var(--ocean);
+      font-weight: 800;
+      font-size: 13px;
+    }
+    .note {
+      padding: 16px 18px;
+      border-left: 4px solid var(--cyan);
+      background: #e9f7f7;
+      color: #274c55;
+    }
+    footer {
+      margin-top: 50px;
+      padding-top: 20px;
+      border-top: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 13px;
+    }
+    @media (max-width: 820px) {
+      .layout { display: block; }
+      nav {
+        position: static;
+        width: auto;
+        height: auto;
+      }
+      nav a { display: inline-block; margin-right: 15px; }
+      main { padding: 24px 18px 60px; }
+      .hero { border-radius: 12px; }
+      table { display: block; overflow-x: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <nav>
+      <div class="brand">바로록</div>
+      <p>데스크톱·웹 제품 전환 계획</p>
+      <a href="#decision">결정</a>
+      <a href="#contract">작업 계약</a>
+      <a href="#references-ui">시안 채택 기준</a>
+      <a href="#product">제품 범위</a>
+      <a href="#architecture">공유 구조</a>
+      <a href="#phases">단계별 실행</a>
+      <a href="#verification">검증</a>
+      <a href="#branch">브랜치·커밋</a>
+      <a href="#references">관련 문서</a>
+    </nav>
+
+    <main>
+      <a class="back" href="index.html">← 문서 허브로 돌아가기</a>
+
+      <header class="hero">
+        <p class="eyebrow">PRODUCT REDESIGN · 2026-07-29</p>
+        <h1>하나의 바로록 화면을 데스크톱과 웹에서 사용한다</h1>
+        <p>
+          현재 기능과 데이터 계약을 보존하면서 해양·수산 정체성을 가진 1인용 기록 제품으로 전면 전환한다.
+          화면 코드를 복제하지 않고, 데스크톱 완성도를 먼저 확보한 뒤 같은 React UI를 웹 로컬 엔진에 연결한다.
+        </p>
+      </header>
+
+      <section id="decision">
+        <h2>이번에 확정할 결정</h2>
+        <div class="grid">
+          <article class="card decision">
+            <span class="tag">확정</span>
+            <h3>현재 로컬 브랜치에서 바로 수정</h3>
+            <p>
+              <code>codex/barorok-desktop-web-redesign</code>에서 작업한다.
+              이미 실행 중인 개발 서버를 사용해 작은 화면 단위로 즉시 비교한다.
+            </p>
+          </article>
+          <article class="card decision">
+            <span class="tag">확정</span>
+            <h3>데스크톱·웹 UI는 하나</h3>
+            <p>
+              기존 <code>desktop-app</code>의 React UI를 공통 제품 화면으로 유지한다.
+              별도 <code>web-app</code> 복제본은 만들지 않는다.
+            </p>
+          </article>
+          <article class="card decision">
+            <span class="tag">확정</span>
+            <h3>1인용 제품으로 제한</h3>
+            <p>
+              조직, 초대, 권한, 공유, 과금, 공동 편집을 만들지 않는다.
+              개인 기록, 분석, 정리, 보고서, 검색과 설정에 집중한다.
+            </p>
+          </article>
+          <article class="card decision">
+            <span class="tag hold">후속</span>
+            <h3>웹 로컬 엔진은 별도 단계</h3>
+            <p>
+              이번 UI 전환과 동시에 로컬 엔진 설치·인증·업데이트까지 바꾸지 않는다.
+              데스크톱 완료 게이트 이후 기존 웹 로컬 엔진 계획을 따른다.
+            </p>
+          </article>
+        </div>
+      </section>
+
+      <section id="references-ui">
+        <h2>사용자 승인 시안 채택 기준</h2>
+        <p class="lead">
+          2026-07-29에 검토한 네 개의 밝은 데스크톱 시안을 앞선 마케팅형 해양 대시보드보다 우선한다.
+          시각 언어와 화면 밀도는 참고하되, 시안 속 가상 기능은 현재 제품 요구로 간주하지 않는다.
+        </p>
+        <table>
+          <thead>
+            <tr>
+              <th>시안 역할</th>
+              <th>채택</th>
+              <th>현재 제품에 맞춘 수정</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>새 기록</td>
+              <td>파일 등록, 최근 기록, 밝은 앱 셸</td>
+              <td>현재 회의 정보, 분석 옵션, 이어하기 기능을 유지한다.</td>
+            </tr>
+            <tr>
+              <td>분석 진행</td>
+              <td>파일 정보, 진행률, 예상 시간, 상태 요약</td>
+              <td>대화록 우선 흐름을 표시하고 참석자 구분·정리·보고서를 자동 고정 단계처럼 보이지 않는다.</td>
+            </tr>
+            <tr>
+              <td>회의 상세</td>
+              <td>제목·메타·동작 위계와 넓은 작업면</td>
+              <td><code>대화록</code>, <code>기록 정리</code>, <code>보고서</code>의 현재 세 탭을 유지한다.</td>
+            </tr>
+            <tr>
+              <td>설정</td>
+              <td>밝은 표면, 조밀한 행, 명확한 상태</td>
+              <td>실제로 존재하는 파일·분석·보관·문제 해결 옵션만 표시한다.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="contract">
+        <h2>작업 계약</h2>
+        <table>
+          <tbody>
+            <tr>
+              <th>목표</th>
+              <td>바로록을 상용 제품 수준의 해양·수산 특화 개인 회의 기록 도구로 보이게 한다.</td>
+            </tr>
+            <tr>
+              <th>우려</th>
+              <td>전면 디자인 변경이 기존 분석, 이어하기, 편집, 생성, 저장과 내보내기를 깨뜨릴 수 있다.</td>
+            </tr>
+            <tr>
+              <th>첫 범위</th>
+              <td>브랜드 토큰과 제한된 앱 프레임, 왼쪽 기록 목록, 오른쪽 새 기록 작업면. 기능 추가보다 기존 기능의 재배치에 집중한다.</td>
+            </tr>
+            <tr>
+              <th>보호선</th>
+              <td>백엔드 출력 계약과 MeetingRecord를 유지하고, SaaS·모바일·순수 브라우저 AI를 끌어들이지 않는다.</td>
+            </tr>
+            <tr>
+              <th>검증</th>
+              <td>타입 검사, 변경 파일 lint, 관련 Playwright 시뮬레이션, 1024/1280/1440/1920px 시각 확인.</td>
+            </tr>
+            <tr>
+              <th>중단 조건</th>
+              <td>한 화면이 기존 기능을 유지하고 자동·시각 검증을 통과하면 다음 화면으로 넘어간다. 무기한 미세 조정하지 않는다.</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="product">
+        <h2>제품 화면과 기능 범위</h2>
+        <p class="lead">
+          시안에 보이는 요소를 그대로 기능 요구로 간주하지 않는다. 현재 구현된 기능을 새 정보 구조에 배치하고,
+          새로운 기능은 실제 1인 사용 흐름에 필요한 경우에만 별도 결정한다.
+        </p>
+        <div class="grid">
+          <article class="card">
+            <h3>왼쪽 기록 탐색</h3>
+            <ul>
+              <li>새 기록 시작</li>
+              <li>분석 중·이어하기</li>
+              <li>폴더 만들기와 회의록 분류</li>
+              <li>최근·전체 회의록 목록</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>새 기록</h3>
+            <ul>
+              <li>회의 정보 입력</li>
+              <li>음성 파일 선택</li>
+              <li>분석 옵션과 준비 상태</li>
+              <li>분석 시작·중지·이어하기</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>회의 작업 공간</h3>
+            <ul>
+              <li>음성 재생과 검색</li>
+              <li>대화록 확인·편집</li>
+              <li>기록 정리와 보고서</li>
+              <li>참석자·결정·후속 작업</li>
+            </ul>
+          </article>
+          <article class="card">
+            <h3>설정</h3>
+            <ul>
+              <li>파일과 보관</li>
+              <li>분석 기본값</li>
+              <li>모델 준비 상태</li>
+              <li>문제 해결</li>
+            </ul>
+          </article>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <h2>코드와 자산 구조</h2>
+        <p class="lead">
+          기존 대형 컴포넌트를 한 번에 이동하지 않는다. 새 셸과 새 화면 조각을 먼저 만들고,
+          검증된 단위만 점진적으로 추출한다.
+        </p>
+        <pre>desktop-app/src/
+  app/
+    AppShell.tsx
+    navigation.ts
+  features/
+    home/
+    meeting-create/
+    meeting-detail/
+    settings/
+  shared/
+    ui/
+    layout/
+    brand/
+  assets/
+    brand/
+      marine-hero.webp
+      marine-detail-strip.webp</pre>
+        <div class="note">
+          해양 이미지는 공통 헤더, 새 기록의 빈 상태, 회의 상세의 얇은 상단 띠처럼 제한된 영역에만 사용한다.
+          대화록·정리·보고서 본문은 불투명한 작업면을 유지한다. 이미지 안에는 로고나 문구를 굽지 않는다.
+        </div>
+        <div class="note">
+          데스크톱에서는 앱 전체를 최대 1360px 프레임 안에 중앙 정렬하고, 화면 크기에 따라 좌우 16~48px와 상하 16~32px의 유동 여백을 둔다.
+          왼쪽 256~288px는 기록 탐색, 오른쪽은 현재 작업 하나만 소유한다. 1024px 이하에서만 프레임이 화면을 채운다.
+        </div>
+      </section>
+
+      <section id="phases">
+        <h2>단계별 실행</h2>
+        <div class="card">
+          <div class="gate">
+            <div class="number">1</div>
+            <div>
+              <h3>브랜드 기반</h3>
+              <p>사용자 표시명을 바로록으로 정리하고 색상·간격·표면·해양 이미지 토큰을 만든다. 내부 패키지명과 경로는 당장 바꾸지 않는다.</p>
+            </div>
+          </div>
+          <div class="gate">
+            <div class="number">2</div>
+            <div>
+              <h3>앱 셸과 기록 탐색</h3>
+              <p>제한된 데스크톱 프레임을 만들고 왼쪽에 폴더·회의록 목록·분석 상태, 오른쪽에 현재 새 기록 작업면을 둔다. 회의록 목록은 오른쪽에 중복하지 않는다.</p>
+            </div>
+          </div>
+          <div class="gate">
+            <div class="number">3</div>
+            <div>
+              <h3>새 기록 기본 화면</h3>
+              <p>참고 이미지의 밝고 집중된 파일 등록 구도를 적용하고 회의 정보와 분석 시작 동작을 유지한다. 낮은 창에서는 업로드 영역을 가로형으로 압축한다.</p>
+            </div>
+          </div>
+          <div class="gate">
+            <div class="number">4</div>
+            <div>
+              <h3>분석 진행</h3>
+              <p>대화록 우선 흐름, 진행률, 경과 시간, 중지·취소·이어하기를 같은 작업면 안에서 안정적으로 표시한다.</p>
+            </div>
+          </div>
+          <div class="gate">
+            <div class="number">5</div>
+            <div>
+              <h3>회의 상세와 산출물</h3>
+              <p>상단 메타와 재생기, 대화록·기록 정리·보고서 탭을 같은 command bar와 결과 표면 체계로 맞춘다. 기존 편집·생성·저장 계약을 유지한다.</p>
+            </div>
+          </div>
+          <div class="gate">
+            <div class="number">6</div>
+            <div>
+              <h3>데스크톱 완료 게이트</h3>
+              <p>실제 포터블 앱에서 음성·영상 분석, 중지·이어하기, 정리, 보고서, 내보내기를 확인한다.</p>
+            </div>
+          </div>
+          <div class="gate">
+            <div class="number">7</div>
+            <div>
+              <h3>웹 로컬 엔진</h3>
+              <p>같은 UI를 HTTPS 웹과 Windows 로컬 엔진에 연결한다. 설치, 페어링, API 인증과 업데이트는 별도 검증한다.</p>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section id="verification">
+        <h2>화면별 완료 기준</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>확인 영역</th>
+              <th>자동 확인</th>
+              <th>시각·사용 확인</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>공통</td>
+              <td><code>typecheck</code>, 변경 파일 lint, <code>diff --check</code></td>
+              <td>1024/1280/1440/1920px, 가로 넘침 0, 키보드 포커스</td>
+            </tr>
+            <tr>
+              <td>앱 셸·새 기록</td>
+              <td>generation/resume 관련 시뮬레이션</td>
+              <td>빈 기록, 분석 중, 실패 복구, 긴 파일명</td>
+            </tr>
+            <tr>
+              <td>회의 상세</td>
+              <td>meeting detail, generation, download 관련 시뮬레이션</td>
+              <td>긴 제목, 원본 없음, 긴 대화록, 탭별 loading/error/stale</td>
+            </tr>
+            <tr>
+              <td>데스크톱</td>
+              <td>포터블 검증 스크립트</td>
+              <td>실제 <code>lmo_audio.exe</code> 실행과 핵심 사용자 시나리오</td>
+            </tr>
+            <tr>
+              <td>웹</td>
+              <td><code>build:web</code>, 연결·인증 집중 테스트</td>
+              <td>Chrome/Edge Local Network Access 승인·거부·복구</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section id="branch">
+        <h2>브랜치와 커밋 전략</h2>
+        <ul>
+          <li>현재 작업 브랜치는 <code>codex/barorok-desktop-web-redesign</code> 하나를 사용한다.</li>
+          <li>현재 미커밋 백엔드 기본값 수정과 UI 수정은 커밋할 때 의미별로 분리한다.</li>
+          <li>브랜드 기반, 앱 셸·새 기록, 회의 상세처럼 검증 가능한 화면 단위로 커밋한다.</li>
+          <li>데스크톱과 웹을 장기 브랜치로 분리하지 않는다. 같은 UI의 회귀 수정이 갈라지는 것을 막는다.</li>
+          <li>웹 로컬 엔진을 실제로 시작할 때는 깨끗한 기준에서 별도 브랜치나 worktree를 사용한다.</li>
+          <li>병합 전 큰 관점과 작은 관점의 agent 검토를 수행하고, 현재 흐름을 막는 문제만 즉시 수정한다.</li>
+        </ul>
+      </section>
+
+      <section id="references">
+        <h2>관련 문서와 경계</h2>
+        <div class="grid">
+          <article class="card">
+            <h3>디자인 규칙</h3>
+            <p><code>docs/design.md</code>의 작업면, 상태, 문구와 레이아웃 안정성 원칙을 계속 적용한다.</p>
+          </article>
+          <article class="card">
+            <h3>기존 현대화 기록</h3>
+            <p><code>docs/ui-ux-2026-modernization-plan.md</code>는 지금까지의 화면 개선 이력과 회귀 기준으로 유지한다.</p>
+          </article>
+          <article class="card">
+            <h3>웹 제품 실행</h3>
+            <p><code>docs/web-local-engine-followup-plan.md</code>가 데스크톱 완료 이후의 활성 웹 아키텍처 기준이다.</p>
+          </article>
+          <article class="card">
+            <h3>순수 브라우저 후보</h3>
+            <p><code>docs/browser-web-version-execution-plan.md</code>은 후순위 기술 조사로만 유지하고 이번 작업에 섞지 않는다.</p>
+          </article>
+        </div>
+      </section>
+
+      <footer>
+        이 문서는 바로록 전면 전환의 상위 계획이다. 상세 구현 지식과 반복적으로 확인할 규칙은
+        각각 디자인 문서, 웹 로컬 엔진 계획, 프론트엔드 시뮬레이션 문서에 유지한다.
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

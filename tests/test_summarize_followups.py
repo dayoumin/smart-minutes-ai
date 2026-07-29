@@ -1,4 +1,5 @@
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -8,13 +9,27 @@ BACKEND_DIR = PROJECT_ROOT / "backend"
 sys.path.insert(0, str(BACKEND_DIR))
 
 from pipeline.summarize import (  # noqa: E402
+    _generate_json_once,
     generate_meeting_report,
     generate_speaker_context_summaries,
     generate_topic_sections,
 )
+from generation_gateway import GenerationFailure  # noqa: E402
 
 
 class SummarizeFollowupTest(unittest.TestCase):
+    def test_missing_local_model_uses_model_missing_recovery_contract(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            for filename in ("missing-summary-model.gguf", "missing-summary-model.GGUF", "missing-summary-model"):
+                missing_model = Path(tmp) / filename
+                with self.subTest(filename=filename):
+                    with self.assertRaises(GenerationFailure) as raised:
+                        _generate_json_once(str(missing_model), "prompt")
+
+                    self.assertEqual(raised.exception.code, "model_missing")
+                    self.assertEqual(raised.exception.user_action, "open_settings")
+                    self.assertNotIn(str(missing_model), raised.exception.user_message)
+
     def test_topic_generation_accepts_top_level_array(self):
         with patch(
             "pipeline.summarize._generate_json_once",

@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
 
@@ -43,13 +43,35 @@ const stopServer = async (child) => {
   if (process.platform === 'win32') {
     await new Promise(resolve => {
       const killer = spawn(
-        process.env.ComSpec ?? 'cmd.exe',
-        ['/d', '/s', '/c', `taskkill /pid ${child.pid} /t /f`],
+        'taskkill.exe',
+        ['/pid', String(child.pid), '/t', '/f'],
         { stdio: 'ignore', windowsHide: true },
       );
-      killer.on('exit', resolve);
-      killer.on('error', resolve);
+      const timeout = setTimeout(() => {
+        killer.kill();
+        resolve();
+      }, 5000);
+      const finish = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      killer.on('exit', finish);
+      killer.on('error', finish);
     });
+    let childExited = child.exitCode !== null || await Promise.race([
+      new Promise(resolve => child.once('exit', () => resolve(true))),
+      sleep(1500).then(() => false),
+    ]);
+    if (!childExited) {
+      child.kill('SIGKILL');
+      childExited = child.exitCode !== null || await Promise.race([
+        new Promise(resolve => child.once('exit', () => resolve(true))),
+        sleep(1500).then(() => false),
+      ]);
+    }
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    if (!childExited) throw new Error(`Failed to stop Vite process ${child.pid}`);
     return;
   }
 
@@ -176,8 +198,8 @@ const run = async () => {
     });
     assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '준비 상태 확인');
     const actionBar = page.locator('.writer-action-bar');
-    await actionBar.getByText('분석에 필요한 파일을 준비해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
     const blockedStartButton = actionBar.getByRole('button', { name: '준비 필요', exact: true });
+    await blockedStartButton.waitFor({ timeout: 10000 });
     assert.equal(await blockedStartButton.isDisabled(), true, 'missing required models should disable analysis start');
 
     await page.getByRole('button', { name: '모델 준비' }).click();

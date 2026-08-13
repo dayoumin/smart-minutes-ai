@@ -53,6 +53,9 @@ import {
 } from './meetingKnowledge';
 import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from './analysisJobRuntime';
 import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisResumeState';
+import { localEngineClient } from './localEngineClient';
+import { useLocalEngineConnection } from './LocalEngineConnectionProvider';
+import { transportFromHealthEvidence } from './localEngineConnection';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -737,6 +740,7 @@ interface MeetingWriterProps {
 }
 
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
+    const { beginTransportCheck, reportTransport } = useLocalEngineConnection();
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [initialDateValue, setInitialDateValue] = useState(date);
@@ -789,6 +793,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         [selectedReportTemplateId],
     );
     const fileInputRef = useRef<HTMLInputElement | null>(null);
+
     const autoDerivedTitleRef = useRef<string | null>(null);
     const fileDragDepthRef = useRef(0);
     const fileMetadataRequestRef = useRef(0);
@@ -1066,16 +1071,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             return { state: 'ready', message: '' };
         }
 
+        let healthReachable = false;
+        const transportCheckId = beginTransportCheck();
         try {
             const apiBase = await getApiBase();
             await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
-            const healthResponse = await fetch(`${apiBase}/api/health`);
+            const healthResponse = await localEngineClient.request('/api/health');
             await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
+            healthReachable = true;
+            reportTransport(transportCheckId, transportFromHealthEvidence(true));
             if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
 
             await healthResponse.json().catch(() => null);
 
-            const modelsResponse = await fetch(`${apiBase}/api/models/status`);
+            const modelsResponse = await localEngineClient.request('/api/models/status');
             await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
             if (!modelsResponse.ok) {
                 const body = await modelsResponse.text().catch(() => '');
@@ -1107,6 +1116,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
         } catch (error) {
+            reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
             await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const message = error instanceof Error && !options.soft
                 ? `분석 기능을 준비하고 있습니다. ${error.message}`

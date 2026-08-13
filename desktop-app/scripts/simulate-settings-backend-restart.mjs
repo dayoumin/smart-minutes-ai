@@ -31,13 +31,35 @@ const stopServer = async (child) => {
   if (process.platform === 'win32') {
     await new Promise(resolve => {
       const killer = spawn(
-        process.env.ComSpec ?? 'cmd.exe',
-        ['/d', '/s', '/c', `taskkill /pid ${child.pid} /t /f`],
+        'taskkill.exe',
+        ['/pid', String(child.pid), '/t', '/f'],
         { stdio: 'ignore', windowsHide: true },
       );
-      killer.on('exit', resolve);
-      killer.on('error', resolve);
+      const timeout = setTimeout(() => {
+        killer.kill();
+        resolve();
+      }, 5000);
+      const finish = () => {
+        clearTimeout(timeout);
+        resolve();
+      };
+      killer.on('exit', finish);
+      killer.on('error', finish);
     });
+    let childExited = child.exitCode !== null || await Promise.race([
+      new Promise(resolve => child.once('exit', () => resolve(true))),
+      sleep(1500).then(() => false),
+    ]);
+    if (!childExited) {
+      child.kill('SIGKILL');
+      childExited = child.exitCode !== null || await Promise.race([
+        new Promise(resolve => child.once('exit', () => resolve(true))),
+        sleep(1500).then(() => false),
+      ]);
+    }
+    child.stdout?.destroy();
+    child.stderr?.destroy();
+    if (!childExited) throw new Error(`Failed to stop Vite process ${child.pid}`);
     return;
   }
 
@@ -98,11 +120,13 @@ const installRoutes = async (page) => {
   const pullRequests = [];
   const modelDownloadRequests = [];
   const modelDownloadStatusRequests = [];
+  const readinessAuthHeaders = [];
   const routeState = {
     settingsPatches,
     pullRequests,
     modelDownloadRequests,
     modelDownloadStatusRequests,
+    readinessAuthHeaders,
     audioModelState: {
       sttInstalled: false,
       diarizationInstalled: true,
@@ -124,16 +148,21 @@ const installRoutes = async (page) => {
       ],
     },
   };
-  await page.route('**/api/health', route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({ ok: true }),
-  }));
+  await page.route('**/api/health', route => {
+    readinessAuthHeaders.push(route.request().headers()['x-lmo-desktop-action-token'] ?? null);
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
+    });
+  });
 
-  await page.route('**/api/models/status', route => route.fulfill({
-    status: 200,
-    contentType: 'application/json',
-    body: JSON.stringify({
+  await page.route('**/api/models/status', route => {
+    readinessAuthHeaders.push(route.request().headers()['x-lmo-desktop-action-token'] ?? null);
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
       ready: true,
       ollama_runtime_status: {
         key: 'ollama_runtime',
@@ -185,8 +214,9 @@ const installRoutes = async (page) => {
         basis: 'memory',
         message: '이 PC 메모리는 약 16GB입니다. 4B를 권장합니다. 속도나 저장 공간이 걱정되면 2B를 선택하세요.',
       },
-    }),
-  }));
+      }),
+    });
+  });
 
   await page.route('**/api/models/ollama/runtime-status', route => route.fulfill({
     status: 200,
@@ -329,11 +359,14 @@ const installRoutes = async (page) => {
 };
 
 const run = async () => {
-  const server = await startServer();
-  const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
+  let server = null;
+  let browser = null;
+  let page = null;
 
   try {
+    server = await startServer();
+    browser = await chromium.launch({ headless: true });
+    page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
     await page.addInitScript(() => {
       window.__restartCalls = 0;
       window.__openedUrls = [];
@@ -345,6 +378,7 @@ const run = async () => {
         core: {
           invoke: async (command, args = {}) => {
             if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
+            if (command === 'get_desktop_action_token') return 'desktop-test-token';
             if (command === 'open_external_url') {
               window.__openedUrls.push(String(args.url));
               return undefined;
@@ -361,6 +395,11 @@ const run = async () => {
     });
     const routeState = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    assert.equal(
+      routeState.readinessAuthHeaders.includes('desktop-test-token'),
+      true,
+      'Tauri readiness requests should use the desktop action token through the common client',
+    );
 
     await page.evaluate(() => {
       window.dispatchEvent(new CustomEvent('analysis:status', {
@@ -490,10 +529,10 @@ const run = async () => {
     console.log('ok - settings backend restart simulation');
   } catch (error) {
     console.error(error);
-    console.error('body:', (await page.locator('body').innerText()).slice(0, 3000));
+    if (page) console.error('body:', (await page.locator('body').innerText()).slice(0, 3000));
     throw error;
   } finally {
-    await browser.close();
+    await browser?.close().catch(() => undefined);
     await stopServer(server);
   }
 };

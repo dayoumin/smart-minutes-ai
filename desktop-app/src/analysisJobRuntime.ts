@@ -4,10 +4,13 @@ const CLAIMS_UPDATED_EVENT = 'analysis-job-runtime:claims-updated';
 
 export const ANALYSIS_JOB_CLAIMS_UPDATED_EVENT = CLAIMS_UPDATED_EVENT;
 
-export const claimAnalysisJob = (jobId: string): void => {
-    if (!jobId || claimedJobIds.has(jobId)) return;
+export const claimAnalysisJob = (jobId: string): boolean => {
+    if (!jobId) return false;
+    if (claimedJobIds.has(jobId)) return true;
+    if (mutationQueues.has(jobId)) return false;
     claimedJobIds.add(jobId);
     window.dispatchEvent(new CustomEvent(CLAIMS_UPDATED_EVENT));
+    return true;
 };
 
 export const releaseAnalysisJob = (jobId: string | null | undefined): void => {

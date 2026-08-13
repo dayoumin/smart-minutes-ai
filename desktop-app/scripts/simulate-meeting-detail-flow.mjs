@@ -1388,8 +1388,8 @@ const run = async () => {
       const trigger = getSidebarMenuTrigger();
       await trigger.focus();
       await trigger.press('Enter');
-      await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
-      return sidebarRecordMenu.getByRole('menuitem');
+      await page.waitForFunction(() => document.querySelector('[data-sidebar-record-menu]')?.contains(document.activeElement));
+      return sidebarRecordMenu.getByRole('button');
     };
 
     await page.evaluate(async () => {
@@ -1421,8 +1421,8 @@ const run = async () => {
     const openPinPreservationMenu = async () => {
       await pinPreservationTrigger.focus();
       await pinPreservationTrigger.press('Enter');
-      await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem');
-      return sidebarRecordMenu.getByRole('menuitem');
+      await page.waitForFunction(() => document.querySelector('[data-sidebar-record-menu]')?.contains(document.activeElement));
+      return sidebarRecordMenu.getByRole('button');
     };
     let pinPreservationItems = await openPinPreservationMenu();
     await pinPreservationItems.first().click();
@@ -1448,13 +1448,18 @@ const run = async () => {
 
     let sidebarMenuItems = await openSidebarRecordMenu();
     assert.equal(await sidebarMenuItems.first().evaluate(element => document.activeElement === element), true);
-    await page.keyboard.press('ArrowDown');
-    assert.equal(await sidebarMenuItems.nth(1).evaluate(element => document.activeElement === element), true);
-    await page.keyboard.press('End');
-    assert.equal(await sidebarMenuItems.last().evaluate(element => document.activeElement === element), true);
-    await page.keyboard.press('Home');
-    assert.equal(await sidebarMenuItems.first().evaluate(element => document.activeElement === element), true);
     await page.keyboard.press('Escape');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await waitForSidebarMenuTriggerFocus();
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    await page.keyboard.press('Shift+Tab');
+    await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await waitForSidebarMenuTriggerFocus();
+
+    sidebarMenuItems = await openSidebarRecordMenu();
+    await sidebarMenuItems.last().focus();
+    await page.keyboard.press('Tab');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     await waitForSidebarMenuTriggerFocus();
 
@@ -1626,7 +1631,7 @@ const run = async () => {
     });
     assert.equal(narrowMenuBounds.left >= 0 && narrowMenuBounds.right <= 800, true);
     assert.equal(narrowMenuBounds.top >= 0 && narrowMenuBounds.bottom <= 720, true);
-    assert.equal(await sidebarRecordMenu.getByRole('menuitem').first().isVisible(), true);
+    assert.equal(await sidebarRecordMenu.getByRole('button').first().isVisible(), true);
     await page.keyboard.press('Escape');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     await page.setViewportSize({ width: 1200, height: 800 });
@@ -2343,7 +2348,7 @@ const run = async () => {
     });
     await otherMeetingMenuTrigger.focus();
     await otherMeetingMenuTrigger.press('Enter');
-    await page.getByRole('menuitem', { name: '상단 고정', exact: true }).click();
+    await sidebarRecordMenu.getByRole('button', { name: '상단 고정', exact: true }).click();
     await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '다른 회의록, 2026-05-08 00:01 회의록 메뉴');
     page.off('dialog', handleNonNavigationDialog);
@@ -2453,7 +2458,7 @@ const run = async () => {
         }
       });
     });
-    await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
+    await sidebarRecordMenu.getByRole('button', { name: '삭제', exact: true }).click();
     await selectedDeleteDialog;
     await legacyDeleteMenuTrigger.waitFor({ state: 'detached', timeout: 10000 });
     const fallbackSelectedRecord = page.locator('button[aria-current="page"]');

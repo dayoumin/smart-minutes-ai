@@ -27,13 +27,14 @@ export interface LayoutProps {
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenStart?: () => void;
     newMeetingBlocked?: boolean;
+    newMeetingBlockedReason?: string;
     resumeSelectionBlocked?: boolean;
     onOpenSettings?: () => void;
     analysisStatus?: AnalysisStatus;
     showAsrBenchmark?: boolean;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
     const shellVariant = getAppShellVariant(activeTab);
     const oceanShellActive = shellVariant === 'ocean';
     return (
@@ -49,6 +50,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onSelectResumeDraft={onSelectResumeDraft}
                     onOpenStart={onOpenStart}
                     newMeetingBlocked={newMeetingBlocked}
+                    newMeetingBlockedReason={newMeetingBlockedReason}
                     resumeSelectionBlocked={resumeSelectionBlocked}
                     onOpenSettings={onOpenSettings}
                     onOpenAsrBenchmark={showAsrBenchmark ? () => onTabChange?.('asr-benchmark') : undefined}

@@ -3,7 +3,9 @@ import {
     AnalysisResumeDraft,
     AnalysisResumeDraftStatus,
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
+    flushPendingAnalysisResumeDraftPersistence,
     getAnalysisResumeDraft,
+    hasPendingAnalysisResumeDraftPersistence,
     getResumeDraftKey,
     listAnalysisResumeDrafts,
     listPendingAnalysisDraftCleanups,
@@ -50,6 +52,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
         setAnalysisResumeSyncState('syncing', { error: null });
 
         try {
+            flushPendingAnalysisResumeDraftPersistence();
             let localDrafts = listAnalysisResumeDrafts();
             if (ANALYSIS_MODE !== 'real') {
                 setAnalysisResumeSyncState('ready', {
@@ -78,31 +81,24 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
             const apiBase = await getApiBase();
 
             for (const jobId of unclaimedPendingJobIds) {
-                let localCleanupSucceeded = true;
-                if (pendingCancelledJobIds.has(jobId)) {
-                    try {
-                        await queueAnalysisJobMutation(jobId, async () => {
-                            if (isAnalysisJobClaimed(jobId)) return;
-                            await deleteMeetingRecordForJob(jobId);
-                            removeAnalysisResumeDraft(jobId);
-                            dispatchMeetingsUpdated(jobId);
-                        });
-                    } catch (error) {
-                        localCleanupSucceeded = false;
-                        await writeFrontendLog(`pending cancelled meeting cleanup error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
-                    }
-                }
-
                 try {
-                    const response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(jobId)}`, {
-                        method: 'DELETE',
-                    });
-                    if (localCleanupSucceeded && (response.ok || response.status === 404)) {
-                        removePendingAnalysisDraftCleanup(jobId);
+                    await queueAnalysisJobMutation(jobId, async () => {
+                        if (isAnalysisJobClaimed(jobId)) return;
+                        const response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(jobId)}`, {
+                            method: 'DELETE',
+                        });
+                        if (!response.ok && response.status !== 404) return;
+
+                        if (pendingCancelledJobIds.has(jobId)) {
+                            await deleteMeetingRecordForJob(jobId);
+                            if (!removeAnalysisResumeDraft(jobId)) return;
+                            dispatchMeetingsUpdated(jobId);
+                        }
+                        if (!removePendingAnalysisDraftCleanup(jobId)) return;
                         removePendingCancelledAnalysisCleanup(jobId);
-                    }
-                } catch {
-                    // Keep cleanup queued until the backend is available again.
+                    });
+                } catch (error) {
+                    await writeFrontendLog(`pending analysis cleanup error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                 }
             }
 
@@ -119,6 +115,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
 
                 const payload = await response.json() as DraftStatusPayload;
                 const remoteDrafts = payload.drafts || [];
+                const remoteDraftByJobId = new Map(remoteDrafts.map(remote => [remote.job_id, remote]));
                 const now = new Date().toISOString();
 
                 for (const draft of localDrafts) {
@@ -193,11 +190,16 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                         } catch (error) {
                             await writeFrontendLog(`analysis recovery import error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                             if (remote.status === 'completed') {
-                                upsertAnalysisResumeDraft({
+                                const recoveryStateSaved = upsertAnalysisResumeDraft({
                                     ...currentDraft,
+                                    stage: 'recovering-result',
                                     lastMessage: '완료된 분석 결과를 다시 가져오고 있습니다.',
                                     errorMessage: '완료된 결과를 아직 가져오지 못했습니다. 잠시 후 다시 확인합니다.',
+                                    resumeEligible: false,
                                 });
+                                if (!recoveryStateSaved) {
+                                    await writeFrontendLog('analysis recovery state persistence deferred until storage is available');
+                                }
                                 continue;
                             }
                             if (remote.status === 'failed' || remote.status === 'stopped') {
@@ -218,16 +220,29 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                     if (remote.status === 'completed') {
                         if (!completedResultImported) continue;
                         const completedDraftKey = getResumeDraftKey(currentDraft);
-                        listAnalysisResumeDrafts()
+                        const completedCandidates = listAnalysisResumeDrafts()
                             .filter(candidate => (
                                 getResumeDraftKey(candidate) === completedDraftKey
                                 && !isAnalysisJobClaimed(candidate.jobId)
-                            ))
-                            .forEach(candidate => markAnalysisResumeDraftUnavailable(candidate.jobId, 'completed', {
+                                && (
+                                    candidate.jobId === draft.jobId
+                                    || Boolean(
+                                        remoteDraftByJobId.get(candidate.jobId)
+                                        && remoteDraftByJobId.get(candidate.jobId)?.status !== 'active',
+                                    )
+                                )
+                            ));
+                        let completedStateSaved = true;
+                        completedCandidates.forEach(candidate => {
+                            completedStateSaved = markAnalysisResumeDraftUnavailable(candidate.jobId, 'completed', {
                                 status: 'completed',
                                 errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
                                 updatedAt: now,
-                            }));
+                            }) && completedStateSaved;
+                        });
+                        if (!completedStateSaved) {
+                            await writeFrontendLog('completed analysis recovery state persistence deferred until storage is available');
+                        }
                         continue;
                     }
 
@@ -310,6 +325,8 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
         const intervalId = window.setInterval(() => {
             if (
                 listAnalysisResumeDrafts().some(draft => draft.status === 'active')
+                || listAnalysisResumeDrafts().some(draft => draft.stage === 'recovering-result')
+                || hasPendingAnalysisResumeDraftPersistence()
                 || listPendingAnalysisDraftCleanups().length > 0
                 || listPendingCancelledAnalysisCleanups().length > 0
             ) {

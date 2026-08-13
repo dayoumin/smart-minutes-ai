@@ -41,6 +41,7 @@ const SUPPRESSED_STORAGE_KEY = 'suppressedResumeCandidateKeys';
 const PENDING_CLEANUP_STORAGE_KEY = 'pendingAnalysisDraftCleanups';
 const PENDING_CANCEL_CLEANUP_STORAGE_KEY = 'pendingCancelledAnalysisCleanups';
 const UPDATED_EVENT = 'analysis-resume-drafts:updated';
+const VOLATILE_UPDATED_EVENT = 'analysis-resume-drafts:volatile-updated';
 
 const canUseStorage = (): boolean => {
     if (typeof window === 'undefined') return false;
@@ -51,7 +52,10 @@ const canUseStorage = (): boolean => {
     }
 };
 
+let volatileDrafts: AnalysisResumeDraft[] | null = null;
+
 const readDrafts = (): AnalysisResumeDraft[] => {
+    if (volatileDrafts) return volatileDrafts;
     if (!canUseStorage()) return [];
     try {
         const raw = window.localStorage.getItem(STORAGE_KEY);
@@ -63,17 +67,32 @@ const readDrafts = (): AnalysisResumeDraft[] => {
     }
 };
 
-const writeDrafts = (drafts: AnalysisResumeDraft[]): void => {
-    if (!canUseStorage()) return;
+const writeDrafts = (drafts: AnalysisResumeDraft[]): boolean => {
+    if (!canUseStorage()) {
+        volatileDrafts = drafts;
+        return false;
+    }
     try {
         window.localStorage.setItem(STORAGE_KEY, JSON.stringify(drafts));
+        volatileDrafts = null;
         window.dispatchEvent(new CustomEvent(UPDATED_EVENT));
+        return true;
     } catch (error) {
+        volatileDrafts = drafts;
+        window.dispatchEvent(new CustomEvent(VOLATILE_UPDATED_EVENT));
         console.warn('Unable to persist analysis resume drafts:', error);
+        return false;
     }
 };
 
+export const hasPendingAnalysisResumeDraftPersistence = (): boolean => volatileDrafts !== null;
+
+export const flushPendingAnalysisResumeDraftPersistence = (): boolean => (
+    volatileDrafts ? writeDrafts(volatileDrafts) : true
+);
+
 export const ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT = UPDATED_EVENT;
+export const ANALYSIS_RESUME_DRAFTS_VOLATILE_UPDATED_EVENT = VOLATILE_UPDATED_EVENT;
 
 export const getResumeDraftKey = (value: AnalysisResumeDraftFileKey): string => (
     `${value.sourceFilename}::${value.sourceSize}::${value.sourceLastModified}`
@@ -133,27 +152,29 @@ export const listPendingAnalysisDraftCleanups = (): string[] => {
     }
 };
 
-const writePendingAnalysisDraftCleanups = (jobIds: string[]): void => {
-    if (!canUseStorage()) return;
+const writePendingAnalysisDraftCleanups = (jobIds: string[]): boolean => {
+    if (!canUseStorage()) return false;
     const uniqueJobIds = [...new Set(jobIds)].filter(Boolean);
     try {
         window.localStorage.setItem(PENDING_CLEANUP_STORAGE_KEY, JSON.stringify(uniqueJobIds));
         window.dispatchEvent(new CustomEvent(UPDATED_EVENT));
+        return true;
     } catch (error) {
         console.warn('Unable to persist pending analysis draft cleanups:', error);
+        return false;
     }
 };
 
-export const queuePendingAnalysisDraftCleanup = (jobId: string): void => {
+export const queuePendingAnalysisDraftCleanup = (jobId: string): boolean => {
     const current = listPendingAnalysisDraftCleanups();
-    if (current.includes(jobId)) return;
-    writePendingAnalysisDraftCleanups([...current, jobId]);
+    if (current.includes(jobId)) return true;
+    return writePendingAnalysisDraftCleanups([...current, jobId]);
 };
 
-export const removePendingAnalysisDraftCleanup = (jobId: string): void => {
+export const removePendingAnalysisDraftCleanup = (jobId: string): boolean => {
     const current = listPendingAnalysisDraftCleanups();
-    if (!current.includes(jobId)) return;
-    writePendingAnalysisDraftCleanups(current.filter(item => item !== jobId));
+    if (!current.includes(jobId)) return true;
+    return writePendingAnalysisDraftCleanups(current.filter(item => item !== jobId));
 };
 
 export const listPendingCancelledAnalysisCleanups = (): string[] => {
@@ -168,40 +189,47 @@ export const listPendingCancelledAnalysisCleanups = (): string[] => {
     }
 };
 
-const writePendingCancelledAnalysisCleanups = (jobIds: string[]): void => {
-    if (!canUseStorage()) return;
+const writePendingCancelledAnalysisCleanups = (jobIds: string[]): boolean => {
+    if (!canUseStorage()) return false;
     const uniqueJobIds = [...new Set(jobIds)].filter(Boolean);
     try {
         window.localStorage.setItem(PENDING_CANCEL_CLEANUP_STORAGE_KEY, JSON.stringify(uniqueJobIds));
+        window.dispatchEvent(new CustomEvent(UPDATED_EVENT));
+        return true;
     } catch (error) {
         console.warn('Unable to persist pending cancelled analysis cleanups:', error);
+        return false;
     }
 };
 
-export const queuePendingCancelledAnalysisCleanup = (jobId: string): void => {
+export const queuePendingCancelledAnalysisCleanup = (jobId: string): boolean => {
     const current = listPendingCancelledAnalysisCleanups();
-    if (current.includes(jobId)) return;
-    writePendingCancelledAnalysisCleanups([...current, jobId]);
+    if (current.includes(jobId)) return true;
+    return writePendingCancelledAnalysisCleanups([...current, jobId]);
 };
 
-export const removePendingCancelledAnalysisCleanup = (jobId: string): void => {
+export const removePendingCancelledAnalysisCleanup = (jobId: string): boolean => {
     const current = listPendingCancelledAnalysisCleanups();
-    if (!current.includes(jobId)) return;
-    writePendingCancelledAnalysisCleanups(current.filter(item => item !== jobId));
+    if (!current.includes(jobId)) return true;
+    return writePendingCancelledAnalysisCleanups(current.filter(item => item !== jobId));
 };
 
-export const upsertAnalysisResumeDraft = (draft: AnalysisResumeDraft): void => {
+export const upsertAnalysisResumeDraft = (draft: AnalysisResumeDraft): boolean => {
     const drafts = readDrafts();
+    const existing = drafts.find(item => item.jobId === draft.jobId);
+    if (existing && JSON.stringify(existing) === JSON.stringify(draft)) {
+        return volatileDrafts ? writeDrafts(drafts) : true;
+    }
     const next = drafts.filter(item => item.jobId !== draft.jobId);
     next.push(draft);
-    writeDrafts(next);
+    return writeDrafts(next);
 };
 
-export const removeAnalysisResumeDraft = (jobId: string): void => {
+export const removeAnalysisResumeDraft = (jobId: string): boolean => {
     const drafts = readDrafts();
     const next = drafts.filter(item => item.jobId !== jobId);
-    if (next.length === drafts.length) return;
-    writeDrafts(next);
+    if (next.length === drafts.length) return true;
+    return writeDrafts(next);
 };
 
 export const dismissAnalysisResumeDraft = (draft: AnalysisResumeDraft): void => {
@@ -237,7 +265,7 @@ export const markAnalysisResumeDraftUnavailable = (
         errorMessage?: string;
         updatedAt?: string;
     } = {},
-): void => {
+): boolean => {
     const drafts = readDrafts();
     let changed = false;
     const next = drafts.map(draft => {
@@ -252,7 +280,8 @@ export const markAnalysisResumeDraftUnavailable = (
             errorMessage: options.errorMessage || draft.errorMessage,
         };
     });
-    if (changed) writeDrafts(next);
+    if (!changed) return true;
+    return writeDrafts(next);
 };
 
 export const markAnalysisResumeDraftsForKeyUnavailable = (

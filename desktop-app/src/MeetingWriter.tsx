@@ -65,13 +65,8 @@ const SHOW_AUDIO_EXTRACT_TOOL = false;
 const getNowMs = (): number => Date.now();
 
 const WhaleTailIcon: React.FC = () => (
-    <img
+    <span
         className="writer-whale-tail-icon"
-        src="/assets/ocean-sunlight/whale-tail-button.webp"
-        alt=""
-        width="256"
-        height="160"
-        decoding="async"
         aria-hidden="true"
     />
 );
@@ -735,11 +730,13 @@ const toResumeDraftFileKey = (selectedFile: File): AnalysisResumeDraftFileKey =>
 
 interface MeetingWriterProps {
     onOpenSettings?: () => void;
+    analysisStartBlocked?: boolean;
+    analysisStartBlockedReason?: string;
     resumeDraftSelectionRequest?: { jobId: string; requestId: number } | null;
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [initialDateValue, setInitialDateValue] = useState(date);
@@ -1056,7 +1053,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         || Boolean(matchingActiveDraft)
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
-        || hasBlockingReadinessIssue;
+        || hasBlockingReadinessIssue
+        || analysisStartBlocked;
 
     const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
     const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
@@ -1197,13 +1195,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             transcriptReady?: boolean;
             errorMessage?: string;
         } = {},
-    ) => {
-        if (!file) return;
+    ): boolean => {
+        if (!file) return false;
         const jobId = options.jobId || analysisJobIdRef.current;
-        if (!jobId) return;
+        if (!jobId) return false;
         const now = new Date().toISOString();
         const existing = getAnalysisResumeDraft(jobId);
-        upsertAnalysisResumeDraft({
+        return upsertAnalysisResumeDraft({
             jobId,
             title: title.trim(),
             date,
@@ -1566,6 +1564,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     };
 
     const handleStartAnalysis = async () => {
+        if (analysisStartBlocked) {
+            showOperationToast(analysisStartBlockedReason, 'warning');
+            return;
+        }
         if (analysisInFlightRef.current || isAnalyzing) {
             return;
         }
@@ -1750,14 +1752,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             }
             analysisJobIdRef.current = analysisJobId;
             analysisResumeDraftIdRef.current = analysisJobId;
-            claimAnalysisJob(analysisJobId);
-            saveResumeDraft('active', {
+            if (!claimAnalysisJob(analysisJobId)) {
+                throw new Error('분석 기록을 정리하고 있습니다. 잠시 후 다시 시도해 주세요.');
+            }
+            const recoverySaved = saveResumeDraft('active', {
                 jobId: analysisJobId,
                 stage: 'uploaded',
                 lastMessage: selectedResumeDraft ? '이전 음성 인식 진행분 재사용을 시도합니다.' : '분석을 시작합니다.',
                 lastProgress: 0,
                 lastEtaSeconds: null,
             });
+            if (!recoverySaved) {
+                throw new Error('재시작 복구 정보를 저장할 수 없습니다. 저장 공간과 앱 권한을 확인한 뒤 다시 시도해 주세요.');
+            }
             setAnalysisPhase('analyzing');
             transcriptReadyRef.current = false;
             setTranscriptReady(false);
@@ -2238,8 +2245,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             return;
         }
 
-        if (action === 'cancel') {
-            queuePendingCancelledAnalysisCleanup(jobId);
+        if (action === 'cancel' && !queuePendingCancelledAnalysisCleanup(jobId)) {
+            setIsRequestingAnalysisStop(false);
+            setAnalysisStopRequestedAction(null);
+            analysisStopActionRef.current = null;
+            setErrorMessage('취소 후 정리 정보를 저장할 수 없습니다. 저장 공간과 앱 권한을 확인한 뒤 다시 시도해 주세요.');
+            showOperationToast('취소 정보를 저장하지 못했습니다.', 'error');
+            return;
         }
         const stopDecisionPromise = (async (): Promise<AnalysisStopAction | null> => {
             try {
@@ -2723,7 +2735,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 </div>
                     <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
                         <div className="writer-primary-actions">
-                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
+                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={analysisStartBlocked ? 'writer-analysis-start-blocked' : undefined} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
                                 {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
                                 {!isAnalyzing && <WhaleTailIcon />}
                                 {isAnalyzing ? '분석 중' : buttonLabel}
@@ -2754,7 +2766,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 <div className="writer-analysis-result-title">분석을 마치지 못했습니다</div>
                                 <div className="writer-analysis-result-message break-words">{errorMessage}</div>
                                 <div className="writer-analysis-result-actions">
-                                    <Button variant="primary" onClick={handleStartAnalysis}>
+                                    <Button variant="primary" onClick={handleStartAnalysis} disabled={analysisStartBlocked} aria-describedby={analysisStartBlocked ? 'writer-analysis-start-blocked' : undefined}>
                                         <RefreshCw size={14} aria-hidden="true" />
                                         다시 시도
                                     </Button>
@@ -2922,6 +2934,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     </StatusBanner>
                 )}
             </div>
+
+            {analysisStartBlocked && (
+                <p id="writer-analysis-start-blocked" className="writer-analysis-blocked-note" role="status">
+                    {analysisStartBlockedReason}
+                </p>
+            )}
 
             {hasBlockingReadinessIssue && (
                 <StatusBanner tone={readinessBannerTone}>

@@ -176,6 +176,7 @@ const runScenario = async (
     delayPartialDuringCancel = false,
     completedResultAfterStop = false,
     delayStopDecisionResponse = false,
+    keepPendingCancellation = false,
   } = {},
 ) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
@@ -235,6 +236,7 @@ const runScenario = async (
     markModelStatusRequested = resolve;
   });
   let analyzeJobId = null;
+  let analyzeRequestCount = 0;
   let cancelRequestCount = 0;
   const cancelRequestBodies = [];
   let markCancelRequested = () => {};
@@ -257,9 +259,9 @@ const runScenario = async (
   try {
     await installBaseRoutes(page);
     await page.route(/\/api\/analyze\/drafts\/[^/]+$/, route => route.fulfill({
-      status: 200,
+      status: keepPendingCancellation ? 409 : 200,
       contentType: 'application/json',
-      body: JSON.stringify({ job_id: analyzeJobId, deleted: true }),
+      body: JSON.stringify({ job_id: analyzeJobId, deleted: !keepPendingCancellation }),
     }));
 
     await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
@@ -301,6 +303,7 @@ const runScenario = async (
     });
 
     await page.route('**/api/analyze', async route => {
+      analyzeRequestCount += 1;
       const postData = (await route.request().postDataBuffer()).toString('utf-8');
       analyzeJobId = multipartField(postData, 'job_id');
       markAnalyzeStarted();
@@ -550,6 +553,19 @@ const runScenario = async (
     }
     releaseAnalyzeResponse();
 
+    if (action === 'cancel' && keepPendingCancellation) {
+      await page.getByText('분석을 취소했습니다.').waitFor({ timeout: 10000 });
+      const restartButton = page.getByRole('button', { name: '분석 시작', exact: true });
+      await restartButton.waitFor({ state: 'visible', timeout: 10000 });
+      assert.equal(await restartButton.isDisabled(), true, 'pending cancellation must keep analysis start disabled');
+      await restartButton.evaluate(button => button.click());
+      await page.waitForTimeout(100);
+      assert.equal(analyzeRequestCount, 1, 'pending cancellation must prevent a second analyze request');
+      assert.deepEqual(await readLocalStorageJson(page, 'pendingCancelledAnalysisCleanups'), [analyzeJobId]);
+      console.log('ok - pending cancellation transition keeps writer locked');
+      return;
+    }
+
     if (action === 'stop') {
       await page.getByText('분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.').waitFor({ timeout: 10000 });
       const drafts = await readLocalStorageJson(page, 'analysisResumeDrafts');
@@ -709,19 +725,30 @@ const server = await startServer();
 const fixture = await createFixtureFile();
 const browser = await chromium.launch();
 try {
-  await runScenario(browser, fixture, 'stop', { cancelAccepted: false });
-  await runScenario(browser, fixture, 'stop', {
-    cancelAccepted: false,
-    completedResultAfterStop: true,
-    delayStopDecisionResponse: true,
-  });
-  await runScenario(browser, fixture, 'stop');
-  await runScenario(browser, fixture, 'stop', {
-    completedResultAfterStop: true,
-    delayStopDecisionResponse: true,
-  });
-  await runScenario(browser, fixture, 'cancel', { delayPartialDuringCancel: true });
-  await runFailureScenario(browser, fixture);
+  if (process.argv.includes('pending-cancellation-transition')) {
+    await runScenario(browser, fixture, 'cancel', {
+      delayPartialDuringCancel: true,
+      keepPendingCancellation: true,
+    });
+  } else {
+    await runScenario(browser, fixture, 'stop', { cancelAccepted: false });
+    await runScenario(browser, fixture, 'stop', {
+      cancelAccepted: false,
+      completedResultAfterStop: true,
+      delayStopDecisionResponse: true,
+    });
+    await runScenario(browser, fixture, 'stop');
+    await runScenario(browser, fixture, 'stop', {
+      completedResultAfterStop: true,
+      delayStopDecisionResponse: true,
+    });
+    await runScenario(browser, fixture, 'cancel', { delayPartialDuringCancel: true });
+    await runScenario(browser, fixture, 'cancel', {
+      delayPartialDuringCancel: true,
+      keepPendingCancellation: true,
+    });
+    await runFailureScenario(browser, fixture);
+  }
 } finally {
   await browser.close();
   await stopServer(server);

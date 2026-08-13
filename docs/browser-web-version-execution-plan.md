@@ -1,6 +1,6 @@
 # 브라우저 온디바이스 웹 버전 실행 계획
 
-> 상태 변경(2026-07-28): 이 실행안은 후순위 순수 BrowserEngine 후보로 보류한다. 첫 웹 제품은 docs/web-local-engine-followup-plan.md의 사용자 다운로드형 Windows 로컬 엔진 한 경로만 추진하며, 데스크톱 앱 검증 완료 후 착수한다.
+> 상태 변경(2026-08-13): 이 실행안은 후순위 순수 BrowserEngine 후보로 보류한다. 현재 우선 제품은 docs/web-local-engine-followup-plan.md의 사용자 다운로드형 Windows 로컬 엔진 웹 버전이다. 데스크톱 앱 완료를 기다리지 않으며 Tauri 제품화는 웹 MVP 이후 별도 범위로 둔다.
 
 - 확정일: 2026-07-17
 - 상태: 후순위 보류. 첫 웹 제품은 docs/web-local-engine-followup-plan.md를 따르고, 순수 BrowserEngine은 별도 재결정 전까지 구현하지 않는다.

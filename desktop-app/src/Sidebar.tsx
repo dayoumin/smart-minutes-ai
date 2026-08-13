@@ -31,6 +31,7 @@ export interface SidebarProps {
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenStart?: () => void;
     newMeetingBlocked?: boolean;
+    newMeetingBlockedReason?: string;
     resumeSelectionBlocked?: boolean;
     onOpenSettings?: () => void;
     onOpenAsrBenchmark?: () => void;
@@ -76,6 +77,7 @@ const formatSidebarStatus = (message: string): string => {
 };
 
 const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
+    if (draft.stage === 'recovering-result') return '결과 복구 중';
     if (draft.status === 'active') return '진행 중';
     if (draft.resumeEligible === false) return '이어하기 불가';
     if (draft.status === 'stopped') return '중단됨';
@@ -85,6 +87,7 @@ const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
 };
 
 const getSidebarResumeDraftTone = (draft: AnalysisResumeDraft): 'info' | 'warning' | 'error' | 'neutral' => {
+    if (draft.stage === 'recovering-result') return 'info';
     if (draft.status === 'active') return 'info';
     if (draft.status === 'failed') return 'error';
     if (draft.resumeEligible === false) return 'warning';
@@ -132,7 +135,7 @@ const sortMeetingFolders = (folders: MeetingFolder[]): MeetingFolder[] => (
     })
 );
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [folders, setFolders] = useState<MeetingFolder[]>([]);
     const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -328,7 +331,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 left: Math.max(8, Math.min(triggerBounds.right - panelBounds.width, window.innerWidth - panelBounds.width - 8)),
             });
             focusFrame = window.requestAnimationFrame(() => {
-                panel.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus();
+                panel.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
             });
         });
         return () => {
@@ -368,7 +371,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         if (event.key === 'Tab') {
             const focusableItems = Array.from(
                 event.currentTarget.querySelectorAll<HTMLElement>(
-                    '[role="menuitem"]:not([disabled]), select:not([disabled])',
+                    'button:not([disabled]), select:not([disabled])',
                 ),
             );
             const currentIndex = focusableItems.indexOf(document.activeElement as HTMLElement);
@@ -379,27 +382,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 focusableItems[nextIndex]?.focus();
                 return;
             }
-            setOpenMenuId(null);
+            event.preventDefault();
+            event.stopPropagation();
+            closeRecordMenu(recordId, true);
             return;
         }
-
-        if (event.target instanceof HTMLSelectElement) return;
-
-        const items = Array.from(
-            event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'),
-        );
-        if (items.length === 0) return;
-        const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-        let nextIndex: number | null = null;
-        if (event.key === 'ArrowDown') nextIndex = currentIndex < 0 ? 0 : (currentIndex + 1) % items.length;
-        if (event.key === 'ArrowUp') nextIndex = currentIndex < 0 ? items.length - 1 : (currentIndex - 1 + items.length) % items.length;
-        if (event.key === 'Home') nextIndex = 0;
-        if (event.key === 'End') nextIndex = items.length - 1;
-        if (nextIndex === null) return;
-
-        event.preventDefault();
-        event.stopPropagation();
-        items[nextIndex]?.focus();
     };
 
     const closeFolderMenu = (folderId: string, restoreFocus = false) => {
@@ -688,15 +675,21 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     type="button"
                     className="sidebar-create-button mb-3"
                     disabled={newMeetingBlocked}
-                    title={newMeetingBlocked ? '다른 실행에서 진행 중인 분석이 끝난 뒤 새 기록을 만들 수 있습니다.' : undefined}
+                    aria-describedby={newMeetingBlocked ? 'sidebar-create-blocked' : undefined}
+                    title={newMeetingBlocked ? newMeetingBlockedReason : undefined}
                     onClick={() => {
                         setOpenMenuId(null);
                         onCreateMeeting?.();
                     }}
                 >
-                    <Plus size={17} />
-                    새 기록
+                    {analysisStatus?.active ? <Clock3 size={17} /> : <Plus size={17} />}
+                    {analysisStatus?.active ? '진행 중인 분석 보기' : '새 기록'}
                 </button>
+                {newMeetingBlocked && (
+                    <p id="sidebar-create-blocked" className="sidebar-action-note" role="status">
+                        {newMeetingBlockedReason}
+                    </p>
+                )}
                 <div className="sidebar-content-scroll custom-scrollbar">
                 <div className="sidebar-folder-toolbar">
                     <button
@@ -914,16 +907,40 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         </button>
                         {showResumeDrafts && (
                             <div className="mt-2 grid gap-1.5">
+                                {resumeSelectionBlocked && resumeDrafts.some(draft => draft.status !== 'active') && (
+                                    <p id="sidebar-resume-blocked" className="sidebar-action-note" role="status">
+                                        다른 분석이 끝난 뒤 이 기록을 이어갈 수 있습니다.
+                                    </p>
+                                )}
+                                {resumeDrafts.some(draft => draft.stage === 'recovering-result') && (
+                                    <p id="sidebar-result-recovery-pending" className="sidebar-action-note" role="status">
+                                        완료된 결과를 다시 가져오고 있습니다.
+                                    </p>
+                                )}
                                 {resumeDrafts.map(draft => {
                                     const tone = getSidebarResumeDraftTone(draft);
-                                    const selectionBlocked = Boolean(resumeSelectionBlocked && draft.status !== 'active');
+                                    const resultRecoveryPending = draft.stage === 'recovering-result';
+                                    const selectionBlocked = Boolean(
+                                        resultRecoveryPending
+                                        || (resumeSelectionBlocked && draft.status !== 'active'),
+                                    );
+                                    const selectionBlockedDescriptionId = resultRecoveryPending
+                                        ? 'sidebar-result-recovery-pending'
+                                        : selectionBlocked
+                                            ? 'sidebar-resume-blocked'
+                                            : undefined;
                                     return (
                                         <button
                                             key={draft.jobId}
                                             type="button"
                                             className={`sidebar-resume-draft-button status-${tone} text-left`}
                                             disabled={selectionBlocked}
-                                            title={selectionBlocked ? '진행 중인 분석이 끝난 뒤 이어서 기록할 수 있습니다.' : undefined}
+                                            aria-describedby={selectionBlockedDescriptionId}
+                                            title={resultRecoveryPending
+                                                ? '완료된 분석 결과를 다시 가져오고 있습니다.'
+                                                : selectionBlocked
+                                                    ? '진행 중인 분석이 끝난 뒤 이어서 기록할 수 있습니다.'
+                                                    : undefined}
                                             onClick={() => {
                                                 setOpenMenuId(null);
                                                 onSelectResumeDraft?.(draft.jobId);
@@ -1031,7 +1048,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                                 closeRecordMenu(record.id, true);
                                             }}
                                             data-sidebar-record-menu-trigger
-                                            aria-haspopup="menu"
+                                            aria-haspopup="dialog"
                                             aria-expanded={openMenuId === record.id}
                                             aria-controls={`sidebar-record-menu-${record.id}`}
                                             title={`${record.title}, ${record.date} 회의록 메뉴`}
@@ -1048,7 +1065,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                             else recordMenuPanelRefs.current.delete(record.id);
                                         }}
                                         id={`sidebar-record-menu-${record.id}`}
-                                        role="menu"
+                                        role="dialog"
                                         aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
                                         className="menu-panel fixed z-20 w-44 text-xs"
                                         style={recordMenuPosition
@@ -1059,8 +1076,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                     >
                                         <button
                                             type="button"
-                                            role="menuitem"
-                                            tabIndex={-1}
                                             className="menu-item px-2 py-1.5"
                                             onClick={() => handleTogglePinned(record)}
                                         >
@@ -1069,8 +1084,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         </button>
                                         <button
                                             type="button"
-                                            role="menuitem"
-                                            tabIndex={-1}
                                             className="menu-item px-2 py-1.5"
                                             onClick={() => handleRenameRecord(record)}
                                         >
@@ -1091,8 +1104,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         </label>
                                         <button
                                             type="button"
-                                            role="menuitem"
-                                            tabIndex={-1}
                                             className="menu-item menu-item-danger px-2 py-1.5"
                                             onClick={() => handleDeleteRecord(record)}
                                         >

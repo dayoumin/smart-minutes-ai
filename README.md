@@ -1,13 +1,19 @@
 # LMO 회의 인사이트
 
-음성/영상 회의 자료를 로컬에서 분석해 회의록을 만드는 데스크탑 앱입니다.
+음성/영상 회의 자료를 각 사용자 PC에서 로컬로 분석해 회의록을 만드는 웹 제품입니다.
+
+현재 우선 제공 방향은 `HTTPS 웹 UI + Windows 로컬 엔진`입니다. 사용자는
+웹사이트에 접속하고, 최초 1회 `LMO Local Engine Setup.exe`를 내려받습니다.
+음성 인식·참석자 구분·요약 모델은 필요한 시점에 각 PC로 내려받으며,
+음성·영상과 회의 내용은 기본적으로 원격 분석 서버로 전송하지 않습니다.
+Tauri 데스크톱 앱은 웹 MVP 이후 별도 제품 범위로 둡니다.
 
 ## 폴더 구조
 
 ```text
 <프로젝트 루트>\
   backend\                         # FastAPI 분석 서버 소스
-  desktop-app\                     # React/Tauri 데스크탑 앱 소스
+  desktop-app\                     # 공통 React UI 소스(기존 폴더명, 웹/Tauri 공유)
   docs\                            # 설계/테스트/배포 문서
   scripts\                         # 빌드, 패키징, 검증 스크립트
   releases\lmo_audio\              # 실행용 portable 배포 폴더, 커밋 제외
@@ -17,9 +23,25 @@
   roadmap.md
 ```
 
-## 실행 폴더
+## 현재 웹 제품 구조
 
-실행할 때는 루트의 portable 폴더를 사용합니다.
+```text
+HTTPS React UI
+      |
+      v
+127.0.0.1:17863 LMO Local Engine
+      +-- ffmpeg / faster-whisper / 선택형 pyannote / Ollama
+      +-- 로컬 모델 / SQLite / 결과 파일
+```
+
+현재 `desktop-app`의 `build:web`은 React 웹 자산을 만들지만, 아직 그 자체로
+완성된 웹 제품은 아닙니다. 실제 분석은 `apiBase.ts`를 통해 로컬 FastAPI
+backend를 호출합니다. 웹 MVP에서는 엔진 설치·연결·인증·모델 다운로드
+화면을 이 경로에 추가합니다.
+
+## 후속 데스크톱 실행 폴더
+
+기존 Tauri/portable 실행 경로는 후속 데스크톱 제품 검증에 사용합니다.
 
 ```text
 <프로젝트 루트>\releases\lmo_audio\lmo_audio.exe
@@ -39,7 +61,9 @@ releases\lmo_audio\
 
 ## 소스 폴더
 
-`desktop-app`은 실행본이 아니라 앱 소스입니다. UI 수정, 설정 화면 수정, Tauri 빌드, 배포 파일 재생성이 필요하면 지우면 안 됩니다.
+`desktop-app`은 이름과 달리 데스크톱 전용 실행본이 아니라 공통 React UI
+소스입니다. 현재 웹 빌드와 후속 Tauri 빌드가 이 코드를 공유하므로 폴더명을
+근거로 제품 범위를 판단하거나 별도 `web-app` 복제본을 만들지 않습니다.
 
 `backend`는 분석 서버 소스입니다. FastAPI, STT, 참석자 구분, 요약, 내보내기 로직이 들어 있습니다.
 

@@ -223,13 +223,13 @@ def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama
     for model in status_model_names:
         local_model = is_local_summary_model_path(model)
         candidate_path = resolve_backend_path(base_dir, model) if local_model and not os.path.isabs(model) else model
-        if os.path.exists(candidate_path) or (not local_model and model in ollama_model_set):
+        if (local_model and os.path.isfile(candidate_path)) or (not local_model and model in ollama_model_set):
             installed_models.append(model)
 
     for model in candidate_models:
         local_model = is_local_summary_model_path(model)
         candidate_path = resolve_backend_path(base_dir, model) if local_model and not os.path.isabs(model) else model
-        if os.path.exists(candidate_path):
+        if local_model and os.path.isfile(candidate_path):
             installed_model = model
             installed_path = candidate_path
             break

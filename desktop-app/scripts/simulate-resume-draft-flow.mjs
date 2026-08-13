@@ -1964,6 +1964,297 @@ const selectSidebarResumeDraft = async (page, title) => {
   await page.getByRole('heading', { name: /이어하기|분석 상태/ }).waitFor({ timeout: 10000 });
 };
 
+const createRecoveryDraft = (jobId, title, fixtureUpload, overrides = {}) => ({
+  jobId,
+  title,
+  date: '2026-08-13T09:00',
+  participants: '',
+  meetingPurpose: '복구 계약 확인',
+  sourceFilename: fixtureUpload.name,
+  sourceSize: fixtureUpload.size,
+  sourceLastModified: fixtureUpload.lastModified,
+  status: 'active',
+  createdAt: '2026-08-13T09:00:00.000Z',
+  updatedAt: '2026-08-13T09:05:00.000Z',
+  stage: 'transcribing',
+  lastMessage: '음성 인식 중',
+  lastProgress: 30,
+  resumeEligible: true,
+  completedChunkCount: 1,
+  ...overrides,
+});
+
+const runPendingCancelledCleanupKeepsGlobalLockScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const draft = createRecoveryDraft('pending-cancel-lock-job', '취소 정리 대기', fixtureUpload, {
+    status: 'cancelled',
+    stage: 'cancelled',
+  });
+  await context.addInitScript(value => {
+    window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
+    window.localStorage.setItem('pendingAnalysisDraftCleanups', JSON.stringify([value.jobId]));
+    window.localStorage.setItem('pendingCancelledAnalysisCleanups', JSON.stringify([value.jobId]));
+  }, draft);
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/drafts/pending-cancel-lock-job', route => route.fulfill({
+    status: 409,
+    contentType: 'application/json',
+    body: JSON.stringify({ detail: 'analysis_job_active' }),
+  }));
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ drafts: [{
+      job_id: draft.jobId,
+      status: 'active',
+      stage: 'transcribing',
+      active: true,
+      resume_supported: true,
+      completed_chunk_count: 1,
+      last_progress: { message: '음성 인식 중', progress: 30 },
+    }] }),
+  }));
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    const createButton = page.getByRole('button', { name: '새 기록', exact: true });
+    await createButton.waitFor({ timeout: 10000 });
+    assert.equal(await createButton.isDisabled(), true, 'pending cancellation must keep new analysis locked');
+    await page.waitForTimeout(400);
+    const stored = await page.evaluate(() => ({
+      drafts: JSON.parse(window.localStorage.getItem('analysisResumeDrafts') || '[]'),
+      pending: JSON.parse(window.localStorage.getItem('pendingCancelledAnalysisCleanups') || '[]'),
+    }));
+    assert.equal(stored.drafts.some(item => item.jobId === draft.jobId), true);
+    assert.deepEqual(stored.pending, [draft.jobId]);
+    console.log('ok - pending cancelled cleanup keeps global lock scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runCompletedJobPreservesSameFileActiveJobScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const completedDraft = createRecoveryDraft('same-file-completed-job', '완료된 분석', fixtureUpload);
+  const activeDraft = createRecoveryDraft('same-file-active-job', '계속 진행 중인 분석', fixtureUpload, {
+    updatedAt: '2026-08-13T09:06:00.000Z',
+  });
+  await context.addInitScript(values => {
+    window.localStorage.setItem('analysisResumeDrafts', JSON.stringify(values));
+  }, [completedDraft, activeDraft]);
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ drafts: [
+      {
+        job_id: completedDraft.jobId,
+        status: 'completed',
+        stage: 'completed',
+        resume_supported: false,
+        completed_chunk_count: 2,
+        last_progress: { message: '완료', progress: 100, transcript_ready: true },
+      },
+      {
+        job_id: activeDraft.jobId,
+        status: 'active',
+        stage: 'transcribing',
+        active: true,
+        resume_supported: true,
+        completed_chunk_count: 1,
+        last_progress: { message: '음성 인식 중', progress: 40 },
+      },
+    ] }),
+  }));
+  await page.route('**/api/analyze/same-file-completed-job/recoverable-result', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: completedDraft.jobId,
+      source_file: fixtureUpload.name,
+      summary: '완료 결과',
+      segments: [{ start: '00:00', end: '00:01', speaker: '', text: '완료된 대화록' }],
+      display_segments: [{ start: '00:00', end: '00:01', speaker: '', text: '완료된 대화록' }],
+      outputs: { job_id: completedDraft.jobId },
+    }),
+  }));
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(({ completedJobId, activeJobId }) => {
+      const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') || '[]');
+      return drafts.find(item => item.jobId === completedJobId)?.status === 'completed'
+        && drafts.find(item => item.jobId === activeJobId)?.status === 'active';
+    }, { completedJobId: completedDraft.jobId, activeJobId: activeDraft.jobId });
+    await page.waitForTimeout(300);
+    const statuses = await page.evaluate(() => Object.fromEntries(
+      JSON.parse(window.localStorage.getItem('analysisResumeDrafts') || '[]')
+        .map(item => [item.jobId, item.status]),
+    ));
+    assert.equal(statuses[completedDraft.jobId], 'completed');
+    assert.equal(statuses[activeDraft.jobId], 'active');
+    assert.equal(await page.getByRole('button', { name: '새 기록', exact: true }).isDisabled(), true);
+    console.log('ok - completed job preserves same-file active job scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runCompletedImportFailureIsBoundedScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const draft = createRecoveryDraft('completed-import-failure-job', '결과 가져오기 실패', fixtureUpload, {
+    status: 'stopped',
+    stage: 'stopped',
+  });
+  await context.addInitScript(value => {
+    window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
+    const originalSetItem = Storage.prototype.setItem;
+    let recoveringResultWriteFailed = false;
+    Storage.prototype.setItem = function setItem(key, nextValue) {
+      if (
+        key === 'analysisResumeDrafts'
+        && !recoveringResultWriteFailed
+        && String(nextValue).includes('recovering-result')
+      ) {
+        recoveringResultWriteFailed = true;
+        throw new DOMException('simulated recovering-result write failure', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, nextValue);
+    };
+    window.__recoveringResultWriteFailed = () => recoveringResultWriteFailed;
+  }, draft);
+  const page = await context.newPage();
+  let recoverableRequestCount = 0;
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ drafts: [{
+      job_id: draft.jobId,
+      status: 'completed',
+      stage: 'completed',
+      resume_supported: false,
+      completed_chunk_count: 2,
+      last_progress: { message: '완료', progress: 100, transcript_ready: true },
+    }] }),
+  }));
+  await page.route('**/api/analyze/completed-import-failure-job/recoverable-result', route => {
+    recoverableRequestCount += 1;
+    if (recoverableRequestCount > 2) {
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          job_id: draft.jobId,
+          source_file: fixtureUpload.name,
+          summary: '재시도 후 가져온 완료 결과',
+          segments: [{ start: '00:00', end: '00:01', speaker: '', text: '복구된 대화록' }],
+          display_segments: [{ start: '00:00', end: '00:01', speaker: '', text: '복구된 대화록' }],
+          outputs: { job_id: draft.jobId },
+        }),
+      });
+    }
+    return route.fulfill({
+      status: 500,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: 'temporary failure' }),
+    });
+  });
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(jobId => {
+      const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') || '[]');
+      return drafts.find(item => item.jobId === jobId)?.errorMessage?.includes('가져오지 못했습니다');
+    }, draft.jobId);
+    await page.waitForTimeout(800);
+    assert.ok(recoverableRequestCount <= 2, `completed import retry must be bounded, got ${recoverableRequestCount}`);
+    assert.equal(await page.evaluate(() => window.__recoveringResultWriteFailed()), true);
+    const pendingDraft = await page.evaluate(jobId => JSON.parse(
+      window.localStorage.getItem('analysisResumeDrafts') || '[]',
+    ).find(item => item.jobId === jobId), draft.jobId);
+    assert.equal(pendingDraft.stage, 'recovering-result');
+    assert.equal(pendingDraft.resumeEligible, false);
+    const recoveryButton = page.locator('.sidebar-resume-draft-button').filter({ hasText: draft.title });
+    if (await recoveryButton.count()) {
+      assert.equal(await recoveryButton.isDisabled(), true);
+    }
+    await page.waitForFunction(jobId => {
+      const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') || '[]');
+      return drafts.find(item => item.jobId === jobId)?.status === 'completed';
+    }, draft.jobId, { timeout: 15000 });
+    assert.equal(recoverableRequestCount, 3);
+    console.log('ok - completed import failure is bounded scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runCleanupLocalRemovalFailureRetriesScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const draft = createRecoveryDraft('cleanup-local-removal-retry-job', '로컬 정리 재시도', fixtureUpload, {
+    status: 'cancelled',
+    stage: 'cancelled',
+  });
+  await context.addInitScript(value => {
+    window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
+    window.localStorage.setItem('pendingAnalysisDraftCleanups', JSON.stringify([value.jobId]));
+    window.localStorage.setItem('pendingCancelledAnalysisCleanups', JSON.stringify([value.jobId]));
+    const originalSetItem = Storage.prototype.setItem;
+    window.__allowCleanupStorageWrites = false;
+    Storage.prototype.setItem = function setItem(key, nextValue) {
+      if (
+        !window.__allowCleanupStorageWrites
+        && key === 'analysisResumeDrafts'
+        && nextValue === '[]'
+      ) {
+        throw new DOMException('simulated quota failure', 'QuotaExceededError');
+      }
+      return originalSetItem.call(this, key, nextValue);
+    };
+  }, draft);
+  const page = await context.newPage();
+  let deleteRequestCount = 0;
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/drafts/cleanup-local-removal-retry-job', route => {
+    deleteRequestCount += 1;
+    return route.fulfill({
+      status: deleteRequestCount === 1 ? 200 : 404,
+      contentType: 'application/json',
+      body: JSON.stringify({ job_id: draft.jobId }),
+    });
+  });
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.waitForFunction(() => window.__allowCleanupStorageWrites === false);
+    await page.waitForTimeout(300);
+    const retained = await page.evaluate(() => ({
+      drafts: JSON.parse(window.localStorage.getItem('analysisResumeDrafts') || '[]'),
+      pending: JSON.parse(window.localStorage.getItem('pendingCancelledAnalysisCleanups') || '[]'),
+    }));
+    assert.equal(retained.drafts.some(item => item.jobId === draft.jobId), true);
+    assert.deepEqual(retained.pending, [draft.jobId]);
+    assert.equal(await page.getByRole('button', { name: '새 기록', exact: true }).isDisabled(), true);
+
+    await page.evaluate(() => {
+      window.__allowCleanupStorageWrites = true;
+      window.dispatchEvent(new Event('analysis-recovery:sync-requested'));
+    });
+    await page.waitForFunction(() => (
+      window.localStorage.getItem('analysisResumeDrafts') === '[]'
+      && window.localStorage.getItem('pendingCancelledAnalysisCleanups') === '[]'
+    ));
+    assert.ok(deleteRequestCount >= 1 && deleteRequestCount <= 2);
+    assert.equal(await page.getByRole('button', { name: '새 기록', exact: true }).isDisabled(), false);
+    console.log('ok - cleanup local removal failure retries scenario');
+  } finally {
+    await context.close();
+  }
+};
+
 const expectNoText = async (page, text) => {
   await page.waitForFunction(nextText => !document.body?.innerText.includes(nextText), text);
 };
@@ -1989,6 +2280,10 @@ const run = async () => {
     ['active-draft-network-failure-keeps-draft', runActiveDraftNetworkFailureKeepsDraftScenario],
     ['delete-does-not-suppress-file-candidate', runDeleteDoesNotSuppressFileCandidateScenario],
     ['cancelled-draft-immediate-delete', runCancelledDraftImmediateDeleteScenario],
+    ['pending-cancelled-cleanup-keeps-global-lock', runPendingCancelledCleanupKeepsGlobalLockScenario],
+    ['completed-job-preserves-same-file-active-job', runCompletedJobPreservesSameFileActiveJobScenario],
+    ['completed-import-failure-is-bounded', runCompletedImportFailureIsBoundedScenario],
+    ['cleanup-local-removal-failure-retries', runCleanupLocalRemovalFailureRetriesScenario],
   ];
   const selectedScenarios = requestedScenarios.size === 0
     ? scenarios

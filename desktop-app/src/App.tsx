@@ -179,7 +179,14 @@ export const App: React.FC = () => {
     });
     const [backendTaskActive, setBackendTaskActive] = useState(false);
     const recoverySnapshot = useAnalysisResumeSnapshot();
-    const remoteAnalysisActive = recoverySnapshot.drafts.some(draft => draft.status === 'active');
+    const pendingCancelledCleanupActive = recoverySnapshot.pendingCancelledCleanupJobIds.length > 0;
+    const remoteDraftActive = recoverySnapshot.drafts.some(draft => draft.status === 'active');
+    const remoteAnalysisActive = remoteDraftActive || pendingCancelledCleanupActive;
+    const analysisStartBlocked = pendingCancelledCleanupActive
+        || (remoteDraftActive && !analysisStatus.active);
+    const newMeetingBlockedReason = pendingCancelledCleanupActive
+        ? '취소한 분석을 정리하고 있습니다. 정리가 끝나면 새 기록을 만들 수 있습니다.'
+        : '다른 실행에서 진행 중인 분석이 끝난 뒤 새 기록을 만들 수 있습니다.';
     const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
     const canLeaveCurrentMeeting = () => {
@@ -190,7 +197,7 @@ export const App: React.FC = () => {
 
     const handleCreateMeeting = () => {
         if (!canLeaveCurrentMeeting()) return;
-        if (remoteAnalysisActive && !analysisStatus.active) return;
+        if (analysisStartBlocked) return;
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
         setResumeDraftSelectionRequest(null);
@@ -200,7 +207,7 @@ export const App: React.FC = () => {
     const handleSelectResumeDraft = (jobId: string) => {
         if (!canLeaveCurrentMeeting()) return;
         const selectedDraft = recoverySnapshot.drafts.find(draft => draft.jobId === jobId);
-        if (remoteAnalysisActive && !analysisStatus.active && selectedDraft?.status !== 'active') return;
+        if (analysisStartBlocked && selectedDraft?.status !== 'active') return;
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
         setActiveTab('minutes');
@@ -350,8 +357,9 @@ export const App: React.FC = () => {
                 onTabChange={handleTabChange}
                 onOpenSettings={() => openSettings('general')}
                 onOpenStart={() => handleTabChange('start')}
-                newMeetingBlocked={remoteAnalysisActive && !analysisStatus.active}
-                resumeSelectionBlocked={remoteAnalysisActive && !analysisStatus.active}
+                newMeetingBlocked={analysisStartBlocked}
+                newMeetingBlockedReason={newMeetingBlockedReason}
+                resumeSelectionBlocked={analysisStartBlocked}
                 onCreateMeeting={handleCreateMeeting}
                 onDeleteMeeting={handleDeleteMeeting}
                 onSelectResumeDraft={handleSelectResumeDraft}
@@ -375,13 +383,16 @@ export const App: React.FC = () => {
                         }}
                         onResumeDraft={handleSelectResumeDraft}
                         analysisActive={analysisStatus.active}
-                        newMeetingBlocked={remoteAnalysisActive && !analysisStatus.active}
+                        newMeetingBlocked={analysisStartBlocked}
+                        newMeetingBlockedReason={newMeetingBlockedReason}
                     />
                 </div>
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
                     <MeetingWriter
                         key={writerSessionKey}
                         onOpenSettings={() => openSettings('models')}
+                        analysisStartBlocked={analysisStartBlocked}
+                        analysisStartBlockedReason={newMeetingBlockedReason}
                         resumeDraftSelectionRequest={resumeDraftSelectionRequest}
                         onRegisterLeaveGuard={(guard) => {
                             writerLeaveGuardRef.current = guard ?? (() => true);
@@ -394,6 +405,8 @@ export const App: React.FC = () => {
                         detailOpenRequest={meetingDetailOpenRequest}
                         onOpenSettings={() => openSettings('models')}
                         onCreateMeeting={handleCreateMeeting}
+                        newMeetingBlocked={analysisStartBlocked}
+                        newMeetingBlockedReason={newMeetingBlockedReason}
                         onSelectMeetingId={setSelectedMeetingId}
                         onRegisterLeaveGuard={(guard) => {
                             leaveGuardRef.current = guard ?? (() => true);

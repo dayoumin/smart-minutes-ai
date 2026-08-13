@@ -782,6 +782,10 @@
     @apply outline-none ring-2 ring-primary/30;
   }
 
+  .sidebar-action-note {
+    @apply -mt-2 mb-3 px-3 text-[11px] leading-relaxed text-muted-foreground;
+  }
+
   .sidebar-folder-toolbar {
     @apply mb-2;
   }
@@ -1048,6 +1052,10 @@
     background: transparent;
   }
 
+  .barorok-app-frame-minutes .sidebar-action-note {
+    color: rgba(238, 252, 253, 0.72);
+  }
+
   .sidebar-resume-draft-button:disabled {
     cursor: not-allowed;
     opacity: 0.5;
@@ -1254,17 +1262,24 @@
   }
 
   .start-primary-tail {
-    position: absolute;
-    left: -0.2rem;
-    bottom: -1.15rem;
-    width: 6.5rem;
-    opacity: 0.34;
+    position: relative;
+    flex: 0 0 auto;
+    width: 4.35rem;
+    height: 2.7rem;
+    opacity: 0.7;
     pointer-events: none;
+  }
+
+  .start-primary-tail,
+  .writer-whale-tail-icon {
+    background-image: url('/assets/ocean-sunlight/whale-tail-button-clean.png');
+    background-repeat: no-repeat;
+    background-position: center;
+    background-size: 250%;
   }
 
   .start-primary-label {
     position: relative;
-    z-index: 1;
     display: inline-flex;
     align-items: center;
     gap: 0.45rem;
@@ -1290,11 +1305,18 @@
     transform: translateY(-1px);
   }
 
-  :is(.start-primary-button, .start-secondary-button):disabled {
-    cursor: wait;
+  :is(.start-primary-button, .start-secondary-button, .start-text-button):disabled {
     opacity: 0.58;
     filter: saturate(0.62);
     box-shadow: none;
+  }
+
+  .start-secondary-button:disabled {
+    cursor: wait;
+  }
+
+  :is(.start-primary-button, .start-text-button):disabled {
+    cursor: not-allowed;
   }
 
   :is(.start-primary-button, .start-secondary-button, .start-text-button):focus-visible {
@@ -1306,6 +1328,27 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.55rem;
+  }
+
+  .start-workspace-blocked-note,
+  .writer-analysis-blocked-note {
+    border: 1px solid var(--status-warning-border);
+    border-radius: var(--radius-control);
+    background: var(--status-warning-bg);
+    color: var(--status-warning-fg);
+    font-size: 0.78rem;
+    line-height: 1.5;
+  }
+
+  .start-workspace-blocked-note {
+    max-width: 36rem;
+    margin: 0 auto;
+    padding: 0.55rem 0.8rem;
+  }
+
+  .writer-analysis-blocked-note {
+    margin: 0 0 1rem;
+    padding: 0.65rem 0.8rem;
   }
 
   .start-workspace-assurance span {
@@ -1927,9 +1970,10 @@
   }
 
   .writer-whale-tail-icon {
+    display: block;
+    flex: 0 0 auto;
     width: 4.8rem;
     height: 3rem;
-    object-fit: contain;
     opacity: 0.76;
     filter: brightness(0.84) saturate(0.82) drop-shadow(0 4px 7px rgba(97, 242, 247, 0.2));
   }

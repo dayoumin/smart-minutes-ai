@@ -285,7 +285,9 @@ def normalize_app_config(config: dict) -> dict:
 
     stt["chunk_seconds"] = max(1, _safe_int(stt.get("chunk_seconds"), DEFAULT_STT_CHUNK_SECONDS))
     diarization["enabled"] = bool(diarization.get("enabled", True))
-    diarization["generate_during_analysis"] = bool(diarization.get("generate_during_analysis", True))
+    diarization["generate_during_analysis"] = bool(
+        diarization.get("generate_during_analysis", diarization["enabled"])
+    )
     diarization["auto_skip_long_audio"] = bool(diarization.get("auto_skip_long_audio", True))
     diarization["max_duration_seconds"] = max(
         60,

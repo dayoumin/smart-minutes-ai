@@ -13,6 +13,7 @@ interface StartWorkspaceProps {
     onResumeDraft: (jobId: string) => void;
     analysisActive?: boolean;
     newMeetingBlocked?: boolean;
+    newMeetingBlockedReason?: string;
 }
 
 const formatMeetingDate = (value: string): string => {
@@ -36,17 +37,15 @@ const meetingPreview = (meeting: MeetingRecord): string => {
 
 const primaryButtonContent = (label: string, icon: React.ReactNode) => (
     <>
-        <img
+        <span
             className="start-primary-tail"
-            src="/assets/ocean-sunlight/whale-tail-button.webp"
-            alt=""
             aria-hidden="true"
         />
         <span className="start-primary-label">{icon}{label}</span>
     </>
 );
 
-export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting, onOpenMeeting, onResumeDraft, analysisActive = false, newMeetingBlocked = false }) => {
+export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting, onOpenMeeting, onResumeDraft, analysisActive = false, newMeetingBlocked = false, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.' }) => {
     const recoverySnapshot = useAnalysisResumeSnapshot();
     const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
     const [meetingsLoaded, setMeetingsLoaded] = useState(false);
@@ -126,7 +125,7 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
                             </div>
                             <div className="start-scene-actions">
                                 {model.recoveryAction === 'resume' && (
-                                    <button type="button" className="start-primary-button" onClick={() => onResumeDraft(model.recoveryDraft!.jobId)}>
+                                    <button type="button" className="start-primary-button" onClick={() => onResumeDraft(model.recoveryDraft!.jobId)} disabled={newMeetingBlocked} aria-describedby={newMeetingBlocked ? 'start-new-meeting-blocked' : undefined}>
                                         {primaryButtonContent('이어서 기록', <ArrowRight size={18} />)}
                                     </button>
                                 )}
@@ -141,7 +140,7 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
                                         {recoverySyncing ? '확인 중' : '상태 확인'}
                                     </button>
                                 )}
-                                {!newMeetingBlocked && <button type="button" className="start-text-button" onClick={onCreateMeeting}>{analysisActive ? '진행 중인 분석 보기' : '새 기록 만들기'}</button>}
+                                <button type="button" className="start-text-button" onClick={onCreateMeeting} disabled={newMeetingBlocked} aria-describedby={newMeetingBlocked ? 'start-new-meeting-blocked' : undefined}>{analysisActive ? '진행 중인 분석 보기' : '새 기록 만들기'}</button>
                             </div>
                         </>
                     ) : model.scene === 'recent' && model.recentMeeting ? (
@@ -157,7 +156,7 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
                                 <button type="button" className="start-primary-button" onClick={() => onOpenMeeting(model.recentMeeting!.id)}>
                                     {primaryButtonContent('회의록 열기', <ArrowRight size={17} />)}
                                 </button>
-                                <button type="button" className="start-text-button" onClick={onCreateMeeting}>{analysisActive ? '진행 중인 분석 보기' : '새 기록 만들기'}</button>
+                                <button type="button" className="start-text-button" onClick={onCreateMeeting} disabled={newMeetingBlocked} aria-describedby={newMeetingBlocked ? 'start-new-meeting-blocked' : undefined}>{analysisActive ? '진행 중인 분석 보기' : '새 기록 만들기'}</button>
                             </div>
                         </>
                     ) : (
@@ -169,13 +168,19 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
                                 <p>회의가 끝난 뒤 파일을 가져와도 괜찮습니다. 로컬에서 안전하게 분석을 시작해 보세요.</p>
                             </div>
                             <div className="start-scene-actions">
-                                <button type="button" className="start-primary-button" onClick={onCreateMeeting}>
+                                <button type="button" className="start-primary-button" onClick={onCreateMeeting} disabled={newMeetingBlocked} aria-describedby={newMeetingBlocked ? 'start-new-meeting-blocked' : undefined}>
                                     {primaryButtonContent(analysisActive ? '진행 중인 분석 보기' : '새 기록 시작', analysisActive ? <ArrowRight size={18} /> : <Plus size={18} />)}
                                 </button>
                             </div>
                         </>
                     )}
                 </div>
+
+                {newMeetingBlocked && (
+                    <p id="start-new-meeting-blocked" className="start-workspace-blocked-note" role="status">
+                        {newMeetingBlockedReason}
+                    </p>
+                )}
 
                 <div className="start-workspace-assurance" aria-label="제품 특징">
                     <span>내 PC에서 보관</span>

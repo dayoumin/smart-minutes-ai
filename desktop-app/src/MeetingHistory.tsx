@@ -48,6 +48,8 @@ interface MeetingHistoryProps {
     selectedMeetingId?: string | null;
     detailOpenRequest?: MeetingDetailOpenRequest | null;
     onCreateMeeting?: () => void;
+    newMeetingBlocked?: boolean;
+    newMeetingBlockedReason?: string;
     onSelectMeetingId?: (id: string | null) => void;
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
     onOpenSettings?: () => void;
@@ -900,6 +902,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     selectedMeetingId,
     detailOpenRequest,
     onCreateMeeting,
+    newMeetingBlocked = false,
+    newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.',
     onSelectMeetingId,
     onRegisterLeaveGuard,
     onOpenSettings,
@@ -3704,9 +3708,20 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             다시 시도
                         </Button>
                     ) : onCreateMeeting ? (
-                        <Button onClick={onCreateMeeting}>
-                            새 회의록 작성
-                        </Button>
+                        <>
+                            <Button
+                                onClick={onCreateMeeting}
+                                disabled={newMeetingBlocked}
+                                aria-describedby={newMeetingBlocked ? 'meeting-history-create-blocked' : undefined}
+                            >
+                                새 회의록 작성
+                            </Button>
+                            {newMeetingBlocked && (
+                                <p id="meeting-history-create-blocked" className="status-note status-neutral">
+                                    {newMeetingBlockedReason}
+                                </p>
+                            )}
+                        </>
                     ) : null}
                 </div>
             </div>

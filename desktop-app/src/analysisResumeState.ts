@@ -1,8 +1,10 @@
 import { useSyncExternalStore } from 'react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
+    ANALYSIS_RESUME_DRAFTS_VOLATILE_UPDATED_EVENT,
     AnalysisResumeDraft,
     listAnalysisResumeDrafts,
+    listPendingCancelledAnalysisCleanups,
 } from './analysisResumeDrafts';
 
 export type AnalysisResumeSyncStatus = 'idle' | 'syncing' | 'ready' | 'error';
@@ -12,6 +14,7 @@ export interface AnalysisResumeSnapshot {
     syncStatus: AnalysisResumeSyncStatus;
     lastSuccessfulSyncAt: string | null;
     drafts: AnalysisResumeDraft[];
+    pendingCancelledCleanupJobIds: string[];
     error: string | null;
 }
 
@@ -21,6 +24,7 @@ let snapshot: AnalysisResumeSnapshot = {
     syncStatus: 'idle',
     lastSuccessfulSyncAt: null,
     drafts: listAnalysisResumeDrafts(),
+    pendingCancelledCleanupJobIds: listPendingCancelledAnalysisCleanups(),
     error: null,
 };
 
@@ -34,7 +38,8 @@ export const getAnalysisResumeSnapshot = (): AnalysisResumeSnapshot => snapshot;
 
 export const refreshAnalysisResumeSnapshot = (): AnalysisResumeSnapshot => {
     const drafts = listAnalysisResumeDrafts();
-    snapshot = { ...snapshot, drafts };
+    const pendingCancelledCleanupJobIds = listPendingCancelledAnalysisCleanups();
+    snapshot = { ...snapshot, drafts, pendingCancelledCleanupJobIds };
     emit();
     return snapshot;
 };
@@ -54,6 +59,9 @@ export const setAnalysisResumeSyncState = (
             ? snapshot.lastSuccessfulSyncAt
             : options.successfulAt,
         drafts: options.refreshDrafts === false ? snapshot.drafts : listAnalysisResumeDrafts(),
+        pendingCancelledCleanupJobIds: options.refreshDrafts === false
+            ? snapshot.pendingCancelledCleanupJobIds
+            : listPendingCancelledAnalysisCleanups(),
         error: options.error === undefined ? snapshot.error : options.error,
     };
     emit();
@@ -62,13 +70,15 @@ export const setAnalysisResumeSyncState = (
 
 const subscribe = (listener: Listener): (() => void) => {
     listeners.add(listener);
-    const handleDraftsUpdated = () => refreshAnalysisResumeSnapshot();
-    window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleDraftsUpdated);
     return () => {
         listeners.delete(listener);
-        window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleDraftsUpdated);
     };
 };
+
+if (typeof window !== 'undefined') {
+    window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, refreshAnalysisResumeSnapshot);
+    window.addEventListener(ANALYSIS_RESUME_DRAFTS_VOLATILE_UPDATED_EVENT, refreshAnalysisResumeSnapshot);
+}
 
 export const useAnalysisResumeSnapshot = (): AnalysisResumeSnapshot => (
     useSyncExternalStore(subscribe, getAnalysisResumeSnapshot, getAnalysisResumeSnapshot)
@@ -80,6 +90,7 @@ export const requestAnalysisRecoverySync = (): void => {
 
 export const isVisibleRecoveryDraft = (draft: AnalysisResumeDraft): boolean => (
     draft.status === 'active'
+    || draft.stage === 'recovering-result'
     || (
         draft.status !== 'completed'
         && draft.status !== 'unavailable'

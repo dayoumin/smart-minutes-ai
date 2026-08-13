@@ -2807,7 +2807,7 @@ def _resolve_summary_model(config: dict, *, start_ollama: bool = True) -> str:
     llm_model = str(summary_config.get("model") or DEFAULT_SUMMARY_MODEL).strip()
     if llm_model and llm_model.startswith((".", "..")):
         llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
-    if llm_model and os.path.exists(llm_model):
+    if llm_model and os.path.isfile(llm_model):
         return llm_model
     if is_local_summary_model_path(llm_model):
         return llm_model
@@ -2875,7 +2875,7 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
             "reason": "model_missing",
         }
 
-    if os.path.exists(model_name_or_path):
+    if os.path.isfile(model_name_or_path):
         return {"ready": True, "status": "ready", "message": ""}
 
     if is_local_summary_model_path(model_name_or_path):

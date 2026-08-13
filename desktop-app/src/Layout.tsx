@@ -26,6 +26,7 @@ export interface LayoutProps {
     onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenStart?: () => void;
+    onOpenArchive?: () => void;
     newMeetingBlocked?: boolean;
     newMeetingBlockedReason?: string;
     resumeSelectionBlocked?: boolean;
@@ -34,7 +35,7 @@ export interface LayoutProps {
     showAsrBenchmark?: boolean;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
     const shellVariant = getAppShellVariant(activeTab);
     const oceanShellActive = shellVariant === 'ocean';
     return (
@@ -49,6 +50,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onDeleteMeeting={onDeleteMeeting}
                     onSelectResumeDraft={onSelectResumeDraft}
                     onOpenStart={onOpenStart}
+                    onOpenArchive={onOpenArchive}
                     newMeetingBlocked={newMeetingBlocked}
                     newMeetingBlockedReason={newMeetingBlockedReason}
                     resumeSelectionBlocked={resumeSelectionBlocked}

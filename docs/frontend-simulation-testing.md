@@ -19,6 +19,7 @@ For the broader user-facing scenario matrix across file length, file type, stop/
 - `corepack pnpm --dir desktop-app test:resume-flow`
 - `corepack pnpm --dir desktop-app test:resume-draft-flow`
 - `corepack pnpm --dir desktop-app test:start-workspace-flow`
+- `corepack pnpm --dir desktop-app test:meeting-archive-flow`
 - `corepack pnpm --dir desktop-app test:edit-guard-flow`
 - `corepack pnpm --dir desktop-app test:close-guard-flow`
 - `corepack pnpm --dir desktop-app test:settings-backend-restart`

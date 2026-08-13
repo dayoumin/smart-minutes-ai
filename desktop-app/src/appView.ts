@@ -1,4 +1,4 @@
-export type AppView = 'start' | 'minutes' | 'history' | 'asr-benchmark';
+export type AppView = 'start' | 'minutes' | 'history' | 'archive' | 'asr-benchmark';
 export type AppShellVariant = 'ocean' | 'document';
 
 export const getAppShellVariant = (view: AppView): AppShellVariant => (
@@ -6,7 +6,7 @@ export const getAppShellVariant = (view: AppView): AppShellVariant => (
 );
 
 export const getInitialAppView = (): AppView => (
-    import.meta.env.DEV && new URLSearchParams(window.location.search).get('view') === 'minutes'
-        ? 'minutes'
+    import.meta.env.DEV && ['minutes', 'archive'].includes(new URLSearchParams(window.location.search).get('view') ?? '')
+        ? new URLSearchParams(window.location.search).get('view') as AppView
         : 'start'
 );

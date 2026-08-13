@@ -2993,6 +2993,262 @@
     @apply rounded-[var(--radius-card)] border border-border bg-background p-8 text-center text-sm text-muted-foreground;
   }
 
+  .sidebar-archive-button {
+    @apply mt-0;
+  }
+
+  .sidebar-archive-button-active {
+    background: var(--barorok-navigation-active);
+    color: var(--brand-primary);
+  }
+
+  .meeting-archive {
+    @apply mx-auto w-full max-w-[74rem] pb-10;
+  }
+
+  .meeting-archive-header {
+    @apply mb-5 flex items-end justify-between gap-6;
+  }
+
+  .meeting-archive-header h1 {
+    @apply text-2xl font-bold tracking-[-0.035em] text-foreground;
+  }
+
+  .meeting-archive-header p {
+    @apply mt-1 text-sm leading-relaxed text-muted-foreground;
+  }
+
+  .meeting-archive-counts {
+    @apply flex shrink-0 items-center divide-x divide-border rounded-[var(--radius-card)] border border-border bg-background px-1 shadow-sm;
+  }
+
+  .meeting-archive-counts > div {
+    @apply grid min-w-[4.4rem] grid-cols-[auto_auto] items-baseline justify-center gap-2 px-3 py-2;
+  }
+
+  .meeting-archive-counts dt {
+    @apply text-[11px] font-medium text-muted-foreground;
+  }
+
+  .meeting-archive-counts dd {
+    @apply text-base font-bold tabular-nums text-foreground;
+  }
+
+  .meeting-archive-controls {
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-3 p-4;
+  }
+
+  .meeting-archive-search-field {
+    @apply flex min-h-11 items-center gap-2.5 rounded-[var(--radius-btn)] border border-input bg-background px-3 text-muted-foreground;
+    box-shadow: var(--shadow-control);
+  }
+
+  .meeting-archive-search-field:focus-within {
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+
+  .meeting-archive-search-field input {
+    @apply min-w-0 flex-1 bg-transparent text-sm text-foreground outline-none placeholder:text-muted-foreground;
+  }
+
+  .meeting-archive-period-field {
+    @apply flex min-h-11 items-center gap-2 rounded-[var(--radius-btn)] border border-input bg-background px-3 text-muted-foreground;
+    box-shadow: var(--shadow-control);
+  }
+
+  .meeting-archive-period-field:focus-within {
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+
+  .meeting-archive-period-field select {
+    @apply bg-transparent text-sm font-medium text-foreground outline-none;
+  }
+
+  .meeting-archive-filter-list {
+    @apply col-span-2 flex flex-wrap items-center gap-1 border-t border-border pt-3;
+  }
+
+  .meeting-archive-filter-list button {
+    @apply min-h-9 rounded-[var(--radius-btn)] border border-transparent px-3 text-sm font-semibold text-muted-foreground transition-colors;
+  }
+
+  .meeting-archive-filter-list button:hover {
+    background: var(--surface-action-hover-bg);
+    color: var(--color-foreground);
+  }
+
+  .meeting-archive-filter-list button:focus-visible {
+    @apply outline-none ring-2 ring-primary/30;
+  }
+
+  .meeting-archive-filter-list .meeting-archive-filter-active {
+    border-color: var(--topic-chip-active-border);
+    background: var(--topic-chip-active-bg);
+    color: var(--topic-chip-active-fg);
+  }
+
+  .meeting-archive-result-heading {
+    @apply mt-6 flex items-center justify-between border-b border-border pb-3;
+  }
+
+  .meeting-archive-result-heading h2 {
+    @apply text-lg font-bold text-foreground;
+  }
+
+  .meeting-archive-result-heading span {
+    @apply text-xs font-semibold tabular-nums text-muted-foreground;
+  }
+
+  .meeting-archive-timeline {
+    @apply relative ml-3 border-l border-border py-2 pl-7;
+  }
+
+  .meeting-archive-item {
+    @apply relative py-2;
+  }
+
+  .meeting-archive-marker {
+    @apply absolute top-7 z-10 rounded-full border-2 border-background;
+    left: -2.05rem;
+    width: 0.68rem;
+    height: 0.68rem;
+    background: var(--brand-primary);
+    box-shadow: 0 0 0 1px var(--brand-primary);
+  }
+
+  .meeting-archive-item-action .meeting-archive-marker {
+    background: var(--status-warning-fg);
+    box-shadow: 0 0 0 1px var(--status-warning-border);
+  }
+
+  .meeting-archive-item-meeting .meeting-archive-marker {
+    background: var(--status-neutral-fg);
+    box-shadow: 0 0 0 1px var(--status-neutral-border);
+  }
+
+  .meeting-archive-item > button {
+    @apply grid w-full gap-2 rounded-[var(--radius-card)] border border-border bg-background px-5 py-4 text-left shadow-sm transition;
+  }
+
+  .meeting-archive-item > button:hover {
+    border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--border-default));
+    box-shadow: var(--shadow-panel);
+    transform: translateY(-1px);
+  }
+
+  .meeting-archive-item > button:focus-visible {
+    @apply outline-none ring-2 ring-primary/30 ring-offset-2 ring-offset-background;
+  }
+
+  .meeting-archive-item-meta {
+    @apply flex flex-wrap items-center justify-between gap-2;
+  }
+
+  .meeting-archive-item-meta time {
+    @apply text-xs font-medium tabular-nums text-muted-foreground;
+  }
+
+  .meeting-archive-kind {
+    @apply inline-flex items-center gap-1.5 rounded-[var(--radius-btn)] border px-2 py-1 text-[11px] font-bold;
+  }
+
+  .meeting-archive-kind-decision {
+    border-color: var(--status-success-border);
+    background: var(--status-success-bg);
+    color: var(--status-success-fg);
+  }
+
+  .meeting-archive-kind-action {
+    border-color: var(--status-warning-border);
+    background: var(--status-warning-bg);
+    color: var(--status-warning-fg);
+  }
+
+  .meeting-archive-kind-meeting {
+    border-color: var(--status-neutral-border);
+    background: var(--status-neutral-bg);
+    color: var(--status-neutral-fg);
+  }
+
+  .meeting-archive-item > button > strong {
+    @apply text-[15px] font-semibold leading-6 text-foreground;
+  }
+
+  .meeting-archive-source {
+    @apply inline-flex w-fit items-center gap-1.5 text-xs font-semibold text-primary;
+  }
+
+  .meeting-archive-topics {
+    @apply flex flex-wrap gap-1.5;
+  }
+
+  .meeting-archive-topics > span {
+    @apply max-w-64 truncate rounded-full border px-2.5 py-1 text-[11px] font-medium;
+    border-color: var(--topic-chip-border);
+    background: var(--topic-chip-bg);
+    color: var(--topic-chip-fg);
+  }
+
+  .archive-search-highlight {
+    @apply rounded-sm bg-transparent font-bold text-primary;
+    box-shadow: inset 0 -0.42em 0 color-mix(in srgb, var(--brand-primary) 16%, transparent);
+  }
+
+  .meeting-archive-empty,
+  .meeting-archive-error {
+    @apply mt-4 grid justify-items-center gap-2;
+  }
+
+  .meeting-archive-empty strong {
+    @apply text-sm font-semibold text-foreground;
+  }
+
+  @media (max-width: 800px) {
+    .meeting-archive-header {
+      @apply items-start;
+    }
+
+    .meeting-archive-counts > div {
+      @apply min-w-0 grid-cols-1 gap-0 px-2.5 text-center;
+    }
+
+    .meeting-archive-controls {
+      @apply grid-cols-1;
+    }
+
+    .meeting-archive-filter-list {
+      @apply col-span-1;
+    }
+  }
+
+  @media (max-width: 620px) {
+    .meeting-archive-header {
+      @apply grid;
+    }
+
+    .meeting-archive-counts {
+      @apply w-full;
+    }
+
+    .meeting-archive-counts > div {
+      @apply flex-1 grid-cols-[auto_auto];
+    }
+
+    .meeting-archive-timeline {
+      @apply ml-1 pl-5;
+    }
+
+    .meeting-archive-marker {
+      left: -1.55rem;
+    }
+
+    .meeting-archive-item > button {
+      @apply px-4;
+    }
+  }
+
   .menu-panel {
     @apply rounded-[var(--radius-card)] border border-border bg-background p-1 text-sm;
     box-shadow: var(--shadow-overlay);

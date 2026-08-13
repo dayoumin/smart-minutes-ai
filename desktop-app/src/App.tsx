@@ -11,6 +11,7 @@ import { getApiBase, isTauriRuntime, setTauriCloseGuardActive } from './apiBase'
 import { AppView, getInitialAppView } from './appView';
 import { AnalysisRecoveryCoordinator } from './AnalysisRecoveryCoordinator';
 import { StartWorkspace } from './StartWorkspace';
+import { MeetingArchive } from './MeetingArchive';
 import { useAnalysisResumeSnapshot } from './analysisResumeState';
 
 interface AnalysisStatus {
@@ -357,6 +358,7 @@ export const App: React.FC = () => {
                 onTabChange={handleTabChange}
                 onOpenSettings={() => openSettings('general')}
                 onOpenStart={() => handleTabChange('start')}
+                onOpenArchive={() => handleTabChange('archive')}
                 newMeetingBlocked={analysisStartBlocked}
                 newMeetingBlockedReason={newMeetingBlockedReason}
                 resumeSelectionBlocked={analysisStartBlocked}
@@ -410,6 +412,16 @@ export const App: React.FC = () => {
                         onSelectMeetingId={setSelectedMeetingId}
                         onRegisterLeaveGuard={(guard) => {
                             leaveGuardRef.current = guard ?? (() => true);
+                        }}
+                    />
+                </div>
+                <div className={activeTab === 'archive' ? 'contents' : 'hidden'}>
+                    <MeetingArchive
+                        active={activeTab === 'archive'}
+                        onOpenMeeting={(id) => {
+                            setMeetingDetailOpenRequest(null);
+                            setSelectedMeetingId(id);
+                            setActiveTab('history');
                         }}
                     />
                 </div>

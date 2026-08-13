@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Settings, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import { AnalysisResumeDraft } from './analysisResumeDrafts';
 import type { AppView } from './appView';
 import { selectVisibleRecoveryDrafts, useAnalysisResumeSnapshot } from './analysisResumeState';
@@ -30,6 +30,7 @@ export interface SidebarProps {
     onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenStart?: () => void;
+    onOpenArchive?: () => void;
     newMeetingBlocked?: boolean;
     newMeetingBlockedReason?: string;
     resumeSelectionBlocked?: boolean;
@@ -135,7 +136,7 @@ const sortMeetingFolders = (folders: MeetingFolder[]): MeetingFolder[] => (
     })
 );
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [folders, setFolders] = useState<MeetingFolder[]>([]);
     const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -690,6 +691,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         {newMeetingBlockedReason}
                     </p>
                 )}
+                {onOpenArchive && (
+                    <button
+                        type="button"
+                        className={`sidebar-create-button sidebar-archive-button mb-3 ${activeTab === 'archive' ? 'sidebar-archive-button-active' : ''}`}
+                        aria-current={activeTab === 'archive' ? 'page' : undefined}
+                        onClick={() => {
+                            setOpenMenuId(null);
+                            onOpenArchive();
+                        }}
+                    >
+                        <Search size={17} aria-hidden="true" />
+                        기록 찾기
+                    </button>
+                )}
                 <div className="sidebar-content-scroll custom-scrollbar">
                 <div className="sidebar-folder-toolbar">
                     <button
@@ -992,7 +1007,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 <div ref={recordsListRef} className="flex flex-col" data-sidebar-records>
                     {visibleRecords.length ? (
                         visibleRecords.map(record => {
-                            const isSelected = selectedMeetingId === record.id;
+                            const isSelected = activeTab === 'history' && selectedMeetingId === record.id;
                             const analysisStateLabel = record.analysisStatus === 'diarization_in_progress'
                                 ? '참석자 구분 중'
                                 : record.analysisStatus === 'diarization_failed'

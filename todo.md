@@ -1,11 +1,18 @@
 # 0. Immediate queue
+- [ ] 2026-08-13 웹 우선 로컬 엔진 MVP
+  - 활성 계획: `docs/web-local-engine-plan.md`.
+  - HTTPS 웹 UI를 첫 제품 구현으로 우선하고, 사용자가 내려받는 Windows 로컬 엔진에서 음성·영상 분석, 모델 실행, 저장과 내보내기를 처리한다.
+  - 음성·영상 원본, 대화록, 요약과 사용자 설정은 기본적으로 원격 분석 서버로 보내지 않는다.
+  - 0단계는 loopback 고정 포트, single instance, health·재연결, 로컬 저장 계약을 검증하는 창 없는 로컬 엔진 PoC다.
+  - 이어서 Local Network Access, exact origin allowlist, 설치별 pairing·API 인증, 서명된 엔진 업데이트와 모델 다운로드 복구를 구현한다.
+  - 데스크톱 portable/handoff 검증은 웹 착수 조건이 아니라 공통 UI·로컬 실행 계약을 재사용하는 후속 호환 단계로 관리한다.
 - [ ] 2026-07-29 바로록 데스크톱·웹 제품 전환
   - 상위 계획과 결정 기록: `docs/barorok-desktop-web-redesign-plan.html`.
   - 작업 브랜치: `codex/barorok-desktop-web-redesign`.
   - 1차 구현은 사용자 표시명·해양 브랜드 토큰·제한된 데스크톱 프레임·공통 앱 셸·새 기록 화면으로 제한하고, 기존 분석/이어하기/기록 조회 기능을 재사용한다.
   - 데스크톱과 웹은 `desktop-app`의 React UI를 공유하며 별도 `web-app` 복제본을 만들지 않는다.
   - 1인용 범위를 유지하고 조직, 초대, 권한, 공유, 과금, 공동 편집은 구현하지 않는다.
-  - 웹 로컬 엔진은 데스크톱 완료 게이트 후 `docs/web-local-engine-followup-plan.md`에 따라 별도 단계로 착수한다.
+  - 웹 로컬 엔진 MVP를 `docs/web-local-engine-plan.md`에 따라 먼저 착수하고, 데스크톱 portable은 후속 호환·배포 경로로 검증한다.
   - 화면 단위 typecheck/lint/관련 Playwright/반응형 검증 후 agent 큰 관점·작은 관점 검토를 거친다.
   - 2026-07-29 방향 정정: 왼쪽 사이드바가 폴더와 회의록 목록을 소유하고, 오른쪽 작업면에는 새 기록·분석 진행·선택한 회의록 상세만 표시한다. 양쪽에 회의록 목록을 중복하지 않는다.
   - 데스크톱은 최대 1360px 앱 프레임과 좌우 16~48px·상하 16~32px의 유동 여백을 적용하고, 1024px 이하에서만 화면을 채운다.
@@ -25,7 +32,7 @@
   - 2026-07-29 완료: 폴더 메뉴에 마우스로 누르는 `위로 이동`·`아래로 이동`을 추가하고, 고정 폴더/일반 폴더 그룹 안의 수동 순서를 IndexedDB에 저장한다. 그룹의 첫·마지막 폴더에서는 불가능한 방향을 비활성화하며, 집중 시뮬레이션으로 클릭 이동·저장·고정 전환을 확인했다.
   - 2026-07-29 완료: 폴더 이름 행을 마우스로 끌어 같은 고정 그룹 안에서 순서를 바꾸는 드래그 이동과 삽입선 피드백을 추가했다. 폴더·회의록 탐색을 하나의 세로 스크롤 영역으로 묶고 선택 결과 이동·스크롤 경계 밖 floating 메뉴·연속 드래그 방지를 적용했으며, 회의록 고정은 최신 DB 레코드의 `pinned`만 변경하도록 데이터 보존 계약을 강화했다.
   - 배포 전 결정 필요: IndexedDB v2를 사용한 뒤 DB v1 기반 구버전 앱으로 되돌리는 롤백을 지원할지 정한다. 지원한다면 폴더 저장소 분리 또는 호환 백업·복구 증거가 필요하고, 지원하지 않는다면 업데이트 안내에 이전 버전 복귀 제한을 명시한다. 마지막 확인: 2026-07-29.
-  - 다음 단계: 실제 `releases\lmo_audio\lmo_audio.exe`를 기준으로 portable 데스크톱 게이트를 수행한다. sidecar 시작, 모델 경로, 음성·영상 파일 선택과 분석, 중지·이어하기, 참석자 구분, 요약, 저장·폴더 열기, 내보내기, backend 재시작, 종료 guard를 확인한 뒤에만 웹 로컬 엔진 단계로 넘어간다.
+  - 다음 단계: 웹용 창 없는 로컬 엔진을 분리해 health·single instance·재연결 PoC를 만들고, 같은 React UI에서 음성·영상 분석과 로컬 저장을 연결한다. 실제 portable 데스크톱 게이트는 웹 MVP 후 별도로 수행한다.
 - [ ] 2026-07-29 회사 PC 첫 작업: 균형형 landing-inspired 기능 작업면 적용
   - 홍보용 랜딩 페이지나 설명 문구를 추가하는 작업이 아니다. 랜딩 페이지의 여백, 비례, 초점, 레이어링만 기능 중심 회의 작업면에 적용한다.
   - 현재 상세 화면은 메타, 상태, 탭, 명령, 본문이 비슷한 간격과 테두리 강도로 연속되어 시각적 대·중·소 계층이 약하다. 단순히 모든 간격을 넓히지 말고 큰 덩어리 사이 여백과 내부 밀도를 분리한다.
@@ -73,7 +80,7 @@
   - 2026-07-29 진행: 기록 정리와 보고서 탭의 command bar를 콘텐츠 폭 64rem 기준으로 전환하고, 결과/빈 상태와 생성·재생성 동작 계층을 통일했다. 1280×720 실제 화면, 보고서 경계 흐름, 템플릿 선택 흐름, 타입·lint로 검증했다.
   - 2026-07-29 진행: 설정 화면의 폭과 정보 레일을 넓히고 지속 오류를 본문 안으로 이동했다. 표시명과 다운로드 설명을 사용자 용어로 정리하고 설정 재시작·모델 관리 시뮬레이션, 타입·lint, 실제 1280×720 화면으로 확인했다.
   - 2026-07-29 완료: 공유 React UI 통합 게이트와 화면 간격·용어·포커스·낮은 창 overflow 마감을 완료했다.
-  - 다음 1순위: 실제 portable `lmo_audio.exe`에서 sidecar·모델·파일 시스템·내보내기·재시작·종료 guard까지 확인하는 데스크톱 런타임 게이트를 수행한다.
+  - 다음 1순위: 공통 React UI를 HTTPS 웹과 사용자 다운로드형 Windows 로컬 엔진에 연결하고, health·인증·로컬 저장·모델 다운로드 흐름을 검증한다.
 - [ ] 2026-06-12 Airepoto 참고 회의록 완성도 강화 1차 계획
   - 세부 계획 원본: `docs/airepoto-reference-adoption-plan.md`.
   - 1차 범위는 내부 기본 회의록 기준, 분야별 용어의 후속 정리/보정 단계 적용, 대화 보관용 회의록/보고서용 정리 회의록 후속 산출물 개념 정리, 긴 회의 안정성 보강으로 잡는다.
@@ -114,7 +121,7 @@
   - 모델 파일은 실제로 여러 필수 파일로 구성되므로 단일 파일로 합치지 않는다. 대신 앱/패키징/검증 코드가 역할 기반 모델 registry를 통해 내부 경로를 찾게 한다.
   - `faster-whisper-large-v3`, `speaker-diarization-community-1` 같은 구체 모델명이 backend, Settings UI, verify/release script에 직접 박혀 있는 지점을 줄이고, `stt`, `diarization`, `summary` 역할 기준으로 교체 가능하게 만든다.
   - 변경 시 `docs\tauri-desktop-release-checklist.md`의 리소스와 모델 경로 기준, handoff zip, manifest, `verify_portable.ps1`, `/api/models/status`, 설정 모델 탭을 함께 갱신한다.
-- [ ] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
+- [ ] 후속: 웹 MVP 이후 집 PC portable 빌드/모델 경로 기준 맞추기
   - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
   - 집에서 작업을 시작하면 먼저 `README.md`, `docs/tauri-desktop-release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.
   - 재빌드용 모델 원본은 프로젝트 루트 `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`로 맞춘다.
@@ -221,7 +228,7 @@
   - `release-manifest.json`은 배포본의 신분증이다. verify/diagnose에서 해시 불일치를 확인한다.
   - WebView 캐시는 필요할 때 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
   - 2026-05-11 확인: 기존 `lmo_audio` deploy 폴더 재구성, manifest/모델/sidecar/export smoke, deploy sidecar 15초 실제 분석을 통과했다. 이후 배포 위치는 `releases\lmo_audio`로 정리한다.
-- [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
+- [ ] 후속: 회사 PC 기준 portable 폴더 테스트
   - `releases\lmo_audio` 폴더 전체를 옮긴 뒤 실행한다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
   - 기본 음성 인식 모델은 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
   - 복사 후 `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`가 보여야 한다.
@@ -523,12 +530,12 @@
 - [x] E2E 성공 후 같은 흐름을 프론트엔드 업로드 화면에서 재검증
   - Playwright smoke test로 파일 선택, real `/api/analyze` SSE 완료, IndexedDB 기록 저장 확인
 
-## 8. 데스크톱 완성 후 웹 로컬 엔진
+## 8. 웹 우선 로컬 엔진
 
-- [ ] 데스크톱 앱 완성 게이트 통과 후 사용자 다운로드형 웹 로컬 엔진 착수
-  - 활성 계획: docs/web-local-engine-followup-plan.md.
+- [ ] 사용자 다운로드형 웹 로컬 엔진 MVP 우선 착수
+  - 활성 계획: docs/web-local-engine-plan.md.
   - 첫 웹 제품은 HTTPS 웹 UI와 현재 사용자 단위 Windows NSIS 로컬 엔진 한 경로만 제공한다.
   - 사용자는 웹에 접속해 코드 서명된 LMO Local Engine Setup.exe를 한 번 내려받고, STT·화자 구분·요약 모델은 필요한 시점에 별도로 받는다.
   - 순수 WASM/WebGPU BrowserEngine, remote SaaS, portable 로컬 엔진, 모바일·PWA는 첫 웹 MVP와 병행하지 않는다.
-  - 웹 구현 전에 실제 lmo_audio.exe 음성·영상 분석, 중지·이어하기, 참석자 구분, 요약, 내보내기와 portable/handoff 검증을 완료한다.
+  - 실제 lmo_audio.exe와 portable/handoff 검증은 웹 구현의 선행 조건으로 두지 않고 웹 MVP 이후 데스크톱 호환 단계에서 완료한다.
   - 웹 착수 0단계에서 loopback 고정 포트, single instance, Local Network Access, exact origin allowlist, 설치별 pairing·API 인증, 서명된 업데이트를 검증한다.

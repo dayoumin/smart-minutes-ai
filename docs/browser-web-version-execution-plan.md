@@ -1,9 +1,9 @@
 # 브라우저 온디바이스 웹 버전 실행 계획
 
-> 상태 변경(2026-07-28): 이 실행안은 후순위 순수 BrowserEngine 후보로 보류한다. 첫 웹 제품은 docs/web-local-engine-followup-plan.md의 사용자 다운로드형 Windows 로컬 엔진 한 경로만 추진하며, 데스크톱 앱 검증 완료 후 착수한다.
+> 상태 변경(2026-08-13): 이 실행안은 후순위 순수 BrowserEngine 후보로 보류한다. 첫 제품 구현은 docs/web-local-engine-plan.md의 사용자 다운로드형 Windows 로컬 엔진 한 경로를 사용하는 웹 MVP로 우선하며, 데스크톱 앱 검증 완료를 기다리지 않는다.
 
 - 확정일: 2026-07-17
-- 상태: 후순위 보류. 첫 웹 제품은 docs/web-local-engine-followup-plan.md를 따르고, 순수 BrowserEngine은 별도 재결정 전까지 구현하지 않는다.
+- 상태: 후순위 보류. 첫 웹 제품은 docs/web-local-engine-plan.md를 따르고, 순수 BrowserEngine은 별도 재결정 전까지 구현하지 않는다.
 - 대상: 기존 데스크톱 제품을 유지하면서 같은 React UI로 제공하는 별도 웹 빌드
 - 관련 문서:
   - `docs/browser-local-web-version-plan.md`

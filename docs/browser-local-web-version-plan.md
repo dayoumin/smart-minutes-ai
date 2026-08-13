@@ -1,6 +1,6 @@
 # 브라우저 온디바이스 웹 버전 설계
 
-> 상태 변경(2026-07-28): 이 문서는 순수 WASM/WebGPU 무설치 후보의 기술 조사 기록으로 보존한다. 첫 웹 제품의 활성 방향은 docs/web-local-engine-followup-plan.md의 사용자 다운로드형 Windows 로컬 엔진 하나로 변경했으며, 데스크톱 앱 완성 전에는 구현하지 않는다.
+> 상태 변경(2026-08-13): 이 문서는 순수 WASM/WebGPU 무설치 후보의 기술 조사 기록으로 보존한다. 첫 제품 구현은 docs/web-local-engine-plan.md의 사용자 다운로드형 Windows 로컬 엔진을 사용하는 웹 MVP를 우선하며, 데스크톱 portable 완성을 선행 조건으로 두지 않는다.
 
 - 문서 상태: 후순위 순수 BrowserEngine 기술 조사 기록
 - 작성 기준일: 2026-07-17

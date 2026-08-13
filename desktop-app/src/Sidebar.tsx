@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, BarChart3, ChevronDown, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Settings, Trash2 } from 'lucide-react';
-import { ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, AnalysisResumeDraft, listAnalysisResumeDrafts } from './analysisResumeDrafts';
+import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Settings, Trash2 } from 'lucide-react';
+import { AnalysisResumeDraft } from './analysisResumeDrafts';
+import type { AppView } from './appView';
+import { selectVisibleRecoveryDrafts, useAnalysisResumeSnapshot } from './analysisResumeState';
 import {
     addMeetingFolder,
     deleteMeetingFolder,
@@ -21,12 +23,15 @@ import { ProgressBar } from './ProgressBar';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
 export interface SidebarProps {
-    activeTab?: string;
+    activeTab?: AppView;
     selectedMeetingId?: string | null;
     onSelectMeeting?: (id: string) => void;
     onCreateMeeting?: () => void;
     onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
+    onOpenStart?: () => void;
+    newMeetingBlocked?: boolean;
+    resumeSelectionBlocked?: boolean;
     onOpenSettings?: () => void;
     onOpenAsrBenchmark?: () => void;
     analysisStatus?: {
@@ -69,11 +74,6 @@ const formatSidebarStatus = (message: string): string => {
     };
     return statusMap[baseMessage] || baseMessage;
 };
-
-const isVisibleResumeDraft = (draft: AnalysisResumeDraft): boolean => (
-    draft.status === 'active'
-    || (draft.status !== 'completed' && draft.status !== 'unavailable' && draft.resumeEligible !== false)
-);
 
 const getSidebarResumeDraftStatus = (draft: AnalysisResumeDraft): string => {
     if (draft.status === 'active') return '진행 중';
@@ -132,7 +132,7 @@ const sortMeetingFolders = (folders: MeetingFolder[]): MeetingFolder[] => (
     })
 );
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, newMeetingBlocked, resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [folders, setFolders] = useState<MeetingFolder[]>([]);
     const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -141,7 +141,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
     const [folderName, setFolderName] = useState('');
     const [folderError, setFolderError] = useState('');
-    const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
+    const resumeSnapshot = useAnalysisResumeSnapshot();
+    const resumeDrafts = useMemo(() => selectVisibleRecoveryDrafts(resumeSnapshot), [resumeSnapshot]);
     const [showResumeDrafts, setShowResumeDrafts] = useState(false);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
     const [showAllRecords, setShowAllRecords] = useState(false);
@@ -149,6 +150,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const [folderDropTarget, setFolderDropTarget] = useState<{ folderId: string; position: 'before' | 'after' } | null>(null);
     const [isReorderingFolders, setIsReorderingFolders] = useState(false);
     const [folderMenuPosition, setFolderMenuPosition] = useState({ top: 0, left: 0 });
+    const [recordMenuPosition, setRecordMenuPosition] = useState<{ top: number; left: number } | null>(null);
     const [now, setNow] = useState(() => Date.now());
     const sidebarRef = useRef<HTMLElement | null>(null);
     const createMeetingButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -188,12 +190,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         }
     };
 
-    const loadResumeDrafts = () => {
-        const drafts = listAnalysisResumeDrafts().filter(isVisibleResumeDraft);
-        setResumeDrafts(drafts);
-        if (drafts.length === 0) setShowResumeDrafts(false);
-    };
-
     const loadFolders = async () => {
         try {
             const data = await getAllMeetingFolders();
@@ -211,20 +207,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     useEffect(() => {
         void loadRecords();
         void loadFolders();
-        loadResumeDrafts();
         window.addEventListener('focus', loadRecords);
         window.addEventListener('meetings:updated', loadRecords);
         window.addEventListener('meetings:updated', loadFolders);
-        window.addEventListener('focus', loadResumeDrafts);
-        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDrafts);
         return () => {
             window.removeEventListener('focus', loadRecords);
             window.removeEventListener('meetings:updated', loadRecords);
             window.removeEventListener('meetings:updated', loadFolders);
-            window.removeEventListener('focus', loadResumeDrafts);
-            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, loadResumeDrafts);
         };
     }, []);
+
+    useEffect(() => {
+        if (resumeDrafts.length === 0) setShowResumeDrafts(false);
+    }, [resumeDrafts.length]);
 
     useEffect(() => {
         if (!analysisStatus?.active) return;
@@ -321,13 +316,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
 
     useEffect(() => {
         if (!openMenuId) return;
+        let focusFrame = 0;
         const frame = window.requestAnimationFrame(() => {
-            recordMenuPanelRefs.current
-                .get(openMenuId)
-                ?.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')
-                ?.focus();
+            const trigger = recordMenuTriggerRefs.current.get(openMenuId);
+            const panel = recordMenuPanelRefs.current.get(openMenuId);
+            if (!trigger || !panel) return;
+            const triggerBounds = trigger.getBoundingClientRect();
+            const panelBounds = panel.getBoundingClientRect();
+            setRecordMenuPosition({
+                top: Math.max(8, Math.min(triggerBounds.bottom + 4, window.innerHeight - panelBounds.height - 8)),
+                left: Math.max(8, Math.min(triggerBounds.right - panelBounds.width, window.innerWidth - panelBounds.width - 8)),
+            });
+            focusFrame = window.requestAnimationFrame(() => {
+                panel.querySelector<HTMLButtonElement>('[role="menuitem"]:not([disabled])')?.focus();
+            });
         });
-        return () => window.cancelAnimationFrame(frame);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            if (focusFrame) window.cancelAnimationFrame(focusFrame);
+            setRecordMenuPosition(null);
+        };
     }, [openMenuId]);
 
     useEffect(() => {
@@ -664,12 +672,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     };
 
     return (
-        <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex max-h-[42vh] shrink-0 flex-col border-b border-border p-4 lg:h-full lg:max-h-none lg:w-72 lg:border-b-0 lg:border-r">
+        <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex h-full max-h-none w-[17rem] shrink-0 flex-col border-r border-border p-4">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                {(activeTab === 'minutes' || activeTab === 'start') && (
+                    <button type="button" className="sidebar-ocean-brand" aria-label="바로록 시작 화면" onClick={onOpenStart}>
+                        <span className="app-brand-mark" aria-hidden="true"><AudioLines size={22} /></span>
+                        <span className="app-brand-copy">
+                            <strong>바로록</strong>
+                            <small>개인용 로컬 회의록</small>
+                        </span>
+                    </button>
+                )}
                 <button
                     ref={createMeetingButtonRef}
                     type="button"
                     className="sidebar-create-button mb-3"
+                    disabled={newMeetingBlocked}
+                    title={newMeetingBlocked ? '다른 실행에서 진행 중인 분석이 끝난 뒤 새 기록을 만들 수 있습니다.' : undefined}
                     onClick={() => {
                         setOpenMenuId(null);
                         onCreateMeeting?.();
@@ -897,11 +916,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                             <div className="mt-2 grid gap-1.5">
                                 {resumeDrafts.map(draft => {
                                     const tone = getSidebarResumeDraftTone(draft);
+                                    const selectionBlocked = Boolean(resumeSelectionBlocked && draft.status !== 'active');
                                     return (
                                         <button
                                             key={draft.jobId}
                                             type="button"
                                             className={`sidebar-resume-draft-button status-${tone} text-left`}
+                                            disabled={selectionBlocked}
+                                            title={selectionBlocked ? '진행 중인 분석이 끝난 뒤 이어서 기록할 수 있습니다.' : undefined}
                                             onClick={() => {
                                                 setOpenMenuId(null);
                                                 onSelectResumeDraft?.(draft.jobId);
@@ -954,11 +976,18 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     {visibleRecords.length ? (
                         visibleRecords.map(record => {
                             const isSelected = selectedMeetingId === record.id;
+                            const analysisStateLabel = record.analysisStatus === 'diarization_in_progress'
+                                ? '참석자 구분 중'
+                                : record.analysisStatus === 'diarization_failed'
+                                    ? '참석자 구분 실패'
+                                    : record.analysisStatus === 'diarization_stopped'
+                                        ? '구분 중지'
+                                        : '';
 
                             return (
                                 <div
                                     key={record.id}
-                                    className={`group relative rounded-md transition-colors ${isSelected ? 'bg-primary/10' : 'hover:bg-muted/40'}`}
+                                    className={`group sidebar-record-row ${isSelected ? 'sidebar-record-row-active' : ''}`}
                                 >
                                 <div className="flex items-start gap-1 px-2 py-1.5">
                                     <button
@@ -982,7 +1011,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                             data-sidebar-record-age
                                             title={record.date}
                                         >
-                                            {formatRecordElapsedTime(record)}
+                                            {analysisStateLabel || formatRecordElapsedTime(record)}
                                         </span>
                                         <button
                                             ref={element => {
@@ -1021,7 +1050,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                         id={`sidebar-record-menu-${record.id}`}
                                         role="menu"
                                         aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
-                                        className="menu-panel absolute right-2 top-8 z-20 w-44 text-xs"
+                                        className="menu-panel fixed z-20 w-44 text-xs"
+                                        style={recordMenuPosition
+                                            ? { top: recordMenuPosition.top, left: recordMenuPosition.left }
+                                            : { top: 0, left: 0, visibility: 'hidden' }}
                                         data-sidebar-record-menu
                                         onKeyDown={event => handleRecordMenuKeyDown(event, record.id)}
                                     >

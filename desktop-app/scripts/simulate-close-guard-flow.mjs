@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 
 const waitForApp = async (url, timeoutMs = 30000) => {

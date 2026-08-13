@@ -9,12 +9,13 @@ import {
     getAnalysisResumeDraft,
     getResumeDraftKey,
     listAnalysisResumeDrafts,
-    listPendingAnalysisDraftCleanups,
     listSuppressedResumeCandidateKeys,
     markAnalysisResumeDraftUnavailable,
     markAnalysisResumeDraftsForKeyUnavailable,
+    queuePendingCancelledAnalysisCleanup,
     queuePendingAnalysisDraftCleanup,
     removeAnalysisResumeDraft,
+    removePendingCancelledAnalysisCleanup,
     removePendingAnalysisDraftCleanup,
     suppressResumeCandidateKey,
     unsuppressResumeCandidateKey,
@@ -25,12 +26,15 @@ import { IconButton } from './IconButton';
 import { Input } from './Input';
 import {
     addMeeting,
+    deleteMeeting,
+    getAllMeetings,
     MeetingGenerationStatus,
     MeetingParticipantSummary,
     MeetingRecord,
     MeetingSegment,
     MeetingSpeakerContextSummary,
     MeetingTopicSection,
+    updateMeeting,
 } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { readApiErrorMessage as readResponseError } from './apiError';
@@ -47,6 +51,8 @@ import {
     ReportTemplate,
     TermGlossary,
 } from './meetingKnowledge';
+import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from './analysisJobRuntime';
+import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisResumeState';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -55,7 +61,20 @@ const ANALYSIS_STALL_WARNING_MS = 120_000;
 const LONG_MEDIA_NOTICE_SECONDS = 30 * 60;
 const VERY_LONG_MEDIA_NOTICE_SECONDS = 90 * 60;
 const PARTICIPANT_SEPARATION_CAUTION_SECONDS = 140 * 60;
+const SHOW_AUDIO_EXTRACT_TOOL = false;
 const getNowMs = (): number => Date.now();
+
+const WhaleTailIcon: React.FC = () => (
+    <img
+        className="writer-whale-tail-icon"
+        src="/assets/ocean-sunlight/whale-tail-button.webp"
+        alt=""
+        width="256"
+        height="160"
+        decoding="async"
+        aria-hidden="true"
+    />
+);
 
 const getAdjustedEtaSeconds = (
     etaSeconds: number | null,
@@ -75,7 +94,7 @@ const getSelectedFileProcessingGuidance = (
     if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
     if (includeDiarizationDuringAnalysis) {
         if (durationSeconds >= PARTICIPANT_SEPARATION_CAUTION_SECONDS) {
-            return '매우 긴 파일입니다. 참석자 구분까지 이어서 실행하면 오래 걸릴 수 있습니다. 대화록을 먼저 보려면 아래 옵션을 끄세요.';
+            return '매우 긴 파일입니다. 참석자 구분까지 이어서 실행하면 오래 걸릴 수 있습니다. 대화록을 먼저 보려면 설정에서 참석자 구분을 끄세요.';
         }
         return '긴 파일입니다. 참석자 구분까지 이어서 실행하므로 전체 완료까지 시간이 더 걸릴 수 있습니다.';
     }
@@ -95,8 +114,8 @@ const getAnalysisProgressGuidance = (
 ): string | null => {
     if (isTranscriptReady) {
         return includeDiarizationDuringAnalysis
-            ? '대화록 진행분은 보존되었습니다. 참석자 구분까지 끝난 뒤 저장되며, 결과 보기를 누르면 편집 화면으로 이동합니다.'
-            : '대화록 진행분은 보존되었습니다. 저장 뒤 결과 보기를 누르면 음성 파일이 보관된 경우 참석자 구분과 정리를 실행할 수 있습니다.';
+            ? '대화록은 저장되었습니다. 참석자 구분을 계속 진행합니다. 문제가 생겨도 저장된 대화록은 남습니다.'
+            : '대화록은 저장되었습니다. 결과 보기를 누르면 음성 파일이 보관된 경우 참석자 구분과 정리를 실행할 수 있습니다.';
     }
     if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
     if (durationSeconds >= VERY_LONG_MEDIA_NOTICE_SECONDS) {
@@ -109,7 +128,10 @@ const getAnalysisProgressGuidance = (
         : '대화록 예상은 저장 기준입니다. 참석자 구분과 정리는 결과 화면에서 실행할 수 있습니다.';
 };
 
-interface AnalyzeResult {
+export interface AnalyzeResult {
+    job_id?: string;
+    source_file?: string;
+    partial?: boolean;
     status?: string;
     heartbeat?: boolean;
     progress?: number;
@@ -196,6 +218,152 @@ interface AnalyzeResult {
     };
 }
 
+export const upsertMeetingRecord = async (record: MeetingRecord): Promise<string> => {
+    const meetings = await getAllMeetings();
+    const matches = meetings.filter(meeting => (
+        meeting.id === record.id
+        || Boolean(record.jobId && meeting.jobId === record.jobId)
+    ));
+    const byMostRecentlyUpdated = (latest: MeetingRecord | undefined, meeting: MeetingRecord): MeetingRecord => {
+        if (!latest) return meeting;
+        const latestUpdatedAt = Date.parse(latest.updatedAt || latest.createdAt || latest.date) || 0;
+        const meetingUpdatedAt = Date.parse(meeting.updatedAt || meeting.createdAt || meeting.date) || 0;
+        return meetingUpdatedAt > latestUpdatedAt ? meeting : latest;
+    };
+    const latestExisting = matches.reduce<MeetingRecord | undefined>(byMostRecentlyUpdated, undefined);
+    if (latestExisting) {
+        const completedExisting = matches
+            .filter(meeting => meeting.analysisStatus === 'completed')
+            .reduce<MeetingRecord | undefined>(byMostRecentlyUpdated, undefined);
+        const incomingRecord = completedExisting && record.analysisStatus !== 'completed'
+            ? completedExisting
+            : record;
+        const userEditedMatches = matches.filter(meeting => (
+            meeting.id !== meeting.jobId
+            || Boolean(meeting.folderId)
+            || meeting.pinned !== undefined
+            || Boolean(meeting.editedDisplaySegments?.length)
+            || Boolean(meeting.transcriptEditMeta?.edited)
+            || Boolean(meeting.transcriptEditMeta?.editedAt)
+            || Boolean(meeting.confirmedMinutes)
+            || Boolean(meeting.meetingReport)
+            || Boolean(Object.keys(meeting.speakerLabels || {}).length)
+        ));
+        const userEdited = userEditedMatches.reduce<MeetingRecord | undefined>(byMostRecentlyUpdated, undefined)
+            || latestExisting;
+        const existing = userEdited || latestExisting;
+        await updateMeeting({
+            ...incomingRecord,
+            id: existing.id,
+            title: userEdited.title || existing.title || incomingRecord.title,
+            meetingPurpose: userEdited.meetingPurpose ?? existing.meetingPurpose ?? incomingRecord.meetingPurpose,
+            createdAt: existing.createdAt,
+            folderId: userEdited.folderId ?? existing.folderId,
+            pinned: userEdited.pinned ?? existing.pinned,
+            sourceFile: userEdited.sourceFile || existing.sourceFile || incomingRecord.sourceFile,
+            speakerLabels: Object.keys(userEdited.speakerLabels || {}).length > 0
+                ? userEdited.speakerLabels
+                : existing.speakerLabels ?? incomingRecord.speakerLabels,
+            editedDisplaySegments: userEdited.editedDisplaySegments?.length
+                ? userEdited.editedDisplaySegments
+                : existing.editedDisplaySegments,
+            transcriptEditMeta: Object.keys(userEdited.transcriptEditMeta || {}).length > 0
+                ? userEdited.transcriptEditMeta
+                : existing.transcriptEditMeta,
+            confirmedMinutes: userEdited.confirmedMinutes ?? existing.confirmedMinutes,
+            meetingReport: userEdited.meetingReport ?? existing.meetingReport,
+        });
+        await Promise.all(
+            matches
+                .filter(meeting => meeting.id !== existing.id)
+                .map(meeting => deleteMeeting(meeting.id)),
+        );
+        return existing.id;
+    }
+    await addMeeting(record);
+    return record.id;
+};
+
+export const deleteMeetingRecordForJob = async (jobId: string): Promise<void> => {
+    const meetings = await getAllMeetings();
+    const matches = meetings.filter(meeting => meeting.id === jobId || meeting.jobId === jobId);
+    await Promise.all(matches.map(meeting => deleteMeeting(meeting.id)));
+};
+
+export const updateMeetingAnalysisStatus = async (
+    jobId: string,
+    analysisStatus: NonNullable<MeetingRecord['analysisStatus']>,
+): Promise<void> => {
+    const meeting = (await getAllMeetings()).find(item => item.id === jobId || item.jobId === jobId);
+    if (!meeting) return;
+    const meetingId = await upsertMeetingRecord({ ...meeting, analysisStatus });
+    window.dispatchEvent(new CustomEvent('meetings:updated', {
+        detail: { id: meetingId, openHistory: false },
+    }));
+};
+
+export const meetingRecordFromSavedAnalysis = (
+    data: AnalyzeResult,
+    draft: AnalysisResumeDraft,
+): MeetingRecord => ({
+    id: draft.jobId,
+    date: draft.date.replace('T', ' '),
+    title: draft.title.trim(),
+    participants: draft.participants || '',
+    meetingPurpose: draft.meetingPurpose?.trim() || '',
+    selectedReportTemplateId: data.selectedReportTemplateId
+        || data.selected_report_template_id
+        || draft.selectedReportTemplateId
+        || DEFAULT_REPORT_TEMPLATE_ID,
+    reportTemplate: data.reportTemplate
+        || data.report_template
+        || draft.reportTemplate
+        || getReportTemplateById(DEFAULT_REPORT_TEMPLATE_ID),
+    selectedContextTemplateId: data.selectedContextTemplateId
+        || data.selected_context_template_id
+        || DEFAULT_CONTEXT_TEMPLATE_ID,
+    contextTemplate: data.contextTemplate
+        || data.context_template
+        || getContextTemplateById(DEFAULT_CONTEXT_TEMPLATE_ID),
+    selectedTermGlossaryIds: data.selectedTermGlossaryIds
+        || data.selected_term_glossary_ids
+        || draft.selectedTermGlossaryIds
+        || [],
+    termGlossaries: data.termGlossaries
+        || data.term_glossaries
+        || draft.termGlossaries
+        || [],
+    summary: data.summary || '대화록을 저장했습니다.',
+    segments: data.segments || [],
+    displaySegments: data.displaySegments || data.display_segments || [],
+    speakerLabels: {},
+    sourceFile: data.source_file || draft.sourceFilename,
+    jobId: data.job_id || draft.jobId,
+    topics: data.topics || [],
+    topicSections: data.topicSections || data.topic_sections || [],
+    participantSummaries: data.participantSummaries || data.participant_summaries || [],
+    speakerContextSummaries: data.speakerContextSummaries || data.speaker_context_summaries || [],
+    generationStatus: data.generationStatus || data.generation_status || {},
+    actions: data.actions || [],
+    decisions: data.decisions || [],
+    needsCheck: data.needsCheck || data.needs_check || [],
+    analysisStatus: data.partial
+        ? draft.status === 'failed'
+            ? 'diarization_failed'
+            : draft.status === 'stopped' || draft.status === 'cancelled'
+                ? 'diarization_stopped'
+                : 'diarization_in_progress'
+        : 'completed',
+    diarizationSkipped: data.diarizationSkipped ?? data.diarization_skipped ?? false,
+    diarizationApplied: data.diarizationApplied ?? data.diarization_applied ?? false,
+    diarizationRequested: data.diarizationRequested ?? data.diarization_requested ?? true,
+    diarizationSkipMessage: data.diarizationSkipMessage || data.diarization_skip_message || '',
+    diarizationSkipReason: data.diarizationSkipReason || data.diarization_skip_reason || '',
+    diarizationDeferred: data.diarizationDeferred ?? data.diarization_deferred ?? false,
+    diarizationDeferMessage: data.diarizationDeferMessage || data.diarization_defer_message || '',
+    outputFiles: data.outputs,
+});
+
 interface ResumeCandidate {
     job_id: string;
     stage: string;
@@ -219,7 +387,7 @@ interface ResumeCandidatesPayload {
     recommended_job_id?: string | null;
 }
 
-interface DraftStatusPayload {
+export interface DraftStatusPayload {
     drafts?: Array<{
         job_id: string;
         status: 'active' | 'cancelled' | 'failed' | 'completed' | 'stopped' | 'missing';
@@ -418,13 +586,6 @@ const formatResumeUpdatedAt = (value?: string): string => {
     });
 };
 
-const canResumeDraft = (draft: AnalysisResumeDraft): boolean => (
-    draft.status !== 'active'
-    && draft.status !== 'completed'
-    && draft.status !== 'unavailable'
-    && draft.resumeEligible !== false
-);
-
 const getResumeUnavailableReasonLabel = (draft: AnalysisResumeDraft): string => {
     if (draft.status === 'active') return '이미 분석이 진행 중입니다. 진행이 끝나거나 중단된 뒤 이어갈 수 있습니다.';
     if (draft.resumeUnavailableReason === 'no-checkpoint') return '재사용 가능한 체크포인트가 없습니다.';
@@ -436,6 +597,9 @@ const getResumeUnavailableReasonLabel = (draft: AnalysisResumeDraft): string => 
 };
 
 const getResumeStartErrorMessage = (draft: AnalysisResumeDraft): string => {
+    if (draft.status === 'active') {
+        return '이 분석은 다른 실행에서 진행 중입니다. 상태를 다시 확인하거나 필요하면 기록을 삭제할 수 있습니다.';
+    }
     const reason = getResumeUnavailableReasonLabel(draft);
     return reason
         ? `이전 분석 기록을 이어서 진행할 수 없습니다. ${reason}`
@@ -594,7 +758,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [statusMessage, setStatusMessage] = useState('');
     const [operationToast, setOperationToast] = useState<AppToastMessage | null>(null);
     const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(true);
-    const [isSavingDiarizationMode, setIsSavingDiarizationMode] = useState(false);
     const [rawStatusMessage, setRawStatusMessage] = useState('');
     const [transcriptReady, setTranscriptReady] = useState(false);
     const [analysisEtaSeconds, setAnalysisEtaSeconds] = useState<number | null>(null);
@@ -602,6 +765,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const transcriptReadyRef = useRef(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [errorMessage, setErrorMessage] = useState('');
+    const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
     const [preserveExtractedAudio, setPreserveExtractedAudio] = useState<boolean | null>(null);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState<boolean | null>(null);
@@ -615,7 +779,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const [audioExtractStartedAt, setAudioExtractStartedAt] = useState<number | null>(null);
     const [audioExtractNow, setAudioExtractNow] = useState(() => Date.now());
     const audioExtractRequestRef = useRef(0);
-    const [resumeDrafts, setResumeDrafts] = useState<AnalysisResumeDraft[]>([]);
+    const resumeSnapshot = useAnalysisResumeSnapshot();
+    const resumeDrafts = resumeSnapshot.drafts;
+    const canResumeDraft = React.useCallback(
+        (draft: AnalysisResumeDraft) => isActionableResumeDraft(draft, resumeSnapshot),
+        [resumeSnapshot],
+    );
     const [selectedResumeDraftId, setSelectedResumeDraftId] = useState<string | null>(null);
     const [deletingResumeDraftIds, setDeletingResumeDraftIds] = useState<Set<string>>(() => new Set());
     const selectedReportTemplate = useMemo(
@@ -635,10 +804,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const analysisJobIdRef = useRef<string | null>(null);
     const analysisResumeDraftIdRef = useRef<string | null>(null);
     const analysisStopActionRef = useRef<AnalysisStopAction | null>(null);
+    const analysisStopAcceptedActionRef = useRef<AnalysisStopAction | null>(null);
+    const analysisStopDecisionPromiseRef = useRef<Promise<AnalysisStopAction | null> | null>(null);
+    const analysisFinalMeetingSavePromiseRef = useRef<Promise<string> | null>(null);
+    const transcriptMeetingSavePromiseRef = useRef<Promise<void> | null>(null);
     const selectedResumeDraftIdRef = useRef<string | null>(null);
-    const cleanupRetryInFlightRef = useRef(false);
-    const diarizationModeSaveRequestRef = useRef(0);
-    const diarizationModeSaveInFlightRef = useRef(false);
+    const queueMeetingMutation = queueAnalysisJobMutation;
     const invalidateFileMetadata = React.useCallback(() => {
         fileMetadataRequestRef.current += 1;
         fileMetadataCleanupRef.current?.();
@@ -698,37 +869,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         }
     }, []);
 
-    const handleDiarizationDuringAnalysisChange = React.useCallback(async (checked: boolean) => {
-        if (diarizationModeSaveInFlightRef.current) return;
-        const requestId = diarizationModeSaveRequestRef.current + 1;
-        diarizationModeSaveRequestRef.current = requestId;
-        diarizationModeSaveInFlightRef.current = true;
-        setDiarizationDuringAnalysis(checked);
-        setIsSavingDiarizationMode(true);
-        try {
-            const apiBase = await getApiBase();
-            const response = await fetch(`${apiBase}/api/settings`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    diarization: { generate_during_analysis: checked },
-                }),
-            });
-            if (!response.ok) throw new Error('참석자 구분 실행 방식을 저장하지 못했습니다.');
-            window.dispatchEvent(new Event('analysis:settings-updated'));
-        } catch (error) {
-            if (diarizationModeSaveRequestRef.current === requestId) {
-                await writeFrontendLog(`diarization setting save error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
-                setDiarizationDuringAnalysis(!checked);
-                setErrorMessage(error instanceof Error ? error.message : '참석자 구분 실행 방식을 저장하지 못했습니다.');
-            }
-        } finally {
-            if (diarizationModeSaveRequestRef.current === requestId) {
-                diarizationModeSaveInFlightRef.current = false;
-                setIsSavingDiarizationMode(false);
-            }
-        }
-    }, []);
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
         || Boolean(meetingPurpose.trim())
@@ -785,9 +925,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 stalled: analysisStalled,
                 transcriptReady,
                 etaSeconds: adjustedEtaSeconds,
+                surfaceTone: isAnalyzing || analysisPhase === 'error' || Boolean(completionNotice) ? 'calm' : 'immersive',
             },
         }));
-    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
+    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisPhase, analysisStartedAt, analysisStalled, completionNotice, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
 
     useEffect(() => {
         if (!isAnalyzing) return;
@@ -806,156 +947,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         const timer = window.setInterval(() => setAudioExtractNow(Date.now()), 1000);
         return () => window.clearInterval(timer);
     }, [isExtractingAudio]);
-
-    useEffect(() => {
-        const syncDrafts = async () => {
-            const localDrafts = listAnalysisResumeDrafts();
-            setResumeDrafts(localDrafts);
-
-            if (ANALYSIS_MODE !== 'real') return;
-            const retryPendingCleanups = async (apiBase: string) => {
-                if (cleanupRetryInFlightRef.current) return;
-                const pendingJobIds = listPendingAnalysisDraftCleanups();
-                if (pendingJobIds.length === 0) return;
-                cleanupRetryInFlightRef.current = true;
-                try {
-                    for (const jobId of pendingJobIds) {
-                        try {
-                            const response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(jobId)}`, {
-                                method: 'DELETE',
-                            });
-                            if (response.ok || response.status === 404) {
-                                removePendingAnalysisDraftCleanup(jobId);
-                            }
-                        } catch {
-                            // Keep the cleanup queued until the backend is available again.
-                        }
-                    }
-                } finally {
-                    cleanupRetryInFlightRef.current = false;
-                }
-            };
-
-            let apiBase: string;
-            try {
-                apiBase = await getApiBase();
-            } catch {
-                return;
-            }
-            await retryPendingCleanups(apiBase);
-            if (localDrafts.length === 0) return;
-
-            try {
-                const response = await fetch(`${apiBase}/api/analyze/draft-statuses`, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ job_ids: localDrafts.map(draft => draft.jobId) }),
-                });
-                if (!response.ok) return;
-                const payload = await response.json() as DraftStatusPayload;
-                const remoteDrafts = payload.drafts || [];
-                const now = new Date().toISOString();
-
-                for (const draft of localDrafts) {
-                    const currentDraft = getAnalysisResumeDraft(draft.jobId);
-                    if (!currentDraft) {
-                        continue;
-                    }
-                    if (currentDraft.status === 'completed' || currentDraft.status === 'unavailable') {
-                        continue;
-                    }
-                    const remote = remoteDrafts.find(item => item.job_id === draft.jobId);
-                    if (!remote || remote.status === 'missing') {
-                        markAnalysisResumeDraftUnavailable(draft.jobId, 'no-checkpoint', {
-                            errorMessage: '재사용 가능한 체크포인트를 찾지 못했습니다.',
-                            updatedAt: now,
-                        });
-                        continue;
-                    }
-                    if (remote.status === 'completed') {
-                        markAnalysisResumeDraftsForKeyUnavailable(
-                            {
-                                sourceFilename: draft.sourceFilename,
-                                sourceSize: draft.sourceSize,
-                                sourceLastModified: draft.sourceLastModified,
-                            },
-                            'completed',
-                            {
-                                status: 'completed',
-                                errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
-                                updatedAt: now,
-                                clearSuppression: false,
-                            },
-                        );
-                        continue;
-                    }
-
-                    const keepLocalCancellation = (remote.status === 'active' || remote.status === 'cancelled')
-                        && (currentDraft.status === 'cancelled' || currentDraft.status === 'stopped');
-                    const nextStatus: AnalysisResumeDraftStatus = keepLocalCancellation
-                        ? currentDraft.status
-                        : remote.status === 'cancelled'
-                        ? 'cancelled'
-                        : remote.status === 'active'
-                            ? 'active'
-                            : remote.status === 'stopped'
-                                ? 'stopped'
-                                : 'failed';
-                    const resumeEligible = Boolean(remote.resume_supported) && Number(remote.completed_chunk_count || 0) > 0;
-                    const nextDraft: AnalysisResumeDraft = {
-                        ...currentDraft,
-                        status: nextStatus,
-                        updatedAt: remote.updated_at || now,
-                        stage: remote.stage || currentDraft.stage,
-                        lastMessage: remote.last_progress?.message || currentDraft.lastMessage,
-                        lastProgress: typeof remote.last_progress?.progress === 'number'
-                            ? remote.last_progress.progress
-                            : currentDraft.lastProgress,
-                        lastEtaSeconds: remote.last_progress
-                            ? Object.prototype.hasOwnProperty.call(remote.last_progress, 'eta_seconds')
-                                ? (typeof remote.last_progress.eta_seconds === 'number' ? remote.last_progress.eta_seconds : null)
-                                : Object.prototype.hasOwnProperty.call(remote.last_progress, 'etaSeconds')
-                                    ? (typeof remote.last_progress.etaSeconds === 'number' ? remote.last_progress.etaSeconds : null)
-                                    : null
-                            : currentDraft.lastEtaSeconds,
-                        transcriptReady: Boolean(remote.last_progress?.transcript_ready || remote.last_progress?.transcriptReady || currentDraft.transcriptReady),
-                        errorMessage: remote.last_error || (resumeEligible ? undefined : currentDraft.errorMessage),
-                        resumeEligible,
-                        resumeUnavailableReason: resumeEligible ? undefined : currentDraft.resumeUnavailableReason,
-                        completedChunkCount: Number(remote.completed_chunk_count || 0),
-                    };
-                    if (
-                        nextDraft.status !== currentDraft.status
-                        || nextDraft.updatedAt !== currentDraft.updatedAt
-                        || nextDraft.stage !== currentDraft.stage
-                        || nextDraft.lastMessage !== currentDraft.lastMessage
-                        || nextDraft.lastProgress !== currentDraft.lastProgress
-                        || nextDraft.lastEtaSeconds !== currentDraft.lastEtaSeconds
-                        || nextDraft.transcriptReady !== currentDraft.transcriptReady
-                        || nextDraft.errorMessage !== currentDraft.errorMessage
-                        || nextDraft.resumeEligible !== currentDraft.resumeEligible
-                        || nextDraft.completedChunkCount !== currentDraft.completedChunkCount
-                    ) {
-                        upsertAnalysisResumeDraft(nextDraft);
-                    }
-                }
-
-                setResumeDrafts(listAnalysisResumeDrafts());
-            } catch {
-                // Keep local draft snapshot when backend state is unavailable.
-            }
-        };
-        void syncDrafts();
-        const handleSyncDrafts = () => {
-            void syncDrafts();
-        };
-        window.addEventListener('focus', handleSyncDrafts);
-        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleSyncDrafts);
-        return () => {
-            window.removeEventListener('focus', handleSyncDrafts);
-            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleSyncDrafts);
-        };
-    }, []);
 
     useEffect(() => {
         if (ANALYSIS_MODE !== 'real') return;
@@ -1038,6 +1029,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         () => resumeDrafts.find(draft => draft.jobId === selectedResumeDraftId) ?? null,
         [resumeDrafts, selectedResumeDraftId],
     );
+    const selectedResumeDraftActive = selectedResumeDraft?.status === 'active';
 
     const activeResumeDrafts = useMemo(
         () => resumeDrafts.filter(draft => draft.status === 'active'),
@@ -1059,13 +1051,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
     const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
-    const startButtonDisabled = isAnalyzing
+    const startButtonOperationallyDisabled = isAnalyzing
         || isExtractingAudio
         || Boolean(matchingActiveDraft)
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
-        || hasBlockingReadinessIssue
-        || missingFields.length > 0;
+        || hasBlockingReadinessIssue;
 
     const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
     const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
@@ -1283,15 +1274,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         updateAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
-    }, [clearSelectedFileState, updateAnalysisEtaSeconds]);
+    }, [canResumeDraft, clearSelectedFileState, updateAnalysisEtaSeconds]);
 
     const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
     const resumeDraftSelectionRequestId = resumeDraftSelectionRequest?.requestId;
+    const handledResumeDraftSelectionRef = useRef<string | null>(null);
 
     useEffect(() => {
         if (!resumeDraftSelectionJobId) return;
+        const selectionKey = `${resumeDraftSelectionRequestId ?? 'legacy'}:${resumeDraftSelectionJobId}`;
+        if (handledResumeDraftSelectionRef.current === selectionKey) return;
+        handledResumeDraftSelectionRef.current = selectionKey;
         const drafts = listAnalysisResumeDrafts();
-        setResumeDrafts(drafts);
         const draft = drafts.find(item => item.jobId === resumeDraftSelectionJobId);
         if (!draft) {
             setSelectedResumeDraftId(null);
@@ -1577,6 +1571,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         }
 
         if (missingFields.length > 0) {
+            setHasAttemptedStart(true);
             setProgress(0);
             setStatusMessage('');
             setCompletionNotice(null);
@@ -1586,6 +1581,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
 
         analysisInFlightRef.current = true;
         analysisCancelledRef.current = false;
+        transcriptMeetingSavePromiseRef.current = null;
         analysisAbortControllerRef.current = new AbortController();
         const startedAt = getNowMs();
         setAnalysisStartedAt(startedAt);
@@ -1599,6 +1595,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         setAnalysisStopRequestedAction(null);
         setIsRequestingAnalysisStop(false);
         analysisStopActionRef.current = null;
+        analysisStopAcceptedActionRef.current = null;
+        analysisStopDecisionPromiseRef.current = null;
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
         setCompletionNotice(null);
@@ -1609,10 +1607,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         }
 
         try {
+            const apiBase = await getApiBase();
+            const startSettingsRequestId = analysisSettingsRequestRef.current + 1;
+            analysisSettingsRequestRef.current = startSettingsRequestId;
+            const settingsResponse = await fetch(`${apiBase}/api/settings`, {
+                signal: analysisAbortControllerRef.current?.signal,
+            });
+            if (!settingsResponse.ok) throw new Error('분석 설정을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+            const latestSettings = await settingsResponse.json() as AnalysisSettingsResponse;
+            const latestDiarizationDuringAnalysis = latestSettings.diarization?.generate_during_analysis ?? true;
+            if (analysisSettingsRequestRef.current === startSettingsRequestId) {
+                setDiarizationDuringAnalysis(latestDiarizationDuringAnalysis);
+            }
             const modelsReady = await ensureModelsReady();
             if (!modelsReady) return;
             if (analysisCancelledRef.current) return;
-            const apiBase = await getApiBase();
             let analysisJobId: string = crypto.randomUUID();
             let resumeRequested = false;
             let resumePayload: ResumeCandidatesPayload | null = null;
@@ -1688,7 +1697,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     markAnalysisResumeDraftUnavailable(selectedResumeDraft.jobId, unavailableReason, {
                         errorMessage: unavailableMessage,
                     });
-                    setResumeDrafts(listAnalysisResumeDrafts());
                     setSelectedResumeDraftId(null);
                     setAnalysisPhase('error');
                     setErrorMessage(`이전 분석 기록을 이어서 진행할 수 없습니다. ${unavailableMessage} 새 분석으로 시작할 수 있습니다.`);
@@ -1742,6 +1750,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             }
             analysisJobIdRef.current = analysisJobId;
             analysisResumeDraftIdRef.current = analysisJobId;
+            claimAnalysisJob(analysisJobId);
             saveResumeDraft('active', {
                 jobId: analysisJobId,
                 stage: 'uploaded',
@@ -1774,6 +1783,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             formData.append('file_size', String((file as File).size));
             formData.append('file_last_modified', String((file as File).lastModified));
             formData.append('resume_requested', resumeRequested ? 'true' : 'false');
+            formData.append('diarization_during_analysis', latestDiarizationDuringAnalysis ? 'true' : 'false');
             const response = await fetch(`${apiBase}/api/analyze`, {
                 method: 'POST',
                 body: formData,
@@ -1803,6 +1813,87 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             const decoder = new TextDecoder('utf-8');
             let buffer = '';
             let finalData: AnalyzeResult | null = null;
+            let transcriptMeetingSaved = false;
+
+            const persistTranscriptMeeting = async (): Promise<void> => {
+                if (transcriptMeetingSaved || ANALYSIS_MODE !== 'real') return;
+                if (transcriptMeetingSavePromiseRef.current) {
+                    await transcriptMeetingSavePromiseRef.current;
+                    return;
+                }
+                const savePromise = (async () => {
+                    const partialResponse = await fetch(`${apiBase}/api/analyze/${analysisJobId}/partial-result`);
+                    if (!partialResponse.ok) {
+                        throw new Error(`대화록 중간 저장본을 불러오지 못했습니다: ${partialResponse.status}`);
+                    }
+                    const partialData = await partialResponse.json() as AnalyzeResult;
+                    if (analysisStopAcceptedActionRef.current === 'cancel') return;
+                    const partialRecord: MeetingRecord = {
+                    id: analysisJobId,
+                    date: date.replace('T', ' '),
+                    title: title.trim(),
+                    participants: '',
+                    meetingPurpose: meetingPurpose.trim(),
+                    selectedReportTemplateId: partialData.selectedReportTemplateId
+                        || partialData.selected_report_template_id
+                        || selectedReportTemplate.id,
+                    reportTemplate: partialData.reportTemplate
+                        || partialData.report_template
+                        || selectedReportTemplate,
+                    selectedContextTemplateId: partialData.selectedContextTemplateId
+                        || partialData.selected_context_template_id
+                        || DEFAULT_CONTEXT_TEMPLATE_ID,
+                    contextTemplate: partialData.contextTemplate
+                        || partialData.context_template
+                        || getContextTemplateById(DEFAULT_CONTEXT_TEMPLATE_ID),
+                    selectedTermGlossaryIds: partialData.selectedTermGlossaryIds
+                        || partialData.selected_term_glossary_ids
+                        || [],
+                    termGlossaries: partialData.termGlossaries
+                        || partialData.term_glossaries
+                        || [],
+                    summary: partialData.summary || '대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다.',
+                    segments: partialData.segments || [],
+                    displaySegments: partialData.displaySegments || partialData.display_segments || [],
+                    speakerLabels: {},
+                    sourceFile: partialData.source_file || file?.name,
+                    jobId: partialData.job_id || analysisJobId,
+                    topics: [],
+                    topicSections: [],
+                    participantSummaries: [],
+                    speakerContextSummaries: [],
+                    generationStatus: {
+                        summary: 'not_started',
+                        topic_sections: 'not_started',
+                        speaker_context_summaries: 'not_started',
+                        meeting_report: 'not_started',
+                    },
+                    actions: [],
+                    decisions: [],
+                    needsCheck: [],
+                    diarizationRequested: partialData.diarizationRequested ?? partialData.diarization_requested ?? true,
+                    diarizationApplied: false,
+                    diarizationSkipped: false,
+                    analysisStatus: 'diarization_in_progress',
+                    };
+                    const savedMeetingId = await queueMeetingMutation(
+                        analysisJobId,
+                        () => upsertMeetingRecord(partialRecord),
+                    );
+                    window.dispatchEvent(new CustomEvent('meetings:updated', {
+                        detail: { id: savedMeetingId, openHistory: false },
+                    }));
+                    transcriptMeetingSaved = true;
+                })();
+                transcriptMeetingSavePromiseRef.current = savePromise;
+                try {
+                    await savePromise;
+                } finally {
+                    if (transcriptMeetingSavePromiseRef.current === savePromise) {
+                        transcriptMeetingSavePromiseRef.current = null;
+                    }
+                }
+            };
 
             while (true) {
                 const { done, value } = await reader.read();
@@ -1840,6 +1931,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         transcriptReadyRef.current = true;
                         setTranscriptReady(true);
                     }
+                    if (nextTranscriptReady && !transcriptMeetingSaved) {
+                        try {
+                            await persistTranscriptMeeting();
+                        } catch (error) {
+                            await writeFrontendLog(`partial meeting save error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+                        }
+                    }
                     if (parsed.message && !analysisStopActionRef.current) {
                         setRawStatusMessage(parsed.message);
                         setStatusMessage(translateStatusMessage(parsed.message));
@@ -1874,9 +1972,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             if (!finalData) {
                 throw new Error('최종 분석 결과를 수신하지 못했습니다.');
             }
+            const pendingStopDecision = analysisStopDecisionPromiseRef.current;
+            if (pendingStopDecision) {
+                await pendingStopDecision;
+            }
+            if (analysisStopAcceptedActionRef.current) {
+                analysisCancelledRef.current = true;
+                throw new DOMException('분석 요청을 중단했습니다.', 'AbortError');
+            }
 
             const newRecord: MeetingRecord = {
-                id: crypto.randomUUID(),
+                id: analysisJobId,
                 date: date.replace('T', ' '),
                 title: title.trim(),
                 participants: '',
@@ -1919,6 +2025,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 actions: finalData.actions || [],
                 decisions: finalData.decisions || [],
                 needsCheck: finalData.needsCheck || finalData.needs_check || [],
+                analysisStatus: 'completed',
                 diarizationSkipped: finalData.diarizationSkipped ?? finalData.diarization_skipped ?? false,
                 diarizationApplied: finalData.diarizationApplied ?? finalData.diarization_applied,
                 diarizationRequested: finalData.diarizationRequested ?? finalData.diarization_requested,
@@ -1929,8 +2036,28 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 outputFiles: finalData.outputs,
             };
 
-            await addMeeting(newRecord);
             const completedJobId = newRecord.jobId || analysisJobId;
+            const finalMeetingSavePromise = queueMeetingMutation(
+                completedJobId,
+                () => upsertMeetingRecord(newRecord),
+            );
+            analysisFinalMeetingSavePromiseRef.current = finalMeetingSavePromise;
+            let savedMeetingId: string;
+            try {
+                savedMeetingId = await finalMeetingSavePromise;
+            } finally {
+                if (analysisFinalMeetingSavePromiseRef.current === finalMeetingSavePromise) {
+                    analysisFinalMeetingSavePromiseRef.current = null;
+                }
+            }
+            const pendingStopDecisionAfterSave = analysisStopDecisionPromiseRef.current;
+            if (pendingStopDecisionAfterSave) {
+                await pendingStopDecisionAfterSave;
+            }
+            if (analysisStopAcceptedActionRef.current) {
+                analysisCancelledRef.current = true;
+                throw new DOMException('분석 요청을 중단했습니다.', 'AbortError');
+            }
             const completedDraftMessage = '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.';
             if (file) {
                 markAnalysisResumeDraftsForKeyUnavailable(
@@ -1951,14 +2078,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                     errorMessage: completedDraftMessage,
                 },
             );
-            window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: newRecord.id, openHistory: false } }));
+            window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: savedMeetingId, openHistory: false } }));
             const completedElapsedMs = getNowMs() - startedAt;
             setProgress(100);
             setRawStatusMessage('');
             updateAnalysisEtaSeconds(null);
             setStatusMessage('회의록을 저장했습니다.');
             setCompletionNotice({
-                meetingId: newRecord.id,
+                meetingId: savedMeetingId,
                 detailTab: (() => {
                     const summary = finalData.summary?.trim();
                     const summaryStatus = finalData.generationStatus?.summary
@@ -2006,7 +2133,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         lastEtaSeconds: null,
                     });
                 }
-                setResumeDrafts(listAnalysisResumeDrafts());
+                const stoppedJobId = existingDraft?.jobId || analysisResumeDraftIdRef.current;
+                if (requestedStopAction !== 'cancel' && stoppedJobId && (transcriptReadyRef.current || existingDraft?.transcriptReady)) {
+                    try {
+                        await queueMeetingMutation(
+                            stoppedJobId,
+                            () => updateMeetingAnalysisStatus(stoppedJobId, 'diarization_stopped'),
+                        );
+                    } catch (statusError) {
+                        await writeFrontendLog(`stopped meeting status error ${statusError instanceof Error ? `${statusError.name}: ${statusError.message}` : String(statusError)}`);
+                    }
+                }
                 setProgress(0);
                 setRawStatusMessage('');
                 updateAnalysisEtaSeconds(null);
@@ -2028,6 +2165,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 lastEtaSeconds: null,
                 errorMessage: message,
             });
+            const failedJobId = analysisResumeDraftIdRef.current;
+            if (failedJobId && transcriptReadyRef.current) {
+                try {
+                    await queueMeetingMutation(
+                        failedJobId,
+                        () => updateMeetingAnalysisStatus(failedJobId, 'diarization_failed'),
+                    );
+                } catch (statusError) {
+                    await writeFrontendLog(`failed meeting status error ${statusError instanceof Error ? `${statusError.name}: ${statusError.message}` : String(statusError)}`);
+                }
+            }
             setAnalysisPhase('error');
             setErrorMessage(message);
             setRawStatusMessage('');
@@ -2037,9 +2185,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         } finally {
             analysisInFlightRef.current = false;
             analysisAbortControllerRef.current = null;
+            releaseAnalysisJob(analysisJobIdRef.current);
             analysisJobIdRef.current = null;
             analysisResumeDraftIdRef.current = null;
             analysisStopActionRef.current = null;
+            analysisStopAcceptedActionRef.current = null;
+            analysisStopDecisionPromiseRef.current = null;
+            analysisFinalMeetingSavePromiseRef.current = null;
             setIsAnalyzing(false);
             setIsAnalysisStopConfirmOpen(false);
             setAnalysisStopRequestedAction(null);
@@ -2086,29 +2238,66 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             return;
         }
 
-        let cancelAccepted = false;
-        try {
-            const apiBase = await getApiBase();
-            const response = await fetch(`${apiBase}/api/analyze/${encodeURIComponent(jobId)}/cancel`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ action }),
-            });
-            const payload = await response.json().catch(() => null) as { cancel_requested?: boolean } | null;
-            cancelAccepted = response.ok && Boolean(payload?.cancel_requested);
-        } catch {
-            // Keep cancelAccepted false.
-        } finally {
-            setIsRequestingAnalysisStop(false);
+        if (action === 'cancel') {
+            queuePendingCancelledAnalysisCleanup(jobId);
         }
+        const stopDecisionPromise = (async (): Promise<AnalysisStopAction | null> => {
+            try {
+                const apiBase = await getApiBase();
+                const response = await fetch(`${apiBase}/api/analyze/${encodeURIComponent(jobId)}/cancel`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ action }),
+                });
+                const payload = await response.json().catch(() => null) as { cancel_requested?: boolean } | null;
+                if (response.ok && payload?.cancel_requested) {
+                    analysisStopAcceptedActionRef.current = action;
+                    return action;
+                }
+            } catch {
+                // Treat an unavailable decision as a rejected stop request.
+            }
+            return null;
+        })();
+        analysisStopDecisionPromiseRef.current = stopDecisionPromise;
+        const acceptedAction = await stopDecisionPromise;
+        if (analysisStopDecisionPromiseRef.current === stopDecisionPromise) {
+            analysisStopDecisionPromiseRef.current = null;
+        }
+        setIsRequestingAnalysisStop(false);
+        const cancelAccepted = acceptedAction === action;
 
         if (!cancelAccepted) {
+            if (action === 'cancel') {
+                removePendingCancelledAnalysisCleanup(jobId);
+                removePendingAnalysisDraftCleanup(jobId);
+            }
             setAnalysisStopRequestedAction(null);
             analysisStopActionRef.current = null;
             setIsAnalysisStopConfirmOpen(false);
             setStatusMessage('중지할 분석을 찾지 못했습니다.');
             showOperationToast('중지할 분석을 찾지 못했습니다.', 'neutral');
             return;
+        }
+        if (action === 'cancel') {
+            queuePendingAnalysisDraftCleanup(jobId);
+        }
+
+        const pendingTranscriptSave = transcriptMeetingSavePromiseRef.current;
+        if (pendingTranscriptSave) {
+            try {
+                await pendingTranscriptSave;
+            } catch (error) {
+                await writeFrontendLog(`pending transcript save before ${action} error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+            }
+        }
+        const pendingFinalMeetingSave = analysisFinalMeetingSavePromiseRef.current;
+        if (pendingFinalMeetingSave) {
+            try {
+                await pendingFinalMeetingSave;
+            } catch (error) {
+                await writeFrontendLog(`pending final meeting save before ${action} error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+            }
         }
 
         if (action === 'stop') {
@@ -2119,14 +2308,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                 lastProgress: progress,
                 lastEtaSeconds: null,
             });
+            if (transcriptReadyRef.current) {
+                try {
+                    await queueMeetingMutation(
+                        jobId,
+                        () => updateMeetingAnalysisStatus(jobId, 'diarization_stopped'),
+                    );
+                } catch (error) {
+                    await writeFrontendLog(`stopped meeting status error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+                }
+            }
         } else {
             if (file) {
                 suppressResumeCandidateKey(getResumeDraftKey(toResumeDraftFileKey(file)));
             }
             removeAnalysisResumeDraft(jobId);
-            queuePendingAnalysisDraftCleanup(jobId);
+            try {
+                await queueMeetingMutation(jobId, () => deleteMeetingRecordForJob(jobId));
+                window.dispatchEvent(new CustomEvent('meetings:updated', {
+                    detail: { id: jobId, openHistory: false },
+                }));
+            } catch (error) {
+                await writeFrontendLog(`cancelled meeting cleanup error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+            }
         }
-        setResumeDrafts(listAnalysisResumeDrafts());
         setErrorMessage('');
         setIsAnalysisStopConfirmOpen(false);
         window.setTimeout(() => {
@@ -2138,6 +2343,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
     };
 
     const buttonLabel = (() => {
+        if (selectedResumeDraftActive) return '진행 중';
         if (matchingActiveDraft) return '진행 중';
         if (selectedResumeDraftUnavailable) return '이어하기 불가';
         if (resumeSelectionActive && !resumeReady) return '같은 파일 선택';
@@ -2246,14 +2452,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
         ? '분석 완료'
         : showAnalysisFailure
             ? '분석을 마치지 못했습니다'
-            : showAnalysisPanel
-                ? '분석 진행'
+                : showAnalysisPanel
+                    ? '분석 진행'
                 : resumeSelectionActive
-                    ? '이어하기'
+                    ? selectedResumeDraftActive ? '분석 상태' : '이어하기'
                     : '새 회의록';
 
+    const showOceanInput = !showAnalysisPanel && !completionNotice;
+
     return (
-        <div className="writer-shell">
+        <div className={`writer-shell writer-shell-ocean ${showOceanInput ? 'writer-shell-ocean-input' : 'writer-shell-ocean-result'}`}>
             {operationToast && (
                 <AppToast
                     message={operationToast.message}
@@ -2271,11 +2479,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             <div className={`app-panel writer-panel ${!showAnalysisPanel && !completionNotice ? 'writer-panel-idle' : ''}`}>
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <span>이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.</span>
+                        <span>{selectedResumeDraftActive
+                            ? '다른 실행에서 진행 중인 분석입니다. 상태를 다시 확인하거나 필요하면 기록을 삭제할 수 있습니다.'
+                            : '이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.'}</span>
                         <div className="flex shrink-0 gap-2">
-                            <Button variant="outline" onClick={handleStartFreshFromResume} disabled={isAnalyzing}>
-                                새 분석
-                            </Button>
+                            {!selectedResumeDraftActive && (
+                                <Button variant="outline" onClick={handleStartFreshFromResume} disabled={isAnalyzing}>
+                                    새 분석
+                                </Button>
+                            )}
                             {selectedResumeDraft && (
                                 <Button
                                     variant="outline"
@@ -2306,8 +2518,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         disabled={isAnalyzing || isExtractingAudio}
                         className="sr-only"
                         id="meeting-file-input"
+                        required
+                        aria-required="true"
+                        aria-hidden="true"
+                        tabIndex={-1}
+                        hidden
                     />
-                    <input
+                    {SHOW_AUDIO_EXTRACT_TOOL && (<input
                         type="file"
                         ref={videoFileInputRef}
                         accept="video/*,.mp4,.mov,.mkv,.avi,.webm"
@@ -2316,14 +2533,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         className="sr-only"
                         aria-hidden="true"
                         tabIndex={-1}
-                    />
+                        hidden
+                    />)}
                     {!file ? (
                         <div
                             role="button"
                             tabIndex={isAnalyzing || isExtractingAudio ? -1 : 0}
                             aria-controls="meeting-file-input"
+                            aria-invalid={hasAttemptedStart && !file}
+                            aria-describedby={hasAttemptedStart && !file ? 'writer-form-error' : undefined}
                             aria-disabled={isAnalyzing || isExtractingAudio}
-                            aria-label="영상 또는 음성 파일 선택"
+                            aria-label="필수: 영상 또는 음성 파일 선택"
                             className={`file-drop-zone ${isFileDragActive ? 'file-drop-zone-active' : ''}`}
                             onClick={() => {
                                 if (!isAnalyzing && !isExtractingAudio) fileInputRef.current?.click();
@@ -2418,7 +2638,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
                         </div>
                     )}
-                    {!resumeSelectionActive && !isAnalyzing && (
+                    {SHOW_AUDIO_EXTRACT_TOOL && !resumeSelectionActive && !isAnalyzing && (
                         <div className="writer-file-tools">
                             <Button
                                 variant="outline"
@@ -2426,6 +2646,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 onClick={handleSelectVideoForAudioExtract}
                                 disabled={isExtractingAudio}
                                 title="음성을 추출할 영상 파일을 선택합니다."
+                                aria-describedby="audio-extract-help"
                             >
                                 <FileAudio size={15} />
                                 {hasAudioExtractFile ? audioExtractSaved ? '다른 영상' : '영상 변경' : '음성 추출'}
@@ -2449,10 +2670,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                                 </Button>
                             ) : null}
                             <span
+                                id="audio-extract-help"
+                                className="sr-only"
+                            >
+                                영상에서 음성만 WAV 파일로 저장합니다. 회의록 분석은 시작하지 않습니다.
+                            </span>
+                            <span
                                 title="영상에서 음성만 WAV 파일로 저장합니다. 회의록 분석은 시작하지 않습니다."
-                                aria-label="음성 추출 도움말"
                                 className="inline-flex text-muted-foreground"
-                                tabIndex={0}
+                                aria-hidden="true"
                             >
                                 <CircleHelp size={14} />
                             </span>
@@ -2471,6 +2697,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                             <label htmlFor="meeting-title">회의 제목 *</label>
                             <Input
                                 id="meeting-title"
+                                required
+                                aria-required="true"
+                                aria-invalid={hasAttemptedStart && !title.trim()}
+                                aria-describedby={hasAttemptedStart && !title.trim() ? 'writer-form-error' : undefined}
                                 value={title}
                                 onChange={event => {
                                     autoDerivedTitleRef.current = null;
@@ -2482,44 +2712,24 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         </div>
                         <div className="writer-field">
                             <label htmlFor="meeting-date">일시 *</label>
-                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} disabled={isAnalyzing} />
+                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={hasAttemptedStart && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                         <div className="writer-field">
                             <label htmlFor="meeting-purpose">회의 목적 *</label>
-                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" disabled={isAnalyzing} />
+                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={hasAttemptedStart && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                     </div>
                     </section>
+                </div>
                     <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
                         <div className="writer-primary-actions">
-                            {!isAnalyzing && (
-                                <div className="analysis-mode-control">
-                                    <label className="analysis-mode-toggle">
-                                        <input
-                                            type="checkbox"
-                                            checked={diarizationDuringAnalysis}
-                                            onChange={event => { void handleDiarizationDuringAnalysisChange(event.target.checked); }}
-                                            disabled={isSavingDiarizationMode}
-                                        />
-                                        <span className="analysis-mode-toggle-title">참석자 구분까지 이어서 실행</span>
-                                    </label>
-                                    <button
-                                        type="button"
-                                        title="이 선택은 앞으로의 기본 분석 설정으로 저장됩니다."
-                                        aria-label="참석자 구분 실행 방식 도움말"
-                                        className="inline-flex text-muted-foreground"
-                                    >
-                                        <CircleHelp size={14} />
-                                    </button>
-                                </div>
-                            )}
-                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonDisabled}>
+                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
                                 {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
+                                {!isAnalyzing && <WhaleTailIcon />}
                                 {isAnalyzing ? '분석 중' : buttonLabel}
                             </Button>
                         </div>
                     </div>
-                </div>
                 </div>)}
 
                 {showAnalysisPanel && (
@@ -2696,7 +2906,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
                         )}
                     </StatusBanner>
                 )}
-                {audioExtractStatusVisible && (
+                {SHOW_AUDIO_EXTRACT_TOOL && audioExtractStatusVisible && (
                     <StatusBanner
                         tone={audioExtractStatusTone}
                         heading={audioExtractStatusHeading}
@@ -2762,7 +2972,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, re
             )}
 
             {errorMessage && !showAnalysisFailure && (
-                <StatusBanner tone="error">
+                <StatusBanner id="writer-form-error" tone="error">
                     {errorMessage}
                 </StatusBanner>
             )}

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
+const WRITER_CAPTURE_DIR = process.env.WRITER_CAPTURE_DIR ?? null;
 
 const waitForApp = async (url, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -113,6 +114,15 @@ const installBaseRoutes = async (page) => {
     }),
   }));
 
+  await page.route('**/api/settings', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      diarization: { enabled: true, generate_during_analysis: true },
+      privacy: { preserve_extracted_audio: true, auto_save_audio_copy: false },
+    }),
+  }));
+
   await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({
     status: 404,
     contentType: 'application/json',
@@ -133,9 +143,496 @@ const createFixtureFile = async () => {
   };
 };
 
+const runWriterLayoutScenario = async (browser) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ drafts: [] }),
+  }));
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
+    await page.getByText('회의 정보', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('참석자 구분까지 이어서 실행', { exact: true }).count(), 0, 'participant separation should be owned by Settings');
+    assert.equal(await page.getByRole('button', { name: '음성 추출', exact: true }).count(), 0, 'audio extraction stays implemented but hidden from the new-record surface');
+    const startButton = page.getByRole('button', { name: '분석 시작' });
+    await startButton.waitFor({ timeout: 10000 });
+
+    let wideBaseline = null;
+    for (const viewport of [{ width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1600, height: 900 }, { width: 1280, height: 720 }, { width: 1024, height: 800 }]) {
+      await page.setViewportSize(viewport);
+      await page.waitForTimeout(100);
+      const metrics = await page.evaluate(() => {
+        const rect = selector => document.querySelector(selector)?.getBoundingClientRect();
+        const overflowX = selector => {
+          const element = document.querySelector(selector);
+          return element ? element.scrollWidth - element.clientWidth : null;
+        };
+        const grid = rect('.writer-input-grid');
+        const upload = rect('.writer-input-grid > .writer-section:first-child');
+        const info = rect('.writer-info-column');
+        const action = rect('.writer-action-bar');
+        const title = rect('.writer-title');
+        const fileButton = rect('.file-drop-zone');
+        const startButton = rect('.writer-start-button');
+        const backdrop = rect('.ocean-backdrop');
+        const workspace = document.querySelector('.barorok-workspace-minutes');
+        const frame = rect('.barorok-app-frame');
+        const shell = rect('.barorok-shell-body');
+        const navigation = rect('.barorok-navigation');
+        const workspaceRect = rect('.barorok-workspace');
+        return {
+          horizontalOverflow: {
+            document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+            frame: overflowX('.barorok-app-frame'),
+            shell: overflowX('.barorok-shell-body'),
+            navigation: overflowX('.barorok-navigation'),
+            workspace: overflowX('.barorok-workspace'),
+          },
+          viewportBounds: [frame, shell, navigation, workspaceRect]
+            .filter(Boolean)
+            .map(element => ({ left: element.left, right: element.right })),
+          scrollHeight: workspace?.scrollHeight ?? 0,
+          clientHeight: workspace?.clientHeight ?? 0,
+          overflowY: workspace ? getComputedStyle(workspace).overflowY : '',
+          viewportHeight: window.innerHeight,
+          grid: grid && { left: grid.left, right: grid.right },
+          upload: upload && { top: upload.top, bottom: upload.bottom },
+          info: info && { left: info.left, right: info.right, top: info.top, bottom: info.bottom },
+          uploadWidth: upload?.width ?? null,
+          infoWidth: info?.width ?? null,
+          action: action && { left: action.left, right: action.right, top: action.top, bottom: action.bottom },
+          startButton: startButton && { left: startButton.left, right: startButton.right, width: startButton.width },
+          backdrop: backdrop && { left: backdrop.left, right: backdrop.right, top: backdrop.top, bottom: backdrop.bottom },
+          visibleBottoms: [title?.bottom, fileButton?.bottom, info?.bottom, action?.bottom, startButton?.bottom],
+        };
+      });
+      for (const [surface, overflow] of Object.entries(metrics.horizontalOverflow)) {
+        assert.ok(overflow !== null && overflow <= 1, `${viewport.width}px ${surface} should not create horizontal overflow`);
+      }
+      assert.ok(
+        metrics.viewportBounds.every(bounds => bounds.left >= -1 && bounds.right <= viewport.width + 1),
+        `${viewport.width}px app surfaces should remain inside viewport bounds`,
+      );
+      assert.ok(metrics.grid && metrics.upload && metrics.info && metrics.action, 'writer layout elements should exist');
+      if (viewport.width > 1024) {
+        if (viewport.height >= 800) {
+          assert.ok(metrics.visibleBottoms.every(bottom => typeof bottom === 'number' && bottom <= metrics.viewportHeight), `${viewport.width}x${viewport.height} initial controls should fit in the viewport`);
+        } else {
+          assert.ok(metrics.scrollHeight >= metrics.clientHeight, 'low-height writer should keep the CTA reachable through its single canvas scroll');
+          assert.ok(['auto', 'scroll'].includes(metrics.overflowY), 'low-height writer should preserve canvas scrolling');
+        }
+        assert.ok(metrics.info.left > metrics.grid.left, `${viewport.width}px should use two columns`);
+        assert.ok(Math.abs(metrics.action.right - metrics.info.right) <= 1, 'wide action should align with the meeting panel right edge');
+        assert.ok(metrics.startButton && metrics.startButton.width >= 220 && metrics.startButton.width <= 240.5, 'wide CTA should keep the approved compact width');
+        if (viewport.width === 1440) {
+          wideBaseline = { uploadWidth: metrics.uploadWidth, infoWidth: metrics.infoWidth };
+        }
+        if (viewport.width === 1600) {
+          assert.ok(wideBaseline, '1440 baseline should be measured before 1600');
+          assert.ok(metrics.uploadWidth <= 584.5 && metrics.infoWidth <= 448.5, '1600 panels should stop at their approved maximum widths');
+          assert.ok(metrics.backdrop && metrics.backdrop.right >= metrics.info.right, 'background plate should cover the complete writer rail');
+        }
+      } else {
+        assert.ok(metrics.info.top >= metrics.upload.bottom - 1, '1024px should stack the writer sections in one column');
+        assert.ok(metrics.action.top >= metrics.info.bottom - 1, '1024px action bar should follow the stacked content');
+        assert.ok(metrics.scrollHeight >= metrics.clientHeight, '1024px should allow normal vertical scrolling when needed');
+        assert.ok(['auto', 'scroll'].includes(metrics.overflowY), '1024px workspace should allow vertical scrolling');
+      }
+      if (WRITER_CAPTURE_DIR) {
+        await mkdir(WRITER_CAPTURE_DIR, { recursive: true });
+        await page.screenshot({ path: join(WRITER_CAPTURE_DIR, `new-record-ocean-${viewport.width}.png`), fullPage: true });
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await startButton.click();
+    await page.getByText(/필수 항목을 확인해 주세요/).waitFor({ timeout: 10000 });
+    await page.locator('#writer-form-error').waitFor({ timeout: 10000 });
+    assert.equal(await page.getByLabel('회의 제목 *').getAttribute('aria-invalid'), 'true');
+    assert.equal(await page.getByLabel('회의 목적 *').getAttribute('aria-invalid'), 'true');
+    const requiredFileButton = page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ });
+    assert.equal(await requiredFileButton.getAttribute('aria-invalid'), 'true');
+    assert.equal(await requiredFileButton.getAttribute('aria-describedby'), 'writer-form-error');
+    assert.equal(await page.locator('#writer-form-error').count(), 1, 'invalid controls should reference a real error description');
+    if (WRITER_CAPTURE_DIR) {
+      await page.screenshot({ path: join(WRITER_CAPTURE_DIR, 'new-record-ocean-error-1280.png'), fullPage: true });
+    }
+    console.log('ok - writer responsive layout scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  let settingsReadCount = 0;
+  let submittedDiarizationValue = null;
+  let releaseInitialSettings = () => {};
+  const initialSettingsCanFinish = new Promise(resolve => {
+    releaseInitialSettings = resolve;
+  });
+
+  await installBaseRoutes(page);
+  await page.route('**/api/settings', async route => {
+    settingsReadCount += 1;
+    const isInitialRequest = settingsReadCount === 1;
+    if (isInitialRequest) await initialSettingsCanFinish;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        diarization: { enabled: true, generate_during_analysis: isInitialRequest },
+        privacy: { preserve_extracted_audio: true, auto_save_audio_copy: false },
+      }),
+    });
+  });
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ drafts: [] }),
+  }));
+  await page.route('**/api/analyze/resume-candidates', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ candidates: [], recommended_job_id: null }),
+  }));
+  await page.route('**/api/analyze', async route => {
+    const postData = (await route.request().postDataBuffer()).toString('utf-8');
+    submittedDiarizationValue = postData.match(/name="diarization_during_analysis"\r\n\r\n([^\r\n]+)/)?.[1] ?? null;
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: ['event: done', 'data: [DONE]', '', ''].join('\n'),
+    });
+  });
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    while (settingsReadCount < 1) {
+      await sleep(25);
+    }
+    await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
+    await page.getByLabel('회의 제목 *').fill('최신 설정 확인');
+    await page.getByLabel('회의 목적 *').fill('분석 시작 직전 설정 재조회');
+    await page.getByRole('button', { name: '분석 시작' }).click();
+    await page.waitForFunction(() => document.body.innerText.includes('분석 진행'));
+    const submissionDeadline = Date.now() + 5_000;
+    while (submittedDiarizationValue === null && Date.now() < submissionDeadline) {
+      await sleep(25);
+    }
+    assert.ok(settingsReadCount >= 2, 'analysis start should re-read settings after the initial page load');
+    assert.equal(submittedDiarizationValue, 'false', 'analysis payload should use the latest Settings value');
+    releaseInitialSettings();
+    await page.waitForTimeout(100);
+    assert.equal(await page.getByText('참석자 구분을 계속 진행합니다.', { exact: false }).count(), 0, 'progress guidance should not revert to an older settings response');
+    console.log('ok - latest diarization setting scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runPartialRecordFailureScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  let analysisJobId = null;
+
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ drafts: [] }),
+  }));
+  await page.route('**/api/analyze/resume-candidates', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ candidates: [], recommended_job_id: null }),
+  }));
+  await page.route('**/partial-result', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: analysisJobId,
+      source_file: fixtureUpload.name,
+      partial: true,
+      summary: '대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다.',
+      segments: [{ start: '00:00', end: '00:02', speaker: '', text: '실패 전 저장된 대화록' }],
+      display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '실패 전 저장된 대화록' }],
+      diarization_requested: true,
+    }),
+  }));
+  await page.route('**/api/analyze', async route => {
+    const postData = (await route.request().postDataBuffer()).toString('utf-8');
+    analysisJobId = postData.match(/name="job_id"\r\n\r\n([^\r\n]+)/)?.[1] ?? null;
+    return route.fulfill({
+      status: 200,
+      contentType: 'text/event-stream',
+      body: [
+      'event: progress',
+      'data: {"type":"progress","progress":70,"status":"diarizing","message":"참석자 구분 중","transcript_ready":true}',
+      '',
+      'event: error',
+      'data: {"type":"error","progress":70,"status":"error","message":"참석자 구분 테스트 오류"}',
+      '',
+      'event: done',
+      'data: [DONE]',
+      '',
+      '',
+      ].join('\n'),
+    });
+  });
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
+    await page.getByLabel('회의 제목 *').fill('중간 저장 실패 테스트');
+    await page.getByLabel('회의 목적 *').fill('참석자 구분 실패 후 대화록 보존 확인');
+    await page.getByRole('button', { name: '분석 시작' }).click();
+    await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+
+    const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(meetings.length, 1);
+    assert.ok(analysisJobId);
+    assert.equal(meetings[0].id, analysisJobId);
+    assert.equal(meetings[0].jobId, analysisJobId);
+    assert.equal(meetings[0].analysisStatus, 'diarization_failed');
+
+    page.once('dialog', dialog => dialog.accept());
+    await page.getByRole('button', { name: '중간 저장 실패 테스트', exact: true }).click();
+    await page.getByText('실패 전 저장된 대화록', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('참석자 구분 실패', { exact: true }).first().waitFor({ timeout: 10000 });
+    console.log('ok - partial record failure preservation scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runCancelledRecoveryImportRaceScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  let releaseRecoverableResult = () => {};
+  const recoverableResultCanFinish = new Promise(resolve => {
+    releaseRecoverableResult = resolve;
+  });
+  let markRecoverableResultRequested = () => {};
+  const recoverableResultRequested = new Promise(resolve => {
+    markRecoverableResultRequested = resolve;
+  });
+  const draft = {
+    jobId: 'cancelled-recovery-race-job',
+    title: '취소 경합 회의',
+    date: '2026-05-13T09:30',
+    meetingPurpose: '복구 응답 지연 중 취소 확인',
+    sourceFilename: fixtureUpload.name,
+    sourceSize: fixtureUpload.size,
+    sourceLastModified: fixtureUpload.lastModified,
+    status: 'active',
+    transcriptReady: true,
+    createdAt: '2026-05-13T09:30:00.000Z',
+    updatedAt: '2026-05-13T09:45:00.000Z',
+    stage: 'diarizing',
+    lastMessage: '참석자 구분 중',
+    lastProgress: 70,
+  };
+
+  await context.addInitScript(value => {
+    window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
+  }, draft);
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      drafts: [{
+        job_id: draft.jobId,
+        status: 'active',
+        stage: 'diarizing',
+        active: true,
+        resume_supported: true,
+        completed_chunk_count: 1,
+        last_progress: { transcript_ready: true },
+      }],
+    }),
+  }));
+  await page.route('**/recoverable-result', async route => {
+    markRecoverableResultRequested();
+    await recoverableResultCanFinish;
+    return route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        job_id: draft.jobId,
+        source_file: fixtureUpload.name,
+        partial: true,
+        summary: '지연된 복구 결과',
+        segments: [{ start: '00:00', end: '00:02', speaker: '', text: '취소 뒤 생성되면 안 됩니다.' }],
+        display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '취소 뒤 생성되면 안 됩니다.' }],
+        diarization_requested: true,
+      }),
+    });
+  });
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await recoverableResultRequested;
+    await page.evaluate(jobId => {
+      window.localStorage.setItem('analysisResumeDrafts', '[]');
+      window.dispatchEvent(new CustomEvent('analysis-resume-drafts:updated', { detail: { jobId } }));
+    }, draft.jobId);
+    releaseRecoverableResult();
+    await page.waitForTimeout(500);
+    const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(meetings.length, 0, 'a delayed recovery response must not recreate a cancelled meeting');
+    console.log('ok - cancelled recovery import race scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runCompletedMeetingRejectsStalePartialScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript(() => {
+    window.__meetingUpdateCount = 0;
+    window.addEventListener('meetings:updated', () => {
+      window.__meetingUpdateCount += 1;
+    });
+  });
+  const page = await context.newPage();
+  const draft = {
+    jobId: 'completed-monotonic-job',
+    title: '완료 상태 단조성',
+    date: '2026-05-13T09:30',
+    meetingPurpose: '늦은 partial 복구 방지',
+    sourceFilename: fixtureUpload.name,
+    sourceSize: fixtureUpload.size,
+    sourceLastModified: fixtureUpload.lastModified,
+    status: 'active',
+    transcriptReady: true,
+    createdAt: '2026-05-13T09:30:00.000Z',
+    updatedAt: '2026-05-13T09:45:00.000Z',
+    stage: 'diarizing',
+    lastMessage: '참석자 구분 중',
+    lastProgress: 70,
+  };
+
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      drafts: [{
+        job_id: draft.jobId,
+        status: 'active',
+        stage: 'diarizing',
+        active: true,
+        resume_supported: true,
+        completed_chunk_count: 1,
+        last_progress: { transcript_ready: true },
+      }],
+    }),
+  }));
+  await page.route('**/recoverable-result', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: draft.jobId,
+      source_file: fixtureUpload.name,
+      partial: true,
+      summary: '늦게 도착한 partial 결과',
+      segments: [{ start: '00:00', end: '00:02', speaker: '', text: '오래된 대화록' }],
+      display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '오래된 대화록' }],
+      diarization_requested: true,
+    }),
+  }));
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(({ meeting, resumeDraft }) => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      request.onerror = () => reject(request.error);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) db.createObjectStore('meetings', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('folders')) db.createObjectStore('folders', { keyPath: 'id' });
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction('meetings', 'readwrite');
+        transaction.objectStore('meetings').put(meeting);
+        transaction.oncomplete = () => {
+          db.close();
+          window.__meetingUpdateCount = 0;
+          window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([resumeDraft]));
+          window.dispatchEvent(new Event('analysis-resume-drafts:updated'));
+          resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+      };
+    }), { meeting: {
+      id: draft.jobId,
+      jobId: draft.jobId,
+      date: '2026-05-13 09:30',
+      title: draft.title,
+      participants: '',
+      meetingPurpose: draft.meetingPurpose,
+      summary: '이미 저장된 최종 결과',
+      segments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '최종 대화록' }],
+      displaySegments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '최종 대화록' }],
+      speakerLabels: {},
+      sourceFile: fixtureUpload.name,
+      analysisStatus: 'completed',
+      createdAt: '2026-05-13T09:30:00.000Z',
+      updatedAt: '2026-05-13T10:00:00.000Z',
+    }, resumeDraft: draft });
+    await page.waitForFunction(() => window.__meetingUpdateCount >= 1, undefined, { timeout: 10000 });
+    const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(meetings.length, 1);
+    assert.equal(meetings[0].analysisStatus, 'completed');
+    assert.equal(meetings[0].summary, '이미 저장된 최종 결과');
+    assert.equal(meetings[0].displaySegments[0].text, '최종 대화록');
+    console.log('ok - completed meeting rejects stale partial scenario');
+  } finally {
+    await context.close();
+  }
+};
+
 const runResumeDraftScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  page.on('pageerror', error => console.error('resume draft scenario page error:', error));
   let analyzeRequestSnapshot = null;
   let resumeCandidatesCalled = false;
 
@@ -272,7 +769,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '중단된 회의' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('이어하기-전-선택.mp3', { exact: true }).count(), 0);
-    await page.getByRole('button', { name: '영상 또는 음성 파일 선택' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
     await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
     await page.getByText('같은 영상·음성 파일 선택 *').waitFor({ timeout: 10000 });
     await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
@@ -311,6 +808,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
 const runActiveDraftBackendSyncScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  let recoveryEnabled = false;
 
   const drafts = [{
     jobId: 'active-draft-job-001',
@@ -340,19 +838,101 @@ const runActiveDraftBackendSyncScenario = async (browser, fixtureUpload) => {
       drafts: [
         {
           job_id: 'active-draft-job-001',
-          status: 'completed',
-          stage: 'completed',
-          active: false,
+          status: recoveryEnabled ? 'completed' : 'active',
+          stage: recoveryEnabled ? 'completed' : 'diarizing',
+          active: !recoveryEnabled,
           resume_supported: true,
+          completed_chunk_count: 1,
         },
       ],
+    }),
+  }));
+  await page.route('**/recoverable-result', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: 'active-draft-job-001',
+      source_file: 'active-draft-job-001-upload.mp4',
+      partial: false,
+      summary: '복구된 회의록',
+      segments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '복구된 대화록입니다.' }],
+      display_segments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '복구된 대화록입니다.' }],
+      diarization_applied: true,
+      diarization_requested: true,
+      outputs: { job_id: 'active-draft-job-001' },
     }),
   }));
 
   try {
     await waitForApp(APP_URL);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(500);
+    await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      request.onerror = () => reject(request.error);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) db.createObjectStore('meetings', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('folders')) db.createObjectStore('folders', { keyPath: 'id' });
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction(['meetings', 'folders'], 'readwrite');
+        transaction.objectStore('folders').put({
+          id: 'edited-folder-001',
+          name: '사용자 폴더',
+          createdAt: '2026-05-13T09:10:00.000Z',
+          updatedAt: '2026-05-13T09:20:00.000Z',
+        });
+        transaction.objectStore('meetings').put({
+          id: 'existing-local-meeting-001',
+          jobId: 'active-draft-job-001',
+          date: '2026-05-13 09:30',
+          title: '사용자가 수정한 제목',
+          participants: '',
+          meetingPurpose: '사용자가 수정한 회의 목적',
+          summary: '대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다.',
+          segments: [{ start: '00:00', end: '00:02', speaker: '', text: '중간 저장 대화록' }],
+          displaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '중간 저장 대화록' }],
+          speakerLabels: {},
+          sourceFile: 'resume-draft-target.mp4',
+          folderId: 'edited-folder-001',
+          pinned: true,
+          editedDisplaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '사용자가 수정한 대화록' }],
+          transcriptEditMeta: { edited: true, editedAt: '2026-05-13T09:20:00.000Z', updatedBy: 'user' },
+          analysisStatus: 'diarization_in_progress',
+          createdAt: '2026-05-13T09:10:00.000Z',
+          updatedAt: '2026-05-13T09:20:00.000Z',
+        });
+        transaction.objectStore('meetings').put({
+          id: 'active-draft-job-001',
+          jobId: 'active-draft-job-001',
+          date: '2026-05-13 09:00',
+          title: '중복된 이전 제목',
+          participants: '',
+          meetingPurpose: '중복된 이전 목적',
+          summary: '이전 중복 기록',
+          segments: [],
+          displaySegments: [],
+          speakerLabels: {},
+          sourceFile: 'resume-draft-target.mp4',
+          analysisStatus: 'diarization_in_progress',
+          createdAt: '2026-05-13T09:30:00.000Z',
+          updatedAt: '2026-05-13T09:40:00.000Z',
+        });
+        transaction.oncomplete = () => {
+          db.close();
+          window.dispatchEvent(new Event('meetings:updated'));
+          resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+      };
+    }));
+    await page.getByRole('button', { name: '사용자가 수정한 제목', exact: true }).click();
+    await page.getByText('사용자가 수정한 대화록', { exact: true }).waitFor({ timeout: 10000 });
+
+    recoveryEnabled = true;
+    await page.reload({ waitUntil: 'domcontentloaded' });
     await page.waitForFunction(() => {
       const stored = window.localStorage.getItem('analysisResumeDrafts');
       const parsed = JSON.parse(stored ?? '[]');
@@ -363,11 +943,216 @@ const runActiveDraftBackendSyncScenario = async (browser, fixtureUpload) => {
     assert.equal(parsedDrafts.length, 1);
     assert.equal(parsedDrafts[0].status, 'completed');
     assert.equal(parsedDrafts[0].resumeUnavailableReason, 'completed');
+    const recoveredMeetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(recoveredMeetings.length, 1);
+    assert.equal(recoveredMeetings[0].id, 'existing-local-meeting-001');
+    assert.equal(recoveredMeetings[0].jobId, 'active-draft-job-001');
+    assert.equal(recoveredMeetings[0].analysisStatus, 'completed');
+    assert.equal(recoveredMeetings[0].title, '사용자가 수정한 제목');
+    assert.equal(recoveredMeetings[0].meetingPurpose, '사용자가 수정한 회의 목적');
+    assert.equal(recoveredMeetings[0].folderId, 'edited-folder-001');
+    assert.equal(recoveredMeetings[0].pinned, true);
+    assert.equal(recoveredMeetings[0].sourceFile, 'resume-draft-target.mp4');
+    assert.equal(recoveredMeetings[0].editedDisplaySegments[0].text, '사용자가 수정한 대화록');
+    assert.equal(recoveredMeetings[0].transcriptEditMeta.updatedBy, 'user');
+    assert.equal(recoveredMeetings[0].summary, '복구된 회의록');
+
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.waitForTimeout(500);
+    const meetingsAfterSecondReload = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(meetingsAfterSecondReload.length, 1);
+    assert.equal(meetingsAfterSecondReload[0].id, 'existing-local-meeting-001');
+    assert.equal(meetingsAfterSecondReload[0].analysisStatus, 'completed');
+    assert.equal(meetingsAfterSecondReload[0].title, '사용자가 수정한 제목');
+    assert.equal(meetingsAfterSecondReload[0].meetingPurpose, '사용자가 수정한 회의 목적');
+    assert.equal(meetingsAfterSecondReload[0].folderId, 'edited-folder-001');
+    assert.equal(meetingsAfterSecondReload[0].pinned, true);
     await expectNoText(page, '진행 중이던 분석 기록');
     console.log('ok - active draft backend sync scenario');
   } finally {
     await context.close();
   }
+};
+
+const runRemoteTerminalTranscriptRecoveryScenario = async (browser, fixtureUpload) => {
+  for (const testCase of [
+    { name: 'failed', remoteStatus: 'failed', recoverableStatus: 200, expectedAnalysisStatus: 'diarization_failed', expectedLabel: '참석자 구분 실패' },
+    { name: 'stopped', remoteStatus: 'stopped', recoverableStatus: 200, expectedAnalysisStatus: 'diarization_stopped', expectedLabel: '구분 중지' },
+    { name: 'failed-recovery-unavailable', remoteStatus: 'failed', recoverableStatus: 500, expectedAnalysisStatus: 'diarization_failed', expectedLabel: '참석자 구분 실패' },
+    { name: 'stopped-recovery-unavailable', remoteStatus: 'stopped', recoverableStatus: 500, expectedAnalysisStatus: 'diarization_stopped', expectedLabel: '구분 중지' },
+    { name: 'cancelled-crash-recovery', remoteStatus: 'missing', recoverableStatus: 404, expectedAnalysisStatus: null, expectedLabel: null, pendingCancellation: true },
+  ]) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
+    const page = await context.newPage();
+    const jobId = `remote-${testCase.name}-job`;
+    let draftStatusRequestCount = 0;
+    let recoverableResultRequestCount = 0;
+    let releaseRemoteStatus = () => {};
+    const remoteStatusCanReturn = new Promise(resolve => {
+      releaseRemoteStatus = resolve;
+    });
+    let releaseCleanup = () => {};
+    const cleanupCanReturn = new Promise(resolve => {
+      releaseCleanup = resolve;
+    });
+    await context.addInitScript(({ jobId: storedJobId, fixture, pendingCancellation }) => {
+      window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([{
+        jobId: storedJobId,
+        title: `${storedJobId} 회의록`,
+        date: '2026-05-13T09:30',
+        meetingPurpose: '원격 종료 상태 복구 확인',
+        sourceFilename: fixture.name,
+        sourceSize: fixture.size,
+        sourceLastModified: fixture.lastModified,
+        status: 'active',
+        createdAt: '2026-05-13T09:30:00.000Z',
+        updatedAt: '2026-05-13T09:45:00.000Z',
+        stage: 'diarizing',
+        transcriptReady: true,
+      }]));
+      if (pendingCancellation) {
+        window.localStorage.setItem('pendingCancelledAnalysisCleanups', JSON.stringify([storedJobId]));
+        window.localStorage.setItem('pendingAnalysisDraftCleanups', JSON.stringify([storedJobId]));
+      }
+    }, { jobId, fixture: fixtureUpload, pendingCancellation: Boolean(testCase.pendingCancellation) });
+    await installBaseRoutes(page);
+    await page.route('**/api/analyze/drafts/*', async route => {
+      await cleanupCanReturn;
+      return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/analyze/draft-statuses', async route => {
+      draftStatusRequestCount += 1;
+      await remoteStatusCanReturn;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ drafts: [{
+          job_id: jobId,
+          status: testCase.remoteStatus,
+          stage: testCase.remoteStatus,
+          active: false,
+          resume_supported: true,
+          completed_chunk_count: 1,
+          last_progress: { transcript_ready: true },
+        }] }),
+      });
+    });
+    await page.route('**/recoverable-result', route => {
+      recoverableResultRequestCount += 1;
+      return route.fulfill({
+        status: testCase.recoverableStatus,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          job_id: jobId,
+          source_file: fixtureUpload.name,
+          partial: true,
+          summary: '중간 저장 회의록',
+          segments: [{ start: '00:00', end: '00:02', speaker: '', text: '복구된 중간 대화록' }],
+          display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '복구된 중간 대화록' }],
+          diarization_applied: false,
+          diarization_requested: true,
+          outputs: { job_id: jobId },
+        }),
+      });
+    });
+    try {
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+      await page.evaluate(({ meetingJobId }) => new Promise((resolve, reject) => {
+        const request = indexedDB.open('MeetingHistoryDB', 2);
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const transaction = db.transaction('meetings', 'readwrite');
+          transaction.objectStore('meetings').put({
+            id: meetingJobId,
+            jobId: meetingJobId,
+            date: '2026-05-13 09:30',
+            title: `${meetingJobId} 회의록`,
+            participants: '',
+            meetingPurpose: '원격 종료 상태 복구 확인',
+            summary: '중간 저장 회의록',
+            segments: [{ start: '00:00', end: '00:02', speaker: '', text: '저장된 중간 대화록' }],
+            displaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '저장된 중간 대화록' }],
+            analysisStatus: 'diarization_in_progress',
+          });
+          transaction.oncomplete = () => { db.close(); resolve(); };
+          transaction.onerror = () => reject(transaction.error);
+        };
+      }), { meetingJobId: jobId });
+      releaseCleanup();
+      releaseRemoteStatus();
+      if (testCase.pendingCancellation) {
+        await page.waitForFunction(expectedJobId => {
+          const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') ?? '[]');
+          return drafts.every(draft => draft.jobId !== expectedJobId);
+        }, jobId, { timeout: 10000 });
+      } else {
+        await page.waitForFunction(({ expectedStatus, expectedJobId }) => {
+          const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') ?? '[]');
+          return drafts.some(draft => draft.jobId === expectedJobId && draft.status === expectedStatus);
+        }, { expectedStatus: testCase.remoteStatus, expectedJobId: jobId }, { timeout: 10000 });
+      }
+      await page.waitForFunction(({ expectedAnalysisStatus, expectedJobId }) => new Promise(resolve => {
+        const request = indexedDB.open('MeetingHistoryDB');
+        request.onerror = () => resolve(false);
+        request.onsuccess = () => {
+          const db = request.result;
+          const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+          getAllRequest.onerror = () => resolve(false);
+          getAllRequest.onsuccess = () => resolve(expectedAnalysisStatus
+            ? getAllRequest.result.some(meeting => meeting.jobId === expectedJobId && meeting.analysisStatus === expectedAnalysisStatus)
+            : getAllRequest.result.every(meeting => meeting.jobId !== expectedJobId));
+        };
+      }), { expectedAnalysisStatus: testCase.expectedAnalysisStatus, expectedJobId: jobId }, { timeout: 10000 });
+      if (testCase.expectedLabel) {
+        await page.getByText(testCase.expectedLabel, { exact: true }).first().waitFor({ timeout: 10000 });
+      }
+      const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+        const request = indexedDB.open('MeetingHistoryDB');
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const db = request.result;
+          const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+          getAllRequest.onerror = () => reject(getAllRequest.error);
+          getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+        };
+      }));
+      if (testCase.expectedAnalysisStatus) {
+        assert.equal(meetings.length, 1);
+        assert.equal(meetings[0].jobId, jobId);
+        assert.equal(meetings[0].analysisStatus, testCase.expectedAnalysisStatus);
+      } else {
+        assert.equal(meetings.filter(meeting => meeting.jobId === jobId).length, 0);
+      }
+      await page.waitForTimeout(300);
+      assert.ok(draftStatusRequestCount <= 2, `${testCase.name} should stabilize draft status synchronization`);
+      assert.ok(recoverableResultRequestCount <= 2, `${testCase.name} should stabilize recoverable-result synchronization`);
+    } catch (error) {
+      console.error(`remote ${testCase.name} body:`, (await page.locator('body').innerText()).slice(0, 3000));
+      throw error;
+    } finally {
+      await context.close();
+    }
+  }
+  console.log('ok - remote terminal transcript recovery scenario');
 };
 
 const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
@@ -532,7 +1317,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.getByRole('button', { name: '결과 보기' }).click();
     await page.getByRole('tab', { name: '기록 정리' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('tab', { name: '기록 정리' }).getAttribute('aria-selected'), 'true');
-    await page.getByText('fresh summary', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-detail-shell').getByText('fresh summary', { exact: true }).waitFor({ timeout: 10000 });
     console.log('ok - suppressed resume candidate scenario');
   } finally {
     await context.close();
@@ -765,7 +1550,7 @@ const runActiveDraftDeleteAfterBackendErrorScenario = async (browser, fixtureUpl
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: /미완료 분석 기록 1건/ }).click();
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '삭제할 진행 기록' }).click();
-    await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: '분석 상태' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '삭제할 진행 기록 분석 기록 삭제', exact: true }).click();
     await expectLocalStorageJson(page, 'analysisResumeDrafts', []);
     const bodyText = await page.locator('body').innerText();
@@ -1176,7 +1961,7 @@ const selectSidebarResumeDraft = async (page, title) => {
     await toggle.click();
   }
   await page.locator('.sidebar-resume-draft-button').filter({ hasText: title }).click();
-  await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
+  await page.getByRole('heading', { name: /이어하기|분석 상태/ }).waitFor({ timeout: 10000 });
 };
 
 const expectNoText = async (page, text) => {
@@ -1184,23 +1969,43 @@ const expectNoText = async (page, text) => {
 };
 
 const run = async () => {
+  const requestedScenarios = new Set(process.argv.slice(2).filter(argument => argument !== '--'));
+  const scenarios = [
+    ['writer-layout', runWriterLayoutScenario],
+    ['latest-diarization-setting', runLatestDiarizationSettingScenario],
+    ['partial-record-failure', runPartialRecordFailureScenario],
+    ['cancelled-recovery-import-race', runCancelledRecoveryImportRaceScenario],
+    ['completed-meeting-rejects-stale-partial', runCompletedMeetingRejectsStalePartialScenario],
+    ['resume-draft', runResumeDraftScenario],
+    ['active-draft-backend-sync', runActiveDraftBackendSyncScenario],
+    ['remote-terminal-transcript-recovery', runRemoteTerminalTranscriptRecoveryScenario],
+    ['invalid-resume-draft', runInvalidResumeDraftScenario],
+    ['suppressed-resume-candidate', runSuppressedResumeCandidateScenario],
+    ['suppressed-active-candidate-blocks-fresh-start', runSuppressedActiveCandidateBlocksFreshStartScenario],
+    ['selected-resume-fresh-start', runSelectedResumeFreshStartScenario],
+    ['active-draft-delete-after-backend-error', runActiveDraftDeleteAfterBackendErrorScenario],
+    ['local-only-delete-retries-pending-cleanup', runLocalOnlyDeleteRetriesPendingCleanupScenario],
+    ['delete-server-error-keeps-draft', runDeleteServerErrorKeepsDraftScenario],
+    ['active-draft-network-failure-keeps-draft', runActiveDraftNetworkFailureKeepsDraftScenario],
+    ['delete-does-not-suppress-file-candidate', runDeleteDoesNotSuppressFileCandidateScenario],
+    ['cancelled-draft-immediate-delete', runCancelledDraftImmediateDeleteScenario],
+  ];
+  const selectedScenarios = requestedScenarios.size === 0
+    ? scenarios
+    : scenarios.filter(([name]) => requestedScenarios.has(name));
+  if (selectedScenarios.length !== (requestedScenarios.size || scenarios.length)) {
+    const knownScenarios = scenarios.map(([name]) => name).join(', ');
+    throw new Error(`Unknown scenario filter. Available scenarios: ${knownScenarios}`);
+  }
+
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
   const fixtureUpload = await createFixtureFile();
 
   try {
-    await runResumeDraftScenario(browser, fixtureUpload);
-    await runActiveDraftBackendSyncScenario(browser, fixtureUpload);
-    await runInvalidResumeDraftScenario(browser, fixtureUpload);
-    await runSuppressedResumeCandidateScenario(browser, fixtureUpload);
-    await runSuppressedActiveCandidateBlocksFreshStartScenario(browser, fixtureUpload);
-    await runSelectedResumeFreshStartScenario(browser, fixtureUpload);
-    await runActiveDraftDeleteAfterBackendErrorScenario(browser, fixtureUpload);
-    await runLocalOnlyDeleteRetriesPendingCleanupScenario(browser, fixtureUpload);
-    await runDeleteServerErrorKeepsDraftScenario(browser, fixtureUpload);
-    await runActiveDraftNetworkFailureKeepsDraftScenario(browser, fixtureUpload);
-    await runDeleteDoesNotSuppressFileCandidateScenario(browser, fixtureUpload);
-    await runCancelledDraftImmediateDeleteScenario(browser, fixtureUpload);
+    for (const [, scenario] of selectedScenarios) {
+      await scenario(browser, fixtureUpload);
+    }
   } finally {
     await browser.close();
     await stopServer(server);

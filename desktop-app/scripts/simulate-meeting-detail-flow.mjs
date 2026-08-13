@@ -28,6 +28,8 @@ const unlabeledAudioMissingMeetingId = 'codex-detail-flow-unlabeled-audio-missin
 const unlabeledAudioMissingJobId = 'codex-detail-flow-unlabeled-audio-missing-job';
 const legacyParticipantMeetingId = 'codex-detail-flow-legacy-participant';
 const legacyParticipantJobId = 'codex-detail-flow-legacy-participant-job';
+const initialAnalysisMeetingId = 'codex-detail-flow-initial-analysis';
+const initialAnalysisJobId = 'codex-detail-flow-initial-analysis-job';
 const formats = ['hwpx', 'md', 'txt', 'docx'];
 let summaryReady = false;
 let topicSectionsFailureCode = null;
@@ -492,6 +494,36 @@ const seedDiarizationCancelMeeting = async (page) => {
     });
     db.close();
   }, { cancelMeetingId, cancelJobId });
+};
+
+const seedInitialAnalysisMeeting = async (page) => {
+  await page.evaluate(async ({ initialAnalysisMeetingId, initialAnalysisJobId }) => {
+    const request = indexedDB.open('MeetingHistoryDB', 2);
+    const db = await new Promise((resolve, reject) => {
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const meeting = {
+      id: initialAnalysisMeetingId,
+      jobId: initialAnalysisJobId,
+      date: '2026-05-08 00:04',
+      title: '최초 분석 진행 회의록',
+      summary: '최초 분석 참석자 구분 진행 상태를 확인합니다.',
+      meetingPurpose: '최초 분석 상태 보존',
+      sourceFile: 'initial-analysis.mp4',
+      analysisStatus: 'diarization_in_progress',
+      diarizationApplied: false,
+      segments: [{ start: '00:00:01', end: '00:00:04', speaker: '화자1', text: '분석이 진행 중입니다.' }],
+      topics: [], actions: [], decisions: [], needsCheck: [],
+    };
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction('meetings', 'readwrite');
+      tx.objectStore('meetings').put(meeting);
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  }, { initialAnalysisMeetingId, initialAnalysisJobId });
 };
 
 const seedAudioMissingDiarizationMeeting = async (page) => {
@@ -986,6 +1018,19 @@ const installRoutes = async (page) => {
     });
   });
 
+  await page.route(`**/api/outputs/${initialAnalysisJobId}/generation-progress/diarization`, route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: initialAnalysisJobId,
+      kind: 'diarization',
+      progress: 0,
+      message: '',
+      status: 'idle',
+      active: false,
+    }),
+  }));
+
   await page.route(`**/api/outputs/${jobId}/generate-speaker-context`, route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -1145,6 +1190,7 @@ const run = async () => {
     await seedExistingContentModelMissingMeeting(page);
     await seedOtherMeeting(page);
     await seedDiarizationCancelMeeting(page);
+    await seedInitialAnalysisMeeting(page);
     await seedAudioMissingDiarizationMeeting(page);
     await seedUnlabeledAudioMissingMeeting(page);
     await seedLegacyParticipantMeeting(page);
@@ -1604,7 +1650,7 @@ const run = async () => {
       db.close();
       window.dispatchEvent(new Event('meetings:updated'));
     });
-    await page.waitForFunction(() => document.querySelectorAll('[data-sidebar-record-menu-trigger]').length === 8);
+    await page.waitForFunction(() => document.querySelectorAll('[data-sidebar-record-menu-trigger]').length >= 8);
 
 
     const cacheMissMeetingId = 'codex-detail-flow-cache-miss-meeting';
@@ -1661,6 +1707,20 @@ const run = async () => {
       }));
     }, skippedMeetingId);
     await page.getByRole('heading', { name: '요약 AI 미준비 회의록' }).waitFor({ timeout: 10000 });
+    const meetingSearchInput = page.getByRole('textbox', { name: '현재 회의에서 검색' });
+    await meetingSearchInput.fill('확인');
+    await page.getByText('요약 AI가 없어도 대화록은 확인할 수 있습니다.').waitFor({ state: 'visible' });
+    const clearMeetingSearchButton = page.getByRole('button', { name: '검색어 지우기' });
+    await clearMeetingSearchButton.waitFor({ state: 'visible' });
+    await clearMeetingSearchButton.click();
+    assert.equal(await meetingSearchInput.inputValue(), '');
+    await meetingSearchInput.fill('일치하지 않는 검색어');
+    await page.getByText('검색과 일치하는 대화록이 없습니다.').waitFor({ state: 'visible' });
+    await meetingSearchInput.fill('대화록');
+    await meetingSearchInput.press('Escape');
+    assert.equal(await meetingSearchInput.inputValue(), '');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '현재 회의에서 검색');
+    assert.equal(await clearMeetingSearchButton.count(), 0);
     if (designCaptureDir) {
       await mkdir(designCaptureDir, { recursive: true });
       for (const width of [1024, 1280, 1440, 1920]) {
@@ -1671,6 +1731,36 @@ const run = async () => {
         assert.equal(horizontalOverflow, 0, `${width}px viewport should not overflow horizontally`);
         await page.screenshot({
           path: resolve(designCaptureDir, `meeting-detail-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.evaluate((targetMeetingId) => {
+        window.dispatchEvent(new CustomEvent('meetings:updated', {
+          detail: { id: targetMeetingId, openHistory: true, detailTab: 'summary' },
+        }));
+      }, meetingId);
+      await page.getByRole('heading', { name: '시뮬레이션 회의록' }).waitFor({ timeout: 10000 });
+      await page.getByRole('tab', { name: '기록 정리' }).click();
+      for (const width of [1024, 1280, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        const summaryHorizontalOverflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        assert.equal(summaryHorizontalOverflow, 0, `${width}px summary viewport should not overflow horizontally`);
+        await page.screenshot({
+          path: resolve(designCaptureDir, `meeting-summary-${width}.png`),
+          fullPage: true,
+        });
+      }
+      await page.getByRole('tab', { name: '보고서' }).click();
+      for (const width of [1024, 1280, 1440]) {
+        await page.setViewportSize({ width, height: 900 });
+        const reportHorizontalOverflow = await page.evaluate(
+          () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        );
+        assert.equal(reportHorizontalOverflow, 0, `${width}px report viewport should not overflow horizontally`);
+        await page.screenshot({
+          path: resolve(designCaptureDir, `meeting-report-${width}.png`),
           fullPage: true,
         });
       }
@@ -1765,10 +1855,64 @@ const run = async () => {
     await page.getByText('저장된 음성 파일이 없어 참석자 구분을 다시 실행할 수 없습니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' }).count(), 0);
 
+    await page.getByText('최초 분석 진행 회의록').first().click();
+    await page.getByText('최초 분석 상태 보존').waitFor({ timeout: 10000 });
+    await page.getByText('진행 중', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.evaluate(async ({ initialAnalysisMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const status = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get(initialAnalysisMeetingId);
+        getRequest.onsuccess = () => resolve(getRequest.result?.analysisStatus);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return status;
+    }, { initialAnalysisMeetingId }), 'diarization_in_progress');
+
+    await page.evaluate(async ({ cancelMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readwrite');
+        const store = tx.objectStore('meetings');
+        const getRequest = store.get(cancelMeetingId);
+        getRequest.onsuccess = () => store.put({ ...getRequest.result, analysisStatus: 'diarization_in_progress' });
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      window.dispatchEvent(new Event('meetings:updated'));
+    }, { cancelMeetingId });
     await page.getByText('참석자 구분 취소 회의록').first().click();
     await page.getByText('참석자 구분 취소 상태 확인').waitFor({ timeout: 10000 });
     await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
-    await page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' }).click();
+    const reconciledDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
+    await reconciledDiarizationButton.waitFor({ timeout: 10000 });
+    assert.equal(await reconciledDiarizationButton.isDisabled(), false);
+    assert.equal(await page.evaluate(async ({ cancelMeetingId }) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      const status = await new Promise((resolve, reject) => {
+        const tx = db.transaction('meetings', 'readonly');
+        const getRequest = tx.objectStore('meetings').get(cancelMeetingId);
+        getRequest.onsuccess = () => resolve(getRequest.result?.analysisStatus);
+        getRequest.onerror = () => reject(getRequest.error);
+      });
+      db.close();
+      return status;
+    }, { cancelMeetingId }), 'diarization_stopped');
+    await reconciledDiarizationButton.click();
     await cancelDiarizationRequested;
     const cancelRunningButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
     await cancelRunningButton.waitFor({ timeout: 10000 });

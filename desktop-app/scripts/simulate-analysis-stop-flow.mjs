@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 
 const waitForApp = async (url, timeoutMs = 30000) => {
@@ -167,11 +167,35 @@ const readLocalStorageJson = async (page, key) => page.evaluate(storageKey => {
   return raw ? JSON.parse(raw) : null;
 }, key);
 
-const runScenario = async (browser, fixture, action, { cancelAccepted = true } = {}) => {
+const runScenario = async (
+  browser,
+  fixture,
+  action,
+  {
+    cancelAccepted = true,
+    delayPartialDuringCancel = false,
+    completedResultAfterStop = false,
+    delayStopDecisionResponse = false,
+  } = {},
+) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   await context.addInitScript(() => {
     const originalCreateElement = document.createElement.bind(document);
     window.__meetingMetadataMedia = [];
+    window.__meetingUpdateCount = 0;
+    window.__meetingStatusesWritten = [];
+    window.addEventListener('meetings:updated', () => {
+      window.__meetingUpdateCount += 1;
+    });
+    const originalPut = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function put(value, key) {
+      if (this.name === 'meetings' && value?.analysisStatus) {
+        window.__meetingStatusesWritten.push(value.analysisStatus);
+      }
+      return key === undefined
+        ? originalPut.call(this, value)
+        : originalPut.call(this, value, key);
+    };
     document.createElement = (tagName, options) => {
       const element = originalCreateElement(tagName, options);
       if (tagName === 'audio' || tagName === 'video') {
@@ -217,9 +241,26 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
   const cancelRequested = new Promise(resolve => {
     markCancelRequested = resolve;
   });
+  let releaseStopDecisionResponse = () => {};
+  const stopDecisionCanFinish = new Promise(resolve => {
+    releaseStopDecisionResponse = resolve;
+  });
+  let releasePartialResponse = () => {};
+  const partialResponseCanFinish = new Promise(resolve => {
+    releasePartialResponse = resolve;
+  });
+  let markPartialRequested = () => {};
+  const partialRequested = new Promise(resolve => {
+    markPartialRequested = resolve;
+  });
 
   try {
     await installBaseRoutes(page);
+    await page.route(/\/api\/analyze\/drafts\/[^/]+$/, route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ job_id: analyzeJobId, deleted: true }),
+    }));
 
     await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
       status: 200,
@@ -241,22 +282,57 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
         }] : [],
       }),
     }));
+    await page.route('**/partial-result', async route => {
+      markPartialRequested();
+      if (delayPartialDuringCancel) await partialResponseCanFinish;
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+        job_id: analyzeJobId,
+        source_file: fixture.name,
+        partial: true,
+        summary: '대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다.',
+        segments: [{ start: '00:00', end: '00:02', speaker: '', text: '중지 전 저장된 대화록' }],
+        display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '중지 전 저장된 대화록' }],
+        diarization_requested: true,
+        }),
+      });
+    });
 
     await page.route('**/api/analyze', async route => {
       const postData = (await route.request().postDataBuffer()).toString('utf-8');
       analyzeJobId = multipartField(postData, 'job_id');
       markAnalyzeStarted();
-      await analyzeCanFinish;
+      if (!delayPartialDuringCancel) await analyzeCanFinish;
       const terminalStatus = action === 'stop' ? 'stopped' : 'cancelled';
       const terminalMessage = action === 'stop'
         ? '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.'
         : '분석이 취소되었습니다.';
-      return route.fulfill({
-        status: 200,
-        contentType: 'text/event-stream',
-        body: [
+      const body = completedResultAfterStop
+        ? [
           'event: progress',
-          `data: ${JSON.stringify({ type: 'progress', progress: 42, status: 'transcribing', message: 'Transcribing chunk 2/4...' })}`,
+          `data: ${JSON.stringify({ type: 'progress', progress: 70, status: 'diarizing', message: '중지 승인 대기 중 최종 결과 도착', transcript_ready: true })}`,
+          '',
+          'event: result',
+          `data: ${JSON.stringify({
+            type: 'result',
+            progress: 100,
+            status: 'completed',
+            summary: '중지 승인 뒤 도착한 완료 결과',
+            segments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '완료 직전 대화록' }],
+            meeting: { source_file: fixture.name, job_id: analyzeJobId },
+            outputs: { job_id: analyzeJobId },
+          })}`,
+          '',
+          'event: done',
+          'data: [DONE]',
+          '',
+          '',
+        ].join('\n')
+        : [
+          'event: progress',
+          `data: ${JSON.stringify({ type: 'progress', progress: 70, status: 'diarizing', message: '참석자 구분 중', transcript_ready: true })}`,
           '',
           `event: ${terminalStatus}`,
           `data: ${JSON.stringify({ type: terminalStatus, action, progress: 42, status: terminalStatus, message: terminalMessage })}`,
@@ -265,14 +341,19 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
           'data: [DONE]',
           '',
           '',
-        ].join('\n'),
+        ].join('\n');
+      return route.fulfill({
+        status: 200,
+        contentType: 'text/event-stream',
+        body,
       });
     });
 
-    await page.route(/\/api\/analyze\/[^/]+\/cancel$/, route => {
+    await page.route(/\/api\/analyze\/[^/]+\/cancel$/, async route => {
       cancelRequestCount += 1;
       cancelRequestBodies.push(JSON.parse(route.request().postData() ?? '{}'));
       markCancelRequested();
+      if (delayStopDecisionResponse) await stopDecisionCanFinish;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -288,7 +369,7 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
     const titleInput = page.getByLabel('회의 제목 *');
     await page.getByLabel('회의 목적 *').fill('분석 중 중지와 취소 동작 확인');
     const fileChooserPromise = page.waitForEvent('filechooser');
-    await page.getByRole('button', { name: '영상 또는 음성 파일 선택' }).press('Enter');
+    await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).press('Enter');
     const fileChooser = await fileChooserPromise;
     await fileChooser.setFiles(fixture.path);
     assert.equal(await titleInput.inputValue(), fixture.name.replace(/\.[^.]+$/, ''), 'filename should fill an empty meeting title');
@@ -337,7 +418,7 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
     await page.getByRole('button', { name: '최신 메타데이터.mp3 제거' }).click();
     assert.equal(await titleInput.inputValue(), '', 'removing a file should clear an auto-filled title');
 
-    const dropZone = page.getByRole('button', { name: '영상 또는 음성 파일 선택' });
+    const dropZone = page.getByRole('button', { name: /영상 또는 음성 파일 선택/ });
     const dataTransfer = await page.evaluateHandle(() => {
       const transfer = new DataTransfer();
       transfer.items.add(new File(['drop audio'], '드롭한 회의.mp3', { type: 'audio/mpeg' }));
@@ -386,6 +467,7 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
     assert.equal(analyzeJobId, null, 'analysis request should wait for model status');
     releaseModelStatusResponse();
     await analyzeStarted;
+    if (delayPartialDuringCancel) await partialRequested;
     const stopMenuButton = page.getByRole('button', { name: '중지/취소' });
     await stopMenuButton.waitFor({ timeout: 10000 });
     const progressLayout = await page.evaluate(() => {
@@ -415,11 +497,22 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
     await cancelRequested;
     assert.equal(cancelRequestCount, 1);
     assert.deepEqual(cancelRequestBodies, [{ action }]);
+    if (delayPartialDuringCancel) releasePartialResponse();
+    if (delayStopDecisionResponse) {
+      releaseAnalyzeResponse();
+      await page.waitForFunction(() => window.__meetingUpdateCount >= 1, undefined, { timeout: 10000 });
+      assert.equal(await page.locator('.writer-completion-panel').count(), 0);
+      releaseStopDecisionResponse();
+    }
     if (!cancelAccepted) {
       await page.getByRole('status').getByText('중지할 분석을 찾지 못했습니다.', { exact: true }).waitFor({ timeout: 10000 });
       await page.locator('.analysis-stop-panel').waitFor({ state: 'detached' });
-      await stopMenuButton.waitFor({ state: 'visible' });
-      assert.equal(await stopMenuButton.isEnabled(), true);
+      if (!completedResultAfterStop) {
+        await stopMenuButton.waitFor({ state: 'visible' });
+        assert.equal(await page.evaluate(() => Array.from(document.querySelectorAll('button')).some(
+          button => button.textContent?.includes('중지/취소') && !button.disabled,
+        )), true);
+      }
       const rejectedStopDrafts = await readLocalStorageJson(page, 'analysisResumeDrafts') ?? [];
       assert.equal(
         rejectedStopDrafts.some(draft => draft.status === 'stopped'),
@@ -427,6 +520,21 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
         'a rejected stop request must not create a stopped resume draft',
       );
       releaseAnalyzeResponse();
+      if (completedResultAfterStop) {
+        await page.locator('.writer-completion-panel').waitFor({ timeout: 10000 });
+        const completedMeetings = await page.evaluate(() => new Promise((resolve, reject) => {
+          const request = indexedDB.open('MeetingHistoryDB');
+          request.onerror = () => reject(request.error);
+          request.onsuccess = () => {
+            const db = request.result;
+            const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+            getAllRequest.onerror = () => reject(getAllRequest.error);
+            getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+          };
+        }));
+        assert.equal(completedMeetings.length, 1);
+        assert.equal(completedMeetings[0].analysisStatus, 'completed');
+      }
       console.log(`ok - analysis ${action} rejected request recovery simulation`);
       return;
     }
@@ -448,14 +556,48 @@ const runScenario = async (browser, fixture, action, { cancelAccepted = true } =
       assert.equal(drafts.length, 1);
       assert.equal(drafts[0].status, 'stopped');
       assert.equal(drafts[0].jobId, analyzeJobId);
+      assert.equal(await page.locator('.writer-completion-panel').count(), 0, 'accepted stop must not show completion UI');
+      assert.equal(
+        (await page.evaluate(() => window.__meetingStatusesWritten)).includes('completed'),
+        false,
+        'an accepted stop must prevent any completed meeting write',
+      );
     } else {
       await page.getByText('분석을 취소했습니다.').waitFor({ timeout: 10000 });
       assert.deepEqual(await readLocalStorageJson(page, 'analysisResumeDrafts'), []);
-      assert.deepEqual(await readLocalStorageJson(page, 'pendingAnalysisDraftCleanups'), [analyzeJobId]);
+      await page.waitForFunction(() => {
+        const pending = JSON.parse(window.localStorage.getItem('pendingAnalysisDraftCleanups') ?? '[]');
+        const cancelled = JSON.parse(window.localStorage.getItem('pendingCancelledAnalysisCleanups') ?? '[]');
+        return pending.length === 0 && cancelled.length === 0;
+      }, undefined, { timeout: 10000 });
+      assert.deepEqual(await readLocalStorageJson(page, 'pendingAnalysisDraftCleanups'), []);
+      assert.deepEqual(await readLocalStorageJson(page, 'pendingCancelledAnalysisCleanups'), []);
       assert.deepEqual(
         await readLocalStorageJson(page, 'suppressedResumeCandidateKeys'),
         [`${fixture.name}::${fixture.size}::${fixture.lastModified}`],
       );
+    }
+
+    const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    if (action === 'stop') {
+      assert.equal(meetings.length, 1, 'stopping after transcript readiness should retain one meeting');
+      assert.equal(meetings[0].jobId, analyzeJobId);
+      assert.equal(meetings[0].analysisStatus, 'diarization_stopped');
+      page.once('dialog', dialog => dialog.accept());
+      await page.getByRole('button', { name: `${action} 분석 중지 테스트`, exact: true }).click();
+      await page.getByText('중지 전 저장된 대화록', { exact: true }).waitFor({ timeout: 10000 });
+      await page.getByText('중지됨', { exact: true }).first().waitFor({ timeout: 10000 });
+    } else {
+      assert.equal(meetings.length, 0, 'explicit cancellation should remove the intermediate meeting');
     }
 
     console.log(`ok - analysis ${action} flow simulation`);
@@ -568,8 +710,17 @@ const fixture = await createFixtureFile();
 const browser = await chromium.launch();
 try {
   await runScenario(browser, fixture, 'stop', { cancelAccepted: false });
+  await runScenario(browser, fixture, 'stop', {
+    cancelAccepted: false,
+    completedResultAfterStop: true,
+    delayStopDecisionResponse: true,
+  });
   await runScenario(browser, fixture, 'stop');
-  await runScenario(browser, fixture, 'cancel');
+  await runScenario(browser, fixture, 'stop', {
+    completedResultAfterStop: true,
+    delayStopDecisionResponse: true,
+  });
+  await runScenario(browser, fixture, 'cancel', { delayPartialDuringCancel: true });
   await runFailureScenario(browser, fixture);
 } finally {
   await browser.close();

@@ -8,6 +8,10 @@ import type { SettingsTab } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
 import { getApiBase, isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
+import { AppView, getInitialAppView } from './appView';
+import { AnalysisRecoveryCoordinator } from './AnalysisRecoveryCoordinator';
+import { StartWorkspace } from './StartWorkspace';
+import { useAnalysisResumeSnapshot } from './analysisResumeState';
 
 interface AnalysisStatus {
     active: boolean;
@@ -18,6 +22,7 @@ interface AnalysisStatus {
     stalled?: boolean;
     transcriptReady?: boolean;
     etaSeconds?: number | null;
+    surfaceTone?: 'immersive' | 'calm';
 }
 
 interface BenchmarkScore {
@@ -156,10 +161,11 @@ const seedHermesComparisonMeetings = async (): Promise<string | null> => {
 };
 
 export const App: React.FC = () => {
-    const [activeTab, setActiveTab] = useState('minutes');
+    const [activeTab, setActiveTab] = useState<AppView>(getInitialAppView);
     const [selectedMeetingId, setSelectedMeetingId] = useState<string | null>(null);
     const [meetingDetailOpenRequest, setMeetingDetailOpenRequest] = useState<MeetingDetailOpenRequest | null>(null);
     const [resumeDraftSelectionRequest, setResumeDraftSelectionRequest] = useState<{ jobId: string; requestId: number } | null>(null);
+    const [writerSessionKey, setWriterSessionKey] = useState(0);
     const [closeGuardActive, setCloseGuardActive] = useState(false);
     const closeGuardSourcesRef = useRef(new Map<string, boolean>());
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -172,6 +178,8 @@ export const App: React.FC = () => {
         message: '',
     });
     const [backendTaskActive, setBackendTaskActive] = useState(false);
+    const recoverySnapshot = useAnalysisResumeSnapshot();
+    const remoteAnalysisActive = recoverySnapshot.drafts.some(draft => draft.status === 'active');
     const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
     const canLeaveCurrentMeeting = () => {
@@ -182,12 +190,17 @@ export const App: React.FC = () => {
 
     const handleCreateMeeting = () => {
         if (!canLeaveCurrentMeeting()) return;
+        if (remoteAnalysisActive && !analysisStatus.active) return;
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
+        setResumeDraftSelectionRequest(null);
+        if (!analysisStatus.active) setWriterSessionKey(current => current + 1);
         setActiveTab('minutes');
     };
     const handleSelectResumeDraft = (jobId: string) => {
         if (!canLeaveCurrentMeeting()) return;
+        const selectedDraft = recoverySnapshot.drafts.find(draft => draft.jobId === jobId);
+        if (remoteAnalysisActive && !analysisStatus.active && selectedDraft?.status !== 'active') return;
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
         setActiveTab('minutes');
@@ -248,6 +261,7 @@ export const App: React.FC = () => {
                 stalled: Boolean(detail.stalled),
                 transcriptReady: Boolean(detail.transcriptReady),
                 etaSeconds: typeof detail.etaSeconds === 'number' ? detail.etaSeconds : null,
+                surfaceTone: detail.surfaceTone === 'calm' ? 'calm' : 'immersive',
             });
         };
 
@@ -318,7 +332,7 @@ export const App: React.FC = () => {
         };
     }, [showAsrBenchmark]);
 
-    const handleTabChange = (tab: string) => {
+    const handleTabChange = (tab: AppView) => {
         if (tab === activeTab) return;
         if (!canLeaveCurrentMeeting()) return;
         if (tab === 'history') {
@@ -329,11 +343,15 @@ export const App: React.FC = () => {
 
     return (
         <>
+            <AnalysisRecoveryCoordinator />
             <Layout
                 activeTab={activeTab}
                 selectedMeetingId={selectedMeetingId}
                 onTabChange={handleTabChange}
                 onOpenSettings={() => openSettings('general')}
+                onOpenStart={() => handleTabChange('start')}
+                newMeetingBlocked={remoteAnalysisActive && !analysisStatus.active}
+                resumeSelectionBlocked={remoteAnalysisActive && !analysisStatus.active}
                 onCreateMeeting={handleCreateMeeting}
                 onDeleteMeeting={handleDeleteMeeting}
                 onSelectResumeDraft={handleSelectResumeDraft}
@@ -347,8 +365,22 @@ export const App: React.FC = () => {
                     setActiveTab('history');
                 }}
             >
+                <div className={activeTab === 'start' ? 'contents' : 'hidden'}>
+                    <StartWorkspace
+                        onCreateMeeting={handleCreateMeeting}
+                        onOpenMeeting={(id) => {
+                            setMeetingDetailOpenRequest(null);
+                            setSelectedMeetingId(id);
+                            setActiveTab('history');
+                        }}
+                        onResumeDraft={handleSelectResumeDraft}
+                        analysisActive={analysisStatus.active}
+                        newMeetingBlocked={remoteAnalysisActive && !analysisStatus.active}
+                    />
+                </div>
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
                     <MeetingWriter
+                        key={writerSessionKey}
                         onOpenSettings={() => openSettings('models')}
                         resumeDraftSelectionRequest={resumeDraftSelectionRequest}
                         onRegisterLeaveGuard={(guard) => {
@@ -378,7 +410,7 @@ export const App: React.FC = () => {
                 <Settings
                     onClose={() => setIsSettingsOpen(false)}
                     initialTab={settingsInitialTab}
-                    analysisActive={analysisStatus.active || backendTaskActive}
+                    analysisActive={analysisStatus.active || remoteAnalysisActive || backendTaskActive}
                 />
             )}
         </>

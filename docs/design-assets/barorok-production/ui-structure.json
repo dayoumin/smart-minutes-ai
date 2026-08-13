@@ -1,0 +1,464 @@
+{
+  "version": "1.0.0",
+  "status": "approved-for-implementation",
+  "updatedAt": "2026-07-30",
+  "product": {
+    "name": "바로록",
+    "description": "개인용 로컬 회의록",
+    "primaryRuntime": "windows-tauri-desktop",
+    "sharedUiRuntime": "react-vite"
+  },
+  "sourceOfTruth": {
+    "visual": {
+      "directory": "docs/design-assets/barorok-production",
+      "screens": [
+        {
+          "id": "new-record",
+          "file": "01-new-record.png"
+        },
+        {
+          "id": "analysis-progress",
+          "file": "02-analysis-progress.png"
+        },
+        {
+          "id": "meeting-transcript",
+          "file": "03-meeting-transcript.png"
+        },
+        {
+          "id": "meeting-summary",
+          "file": "04-meeting-summary.png",
+          "exception": "강한 파도 배경은 구현하지 않고 01과 05의 낮은 대비 배경을 사용한다."
+        },
+        {
+          "id": "meeting-report",
+          "file": "05-meeting-report.png"
+        },
+        {
+          "id": "settings-general",
+          "file": "06-settings-general.png"
+        }
+      ]
+    },
+    "behavior": [
+      "desktop-app/src/App.tsx",
+      "desktop-app/src/Sidebar.tsx",
+      "desktop-app/src/MeetingWriter.tsx",
+      "desktop-app/src/MeetingHistory.tsx",
+      "desktop-app/src/Settings.tsx"
+    ],
+    "designRules": "docs/design.md",
+    "precedence": [
+      "현재 코드의 데이터·저장·복구·내보내기 계약",
+      "docs/design.md의 접근성·상태·반응형 규칙",
+      "이 JSON의 구조와 컴포넌트 소유권",
+      "PNG 시안의 시각적 인상과 세부 배치"
+    ]
+  },
+  "implementationStrategy": {
+    "method": "structure-first",
+    "rules": [
+      "PNG를 배경 이미지로 사용하거나 좌표를 하드코딩하지 않는다.",
+      "공통 셸과 공유 상세 프레임을 먼저 구현하고 화면은 데이터와 상태만 주입한다.",
+      "화면마다 새 색상·반경·그림자·여백 값을 만들지 않고 토큰을 사용한다.",
+      "기존 LMO·Refero·Barorok 팔레트 위에 새 팔레트를 추가하지 않고 Barorok 의미 토큰으로 별칭을 정리한다.",
+      "시안에만 있는 기능은 추가하지 않는다.",
+      "기존 대형 컴포넌트의 상태 로직은 유지하고 시각 영역을 작은 프레젠테이션 컴포넌트로 추출한다.",
+      "각 화면은 기준 PNG와 같은 뷰포트에서 캡처해 구조·위계·밀도를 비교한다."
+    ]
+  },
+  "shell": {
+    "component": "BarorokAppShell",
+    "owner": "desktop-app/src/Layout.tsx",
+    "regions": [
+      {
+        "id": "header",
+        "component": "Header",
+        "heightPx": 72,
+        "persistent": true
+      },
+      {
+        "id": "navigation",
+        "component": "Sidebar",
+        "desktopWidthPx": 272,
+        "persistent": true
+      },
+      {
+        "id": "workspace",
+        "component": "Workspace",
+        "scrollOwner": true,
+        "persistent": true
+      },
+      {
+        "id": "overlay",
+        "component": "OverlayLayer",
+        "persistent": false
+      }
+    ],
+    "desktop": {
+      "maxWidthPx": 1360,
+      "outerInlineGapPx": {
+        "min": 16,
+        "max": 48
+      },
+      "outerBlockGapPx": {
+        "min": 16,
+        "max": 32
+      },
+      "borderRadiusPx": 16
+    },
+    "narrowDesktop": {
+      "breakpointPx": 1024,
+      "fillsViewport": true,
+      "mobileNavigation": false
+    },
+    "background": {
+      "baseToken": "--barorok-mist",
+      "decoration": "low-contrast-bathymetric-contours",
+      "allowedBehindReadingContent": false
+    }
+  },
+  "tokens": {
+    "color": {
+      "ink": "--barorok-ink",
+      "primary": "--barorok-blue",
+      "primaryHover": "--barorok-blue-deep",
+      "secondary": "--barorok-ocean",
+      "secondaryHover": "--barorok-ocean-deep",
+      "page": "--barorok-mist",
+      "surface": "--barorok-surface-base",
+      "surfaceAccent": "--barorok-surface-accent",
+      "surfaceOcean": "--barorok-surface-ocean"
+    },
+    "spacing": {
+      "basePx": 4,
+      "preferredStepsPx": [
+        4,
+        8,
+        12,
+        16,
+        20,
+        24,
+        32
+      ]
+    },
+    "radius": {
+      "controlPx": 8,
+      "cardPx": 10,
+      "dialogPx": 14,
+      "appFramePx": 16
+    },
+    "elevation": {
+      "control": "low",
+      "panel": "low",
+      "dialog": "medium",
+      "appFrame": "medium"
+    },
+    "typography": {
+      "family": "Pretendard, Inter, system-ui, sans-serif",
+      "screenTitlePx": 24,
+      "sectionTitlePx": 16,
+      "bodyPx": 14,
+      "metaPx": 12
+    }
+  },
+  "sharedComponents": [
+    {
+      "id": "AppBrand",
+      "owner": "desktop-app/src/Header.tsx",
+      "usedBy": [
+        "all"
+      ]
+    },
+    {
+      "id": "SidebarNavigator",
+      "owner": "desktop-app/src/Sidebar.tsx",
+      "usedBy": [
+        "all"
+      ],
+      "variants": [
+        "idle",
+        "analysis-active",
+        "meeting-selected"
+      ]
+    },
+    {
+      "id": "MeetingDetailHeader",
+      "owner": "desktop-app/src/MeetingHistory.tsx",
+      "usedBy": [
+        "meeting-transcript",
+        "meeting-summary",
+        "meeting-report"
+      ],
+      "contains": [
+        "title-actions",
+        "metadata-strip",
+        "audio-player",
+        "status-chips",
+        "detail-tabs",
+        "meeting-search"
+      ]
+    },
+    {
+      "id": "DetailCommandBar",
+      "owner": "desktop-app/src/MeetingHistory.tsx",
+      "usedBy": [
+        "meeting-transcript",
+        "meeting-summary",
+        "meeting-report"
+      ],
+      "rule": "탭마다 selector와 primary action만 바꾸고 높이와 정렬은 유지한다."
+    },
+    {
+      "id": "StableStatusSurface",
+      "owner": "desktop-app/src/components",
+      "usedBy": [
+        "all"
+      ],
+      "variants": [
+        "toast",
+        "reserved-chip",
+        "durable-inline-error"
+      ]
+    }
+  ],
+  "screens": [
+    {
+      "id": "new-record",
+      "owner": "desktop-app/src/MeetingWriter.tsx",
+      "reference": "01-new-record.png",
+      "contentRailMaxPx": 1152,
+      "regions": [
+        "screen-heading",
+        "file-column",
+        "meeting-info-column",
+        "action-footer"
+      ],
+      "primaryAction": "분석 시작",
+      "states": [
+        "empty",
+        "file-selected",
+        "extracting-audio",
+        "validation-error",
+        "readiness-error",
+        "resume-draft"
+      ],
+      "preserveContracts": [
+        "파일 선택과 drag-and-drop",
+        "영상에서 음성 추출",
+        "회의 제목·일시·목적",
+        "참석자 구분 기본값 저장",
+        "모델 준비 오류와 설정 이동",
+        "이어하기 초안"
+      ],
+      "layout": {
+        "desktop": "two-column",
+        "leftFraction": 0.55,
+        "rightFraction": 0.45,
+        "actionFooterSpansColumns": true
+      }
+    },
+    {
+      "id": "analysis-progress",
+      "owner": "desktop-app/src/MeetingWriter.tsx",
+      "reference": "02-analysis-progress.png",
+      "contentRailMaxPx": 1152,
+      "regions": [
+        "screen-heading",
+        "file-identity-strip",
+        "phase-indicator",
+        "progress-focus",
+        "progress-detail",
+        "analysis-commands"
+      ],
+      "primaryAction": "중지/취소",
+      "states": [
+        "checking-server",
+        "checking-models",
+        "active",
+        "stalled",
+        "stop-choice",
+        "stop-requested",
+        "failed",
+        "completed"
+      ],
+      "preserveContracts": [
+        "실제 진행률과 서버 메시지",
+        "경과 시간과 예상 시간",
+        "중지와 취소의 차이",
+        "실패 후 입력 보존",
+        "완료 후 상세 화면 이동",
+        "백그라운드 상태의 사이드바 표시"
+      ],
+      "phaseRule": "백엔드가 신뢰할 수 있는 단계 데이터를 제공할 때만 단계 표시를 렌더링한다. 그렇지 않으면 현재 상태 문구와 진행률만 표시한다."
+    },
+    {
+      "id": "meeting-transcript",
+      "owner": "desktop-app/src/MeetingHistory.tsx",
+      "reference": "03-meeting-transcript.png",
+      "contentRailMaxPx": 1320,
+      "sharedFrame": "MeetingDetailHeader",
+      "primaryAction": "저장",
+      "regions": [
+        "detail-command-bar",
+        "transcript-scan-list",
+        "stable-save-status"
+      ],
+      "states": [
+        "loading",
+        "loaded",
+        "searching",
+        "editing-segment",
+        "editing-speakers",
+        "saving",
+        "load-error",
+        "no-source-audio"
+      ],
+      "preserveContracts": [
+        "대화록 검색",
+        "문장 복사와 수정",
+        "참석자 이름 변경",
+        "음성 재생과 구간 이동",
+        "저장되지 않은 변경 이탈 방지",
+        "내보내기"
+      ]
+    },
+    {
+      "id": "meeting-summary",
+      "owner": "desktop-app/src/MeetingHistory.tsx",
+      "reference": "04-meeting-summary.png",
+      "contentRailMaxPx": 1320,
+      "sharedFrame": "MeetingDetailHeader",
+      "primaryAction": "다시 정리",
+      "regions": [
+        "detail-command-bar",
+        "summary-document",
+        "keyword-rail"
+      ],
+      "states": [
+        "not-generated",
+        "generating",
+        "generated",
+        "stale",
+        "generation-error"
+      ],
+      "preserveContracts": [
+        "정리 기준 선택과 수정",
+        "기록 정리 생성과 재생성",
+        "기존 결과 stale 처리",
+        "결정사항과 후속 조치",
+        "생성 실패 복구"
+      ]
+    },
+    {
+      "id": "meeting-report",
+      "owner": "desktop-app/src/MeetingHistory.tsx",
+      "reference": "05-meeting-report.png",
+      "contentRailMaxPx": 1320,
+      "sharedFrame": "MeetingDetailHeader",
+      "primaryAction": "다시 생성",
+      "regions": [
+        "detail-command-bar",
+        "report-paper-preview",
+        "report-info-rail"
+      ],
+      "states": [
+        "not-generated",
+        "generating",
+        "generated",
+        "stale",
+        "generation-error",
+        "saving-file"
+      ],
+      "preserveContracts": [
+        "보고 양식 선택",
+        "보고서 생성과 재생성",
+        "이전 보고서 보존",
+        "보고서 파일 저장",
+        "실제 지원 형식만 표시"
+      ]
+    },
+    {
+      "id": "settings-general",
+      "owner": "desktop-app/src/Settings.tsx",
+      "reference": "06-settings-general.png",
+      "surface": "modal",
+      "dialogWidthPx": 896,
+      "regions": [
+        "dialog-header",
+        "settings-navigation",
+        "settings-content",
+        "dialog-footer"
+      ],
+      "tabs": [
+        "일반",
+        "모델"
+      ],
+      "states": [
+        "loading",
+        "ready",
+        "saving",
+        "saved",
+        "persistent-error",
+        "restart-in-progress"
+      ],
+      "preserveContracts": [
+        "파일·분석·보관·문제 해결 그룹",
+        "모델 관리",
+        "분석 중 재시작 비활성화",
+        "자동 저장 상태",
+        "닫기 후 포커스 복귀"
+      ]
+    }
+  ],
+  "responsive": {
+    "targetViewports": [
+      {
+        "width": 1536,
+        "height": 1024,
+        "purpose": "PNG 기준 비교"
+      },
+      {
+        "width": 1280,
+        "height": 720,
+        "purpose": "주요 데스크톱 게이트"
+      },
+      {
+        "width": 1024,
+        "height": 720,
+        "purpose": "지원하는 좁은 데스크톱"
+      }
+    ],
+    "rules": [
+      "모바일 내비게이션을 새로 만들지 않는다.",
+      "1024px 이하에서 앱 프레임은 화면을 채운다.",
+      "열 전환은 가능하면 workspace 실제 폭을 기준으로 한다.",
+      "가로 overflow는 모든 기준 뷰포트에서 0이어야 한다.",
+      "낮은 창에서도 primary action과 오류 복구 동작에 접근할 수 있어야 한다."
+    ]
+  },
+  "verification": {
+    "perSlice": [
+      "corepack pnpm --dir desktop-app typecheck",
+      "변경 파일 대상 ESLint",
+      "관련 desktop-app/scripts/simulate-*.mjs",
+      "git -c core.excludesFile= diff --check"
+    ],
+    "visual": [
+      "기준 뷰포트 캡처",
+      "앱 프레임·주요 영역·버튼 위치 비교",
+      "텍스트 줄바꿈과 밀도 비교",
+      "hover·focus·disabled·loading·error 상태 확인",
+      "가로 overflow 0 확인"
+    ],
+    "stopCondition": "여섯 기준 화면의 공통 구조가 일치하고 현재 기능 회귀가 없으며 P0·P1과 현재 목표를 막는 P2가 없을 때 종료한다."
+  },
+  "exclusions": [
+    "PNG의 픽셀 좌표 하드코딩",
+    "시안 이미지를 UI 배경으로 사용",
+    "새 대시보드 또는 통계",
+    "계정·팀·클라우드 기능",
+    "실제 지원하지 않는 진행 단계와 저장 형식",
+    "대화록·기록 정리·보고서 본문 뒤의 해양 사진",
+    "화면별 중복 셸·메타·탭·검색 구현"
+  ]
+}

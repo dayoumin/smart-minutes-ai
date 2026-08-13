@@ -4,7 +4,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 const STT_MODEL_LABEL = '\uC74C\uC131 \uC778\uC2DD \uBAA8\uB378';
 const DIARIZATION_MODEL_LABEL = '\uCC38\uC11D\uC790 \uAD6C\uBD84 \uBAA8\uB378';

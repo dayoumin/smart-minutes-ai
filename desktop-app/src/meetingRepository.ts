@@ -103,6 +103,7 @@ export interface MeetingRecord {
     sourceFile?: string;
     jobId?: string;
     pinned?: boolean;
+    analysisStatus?: 'diarization_in_progress' | 'diarization_failed' | 'diarization_stopped' | 'completed';
     topics?: string[];
     topicSections?: MeetingTopicSection[];
     participantSummaries?: MeetingParticipantSummary[];

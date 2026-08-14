@@ -4,10 +4,14 @@ import {
   runtimeHasCapability,
 } from '../src/runtimeEnvironment.ts';
 import {
+  applyLocalEngineAuthorization,
+  applyLocalEngineProbe,
   canUseLocalEngineCapability,
   createInitialLocalEngineConnection,
   isLocalEngineConnected,
+  isLatestAuthorizationCheck,
   isLatestTransportCheck,
+  parseLocalEngineProbe,
   transportFromHealthEvidence,
   updateLocalEngineTransport,
 } from '../src/localEngineConnection.ts';
@@ -47,9 +51,47 @@ assert.equal(transportFromHealthEvidence(true), 'reachable', 'HTTP errors still 
 assert.equal(transportFromHealthEvidence(false), 'unreachable');
 assert.equal(isLatestTransportCheck(2, 1), false, 'a stale check cannot overwrite newer transport evidence');
 assert.equal(isLatestTransportCheck(2, 2), true);
+assert.equal(isLatestAuthorizationCheck(3, 2), false, 'stale pairing results cannot overwrite newer authorization evidence');
+assert.equal(isLatestAuthorizationCheck(3, 3), true);
+
+const parsedProbe = parseLocalEngineProbe({
+  product_id: 'barorok-local-engine',
+  engine_version: '0.0.0-dev',
+  api_contract_version: 1,
+  capabilities: ['analysis', 'export', 'unknown-capability'],
+  auth_state: 'pairing-required',
+  pairing_available: false,
+  update_required: false,
+});
+assert.ok(parsedProbe);
+connection = applyLocalEngineProbe(connection, parsedProbe, 300);
+assert.equal(connection.transport, 'reachable');
+assert.equal(connection.authorization, 'unpaired');
+assert.deepEqual([...connection.capabilities], ['analysis', 'export']);
+connection = applyLocalEngineProbe(connection, { ...parsedProbe, auth_state: 'authenticated' }, 350);
+assert.equal(
+  connection.authorization,
+  'unpaired',
+  'a public probe cannot authenticate a browser session',
+);
+connection = applyLocalEngineAuthorization(connection, 'authenticated', ['analysis'], 375);
+assert.equal(connection.authorization, 'authenticated');
+assert.deepEqual([...connection.capabilities], ['analysis']);
+connection = applyLocalEngineProbe(connection, parsedProbe, 380);
+assert.deepEqual(
+  [...connection.capabilities],
+  ['analysis'],
+  'public engine capabilities cannot expand an authenticated session grant',
+);
+const incompatibleProbe = { ...parsedProbe, api_contract_version: 2 };
+connection = applyLocalEngineProbe(connection, incompatibleProbe, 400);
+assert.equal(connection.transport, 'incompatible');
+assert.equal(connection.capabilities.size, 0);
+assert.equal(parseLocalEngineProbe({ ...parsedProbe, product_id: 'other-engine' }), null);
 
 const authenticatedConnection = {
   ...connection,
+  transport: 'reachable',
   authorization: 'authenticated',
   capabilities: new Set(['analysis']),
 };
@@ -92,6 +134,40 @@ const tauriHeaders = new Headers(tauriCall.init.headers);
 assert.equal(tauriCall.input, 'http://127.0.0.1:18001/api/analyze');
 assert.equal(tauriHeaders.get('X-LMO-Desktop-Action-Token'), 'desktop-token');
 assert.equal(tauriHeaders.get('Content-Type'), 'application/json');
+
+await tauriClient.probe({
+  headers: {
+    Accept: 'application/json',
+    Authorization: 'Bearer caller-secret',
+    'X-LMO-Desktop-Action-Token': 'caller-desktop-secret',
+  },
+});
+const publicProbeCall = calls[2];
+const publicProbeHeaders = new Headers(publicProbeCall.init.headers);
+assert.equal(publicProbeCall.input, 'http://127.0.0.1:18001/api/probe');
+assert.equal(publicProbeHeaders.get('Accept'), 'application/json');
+assert.equal(
+  publicProbeHeaders.has('X-LMO-Desktop-Action-Token'),
+  false,
+  'public probe requests must not receive runtime credentials',
+);
+assert.equal(publicProbeHeaders.has('Authorization'), false);
+
+await tauriClient.pair('/api/pair/start', {
+  method: 'POST',
+  headers: {
+    Authorization: 'Bearer caller-secret',
+    'X-LMO-Desktop-Action-Token': 'caller-desktop-secret',
+  },
+});
+const publicPairHeaders = new Headers(calls[3].init.headers);
+assert.equal(calls[3].input, 'http://127.0.0.1:18001/api/pair/start');
+assert.equal(
+  publicPairHeaders.has('X-LMO-Desktop-Action-Token'),
+  false,
+  'public pairing requests must not receive runtime credentials',
+);
+assert.equal(publicPairHeaders.has('Authorization'), false);
 
 let rejectedFetchCount = 0;
 const guardedClient = createLocalEngineClient({

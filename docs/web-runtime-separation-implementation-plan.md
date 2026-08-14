@@ -1,7 +1,7 @@
 # 웹 런타임 분리 구현 계획
 
 - 작성일: 2026-08-13
-- 상태: 1단계 첫 구현 묶음 완료, 2단계 준비
+- 상태: 2단계 첫 보안 경계 묶음 완료, pairing endpoint 구현 준비
 - 상위 결정: `docs/web-local-engine-followup-plan.md`
 - 목표 제품: HTTPS 웹 UI + 사용자 PC의 Windows 로컬 엔진
 - 후속 제품: Tauri 데스크톱 앱은 웹 MVP 이후 별도 범위
@@ -235,10 +235,11 @@ API를 고정한다.
 로컬 엔진 분리 PoC는 0~3단계에 걸쳐 수행하며, 실제 설치 CTA 배포는 최소
 pairing/session PoC와 exact origin 검증이 통과한 뒤에만 허용한다.
 
-현재 진행 상황(2026-08-13): 1단계의 첫 구현 묶음인 실행 환경 판별,
-공통 로컬 엔진 클라이언트, 전송·인증 상태 분리, MeetingWriter 준비 상태 연결,
-웹/Tauri 경계 회귀 검증을 완료했다. 다음 구현은 2단계의 공개 probe와
-pairing·세션 최소 PoC이며, 실제 설치 다운로드 안내는 보안 계약 검증 뒤에 연다.
+현재 진행 상황(2026-08-14): 2단계 첫 묶음으로 비민감 공개 probe, 개발·배포
+origin 분리, pairing origin 선검사, 세션 수명·origin 결합, endpoint capability와
+민감 API 기본 거부 미들웨어를 구현했다. 일반 실행의 전역 enforcement는 5단계
+전환까지 끈다. 다음 묶음은 nonce 기반 pairing 시작·완료 endpoint와 mock helper,
+세션 갱신·폐기 흐름이며 실제 설치 다운로드 안내는 보안 계약 검증 뒤에 연다.
 
 ### 6.1 현재 단계 상태
 
@@ -246,7 +247,7 @@ pairing·세션 최소 PoC이며, 실제 설치 다운로드 안내는 보안 �
 | --- | --- | --- |
 | 0. 계약·회귀 기준 | 완료 | 아래 inventory, `api_contract_version: 1`, 환경 변수와 simulation 기준 고정 |
 | 1. 프런트엔드 런타임 경계 | 부분 완료 | `dc610b6f`; Settings coordinator는 4단계 전, authorization·capability 갱신 API는 2단계, 실제 Tauri smoke는 5단계 enforcement 전 완료 |
-| 2. probe·pairing·세션 PoC | 다음 단계 | 격리된 default-deny test, origin, nonce, 세션 수명과 mock helper 필요; 실제 helper는 3단계에서 닫음 |
+| 2. probe·pairing·세션 PoC | 부분 완료 | probe·exact origin·격리 default deny·capability·세션 저장소 완료; nonce, pairing endpoint, 갱신·폐기, mock helper 필요; 실제 helper는 3단계에서 닫음 |
 | 3. 로컬 엔진 설치·업데이트 PoC | 미착수 | 설치 위치·single instance·helper·데이터 보존 계약 필요 |
 | 4. 웹 연결·복구 UX | 미착수 | 웹 전용 6장면 설계와 상태별 시뮬레이션 필요 |
 | 5. 전체 API 클라이언트 전환 | 미착수 | 직접 API fetch 0개와 인증 회귀 행렬 필요 |
@@ -300,6 +301,7 @@ pairing·세션 최소 PoC이며, 실제 설치 다운로드 안내는 보안 �
 | 날짜 | 작업 묶음 | 자동·시뮬레이션 증거 | agent 판정 | 커밋·남은 관문 |
 | --- | --- | --- | --- | --- |
 | 2026-08-13 | 1단계 첫 런타임 경계 | `corepack pnpm --dir desktop-app typecheck`, `corepack pnpm --dir desktop-app test:runtime-boundary`, `corepack pnpm --dir desktop-app test:writer-model-readiness`, `corepack pnpm --dir desktop-app test:settings-backend-restart`, `corepack pnpm --dir desktop-app build:web`, `corepack pnpm --dir desktop-app build:desktop`, `git diff --check` 통과 | 큰/작은 관점 최종 P0·P1·현재 목표 P2 없음 | `dc610b6f`; Settings coordinator와 실제 Tauri smoke 잔여 |
+| 2026-08-14 | 2단계 첫 보안 경계 | backend security 14 tests, 기존 API 대표 5 tests, `test:runtime-boundary`, typecheck, writer/settings simulation, 순차 `build:web`·`build:desktop`, `git diff --check` 통과 | 보안/회귀 agent 지적을 수정하고 최종 재검토 | pairing endpoint·nonce·mock helper와 실제 HTTPS 관문 잔여 |
 
 ### 0단계: 현재 계약 고정과 회귀 기준
 
@@ -525,14 +527,13 @@ inventory는 5단계 시작과 완료 시 같은 검색 기준으로 다시 기�
 
 ### 7.2 다음 구현 묶음
 
-다음 코딩은 2단계의 보안 경계 하나로 제한한다.
+다음 코딩은 2단계의 pairing 계약 하나로 제한한다.
 
-- 비민감 `/api/probe` 응답 계약
-- runtime별 exact origin allowlist의 개발 설정
-- 공개 endpoint allowlist와 나머지 `/api/**` 기본 인증(default deny) 미들웨어.
-  일반 실행 enforcement는 5단계 전환까지 끄고 격리된 test 설정에서만 활성화한다.
-- 민감 GET·mutation·SSE·다운로드 대표 경로의 인증 없음 거부 테스트
-- nonce와 session의 타입·수명 계약 및 mock 기반 프런트 상태 전이
+- origin·만료에 묶인 일회성 nonce 발급과 단 한 번의 소비
+- `/api/pair/start`, `/api/pair/complete`의 method·origin·rate limit 계약
+- helper가 보여 주는 일회성 코드의 mock 승인과 잘못된 코드·재사용·만료 거부
+- 짧은 세션 발급·갱신·폐기와 최신 요청 우선 프런트 상태 전이
+- 토큰·nonce·코드가 응답 오류와 로그에 남지 않는지 확인
 
 아직 포함하지 않는 항목:
 

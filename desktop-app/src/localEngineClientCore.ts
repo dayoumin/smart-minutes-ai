@@ -9,6 +9,8 @@ export interface LocalEngineRequestInit extends RequestInit {
 }
 
 export interface LocalEngineClient {
+    probe: (init?: LocalEngineRequestInit) => Promise<Response>;
+    pair: (path: '/api/pair/start' | '/api/pair/complete', init?: LocalEngineRequestInit) => Promise<Response>;
     request: (path: string, init?: LocalEngineRequestInit) => Promise<Response>;
     stream: (path: string, init?: LocalEngineRequestInit) => Promise<Response>;
     download: (path: string, init?: LocalEngineRequestInit) => Promise<Response>;
@@ -20,6 +22,12 @@ const mergeHeaders = (
 ): Headers => {
     const headers = new Headers(requestHeaders);
     new Headers(runtimeHeaders).forEach((value, key) => headers.set(key, value));
+    return headers;
+};
+
+const withoutCredentials = (headers: Headers): Headers => {
+    headers.delete('Authorization');
+    headers.delete('X-LMO-Desktop-Action-Token');
     return headers;
 };
 
@@ -47,9 +55,10 @@ const resolveEngineApiUrl = (path: string, baseUrl: string): URL => {
 export const createLocalEngineClient = (
     dependencies: LocalEngineClientDependencies,
 ): LocalEngineClient => {
-    const request = async (
+    const execute = async (
         path: string,
-        init: LocalEngineRequestInit = {},
+        init: LocalEngineRequestInit,
+        includeRuntimeHeaders: boolean,
     ): Promise<Response> => {
         const { timeoutMs, signal: callerSignal, ...requestInit } = init;
         const controller = new AbortController();
@@ -69,13 +78,16 @@ export const createLocalEngineClient = (
                 controller.signal,
             );
             const target = resolveEngineApiUrl(path, baseUrl);
-            const runtimeHeaders = await awaitWithAbort(
-                dependencies.resolveRequestHeaders(controller.signal),
-                controller.signal,
-            );
+            const runtimeHeaders = includeRuntimeHeaders
+                ? await awaitWithAbort(
+                    dependencies.resolveRequestHeaders(controller.signal),
+                    controller.signal,
+                )
+                : {};
+            const headers = mergeHeaders(runtimeHeaders, requestInit.headers);
             return await dependencies.fetch(target, {
                 ...requestInit,
-                headers: mergeHeaders(runtimeHeaders, requestInit.headers),
+                headers: includeRuntimeHeaders ? headers : withoutCredentials(headers),
                 signal: controller.signal,
             });
         } finally {
@@ -84,7 +96,13 @@ export const createLocalEngineClient = (
         }
     };
 
+    const request = (path: string, init: LocalEngineRequestInit = {}) => (
+        execute(path, init, true)
+    );
+
     return {
+        probe: (init = {}) => execute('/api/probe', init, false),
+        pair: (path, init = {}) => execute(path, init, false),
         request,
         stream: request,
         download: request,

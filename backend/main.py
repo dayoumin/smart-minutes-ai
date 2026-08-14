@@ -40,6 +40,13 @@ from config_normalization import (
     remove_summary_user_model,
 )
 from generation_gateway import classify_generation_exception, failure_for_code
+from local_engine_security import (
+    LocalEngineAuthMiddleware,
+    LocalEngineSessionStore,
+    api_auth_enforcement_enabled,
+    build_probe_payload,
+    configured_exact_origins,
+)
 from job_checkpoints import (
     CorruptCheckpointError,
     atomic_write_json,
@@ -86,6 +93,7 @@ app = FastAPI(title="NIFS AI Meeting API")
 
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
+LOCAL_ENGINE_SESSION_STORE = LocalEngineSessionStore()
 
 
 def _parse_json_form_field(raw_value: str | None, fallback):
@@ -192,20 +200,19 @@ RECOVERABLE_SOURCE_EXTENSIONS = {
 AUDIO_EXTRACT_SOURCE_EXTENSIONS = RECOVERABLE_SOURCE_EXTENSIONS
 
 app.add_middleware(
+    LocalEngineAuthMiddleware,
+    enforcement_enabled=api_auth_enforcement_enabled,
+    desktop_token=lambda: DESKTOP_ACTION_TOKEN,
+    session_store=LOCAL_ENGINE_SESSION_STORE,
+    allowed_origins=configured_exact_origins(),
+)
+app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://tauri.localhost",
-        "https://tauri.localhost",
-        "tauri://localhost",
-    ],
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|tauri\.localhost)(:\d+)?$",
+    allow_origins=list(configured_exact_origins()),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type", DESKTOP_ACTION_TOKEN_HEADER],
+    expose_headers=["Content-Disposition"],
 )
 
 
@@ -679,6 +686,11 @@ def get_analysis_stall_timeout_seconds(last_progress: dict) -> int:
     if progress_value <= 25 or message.startswith("Preparing audio chunks"):
         return ANALYSIS_STALL_ERROR_SECONDS_PREPARE
     return ANALYSIS_STALL_ERROR_SECONDS
+
+
+@app.get("/api/probe")
+async def local_engine_probe() -> dict:
+    return build_probe_payload(pairing_available=False)
 
 
 @app.get("/api/health")

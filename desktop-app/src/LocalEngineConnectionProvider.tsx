@@ -1,30 +1,37 @@
-import React, { createContext, useCallback, useContext, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
     createInitialLocalEngineConnection,
     applyLocalEngineAuthorization,
     applyLocalEngineProbe,
-    isLatestAuthorizationCheck,
     isLatestTransportCheck,
-    LocalEngineAuthorizationState,
-    LocalEngineCapability,
     LocalEngineConnectionSnapshot,
     LocalEngineProbePayload,
     LocalEngineTransportState,
+    parseLocalEngineProbe,
     updateLocalEngineTransport,
 } from './localEngineConnection';
 import { getRuntimeEnvironment } from './runtimeEnvironment';
+import { localEngineClient, localEngineSessionCredentials } from './localEngineClient';
+import {
+    LocalEngineConnectionCoordinator,
+    LocalEnginePairingState,
+} from './localEngineConnectionCoordinator';
+import {
+    parseLocalEnginePairingStart,
+    parseLocalEngineSessionCredential,
+} from './localEngineSession';
+import type { LocalEnginePairingStart } from './localEngineSession';
 
 interface LocalEngineConnectionContextValue {
     snapshot: LocalEngineConnectionSnapshot;
     beginTransportCheck: () => number;
     reportTransport: (checkId: number, transport: LocalEngineTransportState) => void;
-    reportProbe: (checkId: number, probe: LocalEngineProbePayload) => void;
-    beginAuthorizationCheck: () => number;
-    reportAuthorization: (
-        checkId: number,
-        authorization: LocalEngineAuthorizationState,
-        capabilities?: Iterable<LocalEngineCapability>,
-    ) => void;
+    pairingState: LocalEnginePairingState;
+    probeLocalEngine: () => Promise<LocalEngineProbePayload | null>;
+    startPairing: () => Promise<LocalEnginePairingStart | null>;
+    completePairing: (pairingId: string, code: string) => Promise<boolean>;
+    renewSession: () => Promise<boolean>;
+    revokeSession: () => Promise<boolean>;
 }
 
 const LocalEngineConnectionContext = createContext<LocalEngineConnectionContextValue | null>(null);
@@ -34,8 +41,12 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
     const [snapshot, setSnapshot] = useState<LocalEngineConnectionSnapshot>(() => (
         createInitialLocalEngineConnection(environment.kind)
     ));
+    const [pairingState, setPairingState] = useState<LocalEnginePairingState>({
+        phase: 'idle',
+        challenge: null,
+    });
     const transportCheckIdRef = useRef(0);
-    const authorizationCheckIdRef = useRef(0);
+    const coordinatorTransportCheckIdRef = useRef(0);
     const beginTransportCheck = useCallback(() => {
         const checkId = transportCheckIdRef.current + 1;
         transportCheckIdRef.current = checkId;
@@ -50,35 +61,60 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         if (!isLatestTransportCheck(transportCheckIdRef.current, checkId)) return;
         setSnapshot(previous => applyLocalEngineProbe(previous, probe));
     }, []);
-    const beginAuthorizationCheck = useCallback(() => {
-        const checkId = authorizationCheckIdRef.current + 1;
-        authorizationCheckIdRef.current = checkId;
-        return checkId;
-    }, []);
-    const reportAuthorization = useCallback((
-        checkId: number,
-        authorization: LocalEngineAuthorizationState,
-        capabilities: Iterable<LocalEngineCapability> = [],
-    ) => {
-        if (!isLatestAuthorizationCheck(authorizationCheckIdRef.current, checkId)) return;
-        setSnapshot(previous => applyLocalEngineAuthorization(
-            previous,
-            authorization,
-            capabilities,
-        ));
-    }, []);
+    const coordinator = useMemo(() => new LocalEngineConnectionCoordinator(
+        localEngineClient,
+        localEngineSessionCredentials,
+        {
+            onTransport: transport => {
+                if (transport === 'checking') {
+                    coordinatorTransportCheckIdRef.current = beginTransportCheck();
+                    return;
+                }
+                reportTransport(coordinatorTransportCheckIdRef.current, transport);
+            },
+            onProbe: probe => {
+                reportProbe(coordinatorTransportCheckIdRef.current, probe);
+            },
+            onAuthorization: (authorization, capabilities = []) => {
+                setSnapshot(previous => applyLocalEngineAuthorization(
+                    previous,
+                    authorization,
+                    capabilities,
+                ));
+            },
+            onPairingState: setPairingState,
+        },
+        {
+            probe: parseLocalEngineProbe,
+            pairingStart: parseLocalEnginePairingStart,
+            sessionCredential: parseLocalEngineSessionCredential,
+        },
+    ), [beginTransportCheck, reportProbe, reportTransport]);
+    useEffect(() => {
+        if (environment.kind !== 'web-local-engine' || snapshot.authorization !== 'authenticated') return;
+        const synchronizeExpiration = () => {
+            if (localEngineSessionCredentials.current()) return;
+            setSnapshot(previous => applyLocalEngineAuthorization(previous, 'expired'));
+            setPairingState({ phase: 'expired', challenge: null });
+        };
+        const interval = window.setInterval(synchronizeExpiration, 1000);
+        synchronizeExpiration();
+        return () => window.clearInterval(interval);
+    }, [environment.kind, snapshot.authorization]);
     const value = useMemo(() => ({
         snapshot,
         beginTransportCheck,
         reportTransport,
-        reportProbe,
-        beginAuthorizationCheck,
-        reportAuthorization,
+        pairingState,
+        probeLocalEngine: () => coordinator.probe(),
+        startPairing: () => coordinator.startPairing(),
+        completePairing: (pairingId: string, code: string) => coordinator.completePairing(pairingId, code),
+        renewSession: () => coordinator.renewSession(),
+        revokeSession: () => coordinator.revokeSession(),
     }), [
-        beginAuthorizationCheck,
         beginTransportCheck,
-        reportAuthorization,
-        reportProbe,
+        coordinator,
+        pairingState,
         reportTransport,
         snapshot,
     ]);

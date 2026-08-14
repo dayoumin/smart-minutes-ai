@@ -542,7 +542,8 @@
   - 2026-08-13 완료: 1단계 첫 묶음인 웹/Tauri 런타임 경계, 공통 로컬 엔진 클라이언트와 연결 상태 기반을 `dc610b6f`에 반영했다. Settings coordinator와 실제 Tauri smoke는 1단계 잔여 관문으로 유지한다.
   - 2026-08-14 완료: 2단계 첫 묶음으로 비민감 probe, 개발·배포 exact origin 분리, pairing origin 선검사, 세션 수명·origin 결합, endpoint capability와 민감 API default-deny 미들웨어를 구현했다. 전역 enforcement는 전체 프런트 호출을 공통 클라이언트로 옮기는 5단계에서 활성화한다.
   - 2026-08-14 완료: 일회성 pairing code, 시작·완료 endpoint, 시도·시작 속도 제한, 세션 갱신·폐기, 동시 갱신/폐기 직렬화와 프런트 메모리 자격 증명 저장소를 구현했다.
-  - 2026-08-14 다음 작업: 공개 probe부터 pairing, 세션 저장, 만료·폐기와 원래 작업 복귀를 소유하는 프런트 연결 coordinator와 mock 상태 전이를 구현한다.
+  - 2026-08-14 완료: 공개 probe부터 pairing, 세션 저장, 만료·폐기를 소유하는 프런트 연결 coordinator와 중복·오래된 응답·응답 손실·자연 만료 mock 상태 전이를 구현했다. 2단계 PoC를 완료했다.
+  - 2026-08-14 다음 작업: 3단계 Windows helper·single instance·현재 사용자 설치·업데이트·데이터 보존 PoC의 운영 입력과 기존 패키징 재사용 범위를 먼저 확정한다.
   - 첫 웹 제품은 HTTPS 웹 UI와 현재 사용자 단위 Windows NSIS 로컬 엔진 한 경로만 제공한다.
   - 사용자는 웹에 접속해 코드 서명된 LMO Local Engine Setup.exe를 한 번 내려받고, STT·화자 구분·요약 모델은 필요한 시점에 별도로 받는다.
   - 순수 WASM/WebGPU BrowserEngine, remote SaaS, portable 로컬 엔진, 모바일·PWA는 첫 웹 MVP와 병행하지 않는다.

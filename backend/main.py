@@ -742,12 +742,11 @@ async def complete_local_engine_pairing(request: Request, payload: dict = Body(.
 async def renew_local_engine_session(request: Request) -> dict:
     origin = request.headers.get("origin", "")
     token = bearer_token_from_headers(request.headers)
-    rotated = LOCAL_ENGINE_SESSION_STORE.rotate(token, origin=origin)
-    if rotated is None:
+    grant = LOCAL_ENGINE_SESSION_STORE.refresh_if_valid(token, origin=origin)
+    if grant is None:
         raise HTTPException(status_code=401, detail="local engine session expired")
-    next_token, grant = rotated
     return {
-        "session_token": next_token,
+        "session_token": token,
         "expires_at": grant.expires_at,
         "capabilities": sorted(grant.capabilities),
     }

@@ -179,6 +179,19 @@ class LocalEngineSecurityTest(unittest.TestCase):
         self.assertIsNone(sessions.validate(token, origin="https://web.example", now=111))
         self.assertIsNotNone(sessions.validate(next_token, origin="https://web.example", now=111))
 
+    def test_session_refresh_extends_same_token_without_orphan_successor(self) -> None:
+        sessions = LocalEngineSessionStore(ttl_seconds=30)
+        token, _ = sessions.issue(
+            origin="https://web.example",
+            capabilities=["analysis"],
+            now=100,
+        )
+        refreshed = sessions.refresh_if_valid(token, origin="https://web.example", now=120)
+
+        self.assertIsNotNone(refreshed)
+        self.assertEqual(refreshed.expires_at, 150)
+        self.assertIsNotNone(sessions.validate(token, origin="https://web.example", now=149))
+
     def test_concurrent_session_rotation_issues_only_one_successor(self) -> None:
         sessions = LocalEngineSessionStore(ttl_seconds=30)
         token, _ = sessions.issue(
@@ -551,8 +564,8 @@ class LocalEngineSecurityTest(unittest.TestCase):
                 "Origin": origin,
                 "Authorization": f"Bearer {next_token}",
             }
-            self.assertNotEqual(next_token, first_token)
-            self.assertEqual(client.get("/api/health", headers=first_headers).status_code, 401)
+            self.assertEqual(next_token, first_token)
+            self.assertEqual(client.get("/api/health", headers=first_headers).status_code, 200)
             self.assertEqual(client.get("/api/health", headers=next_headers).status_code, 200)
 
             revoked = client.post("/api/session/revoke", headers=next_headers)

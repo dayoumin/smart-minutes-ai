@@ -200,6 +200,26 @@ class LocalEngineSessionStore:
                 now=checked_at,
             )
 
+    def refresh_if_valid(
+        self,
+        token: str,
+        *,
+        origin: str,
+        now: float | None = None,
+    ) -> SessionGrant | None:
+        checked_at = time.time() if now is None else now
+        with self._lock:
+            grant = self.validate(token, origin=origin, now=checked_at)
+            if grant is None:
+                return None
+            refreshed = SessionGrant(
+                origin=grant.origin,
+                capabilities=grant.capabilities,
+                expires_at=checked_at + self._ttl_seconds,
+            )
+            self._grants[self._token_digest(token)] = refreshed
+            return refreshed
+
 
 @dataclass(frozen=True)
 class PairingChallenge:

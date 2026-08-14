@@ -70,11 +70,16 @@ export class LocalEngineSessionCredentialStore {
         this.now = now;
     }
 
-    replace(credential: LocalEngineSessionCredential): void {
+    replace(credential: LocalEngineSessionCredential): boolean {
+        if (credential.expires_at <= this.now()) {
+            this.clear();
+            return false;
+        }
         this.credential = {
             ...credential,
             capabilities: [...credential.capabilities],
         };
+        return true;
     }
 
     clear(): void {

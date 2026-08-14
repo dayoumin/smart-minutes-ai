@@ -11,6 +11,11 @@ export interface LocalEngineRequestInit extends RequestInit {
 export interface LocalEngineClient {
     probe: (init?: LocalEngineRequestInit) => Promise<Response>;
     pair: (path: '/api/pair/start' | '/api/pair/complete', init?: LocalEngineRequestInit) => Promise<Response>;
+    session: (
+        path: '/api/session/renew' | '/api/session/revoke',
+        sessionToken: string,
+        init?: LocalEngineRequestInit,
+    ) => Promise<Response>;
     request: (path: string, init?: LocalEngineRequestInit) => Promise<Response>;
     stream: (path: string, init?: LocalEngineRequestInit) => Promise<Response>;
     download: (path: string, init?: LocalEngineRequestInit) => Promise<Response>;
@@ -59,6 +64,7 @@ export const createLocalEngineClient = (
         path: string,
         init: LocalEngineRequestInit,
         includeRuntimeHeaders: boolean,
+        explicitSessionToken = '',
     ): Promise<Response> => {
         const { timeoutMs, signal: callerSignal, ...requestInit } = init;
         const controller = new AbortController();
@@ -85,9 +91,11 @@ export const createLocalEngineClient = (
                 )
                 : {};
             const headers = mergeHeaders(runtimeHeaders, requestInit.headers);
+            const outgoingHeaders = includeRuntimeHeaders ? headers : withoutCredentials(headers);
+            if (explicitSessionToken) outgoingHeaders.set('Authorization', `Bearer ${explicitSessionToken}`);
             return await dependencies.fetch(target, {
                 ...requestInit,
-                headers: includeRuntimeHeaders ? headers : withoutCredentials(headers),
+                headers: outgoingHeaders,
                 signal: controller.signal,
             });
         } finally {
@@ -103,6 +111,7 @@ export const createLocalEngineClient = (
     return {
         probe: (init = {}) => execute('/api/probe', init, false),
         pair: (path, init = {}) => execute(path, init, false),
+        session: (path, sessionToken, init = {}) => execute(path, init, false, sessionToken),
         request,
         stream: request,
         download: request,

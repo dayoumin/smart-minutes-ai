@@ -3,6 +3,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Origin,
     [string]$EngineVersion = "0.0.0-dev",
+    [string]$FfmpegPath = "backend\ffmpeg.exe",
     [string]$OutputDir = "releases\web-local-engine-poc"
 )
 
@@ -31,6 +32,13 @@ else {
     $Python
 }
 
+$ResolvedFfmpegPath = if ([System.IO.Path]::IsPathRooted($FfmpegPath)) {
+    [System.IO.Path]::GetFullPath($FfmpegPath)
+}
+else {
+    [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $FfmpegPath))
+}
+
 $parsedOrigin = $null
 $originIsValid = [System.Uri]::TryCreate($Origin, [System.UriKind]::Absolute, [ref]$parsedOrigin) -and
     $parsedOrigin.Scheme.Equals("https", [System.StringComparison]::OrdinalIgnoreCase) -and
@@ -47,6 +55,51 @@ if (-not $originIsValid) {
 $normalizedOrigin = $parsedOrigin.GetLeftPart([System.UriPartial]::Authority)
 if ([string]::IsNullOrWhiteSpace($EngineVersion)) {
     throw "EngineVersion is required."
+}
+if (-not (Test-Path -LiteralPath $ResolvedFfmpegPath -PathType Leaf)) {
+    throw "ffmpeg.exe is required for the web local-engine payload: $ResolvedFfmpegPath"
+}
+$outputPrefix = $ExpectedOutputRoot.TrimEnd([char[]]@("\", "/")) + [System.IO.Path]::DirectorySeparatorChar
+if (
+    $ResolvedFfmpegPath.Equals($ExpectedOutputRoot, [System.StringComparison]::OrdinalIgnoreCase) -or
+    $ResolvedFfmpegPath.StartsWith($outputPrefix, [System.StringComparison]::OrdinalIgnoreCase)
+) {
+    throw "FfmpegPath must stay outside the replaceable PoC output directory."
+}
+
+$ffmpegProbeInfo = New-Object System.Diagnostics.ProcessStartInfo
+$ffmpegProbeInfo.FileName = $ResolvedFfmpegPath
+$ffmpegProbeInfo.Arguments = "-version"
+$ffmpegProbeInfo.UseShellExecute = $false
+$ffmpegProbeInfo.CreateNoWindow = $true
+$ffmpegProbeInfo.RedirectStandardOutput = $true
+$ffmpegProbeInfo.RedirectStandardError = $true
+$ffmpegProbe = New-Object System.Diagnostics.Process
+$ffmpegProbe.StartInfo = $ffmpegProbeInfo
+try {
+    if (-not $ffmpegProbe.Start()) {
+        throw "ffmpeg.exe could not be started."
+    }
+    $ffmpegStdoutTask = $ffmpegProbe.StandardOutput.ReadToEndAsync()
+    $ffmpegStderrTask = $ffmpegProbe.StandardError.ReadToEndAsync()
+    if (-not $ffmpegProbe.WaitForExit(10000)) {
+        $ffmpegProbe.Kill()
+        $ffmpegProbe.WaitForExit()
+        throw "ffmpeg.exe validation timed out."
+    }
+    $ffmpegStdout = $ffmpegStdoutTask.GetAwaiter().GetResult()
+    $ffmpegStderr = $ffmpegStderrTask.GetAwaiter().GetResult()
+    $ffmpegVersionMatch = [regex]::Match(
+        ($ffmpegStdout + "`n" + $ffmpegStderr),
+        "(?m)^ffmpeg version [^`r`n]+"
+    )
+    if ($ffmpegProbe.ExitCode -ne 0 -or -not $ffmpegVersionMatch.Success) {
+        throw "FfmpegPath did not pass the ffmpeg -version validation."
+    }
+    $FfmpegVersionLine = $ffmpegVersionMatch.Value.Trim()
+}
+finally {
+    $ffmpegProbe.Dispose()
 }
 
 if (Test-Path -LiteralPath $ResolvedOutputDir) {
@@ -83,13 +136,7 @@ $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
     (($engineSettings | ConvertTo-Json -Depth 4) + "`n"),
     $Utf8NoBom
 )
-$ffmpegPath = Join-Path $BackendDir "ffmpeg.exe"
-if (Test-Path -LiteralPath $ffmpegPath) {
-    Copy-Item -LiteralPath $ffmpegPath -Destination (Join-Path $EngineDir "ffmpeg.exe") -Force
-}
-else {
-    Write-Warning "ffmpeg.exe was not found; video input will be unavailable in this PoC payload."
-}
+Copy-Item -LiteralPath $ResolvedFfmpegPath -Destination (Join-Path $EngineDir "ffmpeg.exe") -Force
 $templatesPath = Join-Path $BackendDir "templates"
 if (Test-Path -LiteralPath $templatesPath) {
     Copy-Item -LiteralPath $templatesPath -Destination (Join-Path $EngineDir "templates") -Recurse -Force
@@ -124,6 +171,7 @@ $payloadFiles = Get-ChildItem -LiteralPath $ResolvedOutputDir -File -Recurse |
 $manifest = [ordered]@{
     packageFormat = "barorok-web-local-engine-poc-v1"
     engineVersion = $EngineVersion
+    ffmpegVersion = $FfmpegVersionLine
     allowedOrigin = $normalizedOrigin
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
     installScope = "current-user"

@@ -94,6 +94,8 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('distributionReady = $false', script)
         self.assertIn('engine-settings.json', script)
         self.assertIn('UTF8Encoding($false)', script)
+        self.assertIn('ffmpeg.exe is required', script)
+        self.assertIn('ReadToEndAsync()', script)
         for excluded in ('"models"', '"database"', '"results"', '"temp"', '"logs"'):
             self.assertIn(excluded, script)
 
@@ -120,6 +122,14 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn("Origin validation failed", combined_output)
         self.assertNotIn("ModuleNotFoundError", combined_output)
 
+        ffmpeg_preflight = script.index('if (-not (Test-Path -LiteralPath $ResolvedFfmpegPath')
+        ffmpeg_version_validated = script.index('$FfmpegVersionLine = $ffmpegVersionMatch.Value.Trim()')
+        ffmpeg_probe_disposed = script.index('$ffmpegProbe.Dispose()')
+        output_replacement = script.index('if (Test-Path -LiteralPath $ResolvedOutputDir)')
+        self.assertLess(ffmpeg_preflight, output_replacement)
+        self.assertLess(ffmpeg_version_validated, output_replacement)
+        self.assertLess(ffmpeg_probe_disposed, output_replacement)
+
     def test_web_server_hard_codes_loopback_and_security_profile(self) -> None:
         server = (ROOT / "backend" / "web_local_engine_server.py").read_text(encoding="utf-8")
         runtime = (ROOT / "backend" / "web_local_engine_runtime.py").read_text(encoding="utf-8")
@@ -130,6 +140,15 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('"LMO_API_AUTH_ENFORCEMENT": "enabled"', runtime)
         self.assertIn('if frozen:', server)
         self.assertIn('Packaged local-engine paths cannot be overridden', server)
+        self.assertIn('mode.add_argument("--stop"', server)
+
+        verifier = (ROOT / "scripts" / "verify_web_local_engine_poc.py").read_text(encoding="utf-8")
+        self.assertIn('"engine/ffmpeg.exe"', verifier)
+        self.assertIn('Concurrent pairing starts were not fail-closed', verifier)
+        self.assertIn('The packaged --stop command', verifier)
+        self.assertIn('The --stop command lost the engine-startup race', verifier)
+        self.assertIn('An expired frozen pairing code was accepted', verifier)
+        self.assertIn('artifact.rename(relocated)', verifier)
 
 
 if __name__ == "__main__":

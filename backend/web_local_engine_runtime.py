@@ -21,6 +21,10 @@ PAIRING_ARM_FORMAT = 1
 ENGINE_SETTINGS_FORMAT = 1
 WINDOWS_MUTEX_ALREADY_EXISTS = 183
 WINDOWS_ERROR_FILE_NOT_FOUND = 2
+WINDOWS_EVENT_MODIFY_STATE = 0x0002
+WINDOWS_WAIT_OBJECT_0 = 0
+WINDOWS_WAIT_TIMEOUT = 258
+WINDOWS_INFINITE = 0xFFFFFFFF
 
 
 @dataclass(frozen=True)
@@ -235,6 +239,12 @@ def pairing_mutex_name(layout: WebLocalEngineLayout) -> str:
     return f"Local\\BarorokLocalEngine-{suffix}"
 
 
+def engine_stop_event_name(layout: WebLocalEngineLayout) -> str:
+    identity = str(layout.data_root).casefold().encode("utf-8")
+    suffix = hashlib.sha256(identity).hexdigest()[:16]
+    return f"Local\\BarorokLocalEngineStop-{suffix}"
+
+
 class WindowsNamedMutex:
     def __init__(self, name: str) -> None:
         self.name = name
@@ -288,6 +298,108 @@ def windows_named_mutex_exists(name: str) -> bool:
     if error == WINDOWS_ERROR_FILE_NOT_FOUND:
         return False
     raise ctypes.WinError(error)
+
+
+class WindowsNamedEvent:
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self._handle: int | None = None
+
+    def create(self) -> None:
+        if os.name != "nt":
+            raise RuntimeError("The standalone local engine is supported on Windows only")
+        if self._handle is not None:
+            return
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateEventW.argtypes = [
+            ctypes.c_void_p,
+            ctypes.c_bool,
+            ctypes.c_bool,
+            ctypes.c_wchar_p,
+        ]
+        kernel32.CreateEventW.restype = ctypes.c_void_p
+        handle = kernel32.CreateEventW(None, True, False, self.name)
+        if not handle:
+            raise ctypes.WinError(ctypes.get_last_error())
+        self._handle = int(handle)
+
+    def wait(self, timeout_seconds: float | None = None) -> bool:
+        if self._handle is None:
+            raise RuntimeError("The local-engine stop event has not been created")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.WaitForSingleObject.argtypes = [ctypes.c_void_p, ctypes.c_uint32]
+        kernel32.WaitForSingleObject.restype = ctypes.c_uint32
+        timeout_ms = (
+            WINDOWS_INFINITE
+            if timeout_seconds is None
+            else max(0, min(int(timeout_seconds * 1000), WINDOWS_INFINITE - 1))
+        )
+        result = kernel32.WaitForSingleObject(
+            ctypes.c_void_p(self._handle),
+            timeout_ms,
+        )
+        if result == WINDOWS_WAIT_OBJECT_0:
+            return True
+        if result == WINDOWS_WAIT_TIMEOUT:
+            return False
+        raise ctypes.WinError(ctypes.get_last_error())
+
+    def signal(self) -> None:
+        if self._handle is None:
+            return
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        if not kernel32.SetEvent(ctypes.c_void_p(self._handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+
+    def close(self) -> None:
+        if self._handle is None:
+            return
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CloseHandle(ctypes.c_void_p(self._handle))
+        self._handle = None
+
+    def __enter__(self) -> "WindowsNamedEvent":
+        self.create()
+        return self
+
+    def __exit__(self, _exc_type, _exc, _traceback) -> None:
+        self.close()
+
+
+def signal_windows_named_event(name: str) -> bool:
+    if os.name != "nt":
+        raise RuntimeError("The standalone local engine is supported on Windows only")
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.OpenEventW.argtypes = [ctypes.c_uint32, ctypes.c_bool, ctypes.c_wchar_p]
+    kernel32.OpenEventW.restype = ctypes.c_void_p
+    handle = kernel32.OpenEventW(WINDOWS_EVENT_MODIFY_STATE, False, name)
+    if not handle:
+        error = ctypes.get_last_error()
+        if error == WINDOWS_ERROR_FILE_NOT_FOUND:
+            return False
+        raise ctypes.WinError(error)
+    try:
+        if not kernel32.SetEvent(ctypes.c_void_p(handle)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return True
+    finally:
+        kernel32.CloseHandle(ctypes.c_void_p(handle))
+
+
+def signal_engine_stop(
+    layout: WebLocalEngineLayout,
+    *,
+    timeout_seconds: float = 5,
+    poll_interval_seconds: float = 0.05,
+) -> bool:
+    deadline = time.monotonic() + max(0, timeout_seconds)
+    event_name = engine_stop_event_name(layout)
+    while True:
+        if signal_windows_named_event(event_name):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(max(0.01, poll_interval_seconds))
 
 
 def arm_pairing_helper(

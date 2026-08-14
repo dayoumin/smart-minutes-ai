@@ -4,6 +4,7 @@ import argparse
 import logging
 import os
 import sys
+import threading
 from pathlib import Path
 from typing import Mapping
 
@@ -11,16 +12,19 @@ import uvicorn
 
 from web_local_engine_runtime import (
     PAIRING_ARM_TTL_SECONDS,
+    WindowsNamedEvent,
     WindowsNamedMutex,
     apply_web_local_engine_environment,
     arm_pairing_helper,
     build_web_local_engine_environment,
+    engine_stop_event_name,
     load_web_local_engine_settings,
     make_pairing_code_presenter,
     pairing_helper_is_armed,
     pairing_mutex_name,
     prepare_web_local_engine_data,
     resolve_web_local_engine_layout,
+    signal_engine_stop,
     show_windows_message,
     validate_production_web_origin,
     windows_named_mutex_exists,
@@ -53,7 +57,9 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--install-root", default=str(_default_install_root()))
     parser.add_argument("--data-root", default=None)
     parser.add_argument("--default-config", default=None)
-    parser.add_argument("--pair", action="store_true")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--pair", action="store_true")
+    mode.add_argument("--stop", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -100,6 +106,8 @@ def main(argv: list[str] | None = None) -> int:
     args = _arguments(argv)
     frozen = bool(getattr(sys, "frozen", False))
     layout = _resolve_startup_layout(args, frozen=frozen)
+    if args.stop:
+        return 0 if signal_engine_stop(layout) else 3
     origin, engine_version = _resolve_startup_settings(
         layout,
         args,
@@ -139,8 +147,14 @@ def main(argv: list[str] | None = None) -> int:
     if not mutex.acquire():
         return 0
 
+    stop_event = WindowsNamedEvent(engine_stop_event_name(layout))
+    stop_watcher: threading.Thread | None = None
     try:
+        stop_event.create()
         from main import LOCAL_ENGINE_PAIRING, app
+
+        if stop_event.wait(timeout_seconds=0):
+            return 0
 
         LOCAL_ENGINE_PAIRING.code_presenter = make_pairing_code_presenter(
             layout,
@@ -150,17 +164,33 @@ def main(argv: list[str] | None = None) -> int:
             layout,
             origin=origin,
         )
-        logging.info("Starting Barorok local engine on loopback port %s", LOCAL_ENGINE_PORT)
-        uvicorn.run(
-            app,
+        server = uvicorn.Server(uvicorn.Config(
+            app=app,
             host="127.0.0.1",
             port=LOCAL_ENGINE_PORT,
             reload=False,
             log_level="info",
             log_config=None,
+        ))
+
+        def wait_for_stop() -> None:
+            if stop_event.wait():
+                server.should_exit = True
+
+        stop_watcher = threading.Thread(
+            target=wait_for_stop,
+            name="barorok-local-engine-stop",
+            daemon=True,
         )
+        stop_watcher.start()
+        logging.info("Starting Barorok local engine on loopback port %s", LOCAL_ENGINE_PORT)
+        server.run()
         return 0
     finally:
+        stop_event.signal()
+        if stop_watcher is not None:
+            stop_watcher.join(timeout=2)
+        stop_event.close()
         mutex.release()
 
 

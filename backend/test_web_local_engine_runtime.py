@@ -8,18 +8,22 @@ from pathlib import Path
 from unittest.mock import patch
 
 from web_local_engine_runtime import (
+    WindowsNamedEvent,
     WindowsNamedMutex,
     apply_web_local_engine_environment,
     arm_pairing_helper,
     build_web_local_engine_environment,
     consume_pairing_helper_arm,
     dispatch_windows_message,
+    engine_stop_event_name,
     load_web_local_engine_settings,
     make_pairing_code_presenter,
     pairing_helper_is_armed,
     pairing_mutex_name,
     prepare_web_local_engine_data,
     resolve_web_local_engine_layout,
+    signal_windows_named_event,
+    signal_engine_stop,
     validate_production_web_origin,
     windows_named_mutex_exists,
 )
@@ -338,6 +342,39 @@ class WebLocalEngineRuntimeTest(unittest.TestCase):
                 second.release()
                 first.release()
             self.assertFalse(windows_named_mutex_exists(pairing_mutex_name(layout)))
+
+    @unittest.skipUnless(os.name == "nt", "Windows named event contract")
+    def test_named_stop_event_can_signal_a_running_engine(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            layout = self._layout(Path(temp_dir))
+            event_name = engine_stop_event_name(layout)
+            event = WindowsNamedEvent(event_name)
+            try:
+                self.assertFalse(signal_windows_named_event(event_name))
+                event.create()
+                self.assertTrue(signal_windows_named_event(event_name))
+                self.assertTrue(event.wait(timeout_seconds=1))
+            finally:
+                event.close()
+            self.assertFalse(signal_windows_named_event(event_name))
+
+    def test_stop_signal_retries_during_engine_startup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            layout = self._layout(Path(temp_dir))
+            with (
+                patch(
+                    "web_local_engine_runtime.signal_windows_named_event",
+                    side_effect=(False, False, True),
+                ) as signal,
+                patch("web_local_engine_runtime.time.sleep") as sleep,
+            ):
+                self.assertTrue(signal_engine_stop(
+                    layout,
+                    timeout_seconds=1,
+                    poll_interval_seconds=0.01,
+                ))
+            self.assertEqual(signal.call_count, 3)
+            self.assertEqual(sleep.call_count, 2)
 
 
 if __name__ == "__main__":

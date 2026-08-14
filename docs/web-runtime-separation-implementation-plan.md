@@ -1,7 +1,7 @@
 # 웹 런타임 분리 구현 계획
 
 - 작성일: 2026-08-13
-- 상태: 2단계 완료, 3단계 3A host·데이터 경계 기반 부분 완료
+- 상태: 2단계 완료, 3단계 3B frozen payload 검증 완료·installer 이전 부분 완료
 - 상위 결정: `docs/web-local-engine-followup-plan.md`
 - 목표 제품: HTTPS 웹 UI + 사용자 PC의 Windows 로컬 엔진
 - 후속 제품: Tauri 데스크톱 앱은 웹 MVP 이후 별도 범위
@@ -248,7 +248,7 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 | 0. 계약·회귀 기준 | 완료 | 아래 inventory, `api_contract_version: 1`, 환경 변수와 simulation 기준 고정 |
 | 1. 프런트엔드 런타임 경계 | 부분 완료 | `dc610b6f`; Settings coordinator는 4단계 전, authorization·capability 갱신 API는 2단계, 실제 Tauri smoke는 5단계 enforcement 전 완료 |
 | 2. probe·pairing·세션 PoC | 완료 | probe·exact origin·격리 default deny·capability·일회성 code·pairing/session lifecycle·프런트 coordinator·mock 상태 전이 통과; 실제 helper는 3단계에서 닫음 |
-| 3. 로컬 엔진 설치·업데이트 PoC | 부분 완료 | 3A source host·고정 loopback·single instance·데이터 경계·one-shot helper arm 통과; frozen exe·실제 helper·설치/보존 smoke 필요 |
+| 3. 로컬 엔진 설치·업데이트 PoC | 부분 완료 | 3A host 경계와 3B frozen exe·실제 helper·쓰기 잠금·relocation 보존·정상 종료 통과; 3C current-user installer·실제 재설치/update·서명·rollback 필요 |
 | 4. 웹 연결·복구 UX | 미착수 | 웹 전용 6장면 설계와 상태별 시뮬레이션 필요 |
 | 5. 전체 API 클라이언트 전환 | 미착수 | 직접 API fetch 0개와 인증 회귀 행렬 필요 |
 | 6. SQLite 기준 저장소 | 미착수 | 백업·가져오기·충돌·FTS·재실행 안전성 필요 |
@@ -452,12 +452,50 @@ inventory는 5단계 시작과 완료 시 같은 검색 기준으로 다시 기�
 - `corepack pnpm check:quick`의 typecheck는 통과했다. 전체 명령은 이번 변경과
   무관한 기존 frontend lint 8건 때문에 중단됐으므로 3A 완료 증거로 사용하지 않는다.
 
-아직 3단계 완료로 판정하지 않는다. 실제 PyInstaller frozen exe,
-Windows MessageBox의 사용자 확인·만료·동시 요청, 읽기 전용 install root,
-install root 교체와 재설치 뒤 config·models·database·results 보존, 정상 종료,
-서명·staging·rollback은 후속 smoke와 installer 묶음에서 닫는다. 실제 HTTPS의
-Chrome/Edge Local Network Access 승인·거부·재승인은 4단계 release QA 관문으로
-유지한다.
+#### 3B 구현·실행 증거 — 2026-08-14
+
+두 번째 묶음은 실제 PyInstaller frozen payload와 반복 가능한 Windows smoke로
+제한했다.
+
+- `scripts/build_web_local_engine_poc.ps1`은 `ffmpeg.exe`를 필수 외부 입력으로
+  받고, 기존 산출물을 바꾸기 전에 경로·실행 파일 존재·`ffmpeg -version`을
+  확인한다. `FfmpegPath`가 교체 대상 output 안에 있으면 거부한다.
+- `backend/web_local_engine_server.py --stop`은 사용자 데이터 경로에 결합된
+  Windows named event로 Uvicorn을 정상 종료한다. 시작 직후 호출도 event 생성까지
+  짧게 재시도하고, 종료 뒤 mutex와 `127.0.0.1:17863`을 반환한다.
+- `scripts/verify_web_local_engine_poc.py`는 manifest의 경로 이탈·중복·미기재
+  추가 파일을 거부하고 모든 payload 해시를 확인한다. smoke 중 install payload
+  파일은 read-only share lock으로 수정·삭제를 막고, 종료 뒤 전체 파일 집합과
+  size·mtime이 같은지 다시 확인한다.
+- 실제 `--pair` MessageBox에서 exact origin과 6자리 code를 읽어 session을 만들고,
+  wrong origin·만료된 arm·동시 start·사용한 code 재사용을 모두 거부하는지 확인한다.
+  code와 token이 user data·로그에 남지 않는 것도 검사한다.
+- config·models·database·results sentinel을 만든 뒤 install root를 다른 이름으로
+  옮겨 다시 실행해도 같은 사용자 데이터가 보존되는지 확인한다. 이는 실제
+  installer 재설치를 대신하지 않으며, 그 관문은 3C에 남긴다.
+
+실제 명령과 결과:
+
+- build: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_web_local_engine_poc.ps1 -Python D:\Projects\LMO_audio\backend\.venv-desktop\Scripts\python.exe -Origin https://minutes.example -EngineVersion 0.1.0-poc-stage3b-final -FfmpegPath D:\Projects\LMO_audio\backend\ffmpeg.exe`: 성공.
+- frozen smoke: `backend\.venv-desktop\Scripts\python.exe scripts\verify_web_local_engine_poc.py releases\web-local-engine-poc --verify-challenge-expiry`: 성공. 일반 반복에서는 이 옵션을 생략하고, 실제 120초 code 만료는 후보 artifact 릴리스 관문에서 실행한다.
+- 검증된 범위: closed manifest, read-only payload, ffmpeg, loopback-only,
+  default-deny, single instance, helper arm과 실제 code expiry·재사용·동시성, startup-safe stop,
+  fixed-port 충돌, install relocation 뒤 사용자 sentinel 보존.
+- focused unittest 45개, backend quick 113개(1개 skip), runtime boundary와
+  TypeScript typecheck를 통과했다.
+- 산출물 `0.1.0-poc-stage3b-final`은 계속 `signed=false`,
+  `distributionReady=false`이며 다운로드 CTA에 사용하지 않는다.
+
+3B 이후에도 3단계 전체 완료로 판정하지 않는다. current-user installer,
+Start Menu helper, 실제 install/update/uninstall-reinstall, installer ACL, 서명,
+staging·rollback은 3C에서 닫는다. 실제 HTTPS의 Chrome/Edge Local Network Access
+승인·거부·재승인은 4단계 release QA 관문으로 유지한다.
+
+릴리스 전 이월 위험은 응답에서만 남기지 않고 다음 표로 관리한다.
+
+| 항목 | 상태 | 필요한 증거 | 종료 조건 | 마지막 확인 |
+| --- | --- | --- | --- | --- |
+| frozen payload의 실제 STT·화자 구분 분석 | 열림 | 설치된 실제 모델과 대표 WAV·video로 분석→저장→내보내기 smoke; build 시 torchcodec·`tbb12.dll` 경고 영향 분류 | 대표 입력이 성공하고 누락 native dependency가 제품 흐름에 영향을 주지 않거나 패키징 수정 후 재검증 | 2026-08-14 |
 
 완료 기준:
 
@@ -573,15 +611,16 @@ Chrome/Edge Local Network Access 승인·거부·재승인은 4단계 release QA
 
 ### 7.2 다음 구현 묶음
 
-다음 코딩은 3B frozen payload smoke로 제한한다.
+다음 코딩은 3C current-user installer PoC로 제한한다.
 
-- `scripts/build_web_local_engine_poc.ps1`로 실제 `--noconsole` executable 생성
-- 고정 포트 점유 시 다른 포트로 이동하지 않고 실패하는지 확인
-- 실제 `--pair` MessageBox와 API 응답이 동시에 유지되고 만료·동시 요청이
-  fail-closed인지 확인
-- 읽기 전용 install root와 교체된 install root에서 사용자 sentinel 보존 확인
-- engine 정상 종료 명령/신호를 추가하고 mutex·고정 포트 재사용 확인
-- 결과가 통과한 뒤에만 3C current-user NSIS와 Start Menu helper로 이동
+- frozen engine·defaults·ffmpeg만 설치하는 전용 NSIS current-user layout 작성
+- 엔진 실행, 연결 준비(`--pair`), 정상 종료(`--stop`) Start Menu 동작 연결
+- install/update/uninstall-reinstall에서 config·models·database·results 보존과
+  사용자가 명시한 전체 삭제만 허용하는지 실제 설치 경로에서 확인
+- program payload staging·manifest 검증 실패 시 적용 중단과 복구 절차 정의
+- 실제 코드 서명과 배포 URL이 없으므로 unsigned local installer PoC까지만 만들고
+  웹 다운로드 CTA는 계속 닫아 둠
+- 실제 모델을 연결한 대표 audio/video 분석 smoke로 위 이월 위험을 닫음
 
 아직 포함하지 않는 항목:
 

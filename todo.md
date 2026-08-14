@@ -543,7 +543,8 @@
   - 2026-08-14 완료: 2단계 첫 묶음으로 비민감 probe, 개발·배포 exact origin 분리, pairing origin 선검사, 세션 수명·origin 결합, endpoint capability와 민감 API default-deny 미들웨어를 구현했다. 전역 enforcement는 전체 프런트 호출을 공통 클라이언트로 옮기는 5단계에서 활성화한다.
   - 2026-08-14 완료: 일회성 pairing code, 시작·완료 endpoint, 시도·시작 속도 제한, 세션 갱신·폐기, 동시 갱신/폐기 직렬화와 프런트 메모리 자격 증명 저장소를 구현했다.
   - 2026-08-14 완료: 공개 probe부터 pairing, 세션 저장, 만료·폐기를 소유하는 프런트 연결 coordinator와 중복·오래된 응답·응답 손실·자연 만료 mock 상태 전이를 구현했다. 2단계 PoC를 완료했다.
-  - 2026-08-14 다음 작업: 3단계 Windows helper·single instance·현재 사용자 설치·업데이트·데이터 보존 PoC의 운영 입력과 기존 패키징 재사용 범위를 먼저 확정한다.
+  - 2026-08-14 완료: 3A standalone host·데이터 경계에 이어 3B 실제 PyInstaller frozen payload를 만들었다. `ffmpeg`, loopback/default-deny, single instance, 실제 pairing MessageBox의 만료·재사용·동시성, startup-safe 정상 종료, fixed-port 충돌, read-only payload, install root relocation 뒤 사용자 sentinel 보존 smoke를 통과했다. 산출물은 unsigned·`distributionReady=false` 개발용으로 유지한다.
+  - 2026-08-14 다음 작업: 3C current-user NSIS installer와 Start Menu의 실행·연결 준비·정상 종료 동작, 실제 install/update/uninstall-reinstall 데이터 보존, staging·rollback을 검증한다. 실제 모델을 넣은 대표 audio/video 분석 smoke도 릴리스 관문으로 닫는다.
   - 첫 웹 제품은 HTTPS 웹 UI와 현재 사용자 단위 Windows NSIS 로컬 엔진 한 경로만 제공한다.
   - 사용자는 웹에 접속해 코드 서명된 LMO Local Engine Setup.exe를 한 번 내려받고, STT·화자 구분·요약 모델은 필요한 시점에 별도로 받는다.
   - 순수 WASM/WebGPU BrowserEngine, remote SaaS, portable 로컬 엔진, 모바일·PWA는 첫 웹 MVP와 병행하지 않는다.

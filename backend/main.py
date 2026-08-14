@@ -42,8 +42,13 @@ from config_normalization import (
 from generation_gateway import classify_generation_exception, failure_for_code
 from local_engine_security import (
     LocalEngineAuthMiddleware,
+    LocalEnginePairingCoordinator,
     LocalEngineSessionStore,
+    PairingRateLimitError,
+    PairingRejectedError,
+    PairingUnavailableError,
     api_auth_enforcement_enabled,
+    bearer_token_from_headers,
     build_probe_payload,
     configured_exact_origins,
 )
@@ -94,6 +99,9 @@ app = FastAPI(title="NIFS AI Meeting API")
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
 LOCAL_ENGINE_SESSION_STORE = LocalEngineSessionStore()
+LOCAL_ENGINE_PAIRING = LocalEnginePairingCoordinator(
+    session_store=LOCAL_ENGINE_SESSION_STORE,
+)
 
 
 def _parse_json_form_field(raw_value: str | None, fallback):
@@ -690,7 +698,68 @@ def get_analysis_stall_timeout_seconds(last_progress: dict) -> int:
 
 @app.get("/api/probe")
 async def local_engine_probe() -> dict:
-    return build_probe_payload(pairing_available=False)
+    return build_probe_payload(pairing_available=LOCAL_ENGINE_PAIRING.available)
+
+
+@app.post("/api/pair/start")
+async def start_local_engine_pairing(request: Request) -> dict:
+    try:
+        return LOCAL_ENGINE_PAIRING.start(origin=request.headers.get("origin", ""))
+    except PairingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="pairing helper unavailable") from exc
+    except PairingRateLimitError as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="pairing temporarily unavailable",
+            headers={"Retry-After": "60"},
+        ) from exc
+
+
+@app.post("/api/pair/complete")
+async def complete_local_engine_pairing(request: Request, payload: dict = Body(...)) -> dict:
+    pairing_id = str(payload.get("pairing_id") or "").strip()
+    code = str(payload.get("code") or "").strip()
+    if not pairing_id or not code:
+        raise HTTPException(status_code=400, detail="pairing information required")
+    try:
+        token, grant = LOCAL_ENGINE_PAIRING.complete(
+            pairing_id=pairing_id,
+            code=code,
+            origin=request.headers.get("origin", ""),
+        )
+    except PairingRateLimitError as exc:
+        raise HTTPException(status_code=429, detail="pairing temporarily unavailable") from exc
+    except PairingRejectedError as exc:
+        raise HTTPException(status_code=401, detail="pairing could not be completed") from exc
+    return {
+        "session_token": token,
+        "expires_at": grant.expires_at,
+        "capabilities": sorted(grant.capabilities),
+    }
+
+
+@app.post("/api/session/renew")
+async def renew_local_engine_session(request: Request) -> dict:
+    origin = request.headers.get("origin", "")
+    token = bearer_token_from_headers(request.headers)
+    rotated = LOCAL_ENGINE_SESSION_STORE.rotate(token, origin=origin)
+    if rotated is None:
+        raise HTTPException(status_code=401, detail="local engine session expired")
+    next_token, grant = rotated
+    return {
+        "session_token": next_token,
+        "expires_at": grant.expires_at,
+        "capabilities": sorted(grant.capabilities),
+    }
+
+
+@app.post("/api/session/revoke")
+async def revoke_local_engine_session(request: Request) -> dict:
+    origin = request.headers.get("origin", "")
+    token = bearer_token_from_headers(request.headers)
+    if not LOCAL_ENGINE_SESSION_STORE.revoke_if_valid(token, origin=origin):
+        raise HTTPException(status_code=401, detail="local engine session expired")
+    return {"revoked": True}
 
 
 @app.get("/api/health")

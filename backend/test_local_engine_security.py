@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -14,7 +15,11 @@ from local_engine_security import (
     API_CONTRACT_VERSION,
     PRODUCT_ID,
     LocalEngineAuthMiddleware,
+    LocalEnginePairingCoordinator,
     LocalEngineSessionStore,
+    PairingRateLimitError,
+    PairingRejectedError,
+    PairingUnavailableError,
     api_auth_enforcement_enabled,
     build_probe_payload,
     configured_exact_origins,
@@ -158,6 +163,190 @@ class LocalEngineSecurityTest(unittest.TestCase):
         sessions.revoke(token)
         self.assertIsNone(sessions.validate(token, origin="https://web.example", now=201))
 
+    def test_session_rotation_revokes_previous_token(self) -> None:
+        sessions = LocalEngineSessionStore(ttl_seconds=30)
+        token, _ = sessions.issue(
+            origin="https://web.example",
+            capabilities=["analysis"],
+            now=100,
+        )
+        rotated = sessions.rotate(token, origin="https://web.example", now=110)
+
+        self.assertIsNotNone(rotated)
+        next_token, next_grant = rotated
+        self.assertNotEqual(next_token, token)
+        self.assertEqual(next_grant.capabilities, frozenset({"analysis"}))
+        self.assertIsNone(sessions.validate(token, origin="https://web.example", now=111))
+        self.assertIsNotNone(sessions.validate(next_token, origin="https://web.example", now=111))
+
+    def test_concurrent_session_rotation_issues_only_one_successor(self) -> None:
+        sessions = LocalEngineSessionStore(ttl_seconds=30)
+        token, _ = sessions.issue(
+            origin="https://web.example",
+            capabilities=["analysis"],
+            now=100,
+        )
+        barrier = threading.Barrier(3)
+        results: list[tuple[str, object] | None] = []
+
+        def rotate() -> None:
+            barrier.wait()
+            results.append(sessions.rotate(token, origin="https://web.example", now=110))
+
+        threads = [threading.Thread(target=rotate) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        successors = [result for result in results if result is not None]
+        self.assertEqual(len(successors), 1)
+        next_token, _ = successors[0]
+        self.assertIsNotNone(sessions.validate(next_token, origin="https://web.example", now=111))
+
+    def test_atomic_revoke_competes_with_rotation_without_leaving_two_successors(self) -> None:
+        sessions = LocalEngineSessionStore(ttl_seconds=30)
+        token, _ = sessions.issue(
+            origin="https://web.example",
+            capabilities=["analysis"],
+            now=100,
+        )
+        barrier = threading.Barrier(3)
+        results: list[object] = []
+
+        def rotate() -> None:
+            barrier.wait()
+            results.append(sessions.rotate(token, origin="https://web.example", now=110))
+
+        def revoke() -> None:
+            barrier.wait()
+            results.append(sessions.revoke_if_valid(token, origin="https://web.example", now=110))
+
+        threads = [threading.Thread(target=rotate), threading.Thread(target=revoke)]
+        for thread in threads:
+            thread.start()
+        barrier.wait()
+        for thread in threads:
+            thread.join()
+
+        rotation = next((result for result in results if isinstance(result, tuple)), None)
+        revoke_succeeded = any(result is True for result in results)
+        self.assertNotEqual(rotation is not None, revoke_succeeded)
+        if rotation is not None:
+            next_token, _ = rotation
+            self.assertIsNotNone(sessions.validate(next_token, origin="https://web.example", now=111))
+
+    def test_pairing_code_is_presented_out_of_band_and_consumed_once(self) -> None:
+        presented: dict[str, str | float] = {}
+        sessions = LocalEngineSessionStore(ttl_seconds=30)
+        pairing = LocalEnginePairingCoordinator(
+            session_store=sessions,
+            code_presenter=lambda pairing_id, code, expires_at: not presented.update({
+                "pairing_id": pairing_id,
+                "code": code,
+                "expires_at": expires_at,
+            }),
+            ttl_seconds=20,
+        )
+
+        started = pairing.start(origin="https://web.example", now=100)
+        self.assertEqual(started["pairing_id"], presented["pairing_id"])
+        self.assertNotIn("code", started)
+        token, grant = pairing.complete(
+            pairing_id=str(presented["pairing_id"]),
+            code=str(presented["code"]),
+            origin="https://web.example",
+            capabilities=["analysis"],
+            now=101,
+        )
+        self.assertEqual(grant.capabilities, frozenset({"analysis"}))
+        self.assertIsNotNone(sessions.validate(token, origin="https://web.example", now=102))
+        with self.assertRaises(PairingRejectedError):
+            pairing.complete(
+                pairing_id=str(presented["pairing_id"]),
+                code=str(presented["code"]),
+                origin="https://web.example",
+                now=102,
+            )
+
+    def test_pairing_rejects_wrong_origin_expiry_and_exhausted_attempts(self) -> None:
+        codes: dict[str, str] = {}
+        pairing = LocalEnginePairingCoordinator(
+            session_store=LocalEngineSessionStore(),
+            code_presenter=lambda pairing_id, code, _expires_at: not codes.update({pairing_id: code}),
+            ttl_seconds=10,
+            max_attempts=2,
+        )
+        started = pairing.start(origin="https://web.example", now=100)
+        pairing_id = started["pairing_id"]
+        with self.assertRaises(PairingRejectedError):
+            pairing.complete(
+                pairing_id=pairing_id,
+                code=codes[pairing_id],
+                origin="https://other.example",
+                now=101,
+            )
+        with self.assertRaises(PairingRejectedError):
+            pairing.complete(
+                pairing_id=pairing_id,
+                code="000000",
+                origin="https://web.example",
+                now=102,
+            )
+        with self.assertRaises(PairingRateLimitError):
+            pairing.complete(
+                pairing_id=pairing_id,
+                code="111111",
+                origin="https://web.example",
+                now=103,
+            )
+        expired = pairing.start(origin="https://web.example", now=200)
+        with self.assertRaises(PairingRejectedError):
+            pairing.complete(
+                pairing_id=expired["pairing_id"],
+                code=codes[expired["pairing_id"]],
+                origin="https://web.example",
+                now=210,
+            )
+
+    def test_pairing_start_is_rate_limited_and_helper_is_required(self) -> None:
+        unavailable = LocalEnginePairingCoordinator(
+            session_store=LocalEngineSessionStore(),
+        )
+        with self.assertRaises(PairingUnavailableError):
+            unavailable.start(origin="https://web.example", now=100)
+        failing_helper = LocalEnginePairingCoordinator(
+            session_store=LocalEngineSessionStore(),
+            code_presenter=lambda *_args: (_ for _ in ()).throw(RuntimeError("helper failed")),
+        )
+        with self.assertRaises(PairingUnavailableError):
+            failing_helper.start(origin="https://web.example", now=100)
+        self.assertEqual(failing_helper._challenges, {})
+
+        pairing = LocalEnginePairingCoordinator(
+            session_store=LocalEngineSessionStore(),
+            code_presenter=lambda *_args: True,
+            start_limit=2,
+            rate_window_seconds=30,
+        )
+        pairing.start(origin="https://web.example", now=100)
+        pairing.start(origin="https://web.example", now=101)
+        with self.assertRaises(PairingRateLimitError):
+            pairing.start(origin="https://web.example", now=102)
+        pairing.start(origin="https://web.example", now=131)
+
+    def test_pairing_start_prunes_expired_challenges(self) -> None:
+        pairing = LocalEnginePairingCoordinator(
+            session_store=LocalEngineSessionStore(),
+            code_presenter=lambda *_args: True,
+            ttl_seconds=10,
+        )
+        first = pairing.start(origin="https://web.example", now=100)
+        self.assertIn(first["pairing_id"], pairing._challenges)
+        pairing.start(origin="https://web.example", now=111)
+        self.assertNotIn(first["pairing_id"], pairing._challenges)
+
     def test_default_deny_covers_read_write_stream_and_download(self) -> None:
         app, _ = build_test_app()
         with TestClient(app) as client:
@@ -300,6 +489,10 @@ class LocalEngineSecurityTest(unittest.TestCase):
             TestClient(main.app) as client,
         ):
             probe = client.get("/api/probe")
+            pair = client.post(
+                "/api/pair/start",
+                headers={"Origin": "http://localhost:5173"},
+            )
             denied = client.get("/api/health")
             allowed = client.get(
                 "/api/health",
@@ -308,8 +501,65 @@ class LocalEngineSecurityTest(unittest.TestCase):
 
         self.assertEqual(probe.status_code, 200)
         self.assertEqual(probe.json()["api_contract_version"], API_CONTRACT_VERSION)
+        self.assertFalse(probe.json()["pairing_available"])
+        self.assertEqual(pair.status_code, 503)
         self.assertEqual(denied.status_code, 401)
         self.assertEqual(allowed.status_code, 200)
+
+    def test_main_app_pairing_session_renew_and_revoke_lifecycle(self) -> None:
+        presented: dict[str, str] = {}
+        sessions = main.LOCAL_ENGINE_SESSION_STORE
+        sessions._grants.clear()
+        pairing = LocalEnginePairingCoordinator(
+            session_store=sessions,
+            code_presenter=lambda pairing_id, code, _expires_at: not presented.update({
+                "pairing_id": pairing_id,
+                "code": code,
+            }),
+        )
+        origin = "http://localhost:5173"
+
+        with (
+            patch.dict(os.environ, {"LMO_API_AUTH_ENFORCEMENT": "enabled"}),
+            patch.object(main, "LOCAL_ENGINE_SESSION_STORE", sessions),
+            patch.object(main, "LOCAL_ENGINE_PAIRING", pairing),
+            TestClient(main.app) as client,
+        ):
+            started = client.post("/api/pair/start", headers={"Origin": origin})
+            self.assertEqual(started.status_code, 200)
+            self.assertNotIn("code", started.json())
+            completed = client.post(
+                "/api/pair/complete",
+                headers={"Origin": origin},
+                json={
+                    "pairing_id": presented["pairing_id"],
+                    "code": presented["code"],
+                },
+            )
+            self.assertEqual(completed.status_code, 200)
+            first_token = completed.json()["session_token"]
+            first_headers = {
+                "Origin": origin,
+                "Authorization": f"Bearer {first_token}",
+            }
+            self.assertEqual(client.get("/api/health", headers=first_headers).status_code, 200)
+
+            renewed = client.post("/api/session/renew", headers=first_headers)
+            self.assertEqual(renewed.status_code, 200)
+            next_token = renewed.json()["session_token"]
+            next_headers = {
+                "Origin": origin,
+                "Authorization": f"Bearer {next_token}",
+            }
+            self.assertNotEqual(next_token, first_token)
+            self.assertEqual(client.get("/api/health", headers=first_headers).status_code, 401)
+            self.assertEqual(client.get("/api/health", headers=next_headers).status_code, 200)
+
+            revoked = client.post("/api/session/revoke", headers=next_headers)
+            self.assertEqual(revoked.status_code, 200)
+            self.assertEqual(client.get("/api/health", headers=next_headers).status_code, 401)
+            self.assertEqual(client.post("/api/session/revoke", headers=next_headers).status_code, 401)
+        sessions._grants.clear()
 
     def test_main_app_cors_rejects_unlisted_development_port(self) -> None:
         request_headers = {

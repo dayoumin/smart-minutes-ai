@@ -16,6 +16,11 @@ import {
   updateLocalEngineTransport,
 } from '../src/localEngineConnection.ts';
 import { createLocalEngineClient } from '../src/localEngineClientCore.ts';
+import {
+  LocalEngineSessionCredentialStore,
+  parseLocalEnginePairingStart,
+  parseLocalEngineSessionCredential,
+} from '../src/localEngineSession.ts';
 
 const web = detectRuntimeEnvironment({
   hostname: 'meetings.example.test',
@@ -195,6 +200,39 @@ await assert.rejects(
   /configured API boundary/,
 );
 assert.equal(rejectedFetchCount, 0, 'rejected URLs must never receive runtime credentials');
+
+const pairingStart = parseLocalEnginePairingStart({
+  pairing_id: 'pairing-id-long-enough',
+  expires_in_seconds: 120,
+});
+assert.ok(pairingStart);
+assert.equal(parseLocalEnginePairingStart({ pairing_id: 'short', expires_in_seconds: 120 }), null);
+const sessionCredential = parseLocalEngineSessionCredential({
+  session_token: 'session-token-long-enough-to-use',
+  expires_at: 200,
+  capabilities: ['analysis', 'unknown-capability'],
+});
+assert.ok(sessionCredential);
+assert.deepEqual(sessionCredential.capabilities, ['analysis']);
+let sessionNow = 100;
+const sessionStore = new LocalEngineSessionCredentialStore(() => sessionNow);
+sessionStore.replace(sessionCredential);
+assert.equal(
+  sessionStore.requestHeaders().Authorization,
+  'Bearer session-token-long-enough-to-use',
+);
+sessionStore.replace({
+  session_token: 'rotated-session-token-long-enough',
+  expires_at: 300,
+  capabilities: ['analysis'],
+});
+assert.equal(
+  sessionStore.requestHeaders().Authorization,
+  'Bearer rotated-session-token-long-enough',
+  'session renewal must replace the previous token',
+);
+sessionNow = 300;
+assert.deepEqual(sessionStore.requestHeaders(), {}, 'expired sessions must clear in-memory credentials');
 
 let slowHeaderResolverStarted = false;
 const timedClient = createLocalEngineClient({

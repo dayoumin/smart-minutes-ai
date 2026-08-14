@@ -16,6 +16,10 @@ from starlette.responses import JSONResponse
 PRODUCT_ID = "barorok-local-engine"
 API_CONTRACT_VERSION = 1
 DEFAULT_SESSION_TTL_SECONDS = 15 * 60
+DEFAULT_PAIRING_TTL_SECONDS = 2 * 60
+DEFAULT_PAIRING_MAX_ATTEMPTS = 5
+DEFAULT_PAIRING_START_LIMIT = 5
+DEFAULT_PAIRING_RATE_WINDOW_SECONDS = 60
 DESKTOP_ACTION_TOKEN_HEADER = "x-lmo-desktop-action-token"
 PUBLIC_PROBE_ROUTE = ("GET", "/api/probe")
 PUBLIC_PAIRING_ROUTES = frozenset({
@@ -28,6 +32,7 @@ LOCAL_ENGINE_CAPABILITIES = frozenset({
     "meeting-storage",
     "export",
 })
+SESSION_MANAGEMENT_CAPABILITY = "__session__"
 DEFAULT_ALLOWED_ORIGINS = (
     "http://localhost:5173",
     "http://127.0.0.1:5173",
@@ -162,6 +167,179 @@ class LocalEngineSessionStore:
         with self._lock:
             self._grants.pop(self._token_digest(token), None)
 
+    def revoke_if_valid(
+        self,
+        token: str,
+        *,
+        origin: str,
+        now: float | None = None,
+    ) -> bool:
+        checked_at = time.time() if now is None else now
+        with self._lock:
+            if self.validate(token, origin=origin, now=checked_at) is None:
+                return False
+            self.revoke(token)
+            return True
+
+    def rotate(
+        self,
+        token: str,
+        *,
+        origin: str,
+        now: float | None = None,
+    ) -> tuple[str, SessionGrant] | None:
+        checked_at = time.time() if now is None else now
+        with self._lock:
+            grant = self.validate(token, origin=origin, now=checked_at)
+            if grant is None:
+                return None
+            self.revoke(token)
+            return self.issue(
+                origin=grant.origin,
+                capabilities=grant.capabilities,
+                now=checked_at,
+            )
+
+
+@dataclass(frozen=True)
+class PairingChallenge:
+    origin: str
+    code_digest: str
+    expires_at: float
+    attempts_remaining: int
+
+
+class PairingUnavailableError(RuntimeError):
+    pass
+
+
+class PairingRateLimitError(RuntimeError):
+    pass
+
+
+class PairingRejectedError(RuntimeError):
+    pass
+
+
+class LocalEnginePairingCoordinator:
+    def __init__(
+        self,
+        *,
+        session_store: LocalEngineSessionStore,
+        code_presenter: Callable[[str, str, float], bool] | None = None,
+        ttl_seconds: int = DEFAULT_PAIRING_TTL_SECONDS,
+        max_attempts: int = DEFAULT_PAIRING_MAX_ATTEMPTS,
+        start_limit: int = DEFAULT_PAIRING_START_LIMIT,
+        rate_window_seconds: int = DEFAULT_PAIRING_RATE_WINDOW_SECONDS,
+    ) -> None:
+        if min(ttl_seconds, max_attempts, start_limit, rate_window_seconds) <= 0:
+            raise ValueError("Pairing limits must be positive")
+        self.session_store = session_store
+        self.code_presenter = code_presenter
+        self.ttl_seconds = ttl_seconds
+        self.max_attempts = max_attempts
+        self.start_limit = start_limit
+        self.rate_window_seconds = rate_window_seconds
+        self._secret = secrets.token_bytes(32)
+        self._challenges: dict[str, PairingChallenge] = {}
+        self._starts_by_origin: dict[str, list[float]] = {}
+        self._lock = threading.RLock()
+
+    @property
+    def available(self) -> bool:
+        return self.code_presenter is not None
+
+    def _code_digest(self, pairing_id: str, code: str) -> str:
+        return hmac.new(
+            self._secret,
+            f"{pairing_id}:{code}".encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+    def start(self, *, origin: str, now: float | None = None) -> dict:
+        if self.code_presenter is None:
+            raise PairingUnavailableError("pairing helper is unavailable")
+        normalized_origin = parse_exact_origins(origin, include_development_defaults=False)[0]
+        started_at = time.time() if now is None else now
+        with self._lock:
+            self._challenges = {
+                pairing_id: challenge
+                for pairing_id, challenge in self._challenges.items()
+                if challenge.expires_at > started_at
+            }
+            recent_starts = [
+                timestamp
+                for timestamp in self._starts_by_origin.get(normalized_origin, [])
+                if timestamp > started_at - self.rate_window_seconds
+            ]
+            if len(recent_starts) >= self.start_limit:
+                raise PairingRateLimitError("pairing start rate limit exceeded")
+            recent_starts.append(started_at)
+            self._starts_by_origin[normalized_origin] = recent_starts
+
+            pairing_id = secrets.token_urlsafe(18)
+            code = f"{secrets.randbelow(1_000_000):06d}"
+            expires_at = started_at + self.ttl_seconds
+            self._challenges[pairing_id] = PairingChallenge(
+                origin=normalized_origin,
+                code_digest=self._code_digest(pairing_id, code),
+                expires_at=expires_at,
+                attempts_remaining=self.max_attempts,
+            )
+
+        try:
+            presented = self.code_presenter(pairing_id, code, expires_at)
+        except Exception as exc:
+            with self._lock:
+                self._challenges.pop(pairing_id, None)
+            raise PairingUnavailableError("pairing helper could not display a code") from exc
+        if not presented:
+            with self._lock:
+                self._challenges.pop(pairing_id, None)
+            raise PairingUnavailableError("pairing helper could not display a code")
+        return {
+            "pairing_id": pairing_id,
+            "expires_in_seconds": self.ttl_seconds,
+        }
+
+    def complete(
+        self,
+        *,
+        pairing_id: str,
+        code: str,
+        origin: str,
+        capabilities: Iterable[str] = LOCAL_ENGINE_CAPABILITIES,
+        now: float | None = None,
+    ) -> tuple[str, SessionGrant]:
+        checked_at = time.time() if now is None else now
+        normalized_origin = parse_exact_origins(origin, include_development_defaults=False)[0]
+        with self._lock:
+            challenge = self._challenges.get(pairing_id)
+            if challenge is None or challenge.expires_at <= checked_at:
+                self._challenges.pop(pairing_id, None)
+                raise PairingRejectedError("pairing challenge is invalid")
+            if not hmac.compare_digest(challenge.origin, normalized_origin):
+                raise PairingRejectedError("pairing challenge is invalid")
+            if not hmac.compare_digest(challenge.code_digest, self._code_digest(pairing_id, code)):
+                attempts_remaining = challenge.attempts_remaining - 1
+                if attempts_remaining <= 0:
+                    self._challenges.pop(pairing_id, None)
+                    raise PairingRateLimitError("pairing attempts exhausted")
+                self._challenges[pairing_id] = PairingChallenge(
+                    origin=challenge.origin,
+                    code_digest=challenge.code_digest,
+                    expires_at=challenge.expires_at,
+                    attempts_remaining=attempts_remaining,
+                )
+                raise PairingRejectedError("pairing challenge is invalid")
+            self._challenges.pop(pairing_id, None)
+
+        return self.session_store.issue(
+            origin=normalized_origin,
+            capabilities=capabilities,
+            now=checked_at,
+        )
+
 
 def _header_map(scope: dict) -> dict[str, str]:
     return {
@@ -176,6 +354,10 @@ def _bearer_token(headers: Mapping[str, str]) -> str:
     if not separator or scheme.lower() != "bearer":
         return ""
     return token.strip()
+
+
+def bearer_token_from_headers(headers: Mapping[str, str]) -> str:
+    return _bearer_token({key.lower(): value for key, value in headers.items()})
 
 
 def required_capability_for_request(method: str, path: str) -> str | None:
@@ -203,6 +385,8 @@ def required_capability_for_request(method: str, path: str) -> str | None:
         return "export"
     if path.startswith("/api/dev/asr-benchmarks"):
         return "model-management"
+    if path.startswith("/api/session/"):
+        return SESSION_MANAGEMENT_CAPABILITY
     return None
 
 
@@ -221,6 +405,8 @@ def request_authorization_status(
     grant = session_store.validate(session_token, origin=origin)
     if grant is None:
         return "unauthorized"
+    if required_capability == SESSION_MANAGEMENT_CAPABILITY:
+        return "authorized"
     if required_capability is None or required_capability not in grant.capabilities:
         return "forbidden"
     return "authorized"

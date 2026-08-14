@@ -122,6 +122,45 @@ pairing/session 최소 PoC를 먼저 통과한다.
 - 고정 loopback 포트, single instance, health, 종료·재시작을 검증한다.
 - 현재 데스크톱과 같은 60초 음성 파일의 결과·시간을 비교한다.
 
+### 0.5A단계: 사용자 PC 호환성 기준
+
+- 첫 공식 지원 후보를 Windows 11 x64와 최신 stable Chrome·Edge로 제한하고,
+  Windows 10 x64·Windows 11 ARM64는 실제 설치·분석 증거 전까지 미지원 후보로 둔다.
+- 저사양 CPU-only, 일반 CPU-only, NVIDIA GPU에서 최소·권장 CPU·RAM·여유 디스크와
+  대표 파일 길이별 예상 처리시간을 정한다.
+- 프록시·오프라인·Defender·SmartScreen·조직 EDR·관리 브라우저, 한글·긴 경로,
+  디스크 부족, 포트 충돌, 절전·재개와 다중 Windows 사용자를 검증 행렬에 포함한다.
+- 설치 전에 환경·모델·저장 공간·포트·브라우저 권한을 구분해 확인하고,
+  지원 요청에는 token·코드·대화록을 제외한 진단 자료만 제공하도록 한다.
+- 첫 MVP는 한 PC의 한 활성 Windows 사용자 세션만 지원한다. 다중 사용자·RDP
+  동시 사용은 고정 포트 발견 계약을 바꾸고 별도 검증하기 전에는 지원하지 않는다.
+
+### 0.5B단계: 단계별 자동 점검
+
+- 웹은 설치 전에 지원 OS·브라우저 안내만 하고 RAM·디스크·GPU를 추측하지 않는다.
+- host system preflight는 OS·workstation·native architecture·RAM만 확인한다.
+- installer target preflight는 실제 설치·모델·임시·결과 볼륨 공간,
+  LocalAppData 쓰기와 포트 상태를 확인한다.
+- 엔진 시작 뒤에는 ffmpeg·native dependency·모델·Ollama와 GPU 가속 후보를,
+  실제 HTTPS 웹에서는 Local Network Access·pairing·version을 확인한다.
+- 분석 직전에는 현재 파일과 모델을 기준으로 temp·results 공간과 예상 처리 부담을
+  다시 확인한다.
+- 자동 점검은 `pass`, `warning`, `blocked`, `unknown`을 구분한다. 확실한 미지원과
+  현재 작업을 수행할 수 없는 조건만 막고, 느린 환경은 예상 지연과 계속 진행을
+  제공하며, 확인 불가는 실패로 단정하지 않는다.
+- 모든 경고에는 다시 확인·공간 확보·권한 확인·관리자 요청·진단 내보내기 중
+  가능한 다음 행동을 제공하고 보안 기능 해제나 강제 프로세스 종료를 권하지 않는다.
+- 2026-08-14 현재 host system과 installer target preflight의 versioned JSON,
+  Windows source·frozen 실행 검증을 완료했다. 이어서 NSIS가 artifact manifest의 확정
+  byte 요구량과 결과 action을 소비하는 current-user installer 소스, Start Menu 동작,
+  same-volume stage·rollback과 선언 파일 기반 정리 계약까지 작성하고 좁은 테스트를
+  통과했다. 모델·temp·results 권장량은 추측하지 않고 후속 실측 전까지 `unknown`으로 둔다.
+- 모델 제외 frozen payload도 Python 분석 runtime과 native dependency 때문에 현재
+  1,117,850,125 bytes(4,887 files, 약 1.04 GiB)다. 회사 PC에서는 이를 다시 build하거나
+  설치하지 않았으며, 실제 helper/NSIS compile과 fresh install·update·중단 복구·uninstall
+  smoke는 집 PC 관문으로 남긴다. 외부 배포 전에는 기능 회귀를 동반한 payload slimming과
+  코드 서명을 별도로 닫아야 한다.
+
 ### 1단계: 설치·연결·보안
 
 - 현재 사용자 단위 NSIS 설치와 명시적 autostart 설정

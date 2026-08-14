@@ -1,7 +1,7 @@
 # 웹 런타임 분리 구현 계획
 
 - 작성일: 2026-08-13
-- 상태: 2단계 완료, 3단계 3B frozen payload 검증 완료·installer 이전 부분 완료
+- 상태: 2단계 완료, 3단계 3C-0B host·installer target preflight 실물 검증 완료·installer 소비 소스 완료·실제 installer build/smoke 대기
 - 상위 결정: `docs/web-local-engine-followup-plan.md`
 - 목표 제품: HTTPS 웹 UI + 사용자 PC의 Windows 로컬 엔진
 - 후속 제품: Tauri 데스크톱 앱은 웹 MVP 이후 별도 범위
@@ -304,6 +304,8 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 | 2026-08-14 | 2단계 첫 보안 경계 | backend security 14 tests, 기존 API 대표 5 tests, `test:runtime-boundary`, typecheck, writer/settings simulation, 순차 `build:web`·`build:desktop`, `git diff --check` 통과 | 보안/회귀 agent 지적을 수정하고 최종 재검토 | pairing endpoint·nonce·mock helper와 실제 HTTPS 관문 잔여 |
 | 2026-08-14 | 2단계 pairing·세션 계약 | backend security 22 tests, 실제 main lifecycle, 동시 renew/revoke, `test:runtime-boundary`, typecheck, writer/settings simulation, 순차 `build:web`·`build:desktop`, `git diff --check` 통과 | 보안/회귀 agent 최종 P0·P1·현재 목표 P2 없음 | 프런트 coordinator·mock 상태 전이, 실제 helper·HTTPS 관문 잔여 |
 | 2026-08-14 | 2단계 프런트 연결 coordinator | backend security 23 tests, probe→pairing→갱신→폐기 mock, 중복·stale·만료·응답 손실, `test:runtime-boundary`, typecheck, writer/settings simulation, 순차 `build:web`·`build:desktop`, `git diff --check` 통과 | 보안/회귀 agent 최종 P0·P1·현재 목표 P2 없음 | 2단계 완료; 실제 helper·HTTPS는 3·8단계 관문 |
+| 2026-08-14 | 3C-0B installer target preflight | 관련 target 68 tests, backend quick 113 tests(1 skip), Windows source smoke, `git diff --check`, 단일 frozen build와 종합 verifier 통과 | 큰/작은 관점 P1·현재 목표 P2 수정 후 좁은 재검토에서 잔여 없음 | `0.1.0-poc-stage3c0b-installer-target-preflight`; 실제 NSIS 소비·공식 용량 manifest·설치/update/reinstall 관문 잔여 |
+| 2026-08-14 | 3C installer preflight 소비 소스 | installer helper/collector focused 37 tests, packaging/verifier 14 tests와 Windows source smoke 통과; closed manifest, current-user NSIS, bounded stop/readiness, same-volume stage·rollback, 선언 파일만 정리하는 복구 계약 작성 | 큰/작은 관점 agent가 readiness 오판, stop race, 중단 복구, manifest drift, 재귀 삭제와 transaction marker 순서를 지적해 수정; strict stage/transaction 회귀 테스트 보강 뒤 잔여 P0·P1·현재 목표 P2 없음 | 회사 PC에서는 helper/NSIS compile·실제 설치를 실행하지 않음. 집 PC에서 frozen payload 재사용 기반 단일 installer build와 install/update/uninstall smoke 필요 |
 
 ### 0단계: 현재 계약 고정과 회귀 기준
 
@@ -496,6 +498,11 @@ staging·rollback은 3C에서 닫는다. 실제 HTTPS의 Chrome/Edge Local Netwo
 | 항목 | 상태 | 필요한 증거 | 종료 조건 | 마지막 확인 |
 | --- | --- | --- | --- | --- |
 | frozen payload의 실제 STT·화자 구분 분석 | 열림 | 설치된 실제 모델과 대표 WAV·video로 분석→저장→내보내기 smoke; build 시 torchcodec·`tbb12.dll` 경고 영향 분류 | 대표 입력이 성공하고 누락 native dependency가 제품 흐름에 영향을 주지 않거나 패키징 수정 후 재검증 | 2026-08-14 |
+| 공식 지원 Windows·CPU·RAM·GPU·여유 디스크 | 열림 | Windows 11 x64 저사양·일반형·NVIDIA PC에서 설치, 모델 준비, 5분·30분·60분·2시간 입력 측정; Windows 10 x64와 Windows 11 ARM64는 별도 증거가 생기기 전 미지원 후보로 분리 | 최소·권장 사양, 예상 처리시간, 최대 권장 입력 길이와 미지원 환경이 사용자 문서·설치 전 점검에 동일하게 반영 | 2026-08-14 |
+| Chrome·Edge와 조직 정책의 Local Network Access | 열림 | 최신 stable Chrome·Edge에서 승인·거부·재승인, 브라우저 재시작, 관리 정책 사전 허용·차단 smoke | 지원 브라우저 범위와 상태별 복구 안내가 확정되고 회사 관리 브라우저의 차단을 설치 실패와 구분 | 2026-08-14 |
+| 고정 포트와 공용 PC·다중 Windows 사용자 | 열림 | `127.0.0.1:17863` 선점, 같은 PC의 두 사용자/RDP 세션, 엔진 재시작·절전 복귀 smoke | 다른 프로세스를 탐색·종료하지 않고 충돌 원인과 복구 동작을 사용자에게 제공하며 지원 범위를 명시 | 2026-08-14 |
+| 설치·모델 다운로드의 오프라인·프록시·보안 제품 영향 | 열림 | 일반 인터넷, 인증 프록시, 완전 오프라인, Defender·SmartScreen·대표 조직 EDR에서 설치·모델 받기·업데이트 확인 | 서명·관리자 배포·오프라인 모델 준비·중단 후 재개 절차가 있고 차단 원인을 사용자 조치와 관리자 조치로 구분 | 2026-08-14 |
+| 지원용 진단과 민감정보 보호 | 열림 | 로그 회전·용량 제한, 오류 분류, token·pairing code·대화록·원본 경로 제외를 자동 검사한 진단 묶음 smoke | 사용자가 한 번에 내보낼 수 있는 비민감 진단 자료와 보존·삭제 기준이 정의되고 로그 무한 증가가 없음 | 2026-08-14 |
 
 완료 기준:
 
@@ -611,7 +618,169 @@ staging·rollback은 3C에서 닫는다. 실제 HTTPS의 Chrome/Edge Local Netwo
 
 ### 7.2 다음 구현 묶음
 
-다음 코딩은 3C current-user installer PoC로 제한한다.
+다음 묶음은 `3C-0A 사용자 PC 호환성 계약`, `3C-0B 단계별 자동 점검`을
+순서대로 고정한 뒤 3C current-user installer PoC로 진행한다. 설치 형식을
+만들기 전에 누구의 PC에서 무엇을 지원하고 어느 시점에 무엇을 확인할지 정해야
+설치 전 점검, 오류 문구와 검증 행렬이 흔들리지 않는다.
+
+3C-0A에서 먼저 고정할 항목:
+
+- 첫 공식 지원 후보는 Windows 11 x64와 최신 stable Chrome·Edge로 제한한다.
+  Windows 10 x64와 Windows 11 ARM64는 실제 증거가 생기기 전 지원 대상으로
+  약속하지 않는다.
+- 저사양 CPU-only, 일반 CPU-only, NVIDIA GPU의 세 등급에서 CPU·RAM·GPU·여유
+  디스크와 5분·30분·60분·2시간 대표 입력의 처리시간·실패 기준을 측정한다.
+- 일반 인터넷, 인증 프록시, 완전 오프라인과 Defender·SmartScreen·조직 EDR,
+  관리 브라우저 정책을 검증 축으로 둔다.
+- 한글 사용자명·공백·긴 경로, 디스크 부족, 절전·재개, 브라우저·엔진 재시작,
+  `17863` 선점과 다중 Windows 사용자 조건을 포함한다.
+- 첫 MVP는 한 PC에서 한 Windows 사용자 세션만 동시에 사용하는 것으로 제한한다.
+  같은 PC의 두 사용자·RDP 세션 동시 사용은 고정 포트 발견 계약을 바꾸고 다시
+  검증하기 전에는 지원하지 않는다.
+
+3C-0B는 한 번의 포괄적인 사양 검사가 아니라 실행 시점별 점검으로 나눈다.
+
+| 시점·소유자 | 자동 확인 | 여기서 단정하지 않는 것 | 실패 시 사용자 동작 |
+| --- | --- | --- | --- |
+| 설치 전 웹 안내 | 지원 OS·브라우저 후보와 필요한 다운로드 안내 | RAM·디스크·GPU·포트 상태 | 지원 범위 보기, 엔진 받기 |
+| installer 전 host system preflight | OS build·workstation·native architecture, 총 RAM | 디스크·쓰기·포트·SmartScreen·EDR·인증 프록시 | 지원 범위 보기, 다시 확인 |
+| installer target preflight | 실제 install·models·temp·results 볼륨 여유 공간, LocalAppData 쓰기·정리, 고정 포트 상태 | SmartScreen·EDR 허용 여부, 인증 프록시 성공 여부 | 공간 확보 후 다시 확인, 충돌 앱 확인, 관리자에게 요청 |
+| 설치 후 엔진 readiness | 제품·API version, data root 쓰기, ffmpeg·native dependency 실행, 모델·Ollama 상태, CUDA 가속 후보 | 실제 VRAM 충분 여부와 장시간 분석 성능 | 구성요소 다시 준비, 모델 받기, 진단 내보내기 |
+| 실제 HTTPS 웹 연결 | Local Network Access 승인·거부·정책 차단, pairing, engine/API version | 설치 성공 여부 자체 | 브라우저 권한 확인, 다시 연결, 관리자에게 요청 |
+| 분석 직전 | 선택 파일 길이·모델 상태에 따른 temp·results 공간, 예상 처리 부담 | PC 전체 지원 여부 | 공간 확보 후 재확인, 느린 처리 경고 후 계속 |
+
+공통 machine-readable 결과는 최소한 `schema_version`, `check_id`, `status`, `severity`,
+`reason_code`, `action_code`, `retryable`, `checked_at`, 측정값과 필요값을 갖는다.
+실행 중 UI/installer 상태는 `checking`, 완료 JSON의 `status`는 `pass`, `warning`,
+`blocked`, `unknown`으로 제한한다.
+원시 사용자명·절대 경로·token·pairing code·대화록은 결과나 진단에 넣지 않는다.
+늦게 도착한 이전 점검 결과가 최신 상태를 덮지 않도록 요청 세대 번호를 둔다.
+
+사용자 경험 원칙:
+
+- 확실한 미지원 OS·architecture, 쓸 수 없는 데이터 폴더, 현재 작업에 필요한
+  공간 부족만 차단한다.
+- RAM 부족, GPU 없음, 느린 CPU처럼 CPU fallback이 가능한 상태는 예상 지연과
+  함께 경고하고 사용자가 계속할 수 있게 한다.
+- 자동 확인 실패는 `unknown`으로 표시하며 실제 실패로 단정하지 않는다.
+- 경고와 차단에는 현재 값·필요 값, `다시 확인`, `공간 확보`, `권한 확인`,
+  `관리자에게 요청`, `진단 내보내기` 중 실제 가능한 다음 행동을 함께 제공한다.
+- 보안 기능을 끄거나 다른 프로세스를 강제 종료하라고 안내하지 않는다.
+
+3C-0B 첫 구현은 UI·installer를 동시에 만들지 않는다. versioned preflight DTO와
+순수 Windows collector를 만들고 frozen host의 `--preflight-json`으로 OS·native
+architecture·RAM만 비민감 JSON으로 증명한다. 실제 설치 대상과 쓰기 수명을
+소유하는 installer가 install·data 볼륨 공간과 임시 쓰기·삭제 결과를 같은 DTO에
+추가한다. GPU, 브라우저, 프록시와 성능 판정은 후속 점검으로 남긴다.
+
+3C-0B 첫 구현 결과(2026-08-14):
+
+- `backend/local_engine_preflight.py`가 `schema_version=1`, 비영구 `run_id` 결과와
+  Windows build·workstation 여부, `IsWow64Process2` 기반 native architecture,
+  총 RAM 점검을 소유한다. architecture 확인 불가는 차단하지 않고 `unknown`으로
+  반환한다.
+- 확정된 Windows 11 x64 조건만 차단 판정에 사용한다. RAM·디스크는 이번 묶음에서
+  차단 수치로 사용하지 않으며 최소·권장 수치와 파일별 필요량은 실기기 증거,
+  실제 설치 대상을 아는 installer와 분석 직전 기존 `/api/analyze/preflight`가
+  각각 소유한다.
+- frozen GUI subsystem에서 stdout에 의존하지 않도록 `--preflight-json OUTPUT_PATH`는
+  사용자 임시 폴더의 신규 파일만 생성하고 기존 파일·임시 폴더 밖 경로를 거부한다.
+- 점검은 layout·startup settings, 사용자 config, 로그, 모델, 네트워크, mutex보다
+  먼저 종료한다. 따라서 staging 위치를 실제 설치 볼륨으로 오인하거나 응답 없는
+  파일시스템 때문에 system preflight가 멈추지 않는다.
+- source entrypoint와 실제 frozen GUI payload 모두에서 비민감 JSON 생성·정리,
+  기존 결과 파일 비덮어쓰기, preflight 전용 실행이 사용자 data root를 만들지 않음을
+  확인했다. 예상된 출력 실패는 GUI 오류창이나 내부 예외를 노출하지 않고 종료 코드로
+  반환한다. verifier는 실제 Windows 계정명의 우연한 부분 문자열에 의존하지 않고
+  실행마다 고유한 가짜 사용자·LocalAppData·TEMP 값을 주입해 경로·환경 유출이 없는지
+  검사한다. Windows 경로는 직렬화된 JSON이 아니라 파싱된 모든 문자열 값을 재귀적으로
+  비교하며, 기존 결과 거부는 정확한 종료 코드 `2`를 요구한다.
+- build: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_web_local_engine_poc.ps1 -Python backend\.venv-desktop\Scripts\python.exe -Origin https://minutes.example -EngineVersion 0.1.0-poc-stage3c0b-preflight -FfmpegPath backend\ffmpeg.exe`: 성공.
+- frozen smoke: `backend\.venv-desktop\Scripts\python.exe scripts\verify_web_local_engine_poc.py releases\web-local-engine-poc`: 성공. `Preflight status: pass`와 함께 closed manifest, read-only payload, loopback/default-deny, single instance, pairing, 정상 종료, 포트 충돌, relocation 보존도 재확인했다.
+- Windows 실물 검증에서 GUI 출력 실패가 대기 상태로 남는 문제와 종료 직후 폴더
+  손잡이가 잠깐 유지되는 문제를 발견했다. 전자는 조용한 실패 코드로, 후자는 전용
+  relocation 두 경로에 한정한 5초 재시도로 보완했다.
+- focused runtime/preflight unittest 21개와 verifier/packaging unittest 10개가
+  통과했다. 이 첫 결과는 host system 범위만 완료했으며 installer target runner와
+  실제 installer 소비는 다음 묶음으로 남겼다.
+
+3C-0B installer target 구현 결과(2026-08-14):
+
+- 기존 `--preflight-json`의 host-only·user-data 무생성 계약을 유지하고 별도
+  `--installer-target-preflight-json REQUEST_PATH OUTPUT_PATH`를 추가했다. 요청과
+  결과는 사용자 임시 폴더 안의 파일만 허용하며 기존 결과를 덮어쓰지 않는다.
+- 완료 DTO에 `preflight_kind`를 두고 installer target 요청의 비음수
+  `request_generation`을 필수화했다. 완료 check는 `pass`, `warning`, `blocked`,
+  `unknown`만 반환하며 raw 경로·사용자명·volume label/serial·PID·process name을
+  포함하지 않는다.
+- 실제 설치 위치는 staging executable 위치가 아니라 current-user canonical
+  `%LOCALAPPDATA%` install/data layout에서 계산한다. install·staging·models·
+  analysis temp·results 필요량은 installer request가 제공하며 값이 없거나 측정할
+  수 없으면 추측하지 않고 `unknown`으로 닫는다.
+- 같은 실제 Windows volume의 요구량을 합산한다. 현재 설치 peak인 install+staging
+  필수 공간 부족은 `blocked`, 설치 뒤 필요한 models+analysis temp+results 부족은
+  installer 단계에서 `warning`으로 안내하고 실제 모델 다운로드·분석 직전에 다시
+  차단 판정한다. 결과에는 run-local `volume_ref`와 byte 수치만 남긴다.
+- 쓰기·정리는 가장 가까운 실제 기존 target에서 고유 canary를 exclusive-create,
+  write, `fsync`, no-replace rename, read-back, delete 순서로 확인한다. 이 실행이 만든
+  파일만 bounded retry로 정리하며 기존 이름 충돌·broken symlink/junction은 기존
+  파일을 삭제하거나 상위 폴더로 우회해 pass하지 않는다.
+- `127.0.0.1:17863`은 Windows exclusive bind, target data-root mutex와 direct
+  non-proxy product probe를 조합한다. 비어 있으면 `pass`, 기존 바로록 엔진이면
+  `warning`과 정상 종료 후 재검사, 다른 listener나 응답 없는 점유자는 `blocked`,
+  검사 API 자체 실패만 `unknown`으로 반환한다. 어떤 프로세스도 강제 종료하지 않는다.
+- JSON 결과는 sibling temp file에 write·`fsync`한 뒤 Windows no-replace atomic move로
+  게시한다. 출력 실패는 기존 결과를 유지하고 부분 파일을 남기지 않으며 종료 코드
+  `2`는 요청·출력 계약 실패에만 사용한다. check가 `blocked`여도 정상 JSON 생성은
+  종료 코드 `0`이다.
+- focused installer tests 30개, 관련 runtime/security/packaging/verifier 68개,
+  `scripts\run_release_checks.ps1 -Tier quick -SkipFrontend` 113개(1개 skip),
+  `scripts\verify_installer_target_preflight_source.py` Windows source smoke와
+  `git diff --check`가 통과했다.
+- 큰/작은 관점 agent가 응답 없는 listener 오분류, optional generation, canary
+  collision, broken reparse, 개인정보 경로 검사와 smoke 단언 누락을 지적했다.
+  모두 수정한 뒤 좁은 재검토에서 P0·P1·현재 목표 P2가 남지 않았다.
+- 단일 build: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_web_local_engine_poc.ps1 -Python backend\.venv-desktop\Scripts\python.exe -Origin https://minutes.example -EngineVersion 0.1.0-poc-stage3c0b-installer-target-preflight -FfmpegPath backend\ffmpeg.exe`: 성공.
+- frozen smoke: `backend\.venv-desktop\Scripts\python.exe scripts\verify_web_local_engine_poc.py releases\web-local-engine-poc`: 성공. host `pass`, installer target
+  정상 `pass`, 기존 엔진 실행 중 `warning`, 외부 listener `blocked`, 공간 5개와
+  write/cleanup `pass`, closed manifest·read-only payload·pairing·normal stop·relocation
+  회귀를 한 번에 확인했다.
+- 다음 installer 소비 소스 묶음에서 artifact manifest의 확정 byte 요구량과 결과 action을
+  실제 current-user NSIS 흐름에 연결했다. 공식 최소·권장 용량, 실제
+  install/update/uninstall-reinstall와 모델 분석은 3C installer 실물 관문으로 유지한다.
+
+3C installer preflight 소비 소스 결과(2026-08-14):
+
+- `backend/web_local_engine_installer_preflight.py`는 closed artifact manifest를 검증하고
+  파일별 4 KiB allocation 반올림, manifest allocation과 16 MiB installer metadata
+  reserve를 install·same-volume staging 각각의 필수 요구량으로 넣는다. 모델·분석 임시·
+  결과 권장량은 실측 근거가 없으므로 `unknown` advisory로 유지한다.
+- helper는 preflight DTO의 check set·`request_generation`·overall status를 다시 검증하고
+  `ready=0`, 계약 오류 `2`, 사용자 확인 `10`, 차단 `20`, 재시도 `30`으로 NSIS에 전달한다.
+  readiness는 mutex만 믿지 않고 실제 loopback probe의 product·engine·API version이 모두
+  일치해야 하며, 종료 완료는 mutex 부재와 고정 포트 free를 함께 확인한다.
+- `installer/web-local-engine.nsi`는 current-user 고정 경로, installer mutex, Start Menu의
+  실행·`--pair`·`--stop`·제거, 최대 약 30초 readiness, same-volume stage와 rollback을
+  연결한다. 중단된 transaction은 target 자체의 구버전 manifest로 먼저 복구한 뒤
+  preflight를 실행한다.
+- install/update/uninstall 정리는 marker와 closed manifest로 선언된 파일만 삭제하고
+  reparse point·미선언 파일이 있으면 fail-closed한다. 사용자 data root는 정리 대상에
+  포함하지 않는다. transaction marker는 payload와 ownership 증거보다 마지막에 삭제해
+  부분 정리를 완료된 update로 오판하지 않는다.
+- 현재 frozen manifest는 모델을 포함하지 않지만 4,887개 파일, 1,117,850,125 bytes
+  (약 1.04 GiB)다. 주요 원인은 `torch_cpu.dll`, `ffmpeg.exe`, `llvmlite.dll`, frozen
+  engine exe, `ctranslate2.dll` 등 분석 runtime/native dependency다. 외부 배포 전에는
+  실제 기능 회귀를 동반한 payload slimming을 별도 관문으로 둔다.
+- 회사 PC에서는 이 큰 payload를 다시 만들거나 NSIS 설치를 실행하지 않았다. source-only
+  검증으로 helper/collector 37개, packaging/verifier 14개와 Windows source smoke가
+  통과했다. `makensis.exe`도
+  현재 환경에 없으므로 compile·설치 결과를 완료로 기록하지 않는다.
+- 집 PC 관문은 기존 frozen artifact의 closed manifest/hash를 먼저 재검증하고 helper와
+  unsigned installer를 한 번만 build한 뒤, 격리한 `LOCALAPPDATA`에서 fresh install,
+  update, 의도적 중단 복구, readiness rollback, uninstall/reinstall, Start Menu 동작,
+  외부 포트 충돌과 사용자 data sentinel 보존을 한 번의 smoke 묶음으로 확인하는 것이다.
+
+3C installer PoC 범위:
 
 - frozen engine·defaults·ffmpeg만 설치하는 전용 NSIS current-user layout 작성
 - 엔진 실행, 연결 준비(`--pair`), 정상 종료(`--stop`) Start Menu 동작 연결
@@ -687,6 +856,11 @@ mock 또는 로컬 개발값으로 진행한다.
 | Windows 코드 서명 인증서·주체 | 3단계 | unsigned 로컬 PoC | 외부 사용자 설치 배포 | 서명된 installer 검증 결과 |
 | 엔진·사용자 데이터·로그 경로 | 3단계 | 프로젝트 임시 경로 | 재설치·업데이트 완료 판정 | 설치/제거 전후 데이터 목록 |
 | 자동 시작 기본값·조직 정책 예외 | 3단계 | 수동 실행 | 사용자 설치 UX 확정 | 설정·정책 PC smoke |
+| 공식 지원 Windows·CPU·RAM·GPU·여유 디스크 | 3C-0A | Windows 11 x64 개발 PC | installer 사용자 후보 배포 | 저사양·일반형·NVIDIA PC의 설치·대표 입력·처리시간 행렬 |
+| Windows 10 x64·Windows 11 ARM64 지원 여부 | 3C-0A | 미지원 후보 | 해당 환경 지원 표기 | 실제 설치·분석·성능 증거와 native dependency 확인 |
+| 고정 포트의 공용 PC·다중 사용자 정책 | 3C-0A~3단계 | 한 PC·한 활성 사용자 세션 | installer 사용자 후보 배포 | 포트 선점·두 사용자/RDP·절전 복귀 smoke와 복구 UX |
+| 단계별 자동 점검 계약·runner | 3C-0B | 기존 분석 저장 공간 점검 | installer 구현 시작 | versioned DTO·CLI JSON·단위 테스트·실제 PC smoke |
+| 진단 묶음·로그 회전·보존 기간 | 3C-0B~3단계 | 개발 로그 직접 확인 | 외부 사용자 지원 시작 | 민감정보 제외 자동 검사·크기 제한·내보내기·삭제 smoke |
 | 최소 Chrome/Edge 버전 | 4단계 | 현재 개발 브라우저 | 웹 MVP 지원 선언 | 버전별 권한·다운로드 결과 |
 | 엔진/API 호환·강제 업데이트 정책 | 2~3단계 | 단일 개발 버전 | 버전 불일치 UX 완료 | 호환 행렬·업데이트 테스트 |
 | pairing helper 배포·서명·코드 UX | 2~3단계 | mock helper | 실제 pairing 완료 판정 | helper 실행·만료·origin 증거 |

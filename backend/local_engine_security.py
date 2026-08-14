@@ -247,6 +247,7 @@ class LocalEnginePairingCoordinator:
         *,
         session_store: LocalEngineSessionStore,
         code_presenter: Callable[[str, str, float], bool] | None = None,
+        availability_check: Callable[[], bool] | None = None,
         ttl_seconds: int = DEFAULT_PAIRING_TTL_SECONDS,
         max_attempts: int = DEFAULT_PAIRING_MAX_ATTEMPTS,
         start_limit: int = DEFAULT_PAIRING_START_LIMIT,
@@ -256,6 +257,7 @@ class LocalEnginePairingCoordinator:
             raise ValueError("Pairing limits must be positive")
         self.session_store = session_store
         self.code_presenter = code_presenter
+        self.availability_check = availability_check
         self.ttl_seconds = ttl_seconds
         self.max_attempts = max_attempts
         self.start_limit = start_limit
@@ -267,7 +269,14 @@ class LocalEnginePairingCoordinator:
 
     @property
     def available(self) -> bool:
-        return self.code_presenter is not None
+        if self.code_presenter is None:
+            return False
+        if self.availability_check is None:
+            return True
+        try:
+            return bool(self.availability_check())
+        except Exception:
+            return False
 
     def _code_digest(self, pairing_id: str, code: str) -> str:
         return hmac.new(
@@ -277,7 +286,7 @@ class LocalEnginePairingCoordinator:
         ).hexdigest()
 
     def start(self, *, origin: str, now: float | None = None) -> dict:
-        if self.code_presenter is None:
+        if not self.available:
             raise PairingUnavailableError("pairing helper is unavailable")
         normalized_origin = parse_exact_origins(origin, include_development_defaults=False)[0]
         started_at = time.time() if now is None else now

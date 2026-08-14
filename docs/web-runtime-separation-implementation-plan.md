@@ -1,7 +1,7 @@
 # 웹 런타임 분리 구현 계획
 
 - 작성일: 2026-08-13
-- 상태: 2단계 probe·pairing·세션 PoC 완료, 3단계 설치·helper PoC 준비
+- 상태: 2단계 완료, 3단계 3A host·데이터 경계 기반 부분 완료
 - 상위 결정: `docs/web-local-engine-followup-plan.md`
 - 목표 제품: HTTPS 웹 UI + 사용자 PC의 Windows 로컬 엔진
 - 후속 제품: Tauri 데스크톱 앱은 웹 MVP 이후 별도 범위
@@ -248,7 +248,7 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 | 0. 계약·회귀 기준 | 완료 | 아래 inventory, `api_contract_version: 1`, 환경 변수와 simulation 기준 고정 |
 | 1. 프런트엔드 런타임 경계 | 부분 완료 | `dc610b6f`; Settings coordinator는 4단계 전, authorization·capability 갱신 API는 2단계, 실제 Tauri smoke는 5단계 enforcement 전 완료 |
 | 2. probe·pairing·세션 PoC | 완료 | probe·exact origin·격리 default deny·capability·일회성 code·pairing/session lifecycle·프런트 coordinator·mock 상태 전이 통과; 실제 helper는 3단계에서 닫음 |
-| 3. 로컬 엔진 설치·업데이트 PoC | 미착수 | 설치 위치·single instance·helper·데이터 보존 계약 필요 |
+| 3. 로컬 엔진 설치·업데이트 PoC | 부분 완료 | 3A source host·고정 loopback·single instance·데이터 경계·one-shot helper arm 통과; frozen exe·실제 helper·설치/보존 smoke 필요 |
 | 4. 웹 연결·복구 UX | 미착수 | 웹 전용 6장면 설계와 상태별 시뮬레이션 필요 |
 | 5. 전체 API 클라이언트 전환 | 미착수 | 직접 API fetch 0개와 인증 회귀 행렬 필요 |
 | 6. SQLite 기준 저장소 | 미착수 | 백업·가져오기·충돌·FTS·재실행 안전성 필요 |
@@ -415,6 +415,50 @@ inventory는 5단계 시작과 완료 시 같은 검색 기준으로 다시 기�
 3단계 첫 작업 묶음에서는 이 표를 실제 installer layout과 대조해 각 자산의
 최종 `재사용/수정/폐기` 결정을 증거 로그에 남긴다.
 
+#### 3A 구현 증거 — 2026-08-14
+
+첫 묶음은 installer가 아니라 standalone host 기반으로 제한했다.
+
+- `backend/web_local_engine_server.py`는 `main` import 전에 production profile,
+  인증 강제, exact HTTPS origin과 engine version을 적용하고
+  `127.0.0.1:17863`만 사용한다. inherited desktop action token은 제거한다.
+- `backend/web_local_engine_runtime.py`는 프로그램 파일을
+  `%LOCALAPPDATA%\Programs\Barorok\LocalEngine`, 사용자 config·models·database·
+  results·temp·logs·Ollama runtime을 `%LOCALAPPDATA%\Barorok\LocalEngine`으로
+  분리한다. config는 최초 한 번만 생성하며 기존 파일을 덮어쓰지 않는다.
+- Windows named mutex로 두 번째 host 실행을 종료한다. 빈 포트 검색이나 다른
+  프로세스 종료는 사용하지 않는다.
+- 사용자가 `--pair` helper를 먼저 연 2분 동안만 probe가 pairing 가능 상태가
+  되고, 첫 요청이 arm을 원자적으로 소비한다. code 창은 별도 thread에서
+  표시해 API event loop를 막지 않으며 code·token은 파일·argv·env에 저장하지 않는다.
+- `scripts/package_backend_sidecar.ps1`은 기존 desktop 기본값을 유지하면서 web
+  entry point와 전용 출력 폴더를 받을 수 있게 했다. 출력은 기존 Tauri binaries와
+  `releases\web-local-engine-poc\engine` 두 곳만 허용한다.
+- `scripts/build_web_local_engine_poc.ps1`은 unsigned·`distributionReady=false`인
+  개발 payload만 만든다. origin/version은 immutable `defaults/engine-settings.json`에
+  기록하고 frozen 실행에서는 CLI·환경변수·install/data path override를 거부한다.
+  PowerShell 5.1에서도 UTF-8 BOM 없이 저장하며 모델·사용자 결과는 payload에 넣지 않는다.
+
+검증 증거:
+
+- `$env:PYTHONPATH='backend'; backend\.venv-desktop\Scripts\python.exe -m unittest backend.test_web_local_engine_runtime backend.test_local_engine_security tests.test_web_local_engine_packaging`: 39개 통과.
+- `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\run_release_checks.ps1 -Tier quick -SkipFrontend`: 111개 통과, 1개 skip.
+- `corepack pnpm --dir desktop-app test:runtime-boundary`: 통과.
+- source host smoke: immutable settings만으로 probe의 `product_id`, contract와
+  engine version 확인, helper 전 `pairing_available=false`, 무인증 `/api/health`
+  차단, 두 번째 실행 종료, 사용자 config 생성과 install root 비변경 확인.
+- fixed-port 충돌 smoke: 다른 listener가 17863을 점유한 상태에서 host가 exit 1로
+  종료되고 fallback port를 사용하지 않음을 확인.
+- `corepack pnpm check:quick`의 typecheck는 통과했다. 전체 명령은 이번 변경과
+  무관한 기존 frontend lint 8건 때문에 중단됐으므로 3A 완료 증거로 사용하지 않는다.
+
+아직 3단계 완료로 판정하지 않는다. 실제 PyInstaller frozen exe,
+Windows MessageBox의 사용자 확인·만료·동시 요청, 읽기 전용 install root,
+install root 교체와 재설치 뒤 config·models·database·results 보존, 정상 종료,
+서명·staging·rollback은 후속 smoke와 installer 묶음에서 닫는다. 실제 HTTPS의
+Chrome/Edge Local Network Access 승인·거부·재승인은 4단계 release QA 관문으로
+유지한다.
+
 완료 기준:
 
 - 신규 설치, 재설치, 업데이트, 제거 후 재설치에서 single instance와 데이터
@@ -529,18 +573,19 @@ inventory는 5단계 시작과 완료 시 같은 검색 기준으로 다시 기�
 
 ### 7.2 다음 구현 묶음
 
-다음 코딩 전에 3단계 설치·helper PoC의 운영 입력과 재사용 자산을 한 묶음으로
-확인한다.
+다음 코딩은 3B frozen payload smoke로 제한한다.
 
-- 기존 NSIS·sidecar 패키징에서 helper·current-user install에 재사용할 범위 확정
-- 엔진·사용자 데이터·로그 경로와 재설치·업데이트·제거 시 보존 계약
-- single instance, loopback bind, helper code 표시와 프로세스 소유권
-- 서명·manifest·hash·rollback의 mock 가능 범위와 실제 인증서 필요 관문 분리
-- 실제 설치 CTA를 열지 않은 채 로컬 helper pairing smoke를 수행할 방법 확정
+- `scripts/build_web_local_engine_poc.ps1`로 실제 `--noconsole` executable 생성
+- 고정 포트 점유 시 다른 포트로 이동하지 않고 실패하는지 확인
+- 실제 `--pair` MessageBox와 API 응답이 동시에 유지되고 만료·동시 요청이
+  fail-closed인지 확인
+- 읽기 전용 install root와 교체된 install root에서 사용자 sentinel 보존 확인
+- engine 정상 종료 명령/신호를 추가하고 mutex·고정 포트 재사용 확인
+- 결과가 통과한 뒤에만 3C current-user NSIS와 Start Menu helper로 이동
 
 아직 포함하지 않는 항목:
 
-- 설치 파일 생성과 다운로드 링크
+- 사용자 배포용 설치 파일과 다운로드 링크
 - production HTTPS origin 고정
 - 실제 코드 서명과 installer 배포
 - SQLite 마이그레이션

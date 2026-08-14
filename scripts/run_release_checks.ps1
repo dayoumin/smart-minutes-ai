@@ -16,13 +16,15 @@ $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BackendQuickModules = @(
     "backend.test_job_checkpoints",
     "backend.test_storage_preflight",
+    "backend.test_web_local_engine_runtime",
     "tests.test_align_speakers",
     "tests.test_export_hwpx",
     "tests.test_export_record",
     "tests.test_qwen_segments",
     "tests.test_summarize_followups",
     "tests.test_transcript_display",
-    "tests.test_portable_release_scripts"
+    "tests.test_portable_release_scripts",
+    "tests.test_web_local_engine_packaging"
 )
 
 $BackendReleaseModules = @(

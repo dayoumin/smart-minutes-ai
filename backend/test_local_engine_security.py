@@ -92,6 +92,22 @@ def build_test_app(
 
 
 class LocalEngineSecurityTest(unittest.TestCase):
+    def test_pairing_availability_can_follow_a_one_shot_helper_arm(self) -> None:
+        armed = False
+        pairing = LocalEnginePairingCoordinator(
+            session_store=LocalEngineSessionStore(),
+            code_presenter=lambda *_args: True,
+            availability_check=lambda: armed,
+        )
+        self.assertFalse(pairing.available)
+        with self.assertRaises(PairingUnavailableError):
+            pairing.start(origin="https://web.example", now=100)
+
+        armed = True
+        self.assertTrue(pairing.available)
+        started = pairing.start(origin="https://web.example", now=100)
+        self.assertTrue(started["pairing_id"])
+
     def test_probe_contract_is_non_sensitive_and_versioned(self) -> None:
         payload = build_probe_payload(pairing_available=False)
 

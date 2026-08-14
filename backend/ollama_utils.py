@@ -43,10 +43,16 @@ def get_portable_ollama_runtime_dir() -> Path:
 
 
 def get_local_ollama_runtime_dir() -> Path:
+    configured = os.environ.get("LMO_LOCAL_OLLAMA_RUNTIME_DIR")
+    if configured:
+        return Path(configured)
     return _local_app_data_root() / "LMO_audio" / "runtime" / "ollama"
 
 
 def get_local_ollama_models_dir() -> Path:
+    configured = os.environ.get("LMO_LOCAL_OLLAMA_MODELS_DIR")
+    if configured:
+        return Path(configured)
     return _local_app_data_root() / "LMO_audio" / "models" / "ollama"
 
 

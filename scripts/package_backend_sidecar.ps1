@@ -1,17 +1,51 @@
 param(
     [string]$Python = "python",
-    [string]$TargetTriple = "x86_64-pc-windows-msvc"
+    [string]$TargetTriple = "x86_64-pc-windows-msvc",
+    [string]$EntryPoint = "desktop_server.py",
+    [string]$ExecutableBaseName = "meeting-backend",
+    [string]$DestinationDir = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $BackendDir = Join-Path $RepoRoot "backend"
-$TauriBinDir = Join-Path $RepoRoot "desktop-app\src-tauri\binaries"
-$OutputName = "meeting-backend-$TargetTriple.exe"
-$OutputPath = Join-Path $TauriBinDir $OutputName
+$DefaultDestinationDir = Join-Path $RepoRoot "desktop-app\src-tauri\binaries"
+$WebPocDestinationDir = Join-Path $RepoRoot "releases\web-local-engine-poc\engine"
+$PackageDestinationDir = if ([string]::IsNullOrWhiteSpace($DestinationDir)) {
+    $DefaultDestinationDir
+}
+elseif ([System.IO.Path]::IsPathRooted($DestinationDir)) {
+    [System.IO.Path]::GetFullPath($DestinationDir)
+}
+else {
+    [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $DestinationDir))
+}
+$AllowedDestinationPaths = @(
+    [System.IO.Path]::GetFullPath($DefaultDestinationDir),
+    [System.IO.Path]::GetFullPath($WebPocDestinationDir)
+)
+if (-not ($AllowedDestinationPaths | Where-Object { $_.Equals($PackageDestinationDir, [System.StringComparison]::OrdinalIgnoreCase) })) {
+    throw "DestinationDir must be a dedicated sidecar output directory: $($AllowedDestinationPaths -join ', ')"
+}
+$BackendFullPath = [System.IO.Path]::GetFullPath([string]$BackendDir)
+$EntryPointPath = [System.IO.Path]::GetFullPath((Join-Path $BackendFullPath $EntryPoint))
+if (-not $EntryPointPath.StartsWith($BackendFullPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "EntryPoint must stay inside the backend directory: $EntryPointPath"
+}
+if (-not (Test-Path -LiteralPath $EntryPointPath) -or [System.IO.Path]::GetExtension($EntryPointPath) -ne ".py") {
+    throw "Python entry point not found: $EntryPointPath"
+}
+if ($ExecutableBaseName -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+    throw "ExecutableBaseName contains unsupported characters: $ExecutableBaseName"
+}
+if ($TargetTriple -notmatch '^[A-Za-z0-9][A-Za-z0-9._-]*$') {
+    throw "TargetTriple contains unsupported characters: $TargetTriple"
+}
+$OutputName = "$ExecutableBaseName-$TargetTriple.exe"
+$OutputPath = Join-Path $PackageDestinationDir $OutputName
 $BuildDistDir = Join-Path $BackendDir "dist-sidecar"
-$BuildOutputDir = Join-Path $BuildDistDir "meeting-backend-$TargetTriple"
+$BuildOutputDir = Join-Path $BuildDistDir "$ExecutableBaseName-$TargetTriple"
 
 function Resolve-PythonCommand([string]$PythonCommand) {
     if ($PythonCommand -match '[\\/]') {
@@ -108,14 +142,14 @@ $PythonCommand = Resolve-PythonCommand $Python
 Assert-PythonRuntime $PythonCommand
 Assert-PythonBuildRequirements $PythonCommand
 
-New-Item -ItemType Directory -Force -Path $TauriBinDir | Out-Null
+New-Item -ItemType Directory -Force -Path $PackageDestinationDir | Out-Null
 if (Test-Path $BuildDistDir) {
     Remove-Item -LiteralPath $BuildDistDir -Recurse -Force
 }
-if (Test-Path (Join-Path $TauriBinDir "_internal")) {
-    $internalDir = Resolve-Path -LiteralPath (Join-Path $TauriBinDir "_internal")
-    $tauriBinFullPath = (Resolve-Path -LiteralPath $TauriBinDir).Path
-    if (-not $internalDir.Path.StartsWith($tauriBinFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+if (Test-Path (Join-Path $PackageDestinationDir "_internal")) {
+    $internalDir = Resolve-Path -LiteralPath (Join-Path $PackageDestinationDir "_internal")
+    $destinationFullPath = (Resolve-Path -LiteralPath $PackageDestinationDir).Path
+    if (-not $internalDir.Path.StartsWith($destinationFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
         throw "Refusing to remove unsafe sidecar dependency path: $($internalDir.Path)"
     }
     Remove-Item -LiteralPath $internalDir.Path -Recurse -Force
@@ -133,7 +167,7 @@ try {
         --clean `
         --onedir `
         --noconsole `
-        --name "meeting-backend-$TargetTriple" `
+        --name "$ExecutableBaseName-$TargetTriple" `
         --contents-directory "_internal" `
         --collect-submodules "pyannote.audio" `
         --collect-data "pyannote.audio" `
@@ -157,7 +191,7 @@ try {
         --distpath $BuildDistDir `
         --workpath (Join-Path $BackendDir "build") `
         --specpath (Join-Path $BackendDir "build") `
-        "desktop_server.py"
+        $EntryPointPath
 }
 finally {
     Pop-Location
@@ -168,19 +202,19 @@ if (-not (Test-Path $BuildOutputDir)) {
 }
 
 Copy-Item -Force (Join-Path $BuildOutputDir $OutputName) $OutputPath
-Copy-Item -Recurse -Force (Join-Path $BuildOutputDir "_internal") (Join-Path $TauriBinDir "_internal")
+Copy-Item -Recurse -Force (Join-Path $BuildOutputDir "_internal") (Join-Path $PackageDestinationDir "_internal")
 
 if (-not (Test-Path $OutputPath)) {
     throw "Sidecar build failed: $OutputPath was not created."
 }
-if (-not (Test-Path (Join-Path $TauriBinDir "_internal"))) {
+if (-not (Test-Path (Join-Path $PackageDestinationDir "_internal"))) {
     throw "Sidecar build failed: _internal dependencies were not copied."
 }
-$lxmlEtree = Get-ChildItem -LiteralPath (Join-Path $TauriBinDir "_internal\lxml") -Filter "etree*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
+$lxmlEtree = Get-ChildItem -LiteralPath (Join-Path $PackageDestinationDir "_internal\lxml") -Filter "etree*.pyd" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $lxmlEtree) {
     throw "Sidecar build failed: lxml.etree was not bundled into _internal\lxml."
 }
-$unicodeData = Get-ChildItem -LiteralPath (Join-Path $TauriBinDir "_internal") -Filter "unicodedata*.pyd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
+$unicodeData = Get-ChildItem -LiteralPath (Join-Path $PackageDestinationDir "_internal") -Filter "unicodedata*.pyd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $unicodeData) {
     throw "Sidecar build failed: unicodedata was not bundled into _internal."
 }

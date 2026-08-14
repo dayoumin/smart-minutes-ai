@@ -4,12 +4,22 @@ import argparse
 import logging
 import os
 import sys
+import tempfile
 import threading
 from pathlib import Path
 from typing import Mapping
 
 import uvicorn
 
+from local_engine_preflight import (
+    InstallerTargetPaths,
+    collect_installer_target_preflight,
+    collect_windows_preflight,
+    inspect_fixed_port,
+    read_installer_preflight_request,
+    write_preflight_json,
+)
+from local_engine_security import PRODUCT_ID
 from web_local_engine_runtime import (
     PAIRING_ARM_TTL_SECONDS,
     WindowsNamedEvent,
@@ -60,6 +70,12 @@ def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--pair", action="store_true")
     mode.add_argument("--stop", action="store_true")
+    mode.add_argument("--preflight-json", metavar="OUTPUT_PATH")
+    mode.add_argument(
+        "--installer-target-preflight-json",
+        nargs=2,
+        metavar=("REQUEST_PATH", "OUTPUT_PATH"),
+    )
     return parser.parse_args(argv)
 
 
@@ -105,6 +121,42 @@ def _resolve_startup_layout(
 def main(argv: list[str] | None = None) -> int:
     args = _arguments(argv)
     frozen = bool(getattr(sys, "frozen", False))
+    if args.preflight_json:
+        try:
+            payload = collect_windows_preflight()
+            write_preflight_json(args.preflight_json, payload)
+        except (OSError, ValueError):
+            return 2
+        return 0
+    if args.installer_target_preflight_json:
+        request_path, output_path = args.installer_target_preflight_json
+        try:
+            request_generation, requirements = read_installer_preflight_request(request_path)
+            layout = resolve_web_local_engine_layout()
+            paths = InstallerTargetPaths(
+                install=layout.install_root,
+                staging=Path(tempfile.gettempdir()).resolve(),
+                models=layout.models_dir,
+                analysis_temp=layout.temp_dir,
+                results=layout.results_dir,
+                write_targets=(layout.install_root, layout.data_root),
+            )
+            payload = collect_installer_target_preflight(
+                paths,
+                requirements,
+                request_generation=request_generation,
+                port_reader=lambda: inspect_fixed_port(
+                    port=LOCAL_ENGINE_PORT,
+                    expected_product_id=PRODUCT_ID,
+                    own_engine_marker=lambda: windows_named_mutex_exists(
+                        pairing_mutex_name(layout)
+                    ),
+                ),
+            )
+            write_preflight_json(output_path, payload)
+        except (OSError, RuntimeError, ValueError):
+            return 2
+        return 0
     layout = _resolve_startup_layout(args, frozen=frozen)
     if args.stop:
         return 0 if signal_engine_stop(layout) else 3

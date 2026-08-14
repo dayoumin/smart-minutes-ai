@@ -13,9 +13,24 @@ from unittest.mock import MagicMock, patch
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import verify_web_local_engine_poc as verifier  # noqa: E402
+import verify_installer_target_preflight_source as source_verifier  # noqa: E402
 
 
 class WebLocalEngineVerifierTest(unittest.TestCase):
+    def test_directory_rename_retries_a_transient_windows_access_denial(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            source = Path(temp_dir) / "source"
+            target = Path(temp_dir) / "target"
+            source.mkdir()
+            with (
+                patch.object(Path, "rename", side_effect=[PermissionError(), None]) as rename,
+                patch("verify_web_local_engine_poc.time.sleep") as sleep,
+            ):
+                verifier.rename_directory_with_retry(source, target)
+
+        self.assertEqual(rename.call_count, 2)
+        sleep.assert_called_once_with(0.1)
+
     def _write_artifact(self, root: Path) -> Path:
         artifact = root / "artifact"
         files = {
@@ -89,6 +104,155 @@ class WebLocalEngineVerifierTest(unittest.TestCase):
                 )
         process.kill.assert_called_once_with()
         process.wait.assert_called_once_with(timeout=5)
+
+    def test_frozen_preflight_contract_is_validated_and_output_is_removed(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "artifact" / "engine" / verifier.ENGINE_EXE_NAME
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"engine")
+            calls = 0
+            child_environments = []
+
+            def run_preflight(command, **kwargs):
+                nonlocal calls
+                calls += 1
+                child_environments.append(kwargs["env"])
+                output_path = Path(command[-1])
+                if calls == 1:
+                    output_path.write_text(json.dumps({
+                        "schema_version": 1,
+                        "preflight_kind": "host_system",
+                        "run_id": "a" * 32,
+                        "overall_status": "pass",
+                        "checks": [
+                            {"check_id": "supported_windows"},
+                            {"check_id": "supported_architecture"},
+                            {"check_id": "system_memory"},
+                        ],
+                    }), encoding="utf-8")
+                    return MagicMock(returncode=0)
+                return MagicMock(returncode=2)
+
+            with patch.object(verifier.subprocess, "run", side_effect=run_preflight):
+                payload = verifier.exercise_preflight_json(
+                    executable,
+                    {"LOCALAPPDATA": str(root / "local-data"), "USERNAME": "system"},
+                    temp_root=root,
+                )
+
+            self.assertEqual(payload["schema_version"], 1)
+            self.assertEqual(calls, 2)
+            self.assertTrue(all(item["USERNAME"].startswith("barorok-preflight-user-") for item in child_environments))
+            self.assertTrue(all(item["TEMP"] == item["TMP"] for item in child_environments))
+            self.assertEqual(list(root.glob("barorok-preflight-env-*")), [])
+
+    def test_frozen_preflight_rejects_a_raw_windows_path_canary(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "artifact" / "engine" / verifier.ENGINE_EXE_NAME
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"engine")
+
+            def run_preflight(command, **kwargs):
+                Path(command[-1]).write_text(json.dumps({
+                    "schema_version": 1,
+                    "preflight_kind": "host_system",
+                    "run_id": "a" * 32,
+                    "overall_status": "pass",
+                    "checks": [
+                        {"check_id": "supported_windows"},
+                        {"check_id": "supported_architecture"},
+                        {
+                            "check_id": "system_memory",
+                            "measured": {"path": kwargs["env"]["LOCALAPPDATA"]},
+                        },
+                    ],
+                }), encoding="utf-8")
+                return MagicMock(returncode=0)
+
+            with (
+                patch.object(verifier.subprocess, "run", side_effect=run_preflight),
+                self.assertRaisesRegex(RuntimeError, "private runtime data"),
+            ):
+                verifier.exercise_preflight_json(executable, {}, temp_root=root)
+
+            self.assertEqual(list(root.glob("barorok-preflight-env-*")), [])
+
+    def test_frozen_installer_target_preflight_contract_and_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            executable = root / "artifact" / "engine" / verifier.ENGINE_EXE_NAME
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"engine")
+            runtime_temp = root / "runtime-temp"
+            runtime_temp.mkdir()
+            local_app_data = root / "local-app-data"
+            local_app_data.mkdir()
+            calls = 0
+
+            def run_preflight(command, **_kwargs):
+                nonlocal calls
+                calls += 1
+                output_path = Path(command[-1])
+                if calls == 1:
+                    output_path.write_text(json.dumps({
+                        "schema_version": 1,
+                        "preflight_kind": "installer_target",
+                        "request_generation": 41,
+                        "run_id": "b" * 32,
+                        "overall_status": "pass",
+                        "checks": [
+                            {
+                                "check_id": check_id,
+                                "status": "pass",
+                                "measured": {},
+                                "required": {},
+                            }
+                            for check_id in sorted(verifier.INSTALLER_TARGET_CHECK_IDS)
+                        ],
+                    }), encoding="utf-8")
+                    return MagicMock(returncode=0)
+                return MagicMock(returncode=2)
+
+            environment = {
+                "TEMP": str(runtime_temp),
+                "TMP": str(runtime_temp),
+                "LOCALAPPDATA": str(local_app_data),
+                "USERNAME": "fixture-user",
+            }
+            with patch.object(verifier.subprocess, "run", side_effect=run_preflight):
+                payload = verifier.exercise_installer_target_preflight(
+                    executable,
+                    environment,
+                    expected_port_status="pass",
+                )
+
+            self.assertEqual(payload["preflight_kind"], "installer_target")
+            self.assertEqual(calls, 2)
+            self.assertEqual(list(runtime_temp.glob("barorok-installer-preflight-*")), [])
+
+    def test_source_installer_preflight_privacy_check_reads_parsed_windows_strings(self) -> None:
+        leaked = Path(r"C:\Users\Private User\AppData\Local")
+        payload = {
+            "schema_version": 1,
+            "preflight_kind": "installer_target",
+            "overall_status": "pass",
+            "checks": [
+                {
+                    "check_id": check_id,
+                    "status": "pass",
+                    "measured": {"path": str(leaked)} if check_id == "installer_install_space" else {},
+                }
+                for check_id in source_verifier.CHECK_IDS
+            ],
+        }
+        with self.assertRaisesRegex(RuntimeError, "private path"):
+            source_verifier.validate_payload(
+                payload,
+                expected_port_status="pass",
+                forbidden_paths=(leaked,),
+            )
 
     @unittest.skipUnless(os.name == "nt", "Windows read-only payload attributes")
     def test_read_only_payload_attributes_are_restored(self) -> None:

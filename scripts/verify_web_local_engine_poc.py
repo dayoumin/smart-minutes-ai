@@ -6,11 +6,14 @@ import hashlib
 import json
 import os
 import re
+import secrets
 import shutil
 import socket
+import stat as stat_module
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -21,6 +24,17 @@ from pathlib import Path
 ENGINE_EXE_NAME = "barorok-local-engine-x86_64-pc-windows-msvc.exe"
 ENGINE_URL = "http://127.0.0.1:17863"
 CREATE_NO_WINDOW = 0x08000000
+PREFLIGHT_PROCESS_TIMEOUT_SECONDS = 60
+INSTALLER_TARGET_CHECK_IDS = {
+    "installer_install_space",
+    "installer_staging_space",
+    "installer_model_space",
+    "installer_analysis_temp_space",
+    "installer_results_space",
+    "installer_local_app_data_write",
+    "installer_local_app_data_cleanup",
+    "installer_fixed_port",
+}
 WM_CLOSE = 0x0010
 GENERIC_READ = 0x80000000
 GENERIC_WRITE = 0x40000000
@@ -34,12 +48,42 @@ def fail(message: str) -> None:
     raise RuntimeError(message)
 
 
+def rename_directory_with_retry(
+    source: Path,
+    target: Path,
+    *,
+    timeout_seconds: float = 5,
+) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    while True:
+        try:
+            source.rename(target)
+            return
+        except PermissionError:
+            if target.exists() or not source.exists() or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.1)
+
+
+def json_string_values(value: object):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            yield str(key)
+            yield from json_string_values(item)
+    elif isinstance(value, list):
+        for item in value:
+            yield from json_string_values(item)
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Verify a frozen Barorok local-engine PoC payload")
     parser.add_argument("artifact", type=Path)
     parser.add_argument("--local-app-data", type=Path)
     parser.add_argument("--keep-data", action="store_true")
     parser.add_argument("--verify-challenge-expiry", action="store_true")
+    parser.add_argument("--manifest-only", action="store_true")
     return parser.parse_args()
 
 
@@ -193,6 +237,219 @@ def start_process(executable: Path, environment: dict[str, str], *arguments: str
     )
 
 
+def exercise_preflight_json(
+    executable: Path,
+    environment: dict[str, str],
+    *,
+    temp_root: Path | None = None,
+) -> dict[str, object]:
+    base_temp_root = (temp_root or Path(tempfile.gettempdir())).resolve()
+    base_temp_root.mkdir(parents=True, exist_ok=True)
+    privacy_nonce = secrets.token_hex(16)
+    output_root = Path(tempfile.mkdtemp(prefix="barorok-preflight-env-", dir=base_temp_root))
+    output_path = output_root / f"barorok-preflight-smoke-{privacy_nonce}.json"
+    child_environment = environment.copy()
+    child_environment["USERNAME"] = f"barorok-preflight-user-{privacy_nonce}"
+    child_environment["LOCALAPPDATA"] = str(output_root / f"local-app-data-{privacy_nonce}")
+    child_environment["TEMP"] = str(output_root)
+    child_environment["TMP"] = str(output_root)
+    try:
+        completed = subprocess.run(
+            [str(executable), "--preflight-json", str(output_path)],
+            cwd=executable.parent.parent,
+            env=child_environment,
+            creationflags=CREATE_NO_WINDOW,
+            timeout=PREFLIGHT_PROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0 or not output_path.is_file():
+            fail("The frozen --preflight-json command did not create a result")
+        original_bytes = output_path.read_bytes()
+        try:
+            payload = json.loads(original_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            fail("The frozen preflight result is not valid UTF-8 JSON")
+        if payload.get("schema_version") != 1:
+            fail("The frozen preflight schema version is invalid")
+        if payload.get("preflight_kind") != "host_system":
+            fail("The frozen host preflight kind is invalid")
+        run_id = str(payload.get("run_id") or "")
+        if re.fullmatch(r"[0-9a-f]{32}", run_id) is None:
+            fail("The frozen preflight run identifier is invalid")
+        if payload.get("overall_status") not in {"pass", "warning", "blocked", "unknown"}:
+            fail("The frozen preflight overall status is invalid")
+        checks = payload.get("checks")
+        if not isinstance(checks, list):
+            fail("The frozen preflight checks are missing")
+        check_ids = {
+            str(check.get("check_id"))
+            for check in checks
+            if isinstance(check, dict)
+        }
+        if check_ids != {"supported_windows", "supported_architecture", "system_memory"}:
+            fail("The frozen preflight check set is invalid")
+        payload_strings = [value.casefold() for value in json_string_values(payload)]
+        forbidden = (
+            child_environment["USERNAME"].casefold(),
+            child_environment["LOCALAPPDATA"].casefold(),
+            str(output_root).casefold(),
+            str(executable.parent.parent.resolve()).casefold(),
+            "authorization",
+            "pairing",
+            "session_token",
+            "transcript",
+        )
+        if any(
+            value and value in payload_value
+            for value in forbidden
+            for payload_value in payload_strings
+        ):
+            fail("The frozen preflight result exposed private runtime data")
+
+        repeated = subprocess.run(
+            [str(executable), "--preflight-json", str(output_path)],
+            cwd=executable.parent.parent,
+            env=child_environment,
+            creationflags=CREATE_NO_WINDOW,
+            timeout=PREFLIGHT_PROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if repeated.returncode != 2 or output_path.read_bytes() != original_bytes:
+            fail("The frozen preflight command overwrote an existing result")
+        return payload
+    finally:
+        output_path.unlink(missing_ok=True)
+        output_root.rmdir()
+
+
+def installer_preflight_request(generation: int) -> dict[str, object]:
+    return {
+        "schema_version": 1,
+        "preflight_kind": "installer_target",
+        "request_generation": generation,
+        "requirements": {
+            role: {
+                "required_bytes": 1024 * 1024,
+                "recommended_bytes": 2 * 1024 * 1024,
+            }
+            for role in ("install", "staging", "models", "analysis_temp", "results")
+        },
+    }
+
+
+def exercise_installer_target_preflight(
+    executable: Path,
+    environment: dict[str, str],
+    *,
+    expected_port_status: str,
+) -> dict[str, object]:
+    base_temp_root = Path(environment["TEMP"]).resolve()
+    base_temp_root.mkdir(parents=True, exist_ok=True)
+    nonce = secrets.token_hex(16)
+    output_root = Path(tempfile.mkdtemp(prefix="barorok-installer-preflight-", dir=base_temp_root))
+    request_path = output_root / f"request-{nonce}.json"
+    output_path = output_root / f"result-{nonce}.json"
+    request_path.write_text(
+        json.dumps(installer_preflight_request(41), separators=(",", ":")),
+        encoding="utf-8",
+    )
+    try:
+        completed = subprocess.run(
+            [
+                str(executable),
+                "--installer-target-preflight-json",
+                str(request_path),
+                str(output_path),
+            ],
+            cwd=executable.parent.parent,
+            env=environment,
+            creationflags=CREATE_NO_WINDOW,
+            timeout=PREFLIGHT_PROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if completed.returncode != 0 or not output_path.is_file():
+            fail("The frozen installer target preflight did not create a result")
+        original_bytes = output_path.read_bytes()
+        try:
+            payload = json.loads(original_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            fail("The frozen installer target preflight result is not valid UTF-8 JSON")
+        if payload.get("schema_version") != 1 or payload.get("preflight_kind") != "installer_target":
+            fail("The frozen installer target preflight scope is invalid")
+        if payload.get("request_generation") != 41:
+            fail("The frozen installer target preflight lost its request generation")
+        if payload.get("overall_status") not in {"pass", "warning", "blocked", "unknown"}:
+            fail("The frozen installer target preflight overall status is invalid")
+        checks = payload.get("checks")
+        if not isinstance(checks, list):
+            fail("The frozen installer target preflight checks are missing")
+        checks_by_id = {
+            str(check.get("check_id")): check
+            for check in checks
+            if isinstance(check, dict)
+        }
+        if set(checks_by_id) != INSTALLER_TARGET_CHECK_IDS:
+            fail("The frozen installer target preflight check set is invalid")
+        if checks_by_id["installer_fixed_port"].get("status") != expected_port_status:
+            fail("The frozen installer target preflight misclassified the fixed port")
+        for check_id, check in checks_by_id.items():
+            if check_id != "installer_fixed_port" and check.get("status") != "pass":
+                fail(f"The frozen installer target preflight did not pass {check_id}")
+        expected_overall = {
+            "pass": "pass",
+            "warning": "warning",
+            "blocked": "blocked",
+        }[expected_port_status]
+        if payload.get("overall_status") != expected_overall:
+            fail("The frozen installer target preflight overall status is inconsistent")
+        if any(
+            check.get("status") not in {"pass", "warning", "blocked", "unknown"}
+            for check in checks_by_id.values()
+        ):
+            fail("The frozen installer target preflight emitted a non-terminal status")
+        payload_strings = [value.casefold() for value in json_string_values(payload)]
+        forbidden = (
+            str(environment.get("USERNAME") or "").casefold(),
+            str(environment.get("LOCALAPPDATA") or "").casefold(),
+            str(environment.get("TEMP") or "").casefold(),
+            str(output_root).casefold(),
+            str(executable.parent.parent.resolve()).casefold(),
+            "session_token",
+            "pairing",
+            "transcript",
+        )
+        if any(
+            value and value in payload_value
+            for value in forbidden
+            for payload_value in payload_strings
+        ):
+            fail("The frozen installer target preflight exposed private runtime data")
+        if list(Path(environment["LOCALAPPDATA"]).rglob(".barorok-preflight-*")):
+            fail("The frozen installer target preflight left a write canary behind")
+
+        repeated = subprocess.run(
+            [
+                str(executable),
+                "--installer-target-preflight-json",
+                str(request_path),
+                str(output_path),
+            ],
+            cwd=executable.parent.parent,
+            env=environment,
+            creationflags=CREATE_NO_WINDOW,
+            timeout=PREFLIGHT_PROCESS_TIMEOUT_SECONDS,
+            check=False,
+        )
+        if repeated.returncode != 2 or output_path.read_bytes() != original_bytes:
+            fail("The frozen installer target preflight overwrote an existing result")
+        return payload
+    finally:
+        request_path.unlink(missing_ok=True)
+        output_path.unlink(missing_ok=True)
+        if output_root.exists():
+            output_root.rmdir()
+
+
 def stop_engine(executable: Path, environment: dict[str, str], engine: subprocess.Popen[bytes]) -> None:
     stopped = subprocess.run(
         [str(executable), "--stop"],
@@ -225,6 +482,10 @@ def verify_manifest(artifact: Path) -> tuple[dict[str, object], dict[str, tuple[
     if manifest.get("bind") != "127.0.0.1:17863":
         fail("The PoC manifest does not declare the fixed loopback listener")
     artifact_root = artifact.resolve()
+    for candidate in artifact_root.rglob("*"):
+        attributes = getattr(candidate.lstat(), "st_file_attributes", 0)
+        if attributes & getattr(stat_module, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400):
+            fail(f"Artifact payload cannot contain a reparse point: {candidate.name}")
     snapshot: dict[str, tuple[int, int]] = {}
     listed_paths: dict[str, str] = {}
     for entry in manifest.get("payloadFiles", []):
@@ -531,6 +792,45 @@ def exercise_port_collision(executable: Path, environment: dict[str, str]) -> No
                 collision.wait(timeout=3)
 
 
+def exercise_installer_target_foreign_port(
+    executable: Path,
+    environment: dict[str, str],
+) -> None:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as occupied:
+        occupied.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        occupied.bind(("127.0.0.1", 17863))
+        occupied.listen(1)
+        finished = threading.Event()
+
+        def answer_probe() -> None:
+            try:
+                connection, _address = occupied.accept()
+                with connection:
+                    connection.settimeout(2)
+                    connection.recv(4096)
+                    body = b'{"product_id":"another-product"}'
+                    connection.sendall(
+                        b"HTTP/1.1 200 OK\r\n"
+                        b"Content-Type: application/json\r\n"
+                        + f"Content-Length: {len(body)}\r\n".encode("ascii")
+                        + b"Connection: close\r\n\r\n"
+                        + body
+                    )
+            finally:
+                finished.set()
+
+        worker = threading.Thread(target=answer_probe, name="foreign-port-probe", daemon=True)
+        worker.start()
+        exercise_installer_target_preflight(
+            executable,
+            environment,
+            expected_port_status="blocked",
+        )
+        if not finished.wait(timeout=3):
+            fail("The installer target preflight did not inspect the foreign listener")
+        worker.join(timeout=1)
+
+
 def exercise_startup_stop_race(executable: Path, environment: dict[str, str]) -> None:
     engine = start_process(executable, environment)
     stopper = start_process(executable, environment, "--stop")
@@ -572,6 +872,10 @@ def run() -> None:
     if not executable.is_file():
         fail(f"Frozen engine executable not found: {executable}")
     manifest, install_snapshot = verify_manifest(artifact)
+    if arguments.manifest_only:
+        print("Frozen web local-engine closed manifest verification passed.")
+        print(f"Engine version: {manifest['engineVersion']}")
+        return
     origin = str(manifest["allowedOrigin"])
     install_handles: list[int] = []
 
@@ -585,13 +889,32 @@ def run() -> None:
         local_app_data.mkdir(parents=True, exist_ok=True)
     environment = os.environ.copy()
     environment["LOCALAPPDATA"] = str(local_app_data)
+    smoke_temp = local_app_data / "smoke-temp"
+    smoke_temp.mkdir(parents=True, exist_ok=True)
+    environment["TEMP"] = str(smoke_temp)
+    environment["TMP"] = str(smoke_temp)
     data_root = local_app_data / "Barorok" / "LocalEngine"
     engine: subprocess.Popen[bytes] | None = None
     relocated = artifact.with_name(artifact.name + "-relocated-smoke")
     try:
+        preflight = exercise_preflight_json(executable, environment)
+        if data_root.exists():
+            fail("The frozen preflight created local-engine user data")
+        installer_preflight = exercise_installer_target_preflight(
+            executable,
+            environment,
+            expected_port_status="pass",
+        )
+        if data_root.exists():
+            fail("The frozen installer target preflight created local-engine user data")
         install_handles = lock_install_files_read_only(artifact)
         exercise_startup_stop_race(executable, environment)
         engine = start_and_probe(executable, environment, origin)
+        running_installer_preflight = exercise_installer_target_preflight(
+            executable,
+            environment,
+            expected_port_status="warning",
+        )
         status, _body = request_json("/api/health", origin=origin)
         if status not in (401, 403):
             fail("The frozen engine exposed a protected API without a session")
@@ -614,11 +937,12 @@ def run() -> None:
         engine = None
         close_install_read_locks(install_handles)
 
+        exercise_installer_target_foreign_port(executable, environment)
         exercise_port_collision(executable, environment)
 
         if relocated.exists():
             fail(f"Relocation smoke target already exists: {relocated}")
-        artifact.rename(relocated)
+        rename_directory_with_retry(artifact, relocated)
         relocated_executable = relocated / "engine" / ENGINE_EXE_NAME
         try:
             engine = start_and_probe(relocated_executable, environment, origin)
@@ -627,22 +951,26 @@ def run() -> None:
             engine = None
         finally:
             if relocated.exists():
-                relocated.rename(artifact)
+                rename_directory_with_retry(relocated, artifact)
 
         assert_sentinels(sentinels)
         assert_install_tree_unchanged(artifact, install_snapshot)
         print("Frozen web local-engine Stage 3B smoke passed.")
         print(f"Engine version: {manifest['engineVersion']}")
+        print(f"Preflight status: {preflight['overall_status']}")
+        print(f"Installer preflight status: {installer_preflight['overall_status']}")
+        print(f"Running-engine installer preflight status: {running_installer_preflight['overall_status']}")
         print(
-            "Verified: closed manifest, read-only payload, ffmpeg, loopback, default-deny, "
-            "single instance, pairing expiry/reuse/concurrency, startup-safe stop, port collision, relocation preservation"
+            "Verified: host and installer-target preflight JSON, closed manifest, read-only payload, ffmpeg, "
+            "loopback, default-deny, single instance, pairing expiry/reuse/concurrency, startup-safe stop, "
+            "own/foreign fixed-port classification, port collision, relocation preservation"
         )
     finally:
         if engine is not None and engine.poll() is None:
             engine.kill()
             engine.wait(timeout=5)
         if relocated.exists() and not artifact.exists():
-            relocated.rename(artifact)
+            rename_directory_with_retry(relocated, artifact)
         if install_handles:
             close_install_read_locks(install_handles)
         if owned_temp_root and not arguments.keep_data and local_app_data.exists():

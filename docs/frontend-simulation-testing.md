@@ -24,11 +24,24 @@ For the broader user-facing scenario matrix across file length, file type, stop/
 - `corepack pnpm --dir desktop-app test:edit-guard-flow`
 - `corepack pnpm --dir desktop-app test:close-guard-flow`
 - `corepack pnpm --dir desktop-app test:settings-backend-restart`
+- `corepack pnpm --dir desktop-app test:settings-model-management`
+- `corepack pnpm --dir desktop-app test:audio-extract-ui`
+- `corepack pnpm --dir desktop-app test:template-selection-flow`
+- `corepack pnpm --dir desktop-app test:download-scope-flow`
+- `corepack pnpm --dir desktop-app test:report-tab-edge-flow`
+- `corepack pnpm --dir desktop-app test:writer-model-readiness`
 - `corepack pnpm --dir desktop-app test:topic-generation-ui`
 
 ## Environment notes
 
 - These scripts use the project `playwright` package, not the Codex in-app browser.
+- On this Windows PC, set the project-local Playwright cache before both installation and
+  simulation execution:
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH='D:\Projects\LMO_audio\.cache\ms-playwright'
+```
+
 - If a simulation times out at the initial `page.goto` before mocked API calls appear, verify the Vite server separately, check the selected port/processes, and retry with a warmed server before treating it as a product regression.
 - On a PC that has not installed Playwright browsers yet, run:
 

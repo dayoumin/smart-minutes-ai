@@ -8,6 +8,7 @@
 
 ## 🔥 Phase 2: 실시간 지능 고도화 (Next)
 - [x] **회의 간 기록 찾기 MVP**: 현재 IndexedDB 기록에서 회의, 결정 사항, 할 일을 한 화면에서 검색하고 기간·종류로 필터링하며 원래 회의록으로 이동한다. 기본 화면은 결정 타임라인으로 제공한다.
+- [ ] **웹 로컬 엔진 보안 연결**: 공개 probe, exact origin, pairing과 짧은 세션 인증을 먼저 완성하고 민감 API는 기본 거부한다. 단계별 실행 기준은 `docs/web-runtime-separation-implementation-plan.md`를 따른다.
 - [ ] **웹 로컬 엔진 SQLite/전문 검색 전환**: 현재 IndexedDB 구현은 UI 계약 검증용 임시 어댑터로 한정한다. 웹 MVP에서는 PC 로컬 엔진의 SQLite를 기준 저장소로 사용하고 회의·결정·할 일 전문 검색(FTS)을 제공한다.
 - [ ] **결정 데이터 구조화**: 결정 일시, 상태, 근거 발언, 관련 회의, 후속 변경 결정을 별도 필드로 저장해 단순 텍스트 검색을 결정 이력으로 발전시킨다.
 - [ ] **여러 파일 선택 분석**: 파일 선택에서 여러 음성/영상 파일을 받아 큐로 표시하고 순차 분석한다.
@@ -38,7 +39,12 @@
 - [ ] **명시적 제외 유지**: Zoom/Teams BOT, SaaS 사용자/그룹 권한, 공동 편집, 관리자 대시보드, 분 단위 과금, 온프레미스 상품화, 회의 간 목소리 학습 기반 화자 자동 인식은 현재 제품 방향에서 제외한다.
 - 세부 기준: `docs/airepoto-reference-adoption-plan.md`
 
-## 🖥️ Desktop Packaging Notes
+## 🖥️ Desktop Packaging Notes (과거 데스크톱 경로·웹 MVP 이후 후속)
+
+아래 portable 항목은 완료 이력과 후속 참고를 보존한 것이다. 2026-08-13 이후 현재
+제품 우선순위는 HTTPS 웹 UI + Windows 설치형 로컬 엔진이며, portable 배포를
+웹 MVP의 선행 조건이나 기본 배포 방식으로 사용하지 않는다.
+
 - [x] **Portable 배포 채택**: 대용량 로컬 모델 때문에 MSI/NSIS 설치 파일 대신 portable 폴더 배포를 기본으로 사용한다.
 - [x] **회사 전달용 모델 분리 패키지 생성**: 앱과 백엔드 sidecar를 포함하고, 기본 STT 모델은 회사 PC에서 `lmo_audio\models\faster-whisper-large-v3` 아래에 별도 배치한다.
 - [x] **2026-04-27 실제 MP4 포터블 검증**: portable `backend` sidecar를 직접 실행해 루트 MP4를 `/api/analyze`로 업로드했고, `event: result`/`event: done` 응답을 확인했다.

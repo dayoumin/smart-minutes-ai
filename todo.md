@@ -84,7 +84,7 @@
   - 2026-07-29 진행: 기록 정리와 보고서 탭의 command bar를 콘텐츠 폭 64rem 기준으로 전환하고, 결과/빈 상태와 생성·재생성 동작 계층을 통일했다. 1280×720 실제 화면, 보고서 경계 흐름, 템플릿 선택 흐름, 타입·lint로 검증했다.
   - 2026-07-29 진행: 설정 화면의 폭과 정보 레일을 넓히고 지속 오류를 본문 안으로 이동했다. 표시명과 다운로드 설명을 사용자 용어로 정리하고 설정 재시작·모델 관리 시뮬레이션, 타입·lint, 실제 1280×720 화면으로 확인했다.
   - 2026-07-29 완료: 공유 React UI 통합 게이트와 화면 간격·용어·포커스·낮은 창 overflow 마감을 완료했다.
-  - 다음 1순위: 실제 portable `lmo_audio.exe`에서 sidecar·모델·파일 시스템·내보내기·재시작·종료 guard까지 확인하는 데스크톱 런타임 게이트를 수행한다.
+  - 2026-08-14 우선순위 갱신: portable 데스크톱 런타임 게이트는 웹 MVP 이후 별도 제품 단계로 보류한다. 현재 다음 1순위는 `docs/web-runtime-separation-implementation-plan.md`의 2단계 probe·pairing·세션 PoC다.
 - [ ] 2026-06-12 Airepoto 참고 회의록 완성도 강화 1차 계획
   - 세부 계획 원본: `docs/airepoto-reference-adoption-plan.md`.
   - 1차 범위는 내부 기본 회의록 기준, 분야별 용어의 후속 정리/보정 단계 적용, 대화 보관용 회의록/보고서용 정리 회의록 후속 산출물 개념 정리, 긴 회의 안정성 보강으로 잡는다.
@@ -393,7 +393,7 @@
 - [ ] 요약 결과 DB 저장: 핵심 요약, 주요 토픽, 결정 사항, 할 일, 후속 액션을 구조화해서 보관 (현재는 단일 요약 텍스트로 보관 중)
 - [x] 회의록 목록/상세 UI 추가: 최근 회의록 조회, 검색, 삭제, MD 결과 다운로드 기능 구현
 - [x] IndexedDB 저장소 로직을 `meetingRepository.ts`로 분리해 SQLite 마이그레이션 준비
-- [ ] 데스크톱 앱(Tauri/Electron) 패키징 시점에 로컬 영구 저장을 위한 SQLite 연동 (현재는 UI 테스트용 IndexedDB 사용 중)
+- [ ] 웹 MVP 6단계에서 로컬 엔진 SQLite를 기준 저장소로 전환한다. 현재 IndexedDB는 UI 계약 검증과 안전한 가져오기 원본으로 유지한다.
 
 ## 4. 요약 프롬프트 및 문서 내보내기 고도화
 - [ ] `backend/pipeline/summarize.py`의 Gemma 프롬프트 세밀 튜닝 (결정사항, 할 일 추출 정확도 향상)
@@ -537,9 +537,12 @@
 ## 8. 웹 우선 로컬 엔진
 
 - [ ] 사용자 다운로드형 웹 로컬 엔진 MVP 착수
-  - 활성 계획: docs/web-local-engine-followup-plan.md.
+  - 제품 방향: `docs/web-local-engine-followup-plan.md`.
+  - 단일 실행 계획과 단계별 증거: `docs/web-runtime-separation-implementation-plan.md`.
+  - 2026-08-13 완료: 1단계 첫 묶음인 웹/Tauri 런타임 경계, 공통 로컬 엔진 클라이언트와 연결 상태 기반을 `dc610b6f`에 반영했다. Settings coordinator와 실제 Tauri smoke는 1단계 잔여 관문으로 유지한다.
+  - 2026-08-14 다음 작업: 2단계의 비민감 probe, exact origin, 공개 allowlist와 민감 API default-deny 미들웨어를 가장 작은 보안 묶음으로 구현한다. 전역 enforcement는 전체 프런트 호출을 공통 클라이언트로 옮기는 5단계에서 함께 활성화한다.
   - 첫 웹 제품은 HTTPS 웹 UI와 현재 사용자 단위 Windows NSIS 로컬 엔진 한 경로만 제공한다.
   - 사용자는 웹에 접속해 코드 서명된 LMO Local Engine Setup.exe를 한 번 내려받고, STT·화자 구분·요약 모델은 필요한 시점에 별도로 받는다.
   - 순수 WASM/WebGPU BrowserEngine, remote SaaS, portable 로컬 엔진, 모바일·PWA는 첫 웹 MVP와 병행하지 않는다.
   - Tauri 데스크톱 앱과 portable/handoff 검증은 웹 MVP 이후 별도 제품 단계에서 수행한다.
-  - 웹 착수 0단계에서 loopback 고정 포트, single instance, Local Network Access, exact origin allowlist, 설치별 pairing·API 인증, 서명된 업데이트를 검증한다.
+  - 0단계는 현재 호출·환경·회귀 inventory를 고정한다. exact origin과 pairing·세션은 2단계, single instance·helper·서명 업데이트는 3단계, Local Network Access 복구 UX는 4단계에서 검증한다.

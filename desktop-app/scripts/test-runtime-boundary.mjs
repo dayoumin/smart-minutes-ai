@@ -22,6 +22,7 @@ import {
   parseLocalEngineSessionCredential,
 } from '../src/localEngineSession.ts';
 import { LocalEngineConnectionCoordinator } from '../src/localEngineConnectionCoordinator.ts';
+import { getLocalEngineConnectionView } from '../src/localEngineConnectionView.ts';
 
 const web = detectRuntimeEnvironment({
   hostname: 'meetings.example.test',
@@ -73,6 +74,7 @@ assert.ok(parsedProbe);
 connection = applyLocalEngineProbe(connection, parsedProbe, 300);
 assert.equal(connection.transport, 'reachable');
 assert.equal(connection.authorization, 'unpaired');
+assert.equal(connection.updateRequired, false);
 assert.deepEqual([...connection.capabilities], ['analysis', 'export']);
 connection = applyLocalEngineProbe(connection, { ...parsedProbe, auth_state: 'authenticated' }, 350);
 assert.equal(
@@ -94,6 +96,69 @@ connection = applyLocalEngineProbe(connection, incompatibleProbe, 400);
 assert.equal(connection.transport, 'incompatible');
 assert.equal(connection.capabilities.size, 0);
 assert.equal(parseLocalEngineProbe({ ...parsedProbe, product_id: 'other-engine' }), null);
+
+const viewSnapshot = createInitialLocalEngineConnection('web-local-engine');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: viewSnapshot,
+  pairingPhase: 'idle',
+  connectionStarted: false,
+}).scene, 'intro');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'checking' },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+}).scene, 'checking');
+const unreachableView = getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'unreachable' },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+});
+assert.equal(unreachableView.scene, 'unreachable');
+assert.equal(unreachableView.primaryAction, 'probe');
+assert.equal(unreachableView.primaryDisabled, false);
+assert.equal(unreachableView.secondaryAction, null, 'unverified installer downloads must not be shown as an action');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+}).scene, 'pairing-required');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
+  pairingPhase: 'awaiting-code',
+  connectionStarted: true,
+}).primaryAction, 'open-code');
+const connectedView = getLocalEngineConnectionView({
+  snapshot: {
+    ...viewSnapshot,
+    transport: 'reachable',
+    authorization: 'authenticated',
+    capabilities: new Set(['analysis']),
+  },
+  pairingPhase: 'connected',
+  connectionStarted: true,
+});
+assert.equal(connectedView.scene, 'connected');
+assert.equal(connectedView.analysisReady, true);
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'expired' },
+  pairingPhase: 'expired',
+  connectionStarted: true,
+}).scene, 'session-ended');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', updateRequired: true },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+}).scene, 'update-required');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'checking', updateRequired: true },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+}).scene, 'checking', 'an explicit retry must replace a stale update scene');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'checking', authorization: 'expired' },
+  pairingPhase: 'expired',
+  connectionStarted: true,
+}).scene, 'checking', 'an explicit retry must replace a stale expired scene');
 
 const authenticatedConnection = {
   ...connection,
@@ -329,6 +394,30 @@ assert.equal(await coordinator.revokeSession(), true);
 assert.deepEqual(coordinatorCredentials.requestHeaders(), {});
 assert.equal(coordinatorEvents.authorization.at(-1).authorization, 'revoked');
 assert.equal(sessionRequestStep, 3);
+
+const resetPairingStates = [];
+const resetPairingCoordinator = new LocalEngineConnectionCoordinator(
+  coordinatorClient,
+  new LocalEngineSessionCredentialStore(() => 100),
+  {
+    onTransport: () => {},
+    onProbe: () => {},
+    onAuthorization: () => {},
+    onPairingState: state => resetPairingStates.push(state),
+  },
+  {
+    probe: parseLocalEngineProbe,
+    pairingStart: parseLocalEnginePairingStart,
+    sessionCredential: parseLocalEngineSessionCredential,
+  },
+);
+await resetPairingCoordinator.startPairing();
+resetPairingCoordinator.resetPairing('연결 코드가 만료되었습니다.');
+assert.deepEqual(resetPairingStates.at(-1), {
+  phase: 'error',
+  challenge: null,
+  reason: '연결 코드가 만료되었습니다.',
+});
 
 let resolveOldCompletion;
 const staleCredentials = new LocalEngineSessionCredentialStore(() => 100);

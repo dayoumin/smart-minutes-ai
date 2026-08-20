@@ -95,8 +95,30 @@ const runEmptyAndResponsiveScene = async browser => {
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByText('첫 회의록', { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '새 기록 시작', exact: true }).waitFor();
+    const startWorkspace = page.getByRole('region', { name: '말하는 순간부터, 회의록이 됩니다' });
+    await page.getByRole('heading', { name: '저장된 회의록이 없습니다' }).waitFor({ timeout: 10000 });
+    await startWorkspace.getByRole('button', { name: '새 기록', exact: true }).waitFor();
+    const typographyMetrics = await page.evaluate(() => {
+      const heading = document.querySelector('.start-workspace-heading h1');
+      const primaryLabel = document.querySelector('.start-scene-empty .start-primary-label');
+      const labelTransform = primaryLabel ? new DOMMatrix(getComputedStyle(primaryLabel).transform) : null;
+      return {
+        headingLetterSpacing: heading ? getComputedStyle(heading).letterSpacing : '',
+        headingWordSpacing: heading ? getComputedStyle(heading).wordSpacing : '',
+        primaryLabelOffsetX: labelTransform?.m41 ?? null,
+        primaryLabelIconCount: primaryLabel?.querySelectorAll('svg').length ?? null,
+      };
+    });
+    assert.ok(['normal', '0px'].includes(typographyMetrics.headingLetterSpacing));
+    assert.notEqual(typographyMetrics.headingWordSpacing, 'normal');
+    assert.equal(typographyMetrics.primaryLabelOffsetX, -5);
+    assert.equal(typographyMetrics.primaryLabelIconCount, 0);
+    assert.equal(await page.getByText('첫 회의록', { exact: true }).count(), 0);
+    assert.equal(await page.locator('.start-scene-copy p').count(), 0);
+    const fileSupportAssurance = page.locator('.start-assurance-item').filter({ hasText: '영상·음성 파일 지원' }).first();
+    await fileSupportAssurance.focus();
+    await page.waitForFunction(() => getComputedStyle(document.querySelector('#start-assurance-tooltip-1')).opacity === '1');
+    assert.equal(await page.locator('#start-assurance-tooltip-1').evaluate(element => getComputedStyle(element).opacity), '1');
     assert.equal(await page.locator('[data-shell-variant="ocean"]').count(), 1);
     await assertNoHorizontalOverflow(page);
     const compactMetrics = await page.evaluate(() => {
@@ -121,11 +143,11 @@ const runEmptyAndResponsiveScene = async browser => {
     await page.emulateMedia({ forcedColors: 'active' });
     const backdropDisplay = await page.locator('.ocean-backdrop').evaluate(element => getComputedStyle(element).display);
     assert.equal(backdropDisplay, 'none');
-    const forcedColorsCreateButton = page.getByRole('button', { name: '새 기록 시작', exact: true });
+    const forcedColorsCreateButton = startWorkspace.getByRole('button', { name: '새 기록', exact: true });
     await forcedColorsCreateButton.focus();
     assert.equal(await forcedColorsCreateButton.evaluate(element => document.activeElement === element), true);
     await page.emulateMedia({ forcedColors: 'none' });
-    await page.getByRole('button', { name: '새 기록 시작', exact: true }).click();
+    await startWorkspace.getByRole('button', { name: '새 기록', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     console.log('ok - start workspace empty and responsive scene');
   } finally {
@@ -160,7 +182,7 @@ const runRecentScene = async browser => {
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByText('첫 회의록', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: '저장된 회의록이 없습니다' }).waitFor({ timeout: 10000 });
     await putMeeting(page, {
       id: 'recent-start-meeting',
       title: '최근 운영 회의',
@@ -263,7 +285,7 @@ const runPendingCancellationLockScene = async browser => {
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const emptyCreateButton = page.getByRole('button', { name: '새 기록 시작', exact: true });
+    const emptyCreateButton = page.getByRole('region', { name: '말하는 순간부터, 회의록이 됩니다' }).getByRole('button', { name: '새 기록', exact: true });
     await emptyCreateButton.waitFor({ timeout: 10000 });
     assert.equal(await emptyCreateButton.isDisabled(), true);
     await page.locator('#start-new-meeting-blocked').waitFor();

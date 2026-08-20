@@ -30,6 +30,7 @@ interface LocalEngineConnectionContextValue {
     probeLocalEngine: () => Promise<LocalEngineProbePayload | null>;
     startPairing: () => Promise<LocalEnginePairingStart | null>;
     completePairing: (pairingId: string, code: string) => Promise<boolean>;
+    resetPairing: (reason?: string) => void;
     renewSession: () => Promise<boolean>;
     revokeSession: () => Promise<boolean>;
 }
@@ -46,7 +47,6 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         challenge: null,
     });
     const transportCheckIdRef = useRef(0);
-    const coordinatorTransportCheckIdRef = useRef(0);
     const beginTransportCheck = useCallback(() => {
         const checkId = transportCheckIdRef.current + 1;
         transportCheckIdRef.current = checkId;
@@ -57,39 +57,51 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         if (!isLatestTransportCheck(transportCheckIdRef.current, checkId)) return;
         setSnapshot(previous => updateLocalEngineTransport(previous, transport));
     }, []);
-    const reportProbe = useCallback((checkId: number, probe: LocalEngineProbePayload) => {
-        if (!isLatestTransportCheck(transportCheckIdRef.current, checkId)) return;
-        setSnapshot(previous => applyLocalEngineProbe(previous, probe));
-    }, []);
-    const coordinator = useMemo(() => new LocalEngineConnectionCoordinator(
-        localEngineClient,
-        localEngineSessionCredentials,
-        {
-            onTransport: transport => {
-                if (transport === 'checking') {
-                    coordinatorTransportCheckIdRef.current = beginTransportCheck();
-                    return;
-                }
-                reportTransport(coordinatorTransportCheckIdRef.current, transport);
+    const [coordinator] = useState(() => {
+        return new LocalEngineConnectionCoordinator(
+            localEngineClient,
+            localEngineSessionCredentials,
+            {
+                onTransport: transport => {
+                    setSnapshot(previous => updateLocalEngineTransport(previous, transport));
+                },
+                onProbe: probe => {
+                    setSnapshot(previous => applyLocalEngineProbe(previous, probe));
+                },
+                onAuthorization: (authorization, capabilities = []) => {
+                    setSnapshot(previous => applyLocalEngineAuthorization(
+                        previous,
+                        authorization,
+                        capabilities,
+                    ));
+                },
+                onPairingState: setPairingState,
             },
-            onProbe: probe => {
-                reportProbe(coordinatorTransportCheckIdRef.current, probe);
+            {
+                probe: parseLocalEngineProbe,
+                pairingStart: parseLocalEnginePairingStart,
+                sessionCredential: parseLocalEngineSessionCredential,
             },
-            onAuthorization: (authorization, capabilities = []) => {
-                setSnapshot(previous => applyLocalEngineAuthorization(
-                    previous,
-                    authorization,
-                    capabilities,
-                ));
-            },
-            onPairingState: setPairingState,
-        },
-        {
-            probe: parseLocalEngineProbe,
-            pairingStart: parseLocalEnginePairingStart,
-            sessionCredential: parseLocalEngineSessionCredential,
-        },
-    ), [beginTransportCheck, reportProbe, reportTransport]);
+        );
+    });
+    const probeLocalEngine = useCallback(() => (
+        coordinator.probe()
+    ), [coordinator]);
+    const startPairing = useCallback(() => (
+        coordinator.startPairing()
+    ), [coordinator]);
+    const completePairing = useCallback((pairingId: string, code: string) => (
+        coordinator.completePairing(pairingId, code)
+    ), [coordinator]);
+    const resetPairing = useCallback((reason?: string) => {
+        coordinator.resetPairing(reason);
+    }, [coordinator]);
+    const renewSession = useCallback(() => (
+        coordinator.renewSession()
+    ), [coordinator]);
+    const revokeSession = useCallback(() => (
+        coordinator.revokeSession()
+    ), [coordinator]);
     useEffect(() => {
         if (environment.kind !== 'web-local-engine' || snapshot.authorization !== 'authenticated') return;
         const synchronizeExpiration = () => {
@@ -106,17 +118,23 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         beginTransportCheck,
         reportTransport,
         pairingState,
-        probeLocalEngine: () => coordinator.probe(),
-        startPairing: () => coordinator.startPairing(),
-        completePairing: (pairingId: string, code: string) => coordinator.completePairing(pairingId, code),
-        renewSession: () => coordinator.renewSession(),
-        revokeSession: () => coordinator.revokeSession(),
+        probeLocalEngine,
+        startPairing,
+        completePairing,
+        resetPairing,
+        renewSession,
+        revokeSession,
     }), [
         beginTransportCheck,
-        coordinator,
+        completePairing,
         pairingState,
+        probeLocalEngine,
         reportTransport,
+        resetPairing,
+        renewSession,
+        revokeSession,
         snapshot,
+        startPairing,
     ]);
 
     return (

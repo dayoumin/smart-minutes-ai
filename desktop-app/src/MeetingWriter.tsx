@@ -55,7 +55,8 @@ import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from '
 import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisResumeState';
 import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionProvider';
-import { transportFromHealthEvidence } from './localEngineConnection';
+import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
+import { LocalEngineConnectionSurface } from './LocalEngineConnectionSurface';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -65,6 +66,10 @@ const LONG_MEDIA_NOTICE_SECONDS = 30 * 60;
 const VERY_LONG_MEDIA_NOTICE_SECONDS = 90 * 60;
 const PARTICIPANT_SEPARATION_CAUTION_SECONDS = 140 * 60;
 const SHOW_AUDIO_EXTRACT_TOOL = false;
+const LOCAL_ENGINE_CONNECTION_UI_ENABLED = import.meta.env.VITE_LOCAL_ENGINE_CONNECTION_UI === 'true'
+    || (import.meta.env.DEV
+        && typeof window !== 'undefined'
+        && new URLSearchParams(window.location.search).get('localEngineConnection') === '1');
 const getNowMs = (): number => Date.now();
 
 const WhaleTailIcon: React.FC = () => (
@@ -740,7 +745,7 @@ interface MeetingWriterProps {
 }
 
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
-    const { beginTransportCheck, reportTransport } = useLocalEngineConnection();
+    const { snapshot: localEngineConnection, beginTransportCheck, reportTransport } = useLocalEngineConnection();
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
     const [initialDateValue, setInitialDateValue] = useState(date);
@@ -792,6 +797,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         () => getReportTemplateById(selectedReportTemplateId),
         [selectedReportTemplateId],
     );
+    const localEngineConnectionRequired = LOCAL_ENGINE_CONNECTION_UI_ENABLED
+        && localEngineConnection.runtime === 'web-local-engine';
+    const localEngineAnalysisReady = canUseLocalEngineCapability(localEngineConnection, 'analysis')
+        && !localEngineConnection.updateRequired;
+    const localEngineAuthorizedForReadiness = localEngineConnection.authorization === 'authenticated'
+        && localEngineConnection.capabilities.has('analysis')
+        && !localEngineConnection.updateRequired
+        && !['unreachable', 'incompatible', 'error'].includes(localEngineConnection.transport);
     const fileInputRef = useRef<HTMLInputElement | null>(null);
 
     const autoDerivedTitleRef = useRef<string | null>(null);
@@ -952,6 +965,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
     useEffect(() => {
         if (ANALYSIS_MODE !== 'real') return;
+        if (localEngineConnectionRequired && !localEngineAuthorizedForReadiness) {
+            setReadinessState('checking');
+            setReadinessMessage('');
+            return;
+        }
 
         let cancelled = false;
         const syncReadiness = async () => {
@@ -994,7 +1012,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             window.removeEventListener('focus', syncReadiness);
             window.removeEventListener('analysis:settings-updated', handleSettingsUpdated);
         };
-    }, []);
+    }, [localEngineAuthorizedForReadiness, localEngineConnectionRequired]);
 
     const missingRequiredModels = useMemo(
         () => (modelsPayload?.models || []).filter(model => model.required && !model.installed),
@@ -1059,7 +1077,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
         || hasBlockingReadinessIssue
+        || (localEngineConnectionRequired && !localEngineAnalysisReady)
         || analysisStartBlocked;
+    const startButtonDescription = [
+        analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
+        localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-local-engine-requirement' : '',
+    ].filter(Boolean).join(' ') || undefined;
 
     const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
     const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
@@ -1072,14 +1095,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
 
         let healthReachable = false;
-        const transportCheckId = beginTransportCheck();
+        const transportCheckId = localEngineConnectionRequired ? null : beginTransportCheck();
         try {
             const apiBase = await getApiBase();
             await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
             const healthResponse = await localEngineClient.request('/api/health');
             await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
             healthReachable = true;
-            reportTransport(transportCheckId, transportFromHealthEvidence(true));
+            if (transportCheckId !== null) {
+                reportTransport(transportCheckId, transportFromHealthEvidence(true));
+            }
             if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
 
             await healthResponse.json().catch(() => null);
@@ -1116,7 +1141,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
         } catch (error) {
-            reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
+            if (transportCheckId !== null) {
+                reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
+            }
             await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const message = error instanceof Error && !options.soft
                 ? `분석 기능을 준비하고 있습니다. ${error.message}`
@@ -2743,9 +2770,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     </div>
                     </section>
                 </div>
-                    <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
+                    <div className={`writer-action-bar ${localEngineConnectionRequired ? 'writer-action-bar-connection' : ''}`} aria-live="polite" aria-busy={isAnalyzing}>
+                        {localEngineConnectionRequired && (
+                            <LocalEngineConnectionSurface />
+                        )}
                         <div className="writer-primary-actions">
-                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={analysisStartBlocked ? 'writer-analysis-start-blocked' : undefined} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
+                            <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
                                 {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
                                 {!isAnalyzing && <WhaleTailIcon />}
                                 {isAnalyzing ? '분석 중' : buttonLabel}

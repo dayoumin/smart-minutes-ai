@@ -25,6 +25,7 @@ export interface LocalEngineConnectionSnapshot {
     transport: LocalEngineTransportState;
     authorization: LocalEngineAuthorizationState;
     capabilities: ReadonlySet<LocalEngineCapability>;
+    updateRequired: boolean;
     checkedAt: number | null;
     reason?: string;
 }
@@ -55,6 +56,7 @@ export const createInitialLocalEngineConnection = (
     transport: 'checking',
     authorization: 'unknown',
     capabilities: new Set(),
+    updateRequired: false,
     checkedAt: null,
 });
 
@@ -110,6 +112,7 @@ export const applyLocalEngineProbe = (
         transport: compatible ? 'reachable' : 'incompatible',
         authorization,
         capabilities: compatible ? capabilities : new Set(),
+        updateRequired: payload.update_required,
         checkedAt,
         reason: compatible ? undefined : '지원하지 않는 로컬 엔진 API 버전입니다.',
     };

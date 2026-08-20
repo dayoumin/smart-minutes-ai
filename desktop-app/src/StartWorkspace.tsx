@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowRight, CalendarDays, FileAudio, Loader2, Plus, RefreshCw, RotateCcw } from 'lucide-react';
+import { ArrowRight, CalendarDays, FileAudio, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 import {
     requestAnalysisRecoverySync,
     useAnalysisResumeSnapshot,
@@ -15,6 +15,21 @@ interface StartWorkspaceProps {
     newMeetingBlocked?: boolean;
     newMeetingBlockedReason?: string;
 }
+
+const START_ASSURANCES = [
+    {
+        label: '내 PC에서 보관',
+        detail: '회의록과 분석 결과는 이 PC에 보관됩니다.',
+    },
+    {
+        label: '영상·음성 파일 지원',
+        detail: '회의가 끝난 뒤 영상이나 음성 파일을 가져와도 됩니다.',
+    },
+    {
+        label: '대화록과 회의 요약',
+        detail: '분석이 끝나면 대화록과 회의 요약을 함께 정리합니다.',
+    },
+] as const;
 
 const formatMeetingDate = (value: string): string => {
     const date = new Date(value);
@@ -41,7 +56,7 @@ const primaryButtonContent = (label: string, icon: React.ReactNode) => (
             className="start-primary-tail"
             aria-hidden="true"
         />
-        <span className="start-primary-label">{icon}{label}</span>
+        <span className="start-primary-label">{icon}<span className="start-primary-label-text">{label}</span></span>
     </>
 );
 
@@ -90,7 +105,6 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
         <section className="start-workspace" aria-labelledby="start-workspace-title" aria-busy={initialLoading || recoverySyncing}>
             <div className={`start-workspace-panel start-scene-${model.scene}`}>
                 <div className="start-workspace-heading">
-                    <span className="start-workspace-kicker">오늘의 회의를 기록하세요</span>
                     <h1 id="start-workspace-title">말하는 순간부터, 회의록이 됩니다</h1>
                     <p>영상이나 음성 파일을 넣으면 대화록과 회의 요약을 한곳에서 정리합니다.</p>
                 </div>
@@ -163,13 +177,11 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
                         <>
                             <div className="start-scene-icon"><FileAudio size={22} /></div>
                             <div className="start-scene-copy">
-                                <span className="start-scene-eyebrow">첫 회의록</span>
-                                <h2>아직 저장된 회의록이 없습니다</h2>
-                                <p>회의가 끝난 뒤 파일을 가져와도 괜찮습니다. 로컬에서 안전하게 분석을 시작해 보세요.</p>
+                                <h2>저장된 회의록이 없습니다</h2>
                             </div>
                             <div className="start-scene-actions">
                                 <button type="button" className="start-primary-button" onClick={onCreateMeeting} disabled={newMeetingBlocked} aria-describedby={newMeetingBlocked ? 'start-new-meeting-blocked' : undefined}>
-                                    {primaryButtonContent(analysisActive ? '진행 중인 분석 보기' : '새 기록 시작', analysisActive ? <ArrowRight size={18} /> : <Plus size={18} />)}
+                                    {primaryButtonContent(analysisActive ? '진행 중인 분석 보기' : '새 기록', analysisActive ? <ArrowRight size={18} /> : null)}
                                 </button>
                             </div>
                         </>
@@ -183,9 +195,22 @@ export const StartWorkspace: React.FC<StartWorkspaceProps> = ({ onCreateMeeting,
                 )}
 
                 <div className="start-workspace-assurance" aria-label="제품 특징">
-                    <span>내 PC에서 보관</span>
-                    <span>영상·음성 파일 지원</span>
-                    <span>대화록과 회의 요약</span>
+                    {START_ASSURANCES.map((assurance, index) => {
+                        const tooltipId = `start-assurance-tooltip-${index}`;
+                        return (
+                            <span
+                                key={assurance.label}
+                                className="start-assurance-item"
+                                tabIndex={0}
+                                aria-describedby={tooltipId}
+                            >
+                                {assurance.label}
+                                <span id={tooltipId} role="tooltip" className="start-assurance-tooltip">
+                                    {assurance.detail}
+                                </span>
+                            </span>
+                        );
+                    })}
                 </div>
             </div>
         </section>

@@ -179,6 +179,16 @@ export class LocalEngineConnectionCoordinator {
         }
     }
 
+    resetPairing(reason?: string): void {
+        this.beginAuthorizationOperation();
+        this.currentChallenge = null;
+        this.callbacks.onPairingState({
+            phase: reason ? 'error' : 'idle',
+            challenge: null,
+            ...(reason ? { reason } : {}),
+        });
+    }
+
     async completePairing(pairingId: string, code: string): Promise<boolean> {
         if (this.completePairingInFlight) return this.completePairingInFlight;
         const operation = this.runCompletePairing(pairingId, code);

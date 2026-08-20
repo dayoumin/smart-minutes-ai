@@ -249,7 +249,7 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 | 1. 프런트엔드 런타임 경계 | 부분 완료 | `dc610b6f`; Settings coordinator는 4단계 전, authorization·capability 갱신 API는 2단계, 실제 Tauri smoke는 5단계 enforcement 전 완료 |
 | 2. probe·pairing·세션 PoC | 완료 | probe·exact origin·격리 default deny·capability·일회성 code·pairing/session lifecycle·프런트 coordinator·mock 상태 전이 통과; 실제 helper는 3단계에서 닫음 |
 | 3. 로컬 엔진 설치·업데이트 PoC | 부분 완료 | 3A host 경계와 3B frozen exe·실제 helper·쓰기 잠금·relocation 보존·정상 종료 통과; 3C current-user installer·실제 재설치/update·서명·rollback 필요 |
-| 4. 웹 연결·복구 UX | 미착수 | 웹 전용 6장면 설계와 상태별 시뮬레이션 필요 |
+| 4. 웹 연결·복구 UX | preview 구현 진행 | 실제 Vite 화면·Mobbin 비교 기반 계약과 preview 연결 작업 레일·pairing dialog·상태 view model 구현; mock 흐름 통과, 실제 다운로드와 Chrome/Edge 권한 smoke 필요 |
 | 5. 전체 API 클라이언트 전환 | 미착수 | 직접 API fetch 0개와 인증 회귀 행렬 필요 |
 | 6. SQLite 기준 저장소 | 미착수 | 백업·가져오기·충돌·FTS·재실행 안전성 필요 |
 | 7. 브라우저 파일 동작 | 미착수 | 실제 다운로드·한글 파일명·세션 만료 검증 필요 |
@@ -306,6 +306,8 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 | 2026-08-14 | 2단계 프런트 연결 coordinator | backend security 23 tests, probe→pairing→갱신→폐기 mock, 중복·stale·만료·응답 손실, `test:runtime-boundary`, typecheck, writer/settings simulation, 순차 `build:web`·`build:desktop`, `git diff --check` 통과 | 보안/회귀 agent 최종 P0·P1·현재 목표 P2 없음 | 2단계 완료; 실제 helper·HTTPS는 3·8단계 관문 |
 | 2026-08-14 | 3C-0B installer target preflight | 관련 target 68 tests, backend quick 113 tests(1 skip), Windows source smoke, `git diff --check`, 단일 frozen build와 종합 verifier 통과 | 큰/작은 관점 P1·현재 목표 P2 수정 후 좁은 재검토에서 잔여 없음 | `0.1.0-poc-stage3c0b-installer-target-preflight`; 실제 NSIS 소비·공식 용량 manifest·설치/update/reinstall 관문 잔여 |
 | 2026-08-14 | 3C installer preflight 소비 소스 | installer helper/collector focused 37 tests, packaging/verifier 14 tests와 Windows source smoke 통과; closed manifest, current-user NSIS, bounded stop/readiness, same-volume stage·rollback, 선언 파일만 정리하는 복구 계약 작성 | 큰/작은 관점 agent가 readiness 오판, stop race, 중단 복구, manifest drift, 재귀 삭제와 transaction marker 순서를 지적해 수정; strict stage/transaction 회귀 테스트 보강 뒤 잔여 P0·P1·현재 목표 P2 없음 | 회사 PC에서는 helper/NSIS compile·실제 설치를 실행하지 않음. 집 PC에서 frozen payload 재사용 기반 단일 installer build와 install/update/uninstall smoke 필요 |
+| 2026-08-20 | 4단계 연결·복구 UX 디자인 묶음 | 실제 Vite 웹 앱의 시작·새 회의록·설정 모델 화면과 엔진 미응답 상태를 확인하고 Mobbin companion app 연결·오류 복구·파일 입력 사례 비교; 6장면 상태표, 단일 primary 위계, 작업 레일, pairing overlay, 기존 컴포넌트 재사용표와 760/1100/1536px 검증 계약 작성 | 승인된 해양 테마와 2열 입력 구조를 보존하고 설치 여부 추측·화면별 health 재해석·사용자 대상 미검증 다운로드 CTA를 금지 | `docs/web-local-engine-connection-ux-spec.md`; mock 상태 구현·시뮬레이션, 집 PC 3C 실물 installer, 서명·manifest, 실제 HTTPS Chrome/Edge 권한 smoke와 5단계 인증 전환 필요 |
+| 2026-08-20 | 4단계 연결·복구 UX preview 구현 | view model, 연결 작업 레일, pairing dialog와 preview gate 구현; 만료·거부 challenge 새 발급, focus trap·Escape 코드 삭제, provider transport 소유권 분리; runtime boundary·typecheck·760/1100/1536px mock simulation·브라우저 시각 확인 통과 | 큰/작은 관점 agent의 공통 P1과 현재 흐름 P2를 반영; 검증 가능한 권한 증거 없는 권한 장면은 만들지 않고 실제 HTTPS smoke로 보류 | 실제 installer/update URL, 낮은 높이·200% 확대·강제 색상, Chrome/Edge 권한 승인·거부·재승인, 5단계 전체 API 인증 전환 필요 |
 
 ### 0단계: 현재 계약 고정과 회귀 기준
 

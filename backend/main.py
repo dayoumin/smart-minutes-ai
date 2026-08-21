@@ -447,6 +447,14 @@ def _should_generate_diarization_during_analysis(config: dict) -> bool:
     )
 
 
+def _apply_analysis_request_diarization_mode(config: dict, enabled: bool) -> dict:
+    diarization = config.setdefault("diarization", {})
+    diarization["generate_during_analysis"] = bool(enabled)
+    if enabled:
+        diarization["enabled"] = True
+    return config
+
+
 def _normalize_resume_file_size(value: int | None) -> int | None:
     if value is None:
         return None
@@ -5613,6 +5621,7 @@ async def analyze_meeting(
     file_size: int | None = Form(None),
     file_last_modified: int | None = Form(None),
     resume_requested: bool = Form(False),
+    diarization_during_analysis: bool = Form(True),
     meeting_purpose: str = Form(""),
     selected_report_template_id: str = Form("standard-minutes"),
     report_template: str = Form(""),
@@ -5666,6 +5675,7 @@ async def analyze_meeting(
                 context_template=context_template_payload,
                 selected_term_glossary_ids=selected_term_glossary_ids_payload,
                 term_glossaries=term_glossaries_payload,
+                diarization_during_analysis=diarization_during_analysis,
                 prepared_upload_path=upload_path,
                 source_filename=file.filename,
                 prepared_cancel_event=cancel_event,
@@ -5809,6 +5819,90 @@ async def analyze_draft_statuses(payload: dict = Body(...)) -> dict:
     return {"drafts": drafts}
 
 
+def _analysis_saved_result_for_ui(job_id: str, result_data: dict, *, partial: bool) -> dict:
+    summary = result_data.get("summary", {})
+    settings = result_data.get("settings", {})
+    return {
+        "job_id": job_id,
+        "source_file": result_data.get("source_file", ""),
+        "summary": (
+            "대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다."
+            if partial
+            else format_summary_for_ui(
+                summary,
+                str(summary.get("title") or "회의록") if isinstance(summary, dict) else "회의록",
+                str(result_data.get("created_at") or ""),
+                "",
+            )
+        ),
+        "segments": segments_for_ui(result_data.get("segments", [])),
+        "display_segments": segments_for_ui(result_data.get("display_segments", [])),
+        "topics": summary.get("topics", []) if isinstance(summary, dict) else [],
+        "topic_sections": summary.get("topic_sections", []) if isinstance(summary, dict) else [],
+        "participant_summaries": summary.get("participant_summaries", []) if isinstance(summary, dict) else [],
+        "speaker_context_summaries": summary.get("speaker_context_summaries", []) if isinstance(summary, dict) else [],
+        "generation_status": summary.get("generation_status", {}) if isinstance(summary, dict) else {},
+        "actions": summary.get("actions", []) if isinstance(summary, dict) else [],
+        "decisions": summary.get("decisions", []) if isinstance(summary, dict) else [],
+        "needs_check": summary.get("needs_check", []) if isinstance(summary, dict) else [],
+        "selected_report_template_id": result_data.get("selected_report_template_id", "standard-minutes"),
+        "report_template": result_data.get("report_template", {}),
+        "selected_context_template_id": result_data.get("selected_context_template_id", "general"),
+        "context_template": result_data.get("context_template", {}),
+        "selected_term_glossary_ids": result_data.get("selected_term_glossary_ids", []),
+        "term_glossaries": result_data.get("term_glossaries", []),
+        "diarization_requested": bool(settings.get("diarization_requested")) if isinstance(settings, dict) else False,
+        "diarization_applied": bool(settings.get("diarization")) if isinstance(settings, dict) else False,
+        "diarization_skipped": bool(settings.get("diarization_skipped")) if isinstance(settings, dict) else False,
+        "diarization_skip_message": str(settings.get("diarization_skip_message") or "") if isinstance(settings, dict) else "",
+        "diarization_skip_reason": str(settings.get("diarization_skip_reason") or "") if isinstance(settings, dict) else "",
+        "diarization_deferred": bool(settings.get("diarization_deferred")) if isinstance(settings, dict) else False,
+        "diarization_defer_message": str(settings.get("diarization_defer_message") or "") if isinstance(settings, dict) else "",
+        "outputs": {"job_id": job_id} if partial else _result_outputs(job_id),
+        "partial": partial,
+    }
+
+
+def _load_saved_analysis_result(result_path: str) -> dict | None:
+    try:
+        result_data = load_json_checkpoint(result_path)
+    except CorruptCheckpointError:
+        return None
+    return result_data if isinstance(result_data, dict) else None
+
+
+@app.get("/api/analyze/{job_id}/partial-result")
+async def get_analysis_partial_result(job_id: str) -> dict:
+    job_id = _validate_job_id(job_id)
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    partial_path = os.path.abspath(os.path.join(output_dir, f"{job_id}_partial_result.json"))
+    if not partial_path.startswith(output_dir + os.sep) or not os.path.exists(partial_path):
+        raise HTTPException(status_code=404, detail="Partial analysis result not found")
+    partial_result = _load_saved_analysis_result(partial_path)
+    if partial_result is None:
+        raise HTTPException(status_code=404, detail="Partial analysis result not found")
+    return _analysis_saved_result_for_ui(job_id, partial_result, partial=True)
+
+
+@app.get("/api/analyze/{job_id}/recoverable-result")
+async def get_analysis_recoverable_result(job_id: str) -> dict:
+    job_id = _validate_job_id(job_id)
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    for filename, partial in (
+        (f"{job_id}_result.json", False),
+        (f"{job_id}_partial_result.json", True),
+    ):
+        result_path = os.path.abspath(os.path.join(output_dir, filename))
+        if not result_path.startswith(output_dir + os.sep) or not os.path.exists(result_path):
+            continue
+        result_data = _load_saved_analysis_result(result_path)
+        if result_data is not None:
+            return _analysis_saved_result_for_ui(job_id, result_data, partial=partial)
+    raise HTTPException(status_code=404, detail="Recoverable analysis result not found")
+
+
 @app.post("/api/analyze/{job_id}/cancel")
 async def cancel_analysis(job_id: str, payload: dict | None = Body(None)) -> dict:
     job_id = _validate_job_id(job_id)
@@ -5856,6 +5950,7 @@ async def stream_real_analysis(
     context_template: dict | None = None,
     selected_term_glossary_ids: list | None = None,
     term_glossaries: list | None = None,
+    diarization_during_analysis: bool = True,
     prepared_upload_path: str | None = None,
     source_filename: str | None = None,
     prepared_cancel_event=None,
@@ -5924,6 +6019,7 @@ async def stream_real_analysis(
     async def prepare_real_config() -> dict:
         raise_if_cancelled()
         config = load_config()
+        _apply_analysis_request_diarization_mode(config, diarization_during_analysis)
 
         report_progress("음성 인식 모델 확인 중", 6)
         config.setdefault("stt", {})["selected_model"] = "faster-whisper-large-v3"
@@ -5973,6 +6069,7 @@ async def stream_real_analysis(
                 "context_template": context_template or {},
                 "selected_term_glossary_ids": selected_term_glossary_ids or [],
                 "term_glossaries": term_glossaries or [],
+                "source_filename": source_filename or (file.filename if file else ""),
             }
             raise_if_cancelled()
             result = await asyncio.to_thread(
@@ -6760,7 +6857,7 @@ def process_audio_pipeline(
     partial_display_segments = build_display_segments(copy.deepcopy(raw_stt_segments))
     partial_result_data = {
         "job_id": job_id,
-        "source_file": os.path.basename(input_file),
+        "source_file": (meeting_context or {}).get("source_filename") or os.path.basename(input_file),
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
         "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
@@ -6967,7 +7064,7 @@ def process_audio_pipeline(
     _raise_if_cancelled()
     result_data = {
         "job_id": job_id,
-        "source_file": os.path.basename(input_file),
+        "source_file": (meeting_context or {}).get("source_filename") or os.path.basename(input_file),
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
         "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),

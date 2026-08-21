@@ -965,6 +965,18 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertTrue(response.json()["diarization"]["enabled"])
         self.assertTrue(response.json()["diarization"]["generate_during_analysis"])
 
+    def test_analysis_request_diarization_mode_is_applied_per_job(self) -> None:
+        auto_config = {"diarization": {"enabled": False, "generate_during_analysis": False}}
+        manual_config = {"diarization": {"enabled": True, "generate_during_analysis": True}}
+
+        main._apply_analysis_request_diarization_mode(auto_config, True)
+        main._apply_analysis_request_diarization_mode(manual_config, False)
+
+        self.assertTrue(auto_config["diarization"]["enabled"])
+        self.assertTrue(auto_config["diarization"]["generate_during_analysis"])
+        self.assertTrue(manual_config["diarization"]["enabled"])
+        self.assertFalse(manual_config["diarization"]["generate_during_analysis"])
+
     def test_update_settings_clamps_audio_auto_save_when_audio_not_preserved(self) -> None:
         config_ref = main.normalize_app_config({
             "paths": {"stt_model": "../models/faster-whisper-large-v3"},
@@ -4368,6 +4380,186 @@ class AnalyzeApiTest(unittest.TestCase):
             state = load_json_checkpoint(checkpoint_paths.state_path)
             self.assertTrue(state["diarization_skipped"])
             self.assertTrue(state["resume_supported"])
+
+    def test_pipeline_saves_partial_result_before_auto_diarization(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            output_dir = os.path.join(work_dir, "outputs")
+            config = {
+                "paths": {
+                    "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3",
+                    "diarization_model": "pyannote-model",
+                    "output_dir": output_dir,
+                    "temp_dir": os.path.join(work_dir, "temp"),
+                    "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
+                "preprocessing": {"enabled": False},
+                "diarization": {"enabled": True, "generate_during_analysis": True},
+                "summary": {"enabled": False},
+                "privacy": {
+                    "auto_delete_temp_audio": True,
+                    "preserve_extracted_audio": True,
+                    "save_original_audio_copy": False,
+                },
+            }
+            config["_meeting_context"] = {"source_filename": "원본 회의.mp4"}
+            job_id = "unit_partial_saved_before_diarization"
+            partial_path = os.path.join(output_dir, f"{job_id}_partial_result.json")
+
+            def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
+                with open(output_path, "wb") as handle:
+                    handle.write(b"wav")
+                return {"preprocessing": preprocessing or {}}
+
+            def assert_partial_then_fail(*_args, **_kwargs):
+                self.assertTrue(os.path.exists(partial_path))
+                partial_result = load_json_checkpoint(partial_path)
+                self.assertTrue(partial_result["settings"]["partial"])
+                self.assertEqual(partial_result["source_file"], "원본 회의.mp4")
+                self.assertEqual(partial_result["segments"][0]["text"], "saved first")
+                raise RuntimeError("diarization failed after partial save")
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=5.0),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 5.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[
+                    {"start": 0.0, "end": 5.0, "text": "saved first"},
+                ]),
+                patch("pipeline.diarize.diarize_audio", side_effect=assert_partial_then_fail),
+                patch("pipeline.export_txt.export_txt"),
+            ):
+                result = process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+
+            self.assertEqual(result["result_data"]["segments"][0]["text"], "saved first")
+            self.assertTrue(result["result_data"]["settings"]["diarization_skipped"])
+
+    def test_partial_result_endpoint_returns_saved_transcript_for_ui(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            job_id = "unit_partial_result_endpoint"
+            partial_path = os.path.join(work_dir, f"{job_id}_partial_result.json")
+            with open(partial_path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "job_id": job_id,
+                    "source_file": "meeting.wav",
+                    "created_at": "2026-07-30T12:00:00",
+                    "selected_report_template_id": "standard-minutes",
+                    "report_template": {},
+                    "selected_context_template_id": "general",
+                    "context_template": {},
+                    "selected_term_glossary_ids": [],
+                    "term_glossaries": [],
+                    "settings": {"diarization_requested": True, "partial": True},
+                    "segments": [{"start": 0.0, "end": 5.0, "speaker": "", "text": "saved transcript"}],
+                    "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "", "text": "saved transcript"}],
+                    "summary": {"title": "중간 저장 테스트", "overview": "대화록 저장 완료"},
+                }, handle, ensure_ascii=False)
+
+            with patch("main.load_config", return_value={
+                "paths": {"output_dir": work_dir},
+            }):
+                response = self.client.get(f"/api/analyze/{job_id}/partial-result")
+
+            self.assertEqual(response.status_code, 200, response.text)
+            payload = response.json()
+            self.assertTrue(payload["partial"])
+            self.assertTrue(payload["diarization_requested"])
+            self.assertEqual(payload["source_file"], "meeting.wav")
+            self.assertEqual(payload["segments"][0]["text"], "saved transcript")
+            self.assertEqual(payload["display_segments"][0]["text"], "saved transcript")
+            self.assertEqual(payload["summary"], "대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다.")
+
+            final_path = os.path.join(work_dir, f"{job_id}_result.json")
+            with open(final_path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "job_id": job_id,
+                    "source_file": "meeting.wav",
+                    "created_at": "2026-07-30T12:00:00",
+                    "settings": {
+                        "diarization_requested": True,
+                        "diarization": True,
+                        "diarization_skipped": False,
+                    },
+                    "segments": [{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_00", "text": "final transcript"}],
+                    "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "SPEAKER_00", "text": "final transcript"}],
+                    "summary": {"title": "복구 테스트", "overview": "최종 저장 완료"},
+                }, handle, ensure_ascii=False)
+
+            with patch("main.load_config", return_value={
+                "paths": {"output_dir": work_dir},
+            }):
+                recovered = self.client.get(f"/api/analyze/{job_id}/recoverable-result")
+
+            self.assertEqual(recovered.status_code, 200, recovered.text)
+            recovered_payload = recovered.json()
+            self.assertFalse(recovered_payload["partial"])
+            self.assertTrue(recovered_payload["diarization_applied"])
+            self.assertEqual(recovered_payload["segments"][0]["text"], "final transcript")
+            self.assertEqual(recovered_payload["summary"], "최종 저장 완료")
+
+            missing_job_id = "unit_missing_recoverable_result"
+            with patch("main.load_config", return_value={
+                "paths": {"output_dir": work_dir},
+            }):
+                missing_partial = self.client.get(f"/api/analyze/{missing_job_id}/partial-result")
+                missing_recoverable = self.client.get(f"/api/analyze/{missing_job_id}/recoverable-result")
+                invalid_job = self.client.get("/api/analyze/unit..bad/partial-result")
+
+            self.assertEqual(missing_partial.status_code, 404, missing_partial.text)
+            self.assertEqual(missing_recoverable.status_code, 404, missing_recoverable.text)
+            self.assertEqual(invalid_job.status_code, 400, invalid_job.text)
+
+            os.remove(final_path)
+            with patch("main.load_config", return_value={
+                "paths": {"output_dir": work_dir},
+            }):
+                partial_recovered = self.client.get(f"/api/analyze/{job_id}/recoverable-result")
+
+            self.assertEqual(partial_recovered.status_code, 200, partial_recovered.text)
+            partial_recovered_payload = partial_recovered.json()
+            self.assertTrue(partial_recovered_payload["partial"])
+            self.assertEqual(partial_recovered_payload["segments"][0]["text"], "saved transcript")
+
+    def test_recoverable_result_falls_back_when_final_json_is_corrupt(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            job_id = "unit_corrupt_final_result"
+            partial_path = os.path.join(work_dir, f"{job_id}_partial_result.json")
+            final_path = os.path.join(work_dir, f"{job_id}_result.json")
+            with open(partial_path, "w", encoding="utf-8") as handle:
+                json.dump({
+                    "job_id": job_id,
+                    "source_file": "meeting.wav",
+                    "settings": {"diarization_requested": True, "partial": True},
+                    "segments": [{"start": 0.0, "end": 5.0, "speaker": "", "text": "saved transcript"}],
+                    "display_segments": [{"start": 0.0, "end": 5.0, "speaker": "", "text": "saved transcript"}],
+                    "summary": {"title": "중간 저장 테스트", "overview": "대화록 저장 완료"},
+                }, handle, ensure_ascii=False)
+
+            for corrupt_payload in ("", "{not-json"):
+                with open(final_path, "w", encoding="utf-8") as handle:
+                    handle.write(corrupt_payload)
+                with patch("main.load_config", return_value={
+                    "paths": {"output_dir": work_dir},
+                }):
+                    recovered = self.client.get(f"/api/analyze/{job_id}/recoverable-result")
+                self.assertEqual(recovered.status_code, 200, recovered.text)
+                recovered_payload = recovered.json()
+                self.assertTrue(recovered_payload["partial"])
+                self.assertEqual(recovered_payload["segments"][0]["text"], "saved transcript")
+
+            empty_partial_job_id = "unit_empty_partial_result"
+            empty_partial_path = os.path.join(work_dir, f"{empty_partial_job_id}_partial_result.json")
+            with open(empty_partial_path, "w", encoding="utf-8") as handle:
+                handle.write("")
+            with patch("main.load_config", return_value={
+                "paths": {"output_dir": work_dir},
+            }):
+                empty_partial = self.client.get(f"/api/analyze/{empty_partial_job_id}/partial-result")
+            self.assertEqual(empty_partial.status_code, 404, empty_partial.text)
 
     def test_pipeline_reports_post_transcription_progress_before_later_steps(self) -> None:
         progress_events = []

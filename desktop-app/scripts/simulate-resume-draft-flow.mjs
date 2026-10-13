@@ -209,7 +209,14 @@ const runWriterLayoutScenario = async (browser) => {
           infoWidth: info?.width ?? null,
           action: action && { left: action.left, right: action.right, top: action.top, bottom: action.bottom },
           startButton: startButton && { left: startButton.left, right: startButton.right, width: startButton.width },
-          backdrop: backdrop && { left: backdrop.left, right: backdrop.right, top: backdrop.top, bottom: backdrop.bottom },
+          backdrop: backdrop && {
+            left: backdrop.left,
+            right: backdrop.right,
+            top: backdrop.top,
+            bottom: backdrop.bottom,
+            width: backdrop.width,
+            height: backdrop.height,
+          },
           visibleBottoms: [title?.bottom, fileButton?.bottom, info?.bottom, action?.bottom, startButton?.bottom],
         };
       });
@@ -236,8 +243,10 @@ const runWriterLayoutScenario = async (browser) => {
         }
         if (viewport.width === 1600) {
           assert.ok(wideBaseline, '1440 baseline should be measured before 1600');
+          assert.ok(metrics.uploadWidth >= 583.5 && metrics.infoWidth >= 447.5, '1600 panels should reach their approved minimum fidelity widths');
           assert.ok(metrics.uploadWidth <= 584.5 && metrics.infoWidth <= 448.5, '1600 panels should stop at their approved maximum widths');
           assert.ok(metrics.backdrop && metrics.backdrop.right >= metrics.info.right, 'background plate should cover the complete writer rail');
+          assert.ok(metrics.backdrop.width > 0 && metrics.backdrop.height > 0, 'background decoration should keep a visible rendered size');
         }
       } else {
         assert.ok(metrics.info.top >= metrics.upload.bottom - 1, '1024px should stack the writer sections in one column');
@@ -251,6 +260,22 @@ const runWriterLayoutScenario = async (browser) => {
       }
     }
     await page.setViewportSize({ width: 1280, height: 800 });
+    const droppedFilename = 'drag-drop-selection-check.mp3';
+    await page.locator('.file-drop-zone').evaluate((dropZone, filename) => {
+      const dataTransfer = new DataTransfer();
+      dataTransfer.items.add(new File([new Uint8Array([1, 2, 3, 4])], filename, { type: 'audio/mpeg' }));
+      for (const type of ['dragenter', 'dragover', 'drop']) {
+        dropZone.dispatchEvent(new DragEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          dataTransfer,
+        }));
+      }
+    }, droppedFilename);
+    await page.getByText(droppedFilename, { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText(droppedFilename, { exact: true }).isVisible(), true, 'drag/drop should show the selected filename');
+    await page.getByRole('button', { name: `${droppedFilename} 제거` }).click();
+    await page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
     await startButton.click();
     await page.getByText(/필수 항목을 확인해 주세요/).waitFor({ timeout: 10000 });
     await page.locator('#writer-form-error').waitFor({ timeout: 10000 });
@@ -270,28 +295,54 @@ const runWriterLayoutScenario = async (browser) => {
 };
 
 const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
+  const stalePrivacyMessage = '분석용 임시 음성은 완료 후 삭제됩니다.';
+  const preloadPrivacyMessage = '분석용 음성을 회의록과 함께 보관합니다.';
+  const startPrivacyMessage = '분석용 음성을 회의록과 함께 보관하고 다운로드 폴더에도 사본을 저장합니다.';
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   let settingsReadCount = 0;
   let submittedDiarizationValue = null;
+  let acceptStartSettings = false;
+  let initialSettingsSettled = false;
   let releaseInitialSettings = () => {};
   const initialSettingsCanFinish = new Promise(resolve => {
     releaseInitialSettings = resolve;
   });
+  const waitForSettingsQuiet = async (minimumCount, quietMs = 400) => {
+    const deadline = Date.now() + 10000;
+    let observedCount = settingsReadCount;
+    let changedAt = Date.now();
+    while (Date.now() < deadline) {
+      if (settingsReadCount !== observedCount) {
+        observedCount = settingsReadCount;
+        changedAt = Date.now();
+      }
+      if (observedCount >= minimumCount && Date.now() - changedAt >= quietMs) return observedCount;
+      await sleep(25);
+    }
+    throw new Error(`settings requests did not settle; count=${settingsReadCount}`);
+  };
 
   await installBaseRoutes(page);
   await page.route('**/api/settings', async route => {
     settingsReadCount += 1;
-    const isInitialRequest = settingsReadCount === 1;
-    if (isInitialRequest) await initialSettingsCanFinish;
-    return route.fulfill({
+    const requestNumber = settingsReadCount;
+    const isStartRequest = acceptStartSettings;
+    if (!isStartRequest && requestNumber === 1) await initialSettingsCanFinish;
+    const fulfilled = route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
-        diarization: { enabled: true, generate_during_analysis: isInitialRequest },
-        privacy: { preserve_extracted_audio: true, auto_save_audio_copy: false },
+        diarization: { enabled: true, generate_during_analysis: !isStartRequest },
+        privacy: isStartRequest
+          ? { preserve_extracted_audio: true, auto_save_audio_copy: true }
+          : requestNumber === 1
+            ? { preserve_extracted_audio: false, auto_save_audio_copy: false }
+            : { preserve_extracted_audio: true, auto_save_audio_copy: false },
       }),
     });
+    if (requestNumber === 1) initialSettingsSettled = true;
+    return fulfilled;
   });
   await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
     status: 200,
@@ -309,31 +360,53 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
     return route.fulfill({
       status: 200,
       contentType: 'text/event-stream',
-      body: ['event: done', 'data: [DONE]', '', ''].join('\n'),
+      body: [
+        'event: progress',
+        'data: {"type":"progress","progress":10,"status":"processing","message":"설정 역전 테스트"}',
+        '',
+        'event: error',
+        'data: {"type":"error","progress":10,"status":"error","message":"설정 역전 테스트 오류"}',
+        '',
+        'event: done',
+        'data: [DONE]',
+        '',
+      ].join('\n'),
     });
   });
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    while (settingsReadCount < 1) {
-      await sleep(25);
-    }
+    await waitForSettingsQuiet(1);
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByLabel('회의 제목 *').fill('최신 설정 확인');
     await page.getByLabel('회의 목적 *').fill('분석 시작 직전 설정 재조회');
+    assert.equal(await page.getByText(startPrivacyMessage, { exact: true }).count(), 0, 'analysis-start privacy guidance should not appear before the start request');
+    const preloadSettingsCount = await waitForSettingsQuiet(1);
+    acceptStartSettings = true;
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.waitForFunction(() => document.body.innerText.includes('분석 진행'));
     const submissionDeadline = Date.now() + 5_000;
     while (submittedDiarizationValue === null && Date.now() < submissionDeadline) {
       await sleep(25);
     }
-    assert.ok(settingsReadCount >= 2, 'analysis start should re-read settings after the initial page load');
-    assert.equal(submittedDiarizationValue, 'false', 'analysis payload should use the latest Settings value');
+    assert.equal(settingsReadCount, preloadSettingsCount + 1, `analysis start should read settings once after preload requests settle (preload=${preloadSettingsCount}, total=${settingsReadCount})`);
+    assert.equal(submittedDiarizationValue, 'false', 'analysis payload should use the analysis-start settings value');
+    await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '입력 확인' }).click();
     releaseInitialSettings();
-    await page.waitForTimeout(100);
-    assert.equal(await page.getByText('참석자 구분을 계속 진행합니다.', { exact: false }).count(), 0, 'progress guidance should not revert to an older settings response');
-    console.log('ok - latest diarization setting scenario');
+    const settleDeadline = Date.now() + 5000;
+    while (!initialSettingsSettled && Date.now() < settleDeadline) {
+      await sleep(25);
+    }
+    assert.ok(initialSettingsSettled, 'stale initial settings response should be delivered');
+    await sleep(200);
+    const latestPrivacyMessage = page.getByText(startPrivacyMessage, { exact: true });
+    await latestPrivacyMessage.waitFor({ timeout: 10000 });
+    assert.equal(await latestPrivacyMessage.isVisible(), true, 'latest privacy guidance should remain after a failed analysis and a stale settings response');
+    assert.equal(await page.getByText(stalePrivacyMessage, { exact: true }).count(), 0, 'stale privacy guidance should not replace the analysis-start response');
+    assert.equal(await page.getByText(preloadPrivacyMessage, { exact: true }).count(), 0, 'preload privacy guidance should not replace the analysis-start response');
+    console.log('ok - latest analysis settings scenario');
   } finally {
+    releaseInitialSettings();
     await context.close();
   }
 };

@@ -1,9 +1,11 @@
 # 0. Immediate queue
-- [ ] 2026-08-12 집에서 확인: 새 회의록 바다 테마 후속 안정화
+- [x] 2026-08-12 집에서 확인: 새 회의록 바다 테마 후속 안정화
   - 분석 시작 직전 `/api/settings` 응답이 초기 설정 응답을 무효화하는 경우에도 `privacy.preserve_extracted_audio`와 `privacy.auto_save_audio_copy`를 최신 응답에서 함께 반영해, 분석 실패 후 입력 화면으로 돌아왔을 때 파일 보관 안내가 사라지지 않게 한다.
   - `simulate-resume-draft-flow.mjs`의 1600px 검증에 패널 폭 하한과 장식의 실제 표시 크기(`width > 0`, `height > 0`)를 추가한다. 현재 상한 검사만으로는 패널이 지나치게 작아지거나 고래가 숨겨지는 회귀를 놓칠 수 있다.
   - `DataTransfer`를 이용한 drag/drop 후 선택 파일명이 실제로 표시되는지 검증하고, 설정 응답 역전 뒤에도 최신 privacy 안내가 남는지 단언한다.
   - 완료 기준: 집중 시뮬레이션, `corepack pnpm --dir desktop-app typecheck`, `git diff --check` 통과. 고래의 현재 512px 표시는 사용자 시각 승인에 따른 의도적 예외로 유지한다.
+  - 2026-08-24 완료: 분석 시작 시 최신 privacy 설정 두 값을 함께 반영하고, 1600px 패널 폭 하한·배경 장식 표시 크기와 DataTransfer 파일명 단언을 추가했다.
+  - 2026-10-13 보강: 개발 서버가 설정 로더를 두 번 실행해도 시작 전 응답과 분석 시작 응답의 보관 안내가 달라지도록 시뮬레이션을 나눴다. `latest-diarization-setting` 장면이 통과했다.
 - [ ] 2026-07-29 바로록 데스크톱·웹 제품 전환
   - 상위 계획과 결정 기록: `docs/barorok-desktop-web-redesign-plan.html`.
   - 작업 브랜치: `codex/barorok-desktop-web-redesign`.

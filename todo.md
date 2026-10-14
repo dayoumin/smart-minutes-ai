@@ -4,6 +4,10 @@
   - `simulate-resume-draft-flow.mjs`의 1600px 검증에 패널 폭 하한과 장식의 실제 표시 크기(`width > 0`, `height > 0`)를 추가한다. 현재 상한 검사만으로는 패널이 지나치게 작아지거나 고래가 숨겨지는 회귀를 놓칠 수 있다.
   - `DataTransfer`를 이용한 drag/drop 후 선택 파일명이 실제로 표시되는지 검증하고, 설정 응답 역전 뒤에도 최신 privacy 안내가 남는지 단언한다.
   - 완료 기준: 집중 시뮬레이션, `corepack pnpm --dir desktop-app typecheck`, `git diff --check` 통과. 고래의 현재 512px 표시는 사용자 시각 승인에 따른 의도적 예외로 유지한다.
+- [ ] 2026-10-14 디자인 정합성 후속 (보류 P3)
+  - 2026-10-14 완료 커밋: `8f9f5cd`(셸·사이드바 통일) → `e8699f6`(상세 메타 한 줄) → `658a6e4`(사이드바 기록 찾기 숨김) → `bdeadad`(대화록 한 줄 행) → `3654924`(부분 커밋 JSX 복구) → `b4ed780`(주요 주제 칩) → `e5b31c8`(agent 검토 반영). 검증: `desktop-app/scripts/simulate-meeting-detail-layout.mjs`.
+  - 남은 후보: 설정 모델 탭의 모델명 노출 표현 결정, 새 회의록 1280×720 회의 목적 예시 문구 잘림, 내려받는 파일 `[주요 내용]`의 주제 중복(`MeetingDownloadControl.tsx`).
+  - 보류 P3: 주제별 정리가 이전 기준(outdated)일 때 칩이 옛 제목을 보여줌, 공백 차이만 있는 주제의 칩 중복, 메타·시간 `title`의 중복 낭독 가능성, 원본 파일 아이콘이 음성 저장 버튼과 같음, 긴 영문 화자명이 7.5rem 열을 넘침, 운영 빌드에서도 숨긴 `MeetingArchive`가 마운트됨, `package.json`에 `test:meeting-detail-layout` 스크립트 미등록.
 - [ ] 2026-07-29 바로록 데스크톱·웹 제품 전환
   - 상위 계획과 결정 기록: `docs/barorok-desktop-web-redesign-plan.html`.
   - 작업 브랜치: `codex/barorok-desktop-web-redesign`.

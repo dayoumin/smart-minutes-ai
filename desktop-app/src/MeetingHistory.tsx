@@ -3858,6 +3858,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         <div className="meeting-meta-item">
                                             <dt className="meeting-meta-label"><CalendarDays size={15} aria-hidden="true" /><span className="sr-only">일시</span></dt>
                                             <dd className="meeting-meta-value">{selectedMeeting.date}</dd>
+                                        </div>
                                         {(selectedMeeting.meetingPurpose || selectedMeeting.participants) && (
                                             <div className="meeting-meta-item meeting-meta-item-purpose">
                                                 <dt className="meeting-meta-label">
@@ -3872,7 +3873,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 </dd>
                                             </div>
                                         )}
-                                        </div>
                                         {selectedMeeting.sourceFile && (
                                             <div className="meeting-meta-item meeting-meta-item-source">
                                                 <dt className="meeting-meta-label"><FileAudio size={15} aria-hidden="true" /><span className="sr-only">원본 파일</span></dt>
@@ -3914,6 +3914,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             </span>
                                         </div>
                                     </div>
+                                </div>
                                 {audioSourceUrl && (
                                     <audio
                                         className="meeting-audio-player"
@@ -3924,7 +3925,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         src={audioSourceUrl}
                                     />
                                 )}
-                                </div>
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note meeting-diarization-guidance" role="status">
                                         {toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.')}
@@ -4762,10 +4762,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         const needsSpeakerReview = segmentNeedsSpeakerReview(segment);
                                         const speakerTone = getSegmentSpeakerTone(segment, index);
                                         return (
+                                            <article key={`${segment.start}-${index}`} className={`speaker-turn script-row ${speakerTone} ${warning ? 'speaker-turn-warning' : ''}`}>
                                                 <div className="script-time-range" title={`${segment.start} - ${segment.end}`}>
                                                     {segment.start}<span className="sr-only"> - {segment.end}</span>
                                                 </div>
-                                            <article key={`${segment.start}-${index}`} className={`speaker-turn script-row ${speakerTone} ${warning ? 'speaker-turn-warning' : ''}`}>
                                                 <div className="speaker-meta script-meta">
                                                     <div className="speaker-label">
                                                         <span className="speaker-dot" />

@@ -802,7 +802,7 @@ const run = async () => {
     const gemma4e4bInitialCard = gemma4e4bInitialLink
       .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
     await gemma4e4bInitialCard.getByText('권장', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await modelsPanel.getByText('권장 2B', { exact: true }).count(), 0, '2B should not look recommended when memory recommends 4B');
+    assert.equal(await modelsPanel.getByText('권장', { exact: true }).count(), 1, 'only the memory-recommended 4B card should carry the 권장 badge');
 
     const gemma4e2bReadyCard = modelsPanel
       .getByRole('link', { name: 'gemma4:e2b 모델 페이지' })

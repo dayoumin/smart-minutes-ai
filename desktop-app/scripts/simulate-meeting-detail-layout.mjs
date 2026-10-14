@@ -144,6 +144,7 @@ const runTopicChipScenario = async browser => {
     await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
 
     const chips = page.locator('.summary-topic-list .topic-chip');
+    await chips.first().waitFor({ timeout: 10000 });
     assert.deepEqual(await chips.allTextContents(), ['어획량 감소와 수온', '음향 장비 교정'], 'summary chips should use deduplicated topic section titles');
 
     // Visit the topic sections once so their nodes unmount before the chip is used.

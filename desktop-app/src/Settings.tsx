@@ -73,10 +73,10 @@ const isLocalSummaryModel = (model?: string): boolean => {
 
 const isOllamaSummaryModel = (model?: string): boolean => Boolean(model && !isLocalSummaryModel(model));
 
-const getSummaryModelSizeLabel = (model?: string): string => {
+const getSummaryModelTraitLabel = (model?: string): string => {
     const normalized = normalizeSummaryModelName(model);
-    if (normalized === 'gemma4:e2b') return '가볍고 빠름';
-    if (normalized === 'gemma4:e4b') return '정리 품질 우선';
+    if (normalized === 'gemma4:e2b') return '2B · 가볍고 빠름';
+    if (normalized === 'gemma4:e4b') return '4B · 정리 품질 우선';
     return '';
 };
 
@@ -2111,7 +2111,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     <option key={option.model} value={option.model}>
                                                         {[
                                                             option.model,
-                                                            getSummaryModelSizeLabel(option.model),
+                                                            getSummaryModelTraitLabel(option.model),
                                                         ].filter(Boolean).join(' · ')}{option.model === recommendedSummaryModel ? ' (권장)' : ''}
                                                     </option>
                                                 ))}
@@ -2152,8 +2152,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             const menuKey = optionModel || option.url || option.command || `summary-model-${index}`;
                                             const menuCanRefresh = Boolean(optionModel && optionCanPull && optionInstalled);
                                             const hasMenuActions = Boolean(menuCanRefresh || optionRemovable || optionFileDeletable);
-                                            const optionSizeLabel = getSummaryModelSizeLabel(optionModel);
-                                            const optionMeta = optionSizeLabel
+                                            const optionTraitLabel = getSummaryModelTraitLabel(optionModel);
+                                            const optionMeta = optionTraitLabel
                                                 || (option.label && option.label !== optionName && option.source !== 'user'
                                                     ? option.label
                                                     : '');

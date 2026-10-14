@@ -354,7 +354,7 @@
     box-sizing: border-box;
   }
 
-  :where(button, a[href], input, select, textarea, [role=tab], [role=menuitem]):focus-visible {
+  :where(button, a[href], input, select, textarea, [role=tab], [role=menuitem], .topic-section-heading):focus-visible {
     outline: 2px solid var(--focus-ring-color);
     outline-offset: 2px;
   }

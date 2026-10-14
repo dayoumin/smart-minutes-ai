@@ -3856,7 +3856,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                     </label>
                                     <label className="grid gap-1 text-xs font-semibold text-foreground">
                                         회의 목적
-                                        <Input value={editMeetingPurpose} onChange={event => setEditMeetingPurpose(event.target.value)} aria-label="회의 목적" placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" />
+                                        <Input value={editMeetingPurpose} onChange={event => setEditMeetingPurpose(event.target.value)} aria-label="회의 목적" placeholder="예: 월간 현황 점검, 후속 조치 중심" />
                                     </label>
                                 </div>
                                 {!selectedMeeting.meetingPurpose && selectedMeeting.participants && (

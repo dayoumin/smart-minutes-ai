@@ -75,8 +75,8 @@ const isOllamaSummaryModel = (model?: string): boolean => Boolean(model && !isLo
 
 const getSummaryModelSizeLabel = (model?: string): string => {
     const normalized = normalizeSummaryModelName(model);
-    if (normalized === 'gemma4:e2b') return '2B';
-    if (normalized === 'gemma4:e4b') return '4B';
+    if (normalized === 'gemma4:e2b') return '가볍고 빠름';
+    if (normalized === 'gemma4:e4b') return '정리 품질 우선';
     return '';
 };
 
@@ -2109,7 +2109,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             >
                                                 {summaryModelOptions.map(option => (
                                                     <option key={option.model} value={option.model}>
-                                                        {option.model === recommendedSummaryModel ? `${option.model} (권장)` : option.model}
+                                                        {[
+                                                            option.model,
+                                                            getSummaryModelSizeLabel(option.model),
+                                                        ].filter(Boolean).join(' · ')}{option.model === recommendedSummaryModel ? ' (권장)' : ''}
                                                     </option>
                                                 ))}
                                             </select>
@@ -2150,12 +2153,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             const menuCanRefresh = Boolean(optionModel && optionCanPull && optionInstalled);
                                             const hasMenuActions = Boolean(menuCanRefresh || optionRemovable || optionFileDeletable);
                                             const optionSizeLabel = getSummaryModelSizeLabel(optionModel);
-                                            const optionMeta = optionRecommended
-                                                ? '권장'
-                                                : optionSizeLabel
-                                                    || (option.label && option.label !== optionName && option.source !== 'user'
-                                                        ? option.label
-                                                        : '');
+                                            const optionMeta = optionSizeLabel
+                                                || (option.label && option.label !== optionName && option.source !== 'user'
+                                                    ? option.label
+                                                    : '');
                                             return (
                                                 <div key={menuKey} className="rounded-md border border-border bg-background p-3 text-sm">
                                                     <div className="flex items-start justify-between gap-3">
@@ -2181,7 +2182,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                     <span className="block break-all text-sm font-semibold text-foreground">{optionName}</span>
                                                                 )}
                                                             </div>
-                                                            {optionMeta && <span className="mt-0.5 block text-xs font-medium text-muted-foreground">{optionMeta}</span>}
+                                                            {(optionRecommended || optionMeta) && (
+                                                                <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs font-medium text-muted-foreground">
+                                                                    {optionRecommended && <span className="text-foreground">권장</span>}
+                                                                    {optionRecommended && optionMeta && <span aria-hidden="true">·</span>}
+                                                                    {optionMeta && <span>{optionMeta}</span>}
+                                                                </span>
+                                                            )}
                                                         </div>
                                                         {optionSelected && optionInstalled ? (
                                                             <div className="relative flex shrink-0 items-center justify-end gap-2" data-summary-model-menu-root>

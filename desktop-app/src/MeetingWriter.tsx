@@ -2765,7 +2765,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         </div>
                         <div className="writer-field">
                             <label htmlFor="meeting-purpose">회의 목적 *</label>
-                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 사업 현황 점검, 결정사항과 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={hasAttemptedStart && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={hasAttemptedStart && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                     </div>
                     </section>

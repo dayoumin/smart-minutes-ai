@@ -2862,9 +2862,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const summaryMatches = hasGeneratedSummary
         && (!contentQuery || Boolean(selectedMeeting?.summary.toLowerCase().includes(contentQuery)));
     const allTopics = useMemo(() => {
-        const topics = selectedMeeting?.topics ?? [];
-        const sectionTopics = selectedMeeting?.topicSections?.map(section => section.topic) ?? [];
-        return Array.from(new Set([...topics, ...sectionTopics].filter(Boolean)));
+        // Topic section titles supersede summary keywords; the backend appends them to `topics`, so merging both repeats near-identical items.
+        const sectionTopics = (selectedMeeting?.topicSections?.map(section => section.topic) ?? []).filter(Boolean);
+        if (sectionTopics.length) return Array.from(new Set(sectionTopics));
+        return Array.from(new Set((selectedMeeting?.topics ?? []).filter(Boolean)));
     }, [selectedMeeting]);
     const visibleTopics = useMemo(
         () => allTopics.filter(topic => !contentQuery || topic.toLowerCase().includes(contentQuery)),
@@ -3385,6 +3386,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (input instanceof HTMLInputElement) {
                 input.focus();
             }
+        });
+    };
+
+    const handleOpenTopicSection = (topic: string) => {
+        const nextKey = normalizeTopicKey(topic);
+        if (!topicSectionKeySet.has(nextKey)) return;
+        setOrganizeTab('topics');
+        setSelectedTopicKey(nextKey);
+        window.requestAnimationFrame(() => {
+            topicSectionRefs.current[nextKey]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
     };
 
@@ -4243,10 +4254,25 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         {hasResultHighlights && (
                                             <div className="grid gap-3">
                                                 {!!visibleTopics.length && (
-                                                    <div className="detail-subtle-card">
-                                                        <div className="mb-2 text-xs font-semibold text-muted-foreground">주요 내용</div>
-                                                        <ul className="detail-list">
-                                                            {visibleTopics.map((topic, index) => <li key={`${topic}-${index}`}>{renderSearchText(toParticipantCopy(topic))}</li>)}
+                                                    <div className="summary-topic-row">
+                                                        <div className="text-xs font-semibold text-muted-foreground">주요 주제</div>
+                                                        <ul className="summary-topic-list">
+                                                            {visibleTopics.map((topic, index) => (
+                                                                <li key={`${topic}-${index}`}>
+                                                                    {topicSectionKeySet.has(normalizeTopicKey(topic)) ? (
+                                                                        <button
+                                                                            type="button"
+                                                                            className="topic-chip"
+                                                                            title="주제별 정리에서 보기"
+                                                                            onClick={() => handleOpenTopicSection(topic)}
+                                                                        >
+                                                                            {renderSearchText(toParticipantCopy(topic))}
+                                                                        </button>
+                                                                    ) : (
+                                                                        <span className="topic-chip topic-chip-static">{renderSearchText(toParticipantCopy(topic))}</span>
+                                                                    )}
+                                                                </li>
+                                                            ))}
                                                         </ul>
                                                     </div>
                                                 )}

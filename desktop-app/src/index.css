@@ -3485,6 +3485,14 @@
     background-color: var(--status-error-bg);
   }
 
+  .summary-topic-row {
+    @apply grid gap-2;
+  }
+
+  .summary-topic-list {
+    @apply m-0 flex list-none flex-wrap gap-2 p-0;
+  }
+
   .topic-chip {
     @apply max-w-72 cursor-pointer truncate rounded-full border px-3 py-1 text-xs font-medium shadow-sm transition-colors;
     background-color: var(--topic-chip-bg);
@@ -3517,6 +3525,12 @@
     background-color: var(--topic-chip-active-bg);
     border-color: var(--topic-chip-active-border);
     color: var(--topic-chip-active-fg);
+  }
+
+  .topic-chip.topic-chip-static {
+    @apply inline-block cursor-default;
+    border-color: var(--topic-chip-border);
+    color: var(--topic-chip-fg);
   }
 
   .speaker-turn {

@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Trash2, X } from 'lucide-react';
+import { CalendarDays, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -3656,11 +3656,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 <div className="app-panel-header">
                     <div className="meeting-detail-heading">
                         <div className="meeting-skeleton-line meeting-skeleton-title" />
-                        <div className="meeting-meta-grid meeting-meta-grid-with-source">
-                            <div className="meeting-skeleton-card" />
-                            <div className="meeting-skeleton-card" />
-                            <div className="meeting-skeleton-card" />
-                        </div>
+                        <div className="meeting-skeleton-line meeting-skeleton-meta" />
                     </div>
                 </div>
                 <div className="detail-main-nav px-5">
@@ -3857,30 +3853,38 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             </div>
                         ) : (
                             <>
-                                <div className="meeting-detail-heading">
-                                    <div className={`meeting-meta-grid${selectedMeeting.sourceFile ? ' meeting-meta-grid-with-source' : ''}`}>
+                                <div className="meeting-meta-line">
+                                    <dl className="meeting-meta-list">
                                         <div className="meeting-meta-item">
-                                            <span className="meeting-meta-label">일시</span>
-                                            <span className="meeting-meta-value">{selectedMeeting.date}</span>
-                                        </div>
-                                        <div className="meeting-meta-item">
-                                            <span className="meeting-meta-label">{selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}</span>
-                                            <span className="meeting-meta-value">{selectedMeeting.meetingPurpose || selectedMeeting.participants || '-'}</span>
+                                            <dt className="meeting-meta-label"><CalendarDays size={15} aria-hidden="true" /><span className="sr-only">일시</span></dt>
+                                            <dd className="meeting-meta-value">{selectedMeeting.date}</dd>
+                                        {(selectedMeeting.meetingPurpose || selectedMeeting.participants) && (
+                                            <div className="meeting-meta-item meeting-meta-item-purpose">
+                                                <dt className="meeting-meta-label">
+                                                    {selectedMeeting.meetingPurpose ? <Target size={15} aria-hidden="true" /> : <Users size={15} aria-hidden="true" />}
+                                                    <span className="sr-only">{selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}</span>
+                                                </dt>
+                                                <dd
+                                                    className="meeting-meta-value"
+                                                    title={selectedMeeting.meetingPurpose || selectedMeeting.participants}
+                                                >
+                                                    {selectedMeeting.meetingPurpose || selectedMeeting.participants}
+                                                </dd>
+                                            </div>
+                                        )}
                                         </div>
                                         {selectedMeeting.sourceFile && (
                                             <div className="meeting-meta-item meeting-meta-item-source">
-                                                <span className="meeting-meta-label">원본 파일</span>
-                                                <span
+                                                <dt className="meeting-meta-label"><FileAudio size={15} aria-hidden="true" /><span className="sr-only">원본 파일</span></dt>
+                                                <dd
                                                     className="meeting-meta-value meeting-meta-value-source"
                                                     title={selectedMeeting.sourceFile}
                                                 >
                                                     {selectedMeeting.sourceFile}
-                                                </span>
+                                                </dd>
                                             </div>
                                         )}
-                                    </div>
-                                </div>
-                                <div className={`meeting-runtime-row${audioSourceUrl ? '' : ' meeting-runtime-row-status-only'}`}>
+                                    </dl>
                                     <div className="meeting-status-grid">
                                         <div className="meeting-status-item">
                                             <span className="meeting-status-title">대화록</span>
@@ -3910,16 +3914,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             </span>
                                         </div>
                                     </div>
-                                    {audioSourceUrl && (
-                                        <audio
-                                            className="meeting-audio-player"
-                                            aria-label="추출 음성"
-                                            controls
-                                            crossOrigin="anonymous"
-                                            preload="metadata"
-                                            src={audioSourceUrl}
-                                        />
-                                    )}
+                                {audioSourceUrl && (
+                                    <audio
+                                        className="meeting-audio-player"
+                                        aria-label="추출 음성"
+                                        controls
+                                        crossOrigin="anonymous"
+                                        preload="metadata"
+                                        src={audioSourceUrl}
+                                    />
+                                )}
                                 </div>
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note meeting-diarization-guidance" role="status">

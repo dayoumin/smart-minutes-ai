@@ -218,9 +218,9 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=list(configured_exact_origins()),
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Accept", "Authorization", "Content-Type", DESKTOP_ACTION_TOKEN_HEADER],
-    expose_headers=["Content-Disposition"],
+    allow_methods=["GET", "HEAD", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Accept", "Authorization", "Content-Type", "Range", DESKTOP_ACTION_TOKEN_HEADER],
+    expose_headers=["Content-Disposition", "WWW-Authenticate", "Content-Range", "Accept-Ranges"],
 )
 
 
@@ -2418,7 +2418,7 @@ async def download_output(job_id: str, kind: str, request: Request) -> FileRespo
         "hwpx": (f"{job_id}_report.hwpx", "application/hwp+zip"),
     }
     if kind == "audio":
-        _require_save_copy_origin(request)
+        _require_output_audio_origin(request)
         config = load_config()
         audio_path = _resolve_job_audio_path(config, job_id)
         if not audio_path:
@@ -2442,7 +2442,7 @@ async def download_output(job_id: str, kind: str, request: Request) -> FileRespo
 
 @app.head("/api/outputs/{job_id}/audio")
 async def head_output_audio(job_id: str, request: Request) -> Response:
-    _require_save_copy_origin(request)
+    _require_output_audio_origin(request)
     job_id = _validate_job_id(job_id)
     config = load_config()
     audio_path = _resolve_job_audio_path(config, job_id)
@@ -3028,10 +3028,28 @@ def _should_generate_summary_during_analysis(config: dict) -> bool:
     return bool(summary_config.get("generate_during_analysis", False))
 
 
+def _canonical_generation_status(value) -> dict:
+    status = dict(value) if isinstance(value, dict) else {}
+    for camel, snake in (
+        ("topicSections", "topic_sections"),
+        ("speakerContextSummaries", "speaker_context_summaries"),
+        ("meetingReport", "meeting_report"),
+    ):
+        if snake not in status and camel in status:
+            status[snake] = status[camel]
+        status.pop(camel, None)
+    return status
+
+
 def _ensure_generation_status(summary: dict) -> dict:
     status = summary.get("generation_status")
-    if not isinstance(status, dict):
-        status = {}
+    canonical = _canonical_generation_status(status)
+    if isinstance(status, dict):
+        # Callers may still own this dict while another helper checks its state.
+        status.clear()
+        status.update(canonical)
+    else:
+        status = canonical
     status.setdefault("summary", "completed" if summary.get("overview") else "not_started")
     status.setdefault("topic_sections", "completed" if summary.get("topic_sections") else "not_started")
     status.setdefault(
@@ -4154,7 +4172,7 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
 
         export_error = None
         try:
-            outputs = _refresh_summary_exports(job_id, result_data)
+            outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
         except Exception:
             logging.exception("Failed to refresh exports after summary generation")
             outputs = _result_outputs(job_id)
@@ -4265,7 +4283,7 @@ async def generate_output_topic_sections(job_id: str, payload: dict | None = Bod
 
         export_error = None
         try:
-            outputs = _refresh_summary_exports(job_id, result_data)
+            outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
         except Exception:
             logging.exception("Failed to refresh exports after topic section generation")
             outputs = _result_outputs(job_id)
@@ -4416,7 +4434,7 @@ async def generate_output_topic_section(job_id: str, payload: dict | None = Body
 
         export_error = None
         try:
-            outputs = _refresh_summary_exports(job_id, result_data)
+            outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
         except Exception:
             logging.exception("Failed to refresh exports after custom topic section generation")
             outputs = _result_outputs(job_id)
@@ -4536,7 +4554,7 @@ async def generate_output_speaker_context(job_id: str, payload: dict | None = Bo
 
         export_error = None
         try:
-            outputs = _refresh_summary_exports(job_id, result_data)
+            outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
         except Exception:
             logging.exception("Failed to refresh exports after speaker context generation")
             outputs = _result_outputs(job_id)
@@ -4662,7 +4680,7 @@ async def generate_output_meeting_report(job_id: str, payload: dict | None = Bod
 
         export_error = None
         try:
-            outputs = _refresh_summary_exports(job_id, result_data)
+            outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
         except Exception:
             logging.exception("Failed to refresh exports after meeting report generation")
             outputs = _result_outputs(job_id)
@@ -4728,6 +4746,18 @@ def _require_save_copy_origin(request: Request) -> None:
     origin = request.headers.get("origin")
     if not origin or origin not in _allowed_save_copy_origins():
         raise HTTPException(status_code=403, detail="Save-copy is only available from the desktop app")
+
+
+def _require_output_audio_origin(request: Request) -> None:
+    if not api_auth_enforcement_enabled():
+        # Preserve the existing development and desktop origin contract.
+        _require_save_copy_origin(request)
+        return
+    # Authentication and export capability remain enforced by the middleware.
+    # Legacy save-copy overrides must not widen the authenticated web boundary.
+    origin = request.headers.get("origin")
+    if not origin or origin not in configured_exact_origins():
+        raise HTTPException(status_code=403, detail="Audio origin is not allowed")
 
 
 def _resolve_config_ffmpeg_path(config: dict) -> str:
@@ -5102,10 +5132,17 @@ def _auto_save_completed_outputs(
 def _export_record_to_path(kind: str, payload: dict, output_path: str) -> dict:
     result_data = _meeting_record_to_export_result(payload)
     if kind == "txt":
-        from pipeline.export_txt import export_txt
-        from pipeline.transcript_display import get_transcript_segments
+        requested_scope = payload.get("exportScope") or payload.get("export_scope")
+        if requested_scope and result_data.get("export_scope") == "full":
+            from pipeline.export_markdown import export_markdown
 
-        export_txt(get_transcript_segments(result_data), output_path)
+            export_markdown(result_data, output_path, plain_text=True)
+        else:
+            # Preserve transcript TXT, including legacy callers without a scope.
+            from pipeline.export_txt import export_txt
+            from pipeline.transcript_display import get_transcript_segments
+
+            export_txt(get_transcript_segments(result_data), output_path)
     elif kind == "md":
         from pipeline.export_markdown import export_markdown
 
@@ -5283,7 +5320,9 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
             "topic_sections": _participant_copy_value(payload.get("topicSections") or payload.get("topic_sections") or []),
             "participant_summaries": participant_summaries,
             "speaker_context_summaries": speaker_context_summaries,
-            "generation_status": payload.get("generationStatus") or payload.get("generation_status") or {},
+            "generation_status": _canonical_generation_status(
+                payload.get("generationStatus") if "generationStatus" in payload else payload.get("generation_status"),
+            ),
             "actions": _participant_copy_value(payload.get("actions") or []),
             "decisions": _participant_copy_value(payload.get("decisions") or []),
             "needs_check": _participant_copy_value(payload.get("needs_check") or payload.get("needsCheck") or []),
@@ -5530,7 +5569,7 @@ async def sync_output_record(job_id: str, payload: dict = Body(...)) -> dict:
 
     export_error = None
     try:
-        outputs = _refresh_summary_exports(job_id, result_data)
+        outputs = _refresh_transcript_and_summary_exports(job_id, result_data)
     except Exception:
         logging.exception("Failed to refresh exports after sync")
         outputs = _result_outputs(job_id)

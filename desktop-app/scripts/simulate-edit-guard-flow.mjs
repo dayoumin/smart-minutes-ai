@@ -206,12 +206,39 @@ const run = async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('수정본 가드 시뮬레이션').first().click();
 
+    assert.equal(await page.title(), '바로록');
+    const detailTabs = page.getByRole('tablist', { name: '회의록 상세' });
+    const transcriptTab = detailTabs.getByRole('tab', { name: '대화록', exact: true });
+    const organizedTab = detailTabs.getByRole('tab', { name: '기록 정리', exact: true });
+    const reportTab = detailTabs.getByRole('tab', { name: '보고서', exact: true });
+    await transcriptTab.focus();
+    await transcriptTab.press('ArrowRight');
+    assert.equal(await organizedTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await organizedTab.evaluate(element => element === document.activeElement), true);
+    await organizedTab.press('End');
+    assert.equal(await reportTab.getAttribute('aria-selected'), 'true');
+    const reportPanelId = await reportTab.getAttribute('aria-controls');
+    assert.ok(reportPanelId);
+    assert.equal(await page.locator(`#${reportPanelId}`).getAttribute('aria-labelledby'), await reportTab.getAttribute('id'));
+    await reportTab.press('Home');
+    assert.equal(await transcriptTab.getAttribute('aria-selected'), 'true');
+    assert.equal(await detailTabs.locator('[role="tab"][tabindex="0"]').count(), 1);
+
     await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
     await page.getByRole('button', { name: '대화록 편집' }).click();
     await page.getByLabel('참석자01 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
 
     await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
-    await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
+    const organizeModes = page.locator('.detail-mode-switch');
+    const summaryMode = organizeModes.getByRole('tab', { name: '전체 요약', exact: true });
+    await summaryMode.focus();
+    await summaryMode.press('End');
+    assert.equal(await organizeModes.getByRole('tab', { name: '참석자별 정리', exact: true }).getAttribute('aria-selected'), 'true');
+    await page.keyboard.press('Home');
+    assert.equal(await summaryMode.getAttribute('aria-selected'), 'true');
+    await summaryMode.press('ArrowRight');
+    assert.equal(await organizeModes.getByRole('tab', { name: '주제별 정리', exact: true }).getAttribute('aria-selected'), 'true');
+    assert.equal(await organizeModes.locator('[role="tab"][tabindex="0"]').count(), 1);
     await page.locator('button.detail-action-button[aria-label="주제별 정리"]').click();
     await page.getByText(guardMessage).waitFor({ timeout: 10000 });
 

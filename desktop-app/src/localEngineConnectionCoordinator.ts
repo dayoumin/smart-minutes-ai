@@ -1,4 +1,4 @@
-import type { LocalEngineClient } from './localEngineClientCore';
+import type { LocalEngineAuthorizationRecovery, LocalEngineClient } from './localEngineClientCore';
 import type {
     LocalEngineAuthorizationState,
     LocalEngineCapability,
@@ -75,6 +75,8 @@ const responseError = async (
 export class LocalEngineConnectionCoordinator {
     private transportOperationId = 0;
     private authorizationOperationId = 0;
+    private authorizationIntentId = 0;
+    private authorizationIntentPending = false;
     private readonly client: LocalEngineClient;
     private readonly credentials: LocalEngineSessionCredentialStore;
     private readonly callbacks: LocalEngineConnectionCoordinatorCallbacks;
@@ -103,6 +105,12 @@ export class LocalEngineConnectionCoordinator {
     private beginAuthorizationOperation(): number {
         this.authorizationOperationId += 1;
         return this.authorizationOperationId;
+    }
+
+    private beginUserAuthorizationOperation(pending = true): number {
+        this.authorizationIntentId += 1;
+        this.authorizationIntentPending = pending;
+        return this.beginAuthorizationOperation();
     }
 
     private isLatestTransport(operationId: number): boolean {
@@ -154,7 +162,7 @@ export class LocalEngineConnectionCoordinator {
     }
 
     async startPairing(): Promise<LocalEnginePairingStart | null> {
-        const operationId = this.beginAuthorizationOperation();
+        const operationId = this.beginUserAuthorizationOperation();
         this.callbacks.onPairingState({ phase: 'starting', challenge: null });
         try {
             const response = await this.client.pair('/api/pair/start', { method: 'POST' });
@@ -169,6 +177,7 @@ export class LocalEngineConnectionCoordinator {
             return challenge;
         } catch (error) {
             if (this.isLatestAuthorization(operationId)) {
+                this.authorizationIntentPending = false;
                 this.callbacks.onPairingState({
                     phase: 'error',
                     challenge: null,
@@ -180,7 +189,7 @@ export class LocalEngineConnectionCoordinator {
     }
 
     resetPairing(reason?: string): void {
-        this.beginAuthorizationOperation();
+        this.beginUserAuthorizationOperation(false);
         this.currentChallenge = null;
         this.callbacks.onPairingState({
             phase: reason ? 'error' : 'idle',
@@ -201,7 +210,7 @@ export class LocalEngineConnectionCoordinator {
     }
 
     private async runCompletePairing(pairingId: string, code: string): Promise<boolean> {
-        const operationId = this.beginAuthorizationOperation();
+        const operationId = this.beginUserAuthorizationOperation();
         const challenge = this.currentChallenge?.pairing_id === pairingId
             ? this.currentChallenge
             : null;
@@ -223,6 +232,7 @@ export class LocalEngineConnectionCoordinator {
                 return false;
             }
             this.currentChallenge = null;
+            this.authorizationIntentPending = false;
             const applied = this.applyCredential(operationId, credential);
             if (!applied) await this.revokeCredentialBestEffort(credential.session_token);
             return applied;
@@ -249,6 +259,56 @@ export class LocalEngineConnectionCoordinator {
         }
     }
 
+    captureAuthorizationRecovery(authorization: string): (() => Promise<LocalEngineAuthorizationRecovery | null>) | null {
+        if (this.authorizationIntentPending || this.credentials.requestHeaders().Authorization !== authorization) return null;
+        const intentId = this.authorizationIntentId;
+        const operationId = this.authorizationOperationId;
+        return () => this.recoverAuthorization(authorization, intentId, operationId);
+    }
+
+    private async recoverAuthorization(
+        authorization: string, intentId: number, capturedOperationId: number,
+    ): Promise<LocalEngineAuthorizationRecovery | null> {
+        if (this.authorizationIntentPending || this.authorizationIntentId !== intentId || !this.credentials.current()) return null;
+        let operationId = this.authorizationOperationId;
+        if (capturedOperationId === operationId || this.renewSessionInFlight) {
+            if (capturedOperationId === operationId && this.credentials.requestHeaders().Authorization !== authorization) return null;
+            const renewal = this.renewSession();
+            operationId = this.authorizationOperationId;
+            try {
+                if (!await renewal) return null;
+            } catch {
+                // renewSession publishes failure and clears only the current credential.
+                return null;
+            }
+        }
+        if (this.authorizationIntentPending || this.authorizationIntentId !== intentId || !this.isLatestAuthorization(operationId)) return null;
+        const credential = this.credentials.current();
+        if (!credential) return null;
+        const isCurrent = () => (
+            this.isLatestAuthorization(operationId)
+            && this.authorizationIntentId === intentId && !this.authorizationIntentPending
+            && this.credentials.current()?.session_token === credential.session_token
+        );
+        return {
+            authorization: `Bearer ${credential.session_token}`,
+            isCurrent,
+            expire: () => {
+                if (!isCurrent()) return;
+                this.beginAuthorizationOperation();
+                this.credentials.clear();
+                this.callbacks.onAuthorization('expired');
+                this.callbacks.onPairingState({ phase: 'expired', challenge: null });
+            },
+        };
+    }
+
+    dispose(): void {
+        this.beginTransportOperation();
+        this.beginUserAuthorizationOperation(false);
+        this.currentChallenge = null;
+    }
+
     private async runRenewSession(): Promise<boolean> {
         const operationId = this.beginAuthorizationOperation();
         const currentCredential = this.credentials.current();
@@ -261,7 +321,7 @@ export class LocalEngineConnectionCoordinator {
             const response = await this.client.session(
                 '/api/session/renew',
                 currentCredential.session_token,
-                { method: 'POST' },
+                { method: 'POST', timeoutMs: 5000 },
             );
             if (response.status === 401) {
                 if (this.isLatestAuthorization(operationId)) {
@@ -296,30 +356,32 @@ export class LocalEngineConnectionCoordinator {
     }
 
     async revokeSession(): Promise<boolean> {
-        const operationId = this.beginAuthorizationOperation();
-        const currentCredential = this.credentials.current();
-        if (!currentCredential) {
-            this.callbacks.onAuthorization('expired');
-            this.callbacks.onPairingState({ phase: 'expired', challenge: null });
-            return false;
+        const operationId = this.beginUserAuthorizationOperation();
+        try {
+            const currentCredential = this.credentials.current();
+            if (!currentCredential) {
+                this.callbacks.onAuthorization('expired');
+                this.callbacks.onPairingState({ phase: 'expired', challenge: null });
+                return false;
+            }
+            const response = await this.client.session(
+                '/api/session/revoke', currentCredential.session_token, { method: 'POST' },
+            );
+            if (!response.ok && response.status !== 401) throw await responseError(response, 'session');
+            if (!this.isLatestAuthorization(operationId)) return false;
+            this.credentials.clear();
+            const authorization = response.status === 401 ? 'expired' : 'revoked';
+            this.callbacks.onAuthorization(authorization);
+            this.callbacks.onPairingState({ phase: authorization, challenge: null });
+            return response.ok;
+        } finally {
+            if (this.isLatestAuthorization(operationId)) this.authorizationIntentPending = false;
         }
-        const response = await this.client.session(
-            '/api/session/revoke',
-            currentCredential.session_token,
-            { method: 'POST' },
-        );
-        if (!response.ok && response.status !== 401) throw await responseError(response, 'session');
-        if (!this.isLatestAuthorization(operationId)) return false;
-        this.credentials.clear();
-        const authorization = response.status === 401 ? 'expired' : 'revoked';
-        this.callbacks.onAuthorization(authorization);
-        this.callbacks.onPairingState({ phase: authorization, challenge: null });
-        return response.ok;
     }
 
     private async revokeCredentialBestEffort(sessionToken: string): Promise<void> {
         try {
-            await this.client.session('/api/session/revoke', sessionToken, { method: 'POST' });
+            await this.client.session('/api/session/revoke', sessionToken, { method: 'POST', timeoutMs: 5000 });
         } catch {
             // A stale credential is never installed locally; its short server TTL remains the fallback.
         }

@@ -835,6 +835,12 @@ const run = async () => {
     await runningPullButton.click();
     await openModelMenu(modelsPanel, 'user-running:1b');
     await expectDisabled(modelsPanel.getByRole('menuitem', { name: 'user-running:1b 등록 해제' }), true, 'running pull should block list removal');
+    const disabledModelMenu = modelsPanel.getByRole('menu');
+    await page.waitForFunction(element => element === document.activeElement, await disabledModelMenu.elementHandle());
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await disabledModelMenu.evaluate(element => element === document.activeElement), true, 'an all-disabled menu should keep a safe focus target');
+    await page.keyboard.press('Escape');
+    assert.equal(await modelsPanel.getByRole('button', { name: 'user-running:1b 모델 작업' }).evaluate(element => element === document.activeElement), true);
     await modelsPanel.getByText('25.0% 진행 · 약 15분 남음').waitFor({ state: 'visible', timeout: 10000 });
     assertHeightDeltaAtMost(
       beforeRunningSummaryMetrics,
@@ -848,7 +854,7 @@ const run = async () => {
     await modelsPanel.getByRole('button', { name: 'user-running:1b 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText('user-running:1b 모델 받기를 중지하고 있습니다.').count(), 0, 'summary stopping state should not add duplicate helper copy');
     assert.deepEqual(state.pullStopRequests, ['user-running:1b']);
-    await page.keyboard.press('Escape');
+    assert.equal(await settingsDialog.isVisible(), true);
 
     await modelsPanel.getByLabel('고급: 직접 입력').fill('broken-model:1b');
     await modelsPanel.getByRole('button', { name: '직접 입력 broken-model:1b 모델 검색' }).click();
@@ -887,6 +893,35 @@ const run = async () => {
     assert.equal(await customReadyCard.getByRole('button', { name: 'custom-ready:1b 모델 작업' }).count(), 0, 'current custom-ready model should not show a confusing overflow menu');
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'custom-ready:1b', 'direct input installed model should save as the configured summary model');
 
+    const modelMenuTrigger = modelsPanel.getByRole('button', { name: 'user-ready:1b 모델 작업' });
+    await modelMenuTrigger.focus();
+    await modelMenuTrigger.press('Enter');
+    const modelMenu = modelsPanel.getByRole('menu');
+    const updateMenuItem = modelMenu.getByRole('menuitem', { name: '업데이트', exact: true });
+    const deleteMenuItem = modelMenu.getByRole('menuitem', { name: 'user-ready:1b PC에서 삭제' });
+    await updateMenuItem.waitFor();
+    await page.waitForFunction(element => element === document.activeElement, await updateMenuItem.elementHandle());
+    assert.equal(await updateMenuItem.evaluate(element => element === document.activeElement), true, 'opening the model action menu should focus its first enabled item');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await deleteMenuItem.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await updateMenuItem.evaluate(element => element === document.activeElement), true, 'menu navigation should wrap');
+    await page.keyboard.press('End');
+    assert.equal(await deleteMenuItem.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Home');
+    assert.equal(await updateMenuItem.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Escape');
+    await modelMenu.waitFor({ state: 'hidden' });
+    assert.equal(await settingsDialog.isVisible(), true, 'Escape should close the menu, not settings');
+    assert.equal(await modelMenuTrigger.evaluate(element => element === document.activeElement), true, 'Escape should restore the menu trigger focus');
+    await modelMenuTrigger.press('ArrowDown');
+    await updateMenuItem.waitFor();
+    await page.waitForFunction(element => element === document.activeElement, await updateMenuItem.elementHandle());
+    assert.equal(await updateMenuItem.evaluate(element => element === document.activeElement), true);
+    await page.keyboard.press('Tab');
+    await modelMenu.waitFor({ state: 'hidden' });
+    assert.equal((await getSettingsFocusState(page)).dialogContainsActive, true, 'Tab should leave the menu without losing dialog focus');
+    assert.equal(await modelMenuTrigger.evaluate(element => element === document.activeElement), false, 'Tab should advance instead of trapping focus at the trigger');
     await openModelMenu(modelsPanel, 'user-ready:1b');
     await modelsPanel.getByRole('menuitem', { name: /^업데이트$/ }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByRole('menuitem', { name: 'user-ready:1b PC에서 삭제' }).click();
@@ -898,10 +933,20 @@ const run = async () => {
     await page.evaluate(() => {
       window.__confirmResponses.push(false);
     });
-    await openModelMenu(modelsPanel, 'list-only:1b');
-    await modelsPanel.getByRole('menuitem', { name: 'list-only:1b 등록 해제' }).click();
+    const listOnlyTrigger = modelsPanel.getByRole('button', { name: 'list-only:1b 모델 작업' });
+    await listOnlyTrigger.focus();
+    await listOnlyTrigger.press('ArrowUp');
+    const listOnlyItem = modelsPanel.getByRole('menuitem', { name: 'list-only:1b 등록 해제' });
+    await page.waitForFunction(element => element === document.activeElement, await listOnlyItem.elementHandle());
+    await page.keyboard.press('Shift+Tab');
+    await modelsPanel.getByRole('menu').waitFor({ state: 'hidden' });
+    assert.equal(await listOnlyTrigger.evaluate(element => element === document.activeElement), true);
+    await listOnlyTrigger.press('Enter');
+    await page.waitForFunction(element => element === document.activeElement, await listOnlyItem.elementHandle());
+    await listOnlyItem.press('Enter');
     await sleep(250);
     assert.equal(state.deleteRequests.length, deleteRequestsBeforeCancel, 'cancelled list removal should not call delete API');
+    assert.equal(await listOnlyTrigger.evaluate(element => element === document.activeElement), true, 'cancelled removal should return focus to the model menu trigger');
 
     await openModelMenu(modelsPanel, 'list-only:1b');
     await modelsPanel.getByRole('menuitem', { name: 'list-only:1b 등록 해제' }).click();
@@ -909,6 +954,7 @@ const run = async () => {
     assert.deepEqual(state.deleteRequests.at(-1), { model: 'list-only:1b', deleteFiles: false });
     await page.waitForFunction(() => !document.querySelector('#settings-models-panel')?.textContent?.includes('list-only:1b 목록 전용 모델'), null, { timeout: 10000 });
     assert.equal(await modelsPanel.getByRole('button', { name: 'list-only:1b 모델 작업' }).count(), 0);
+    await page.waitForFunction(element => element === document.activeElement, await modelsPanel.locator('select').elementHandle());
 
     const confirmMessages = await page.evaluate(() => window.__confirmMessages);
     assert.equal(confirmMessages.some(message => message.includes('Ollama 저장소에서 삭제할까요')), true, 'PC delete should ask for file-delete confirmation');

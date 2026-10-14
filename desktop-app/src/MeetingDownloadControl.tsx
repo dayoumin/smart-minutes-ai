@@ -8,7 +8,7 @@ import {
     DOWNLOAD_FORMAT_CHANGE_EVENT,
     getDownloadFormatPreference,
 } from './downloadPreferences';
-import { toApiUrl } from './apiBase';
+import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 
 const extensionByKind: Record<DownloadFormat, string> = {
     hwpx: 'hwpx',
@@ -93,6 +93,11 @@ const formatSegmentLine = (segment: MeetingSegment): string => {
     return `${segment.start}-${segment.end}${timingLabel} ${participantLabel(segment.displaySpeaker || segment.speaker)}: ${segment.text}`;
 };
 
+const exportParticipantLabel = (meeting: MeetingRecord, speaker: string, fallback?: string): string => (
+    meeting.speakerLabels?.[speaker]?.trim()
+    || participantLabel(meeting.speakerLabels && speaker ? speaker : fallback || speaker)
+);
+
 const transcriptSegmentsForExport = (meeting: MeetingRecord): MeetingSegment[] => (
     meeting.editedDisplaySegments?.length
         ? meeting.editedDisplaySegments
@@ -112,7 +117,7 @@ const buildTranscriptText = (meeting: MeetingRecord): string => {
         ...(transcriptSegmentsForExport(meeting).length
             ? transcriptSegmentsForExport(meeting).map(segment => ({
                 ...segment,
-                displaySpeaker: meeting.speakerLabels?.[segment.speaker] || segment.displaySpeaker || participantLabel(segment.speaker),
+                displaySpeaker: exportParticipantLabel(meeting, segment.speaker, segment.displaySpeaker),
             })).map(formatSegmentLine)
             : ['대화록이 없습니다. 다시 분석해 주세요.']),
     ];
@@ -145,13 +150,13 @@ const buildOrganizedText = (meeting: MeetingRecord): string => {
     }
     const speakerSummaries = meeting.speakerContextSummaries?.length
         ? meeting.speakerContextSummaries.map(item => ({
-            name: item.display_name || item.speaker || '참석자',
+            name: exportParticipantLabel(meeting, item.speaker, item.display_name),
             summary: item.summary,
             points: item.key_points ?? [],
             actions: item.actions ?? [],
         }))
         : (meeting.participantSummaries ?? []).map(item => ({
-            name: item.participant || '참석자',
+            name: exportParticipantLabel(meeting, item.participant, item.participant),
             summary: item.summary,
             points: item.key_points ?? [],
             actions: item.actions ?? [],
@@ -403,7 +408,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
 
     const tryDownloadFromUrl = async (url: string, fallbackName: string): Promise<boolean> => {
         try {
-            const response = await fetch(await toApiUrl(url));
+            const response = await localEngineClient.download(toLocalEngineApiPath(url));
             if (!response.ok) return false;
 
             const blob = await response.blob();
@@ -418,7 +423,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
 
     const trySaveCopyToDownloads = async (): Promise<boolean> => {
         try {
-            const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}/save-copy`), {
+            const response = await localEngineClient.request(`/api/export-record/${downloadKind}/save-copy`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(buildExportPayload(meeting, scope, downloadFilename)),
@@ -450,7 +455,7 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
                 return;
             }
 
-            const response = await fetch(await toApiUrl(`/api/export-record/${downloadKind}`), {
+            const response = await localEngineClient.request(`/api/export-record/${downloadKind}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(buildExportPayload(meeting, scope, downloadFilename)),

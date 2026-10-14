@@ -14,6 +14,10 @@ if (!(Test-Path -LiteralPath $python)) {
     throw "Backend virtual environment is missing: $python"
 }
 
+if (-not $env:ANALYSIS_MODE) {
+    $env:ANALYSIS_MODE = "real"
+}
+
 & $python -c "import fastapi, uvicorn, faster_whisper; print('backend runtime ok')"
 
 $existingByCommand = Get-CimInstance Win32_Process |

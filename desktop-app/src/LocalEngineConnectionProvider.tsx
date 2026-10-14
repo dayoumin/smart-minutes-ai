@@ -1,17 +1,16 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
     createInitialLocalEngineConnection,
     applyLocalEngineAuthorization,
     applyLocalEngineProbe,
     isLatestTransportCheck,
     LocalEngineConnectionSnapshot,
-    LocalEngineProbePayload,
     LocalEngineTransportState,
     parseLocalEngineProbe,
     updateLocalEngineTransport,
 } from './localEngineConnection';
 import { getRuntimeEnvironment } from './runtimeEnvironment';
-import { localEngineClient, localEngineSessionCredentials } from './localEngineClient';
+import { localEngineClient, localEngineSessionCredentials, registerLocalEngineAuthorizationRecovery } from './localEngineClient';
 import {
     LocalEngineConnectionCoordinator,
     LocalEnginePairingState,
@@ -20,22 +19,7 @@ import {
     parseLocalEnginePairingStart,
     parseLocalEngineSessionCredential,
 } from './localEngineSession';
-import type { LocalEnginePairingStart } from './localEngineSession';
-
-interface LocalEngineConnectionContextValue {
-    snapshot: LocalEngineConnectionSnapshot;
-    beginTransportCheck: () => number;
-    reportTransport: (checkId: number, transport: LocalEngineTransportState) => void;
-    pairingState: LocalEnginePairingState;
-    probeLocalEngine: () => Promise<LocalEngineProbePayload | null>;
-    startPairing: () => Promise<LocalEnginePairingStart | null>;
-    completePairing: (pairingId: string, code: string) => Promise<boolean>;
-    resetPairing: (reason?: string) => void;
-    renewSession: () => Promise<boolean>;
-    revokeSession: () => Promise<boolean>;
-}
-
-const LocalEngineConnectionContext = createContext<LocalEngineConnectionContextValue | null>(null);
+import { LocalEngineConnectionContext } from './LocalEngineConnectionContext';
 
 export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
     const environment = useMemo(() => getRuntimeEnvironment(), []);
@@ -103,6 +87,16 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         coordinator.revokeSession()
     ), [coordinator]);
     useEffect(() => {
+        if (environment.kind !== 'web-local-engine') return;
+        const unregister = registerLocalEngineAuthorizationRecovery(
+            authorization => coordinator.captureAuthorizationRecovery(authorization),
+        );
+        return () => {
+            unregister();
+            coordinator.dispose();
+        };
+    }, [coordinator, environment.kind]);
+    useEffect(() => {
         if (environment.kind !== 'web-local-engine' || snapshot.authorization !== 'authenticated') return;
         const synchronizeExpiration = () => {
             if (localEngineSessionCredentials.current()) return;
@@ -142,12 +136,4 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
             {children}
         </LocalEngineConnectionContext.Provider>
     );
-};
-
-export const useLocalEngineConnection = (): LocalEngineConnectionContextValue => {
-    const context = useContext(LocalEngineConnectionContext);
-    if (!context) {
-        throw new Error('useLocalEngineConnection must be used within LocalEngineConnectionProvider');
-    }
-    return context;
 };

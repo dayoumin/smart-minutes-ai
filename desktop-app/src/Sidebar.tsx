@@ -18,7 +18,7 @@ import {
     updateMeeting,
     updateMeetingPinned,
 } from './meetingRepository';
-import { toApiUrl } from './apiBase';
+import { localEngineClient } from './localEngineClient';
 import { ProgressBar } from './ProgressBar';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
@@ -320,7 +320,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
 
     useEffect(() => {
         if (!openMenuId) return;
-        let focusFrame = 0;
         const frame = window.requestAnimationFrame(() => {
             const trigger = recordMenuTriggerRefs.current.get(openMenuId);
             const panel = recordMenuPanelRefs.current.get(openMenuId);
@@ -331,16 +330,23 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 top: Math.max(8, Math.min(triggerBounds.bottom + 4, window.innerHeight - panelBounds.height - 8)),
                 left: Math.max(8, Math.min(triggerBounds.right - panelBounds.width, window.innerWidth - panelBounds.width - 8)),
             });
-            focusFrame = window.requestAnimationFrame(() => {
-                panel.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
-            });
         });
         return () => {
             window.cancelAnimationFrame(frame);
-            if (focusFrame) window.cancelAnimationFrame(focusFrame);
             setRecordMenuPosition(null);
         };
     }, [openMenuId]);
+
+    useEffect(() => {
+        if (!openMenuId || !recordMenuPosition) return;
+        const frame = window.requestAnimationFrame(() => {
+            recordMenuPanelRefs.current
+                .get(openMenuId)
+                ?.querySelector<HTMLButtonElement>('button:not([disabled])')
+                ?.focus();
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [openMenuId, recordMenuPosition]);
 
     useEffect(() => {
         const pendingFocus = pendingRecordMenuFocusRef.current;
@@ -641,7 +647,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         closeRecordMenu(record.id, true);
         if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?\n\n앱 안의 회의 기록과 분석 산출물은 삭제되지만, 다운로드 폴더에 저장한 HWPX/음성 파일은 직접 삭제해야 합니다.`)) return;
         if (record.jobId) {
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(record.jobId)}`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(record.jobId)}`, {
                 method: 'DELETE',
             }).catch(() => null);
             if (response && !response.ok && response.status !== 404) {

@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { FileText, RefreshCw } from 'lucide-react';
 import { Button } from './Button';
 import { StatusBanner } from './StatusBanner';
-import { toApiUrl } from './apiBase';
+import { localEngineClient } from './localEngineClient';
 
 interface BenchmarkListItem {
     id: string;
@@ -141,7 +141,7 @@ export const AsrBenchmark: React.FC = () => {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch(await toApiUrl('/api/dev/asr-benchmarks'), { cache: 'no-store' });
+            const response = await localEngineClient.request('/api/dev/asr-benchmarks', { cache: 'no-store' });
             if (!response.ok) throw new Error(`결과 목록을 불러오지 못했습니다. (${response.status})`);
             const payload = await response.json() as { results?: BenchmarkListItem[] };
             const nextItems = payload.results || [];
@@ -167,7 +167,7 @@ export const AsrBenchmark: React.FC = () => {
             }
             setError(null);
             try {
-                const response = await fetch(await toApiUrl(`/api/dev/asr-benchmarks/${encodeURIComponent(selectedId)}`), { cache: 'no-store' });
+                const response = await localEngineClient.request(`/api/dev/asr-benchmarks/${encodeURIComponent(selectedId)}`, { cache: 'no-store' });
                 if (!response.ok) throw new Error(`결과를 불러오지 못했습니다. (${response.status})`);
                 setDetail(await response.json() as BenchmarkDetail);
             } catch (nextError) {

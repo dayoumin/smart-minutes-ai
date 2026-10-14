@@ -493,8 +493,8 @@ const runScenario = async (
       await page.locator('.analysis-stop-panel').getByRole('button', { name: '이어하기 기록을 남기고 분석 중지' }).click();
       await page.getByRole('main').getByText('현재 처리 중인 구간이 끝나면 이어하기 기록으로 남깁니다.').waitFor({ timeout: 10000 });
     } else {
-      await page.locator('.analysis-stop-panel').getByRole('button', { name: '이어하기 기록을 남기지 않고 분석 취소' }).click();
-      await page.getByRole('main').getByText('현재 처리 중인 구간이 끝나면 이어하기 기록을 제거합니다.').waitFor({ timeout: 10000 });
+      await page.locator('.analysis-stop-panel').getByRole('button', { name: '진행 중 기록을 끝내고 분석 취소' }).click();
+      await page.getByRole('main').getByText('현재 처리 중인 구간이 끝나면 진행 중 기록을 끝냅니다.').waitFor({ timeout: 10000 });
     }
 
     await cancelRequested;
@@ -730,6 +730,8 @@ try {
       delayPartialDuringCancel: true,
       keepPendingCancellation: true,
     });
+  } else if (process.argv.includes('failure-recovery')) {
+    await runFailureScenario(browser, fixture);
   } else {
     await runScenario(browser, fixture, 'stop', { cancelAccepted: false });
     await runScenario(browser, fixture, 'stop', {

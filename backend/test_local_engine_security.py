@@ -1,7 +1,9 @@
 import os
 import sys
+import tempfile
 import threading
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi import FastAPI
@@ -14,6 +16,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 from local_engine_security import (
     API_CONTRACT_VERSION,
     PRODUCT_ID,
+    PUBLIC_PAIRING_ROUTES,
+    PUBLIC_PROBE_ROUTE,
     LocalEngineAuthMiddleware,
     LocalEnginePairingCoordinator,
     LocalEngineSessionStore,
@@ -24,6 +28,7 @@ from local_engine_security import (
     build_probe_payload,
     configured_exact_origins,
     parse_exact_origins,
+    required_capability_for_request,
 )
 import main
 
@@ -91,7 +96,195 @@ def build_test_app(
     return app, sessions
 
 
+def build_isolated_main_app() -> tuple[FastAPI, LocalEngineSessionStore]:
+    """Reuse main's routes/middleware with isolated sessions and configured test origins."""
+    app = FastAPI(routes=main.app.routes)
+    sessions = LocalEngineSessionStore(ttl_seconds=60)
+    origins = configured_exact_origins()
+    for middleware in reversed(main.app.user_middleware):
+        options = dict(middleware.kwargs)
+        if middleware.cls is CORSMiddleware:
+            options["allow_origins"] = list(origins)
+        elif middleware.cls is LocalEngineAuthMiddleware:
+            options.update(allowed_origins=origins, session_store=sessions, desktop_token=lambda: "")
+        app.add_middleware(middleware.cls, **options)
+    return app, sessions
+
+
 class LocalEngineSecurityTest(unittest.TestCase):
+    def test_main_api_routes_have_explicit_auth_policy(self) -> None:
+        public_routes = {PUBLIC_PROBE_ROUTE, *PUBLIC_PAIRING_ROUTES}
+        for route in main.app.routes:
+            if not route.path.startswith('/api/'):
+                continue
+            for method in route.methods:
+                if method == 'OPTIONS' or (method, route.path) in public_routes:
+                    continue
+                with self.subTest(method=method, path=route.path):
+                    self.assertIsNotNone(required_capability_for_request(method, route.path))
+
+    def test_output_capability_depends_on_operation_not_job_id(self) -> None:
+        cases = (
+            ('GET', 'json', 'export'),
+            ('HEAD', 'audio', 'export'),
+            ('POST', 'audio/save-copy', 'export'),
+            ('POST', 'generate-summary', 'analysis'),
+            ('GET', 'generation-progress/diarization', 'analysis'),
+            ('POST', 'generation-stop/diarization', 'analysis'),
+            ('POST', 'sync-record', 'meeting-storage'),
+            ('DELETE', '', 'meeting-storage'),
+            ('GET', '', 'export'),
+        )
+        for job_id in ('ordinary-id', 'generate-private', 'generation-private', 'sync-record'):
+            self.assertEqual(main._validate_job_id(job_id), job_id)
+            for method, operation, expected in cases:
+                path = f'/api/outputs/{job_id}' + (f'/{operation}' if operation else '')
+                with self.subTest(job_id=job_id, method=method, operation=operation):
+                    self.assertEqual(required_capability_for_request(method, path), expected)
+
+    def test_output_auth_uses_operation_for_marker_job_ids(self) -> None:
+        app, sessions = build_test_app()
+
+        @app.api_route('/api/outputs/{job_id}/audio', methods=['GET', 'HEAD'])
+        @app.get('/api/outputs/{job_id}/json')
+        async def output_download(job_id: str):
+            return PlainTextResponse(job_id)
+
+        @app.post('/api/outputs/{job_id}/generate-summary')
+        async def output_generation(job_id: str):
+            return {'job_id': job_id}
+
+        origin = 'https://web.example'
+        analysis, _ = sessions.issue(origin=origin, capabilities=['analysis'])
+        export, _ = sessions.issue(origin=origin, capabilities=['export'])
+        with TestClient(app) as client:
+            for job_id in ('ordinary-id', 'generate-private', 'generation-private'):
+                for capability, token in (('analysis', analysis), ('export', export)):
+                    headers = {'Origin': origin, 'Authorization': f'Bearer {token}'}
+                    for method, operation in (('GET', 'json'), ('HEAD', 'audio')):
+                        with self.subTest(job_id=job_id, capability=capability, operation=operation):
+                            response = client.request(method, f'/api/outputs/{job_id}/{operation}', headers=headers)
+                            self.assertEqual(response.status_code, 200 if capability == 'export' else 403)
+                    response = client.post(f'/api/outputs/{job_id}/generate-summary', headers=headers)
+                    self.assertEqual(response.status_code, 200 if capability == 'analysis' else 403)
+
+    def test_main_audio_https_head_get_and_range_require_valid_session(self) -> None:
+        origin = "https://web.example"
+        with (
+            patch.dict(os.environ, {
+                "LMO_RUNTIME_PROFILE": "production",
+                "LMO_WEB_ALLOWED_ORIGINS": origin,
+                "LMO_API_AUTH_ENFORCEMENT": "enabled",
+            }),
+            tempfile.TemporaryDirectory() as tmp,
+        ):
+            app, sessions = build_isolated_main_app()
+            token, _ = sessions.issue(origin=origin, capabilities=["export"])
+            headers = {"Origin": origin, "Authorization": f"Bearer {token}"}
+            audio_path = Path(tmp) / "audio.wav"
+            audio_path.write_bytes(b"0123456789")
+            with (
+                patch.object(main, "load_config", return_value={}),
+                patch.object(main, "_resolve_job_audio_path", return_value=str(audio_path)),
+                TestClient(app) as client,
+            ):
+                preflight = client.options("/api/outputs/unit_audio/audio", headers={
+                    "Origin": origin,
+                    "Access-Control-Request-Method": "HEAD",
+                    "Access-Control-Request-Headers": "authorization, range",
+                })
+                self.assertEqual(preflight.status_code, 200, preflight.text)
+                self.assertEqual(preflight.headers.get("access-control-allow-origin"), origin)
+                self.assertIn("HEAD", preflight.headers.get("access-control-allow-methods", ""))
+                self.assertIn("range", preflight.headers.get("access-control-allow-headers", "").lower())
+                denied_preflight = client.options("/api/outputs/unit_audio/audio", headers={
+                    "Origin": "https://other.example",
+                    "Access-Control-Request-Method": "HEAD",
+                    "Access-Control-Request-Headers": "authorization",
+                })
+                self.assertEqual(denied_preflight.status_code, 400)
+                self.assertNotIn("access-control-allow-origin", denied_preflight.headers)
+                head = client.head("/api/outputs/unit_audio/audio", headers=headers)
+                self.assertEqual(head.status_code, 200)
+                self.assertEqual(head.content, b"")
+                self.assertEqual(head.headers["content-length"], "10")
+                self.assertEqual(head.headers["content-type"], "audio/wav")
+                self.assertEqual(head.headers.get("access-control-allow-origin"), origin)
+                full = client.get("/api/outputs/unit_audio/audio", headers=headers)
+                self.assertEqual(full.status_code, 200)
+                self.assertEqual(full.content, b"0123456789")
+                self.assertEqual(full.headers.get("access-control-allow-origin"), origin)
+                part = client.get("/api/outputs/unit_audio/audio", headers={**headers, "Range": "bytes=2-5"})
+                self.assertEqual(part.status_code, 206)
+                self.assertEqual(part.content, b"2345")
+                self.assertEqual(part.headers["content-range"], "bytes 2-5/10")
+                self.assertIn("content-range", part.headers.get("access-control-expose-headers", "").lower())
+                self.assertIn("accept-ranges", part.headers.get("access-control-expose-headers", "").lower())
+                out_of_bounds = client.get("/api/outputs/unit_audio/audio", headers={**headers, "Range": "bytes=20-"})
+                self.assertEqual(out_of_bounds.status_code, 416)
+                self.assertEqual(out_of_bounds.headers["content-range"], "bytes */10")
+                for method in (client.get, client.head):
+                    self.assertEqual(method("/api/outputs/invalid..job/audio", headers=headers).status_code, 400)
+                with patch.object(main, "_resolve_job_audio_path", return_value=None):
+                    for method in (client.get, client.head):
+                        self.assertEqual(method("/api/outputs/unit_audio/audio", headers=headers).status_code, 404)
+
+    def test_main_audio_https_rejects_invalid_credentials_origins_and_capabilities(self) -> None:
+        origin = "https://web.example"
+        with patch.dict(os.environ, {
+            "LMO_RUNTIME_PROFILE": "production",
+            "LMO_WEB_ALLOWED_ORIGINS": origin,
+            "LMO_API_AUTH_ENFORCEMENT": "enabled",
+            "MEETING_AI_SAVE_COPY_ALLOWED_ORIGINS": "https://legacy.example",
+        }):
+            app, sessions = build_isolated_main_app()
+            valid, _ = sessions.issue(origin=origin, capabilities=["export"])
+            expired, _ = sessions.issue(origin=origin, capabilities=["export"], now=0)
+            revoked, _ = sessions.issue(origin=origin, capabilities=["export"])
+            self.assertTrue(sessions.revoke_if_valid(revoked, origin=origin))
+            other, _ = sessions.issue(origin="https://other.example", capabilities=["export"])
+            legacy, _ = sessions.issue(origin="https://legacy.example", capabilities=["export"])
+            restricted, _ = sessions.issue(origin=origin, capabilities=["analysis"])
+            cases = [
+                ({"Origin": origin}, 401),
+                ({"Origin": origin, "Authorization": "Bearer tampered"}, 401),
+                ({"Origin": origin, "Authorization": f"Bearer {expired}"}, 401),
+                ({"Origin": origin, "Authorization": f"Bearer {revoked}"}, 401),
+                ({"Origin": origin, "Authorization": f"Bearer {other}"}, 401),
+                ({"Origin": "https://other.example", "Authorization": f"Bearer {valid}"}, 401),
+                ({"Authorization": f"Bearer {valid}"}, 401),
+                ({"Origin": "https://other.example", "Authorization": f"Bearer {other}"}, 403),
+                ({"Origin": "https://legacy.example", "Authorization": f"Bearer {legacy}"}, 403),
+                ({"Origin": origin, "Authorization": f"Bearer {restricted}"}, 403),
+            ]
+            with TestClient(app) as client:
+                for index, (headers, expected) in enumerate(cases):
+                    for method in (client.get, client.head):
+                        with self.subTest(case=index, method=method.__name__):
+                            response = method("/api/outputs/unit_audio/audio", headers=headers)
+                            self.assertEqual(response.status_code, expected)
+                            if expected == 401 and headers.get("Origin") == origin:
+                                self.assertEqual(response.headers.get("www-authenticate"), "Bearer")
+                                exposed = response.headers.get("access-control-expose-headers", "").lower()
+                                self.assertIn("www-authenticate", exposed)
+
+    def test_main_audio_web_read_access_does_not_allow_save_copy(self) -> None:
+        origin = "https://web.example"
+        with patch.dict(os.environ, {
+            "LMO_RUNTIME_PROFILE": "production",
+            "LMO_WEB_ALLOWED_ORIGINS": origin,
+            "LMO_API_AUTH_ENFORCEMENT": "enabled",
+            "MEETING_AI_SAVE_COPY_ALLOWED_ORIGINS": "",
+        }):
+            app, sessions = build_isolated_main_app()
+            token, _ = sessions.issue(origin=origin, capabilities=["export"])
+            with TestClient(app) as client:
+                response = client.post("/api/outputs/unit_audio/audio/save-copy", headers={
+                    "Origin": origin,
+                    "Authorization": f"Bearer {token}",
+                })
+            self.assertEqual(response.status_code, 403)
+
     def test_pairing_availability_can_follow_a_one_shot_helper_arm(self) -> None:
         armed = False
         pairing = LocalEnginePairingCoordinator(

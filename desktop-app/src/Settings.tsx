@@ -10,6 +10,7 @@ import {
     setDownloadFormatPreference,
 } from './downloadPreferences';
 import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
+import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 import { readApiErrorMessage } from './apiError';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
@@ -400,7 +401,7 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
     const timeoutId = window.setTimeout(() => controller.abort(), SETTINGS_FETCH_TIMEOUT_MS);
 
     try {
-        return await fetch(url, { ...init, signal: controller.signal });
+        return await localEngineClient.request(toLocalEngineApiPath(url), { ...init, signal: controller.signal });
     } finally {
         window.clearTimeout(timeoutId);
     }
@@ -449,6 +450,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const currentGeneralKeyRef = useRef('');
     const dialogRef = useRef<HTMLDivElement | null>(null);
     const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+    const summaryModelMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
+    const summaryModelMenuFocusEdgeRef = useRef<'first' | 'last'>('first');
+    const summaryModelSelectRef = useRef<HTMLSelectElement | null>(null);
     const previouslyFocusedElementRef = useRef<HTMLElement | null>(
         typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
     );
@@ -1203,6 +1207,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     useEffect(() => {
         if (!openSummaryModelMenu) return;
+        const focusFrame = window.requestAnimationFrame(() => {
+            const menuId = summaryModelMenuTriggerRef.current?.getAttribute('aria-controls');
+            const menu = menuId ? document.getElementById(menuId) : null;
+            if (!menu) return;
+            const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'));
+            const item = summaryModelMenuFocusEdgeRef.current === 'last' ? items.at(-1) : items[0];
+            (item ?? menu).focus();
+        });
         const handlePointerDown = (event: MouseEvent) => {
             const target = event.target as Element | null;
             if (!target?.closest('[data-summary-model-menu-root]')) {
@@ -1210,8 +1222,65 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
         };
         window.addEventListener('mousedown', handlePointerDown);
-        return () => window.removeEventListener('mousedown', handlePointerDown);
+        return () => {
+            window.cancelAnimationFrame(focusFrame);
+            window.removeEventListener('mousedown', handlePointerDown);
+        };
     }, [openSummaryModelMenu]);
+
+    const handleSummaryModelMenuToggle = (event: React.MouseEvent<HTMLButtonElement>, menuKey: string) => {
+        summaryModelMenuTriggerRef.current = event.currentTarget;
+        summaryModelMenuFocusEdgeRef.current = 'first';
+        setOpenSummaryModelMenu(previous => previous === menuKey ? '' : menuKey);
+    };
+
+    const handleSummaryModelMenuTriggerKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, menuKey: string) => {
+        if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
+        event.preventDefault();
+        summaryModelMenuTriggerRef.current = event.currentTarget;
+        summaryModelMenuFocusEdgeRef.current = event.key === 'ArrowUp' ? 'last' : 'first';
+        setOpenSummaryModelMenu(menuKey);
+    };
+
+    const runSummaryModelMenuAction = async (action: () => Promise<void>) => {
+        const trigger = summaryModelMenuTriggerRef.current;
+        trigger?.focus();
+        setOpenSummaryModelMenu('');
+        await action();
+        window.requestAnimationFrame(() => {
+            // Removal may unmount the trigger. Do not steal focus if the user
+            // moved elsewhere while the request was running.
+            if (!trigger?.isConnected && document.activeElement === document.body && dialogRef.current?.isConnected) {
+                (summaryModelSelectRef.current ?? closeButtonRef.current)?.focus();
+            }
+        });
+    };
+
+    const handleSummaryModelMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+        const menu = event.currentTarget;
+        const items = Array.from(menu.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not([disabled])'));
+        if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+            event.preventDefault();
+            const currentIndex = items.findIndex(item => item === document.activeElement);
+            const index = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1
+                : event.key === 'ArrowUp' ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+                    : (currentIndex + 1) % items.length;
+            items[index]?.focus();
+        } else if (event.key === 'Escape' || event.key === 'Tab') {
+            event.preventDefault();
+            event.stopPropagation();
+            const trigger = summaryModelMenuTriggerRef.current;
+            const controls = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+                'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+            ) ?? []).filter(element => !menu.contains(element) && element.tabIndex >= 0
+                && element.getAttribute('aria-hidden') !== 'true' && element.getClientRects().length > 0);
+            const triggerIndex = controls.findIndex(element => element === trigger);
+            const nextControl = event.key === 'Tab' && !event.shiftKey
+                ? controls[triggerIndex + 1] ?? controls[0] : trigger;
+            setOpenSummaryModelMenu('');
+            nextControl?.focus();
+        }
+    };
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {
@@ -1249,6 +1318,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
             if (openSummaryModelMenu) {
                 setOpenSummaryModelMenu('');
+                summaryModelMenuTriggerRef.current?.focus();
                 return;
             }
             onClose();
@@ -2103,6 +2173,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <span className="text-xs font-semibold text-muted-foreground">모델 선택</span>
                                         <div className="mt-2">
                                             <select
+                                                ref={summaryModelSelectRef}
                                                 value={summaryModelInput}
                                                 onChange={event => setSummaryModelInput(event.target.value)}
                                                 className="select-field"
@@ -2248,20 +2319,21 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                             aria-haspopup="menu"
                                                                             aria-expanded={openSummaryModelMenu === menuKey}
                                                                             aria-controls={`summary-model-menu-${index}`}
-                                                                            onClick={() => setOpenSummaryModelMenu(previous => (previous === menuKey ? '' : menuKey))}
+                                                                            onClick={event => handleSummaryModelMenuToggle(event, menuKey)}
+                                                                            onKeyDown={event => handleSummaryModelMenuTriggerKeyDown(event, menuKey)}
                                                                         >
                                                                             <MoreVertical size={14} />
                                                                         </button>
                                                                         {openSummaryModelMenu === menuKey && (
-                                                                            <div id={`summary-model-menu-${index}`} role="menu" className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
+                                                                            <div id={`summary-model-menu-${index}`} role="menu" aria-label={`${optionName} 모델 작업`} tabIndex={-1} onKeyDown={handleSummaryModelMenuKeyDown} className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
                                                                                 {menuCanRefresh && (
                                                                                     <button
                                                                                         type="button"
                                                                                         role="menuitem"
+                                                                                        tabIndex={-1}
                                                                                         className="menu-item px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                                                                                         onClick={() => {
-                                                                                            setOpenSummaryModelMenu('');
-                                                                                            void handleDownloadOllamaModel(optionModel);
+                                                                                            void runSummaryModelMenuAction(() => handleDownloadOllamaModel(optionModel));
                                                                                         }}
                                                                                         disabled={pullActive || optionDeleting}
                                                                                     >
@@ -2275,9 +2347,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                                         role="menuitem"
                                                                                         className="menu-item menu-item-danger px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                                                                                         aria-label={`${optionName} ${optionFileDeletable ? 'PC에서 삭제' : '등록 해제'}`}
+                                                                                        tabIndex={-1}
                                                                                         onClick={() => {
-                                                                                            setOpenSummaryModelMenu('');
-                                                                                            void handleDeleteOllamaModel(optionModel, optionFileDeletable, replacementModel);
+                                                                                            void runSummaryModelMenuAction(() => handleDeleteOllamaModel(optionModel, optionFileDeletable, replacementModel));
                                                                                         }}
                                                                                         disabled={optionDeleting || pullActive}
                                                                                     >
@@ -2323,21 +2395,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                             aria-haspopup="menu"
                                                                             aria-expanded={openSummaryModelMenu === menuKey}
                                                                             aria-controls={`summary-model-menu-${index}`}
-                                                                            onClick={() => setOpenSummaryModelMenu(previous => (previous === menuKey ? '' : menuKey))}
+                                                                            onClick={event => handleSummaryModelMenuToggle(event, menuKey)}
+                                                                            onKeyDown={event => handleSummaryModelMenuTriggerKeyDown(event, menuKey)}
                                                                         >
                                                                             <MoreVertical size={14} />
                                                                         </button>
                                                                         {openSummaryModelMenu === menuKey && (
-                                                                            <div id={`summary-model-menu-${index}`} role="menu" className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
+                                                                            <div id={`summary-model-menu-${index}`} role="menu" aria-label={`${optionName} 모델 작업`} tabIndex={-1} onKeyDown={handleSummaryModelMenuKeyDown} className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
                                                                                 {optionRemovable && (
                                                                                     <button
                                                                                         type="button"
                                                                                         role="menuitem"
                                                                                         className="menu-item menu-item-danger px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
                                                                                         aria-label={`${optionName} 등록 해제`}
+                                                                                        tabIndex={-1}
                                                                                         onClick={() => {
-                                                                                            setOpenSummaryModelMenu('');
-                                                                                            void handleDeleteOllamaModel(optionModel, false);
+                                                                                            void runSummaryModelMenuAction(() => handleDeleteOllamaModel(optionModel, false));
                                                                                         }}
                                                                                         disabled={optionDeleting || pullActive}
                                                                                     >

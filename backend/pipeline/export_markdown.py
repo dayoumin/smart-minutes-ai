@@ -83,53 +83,55 @@ def _meeting_report_template_name(result: dict) -> str:
     return ""
 
 
-def _render_meeting_report(result: dict, section_no: int, *, include_empty: bool = False) -> tuple[str, int]:
+def _render_meeting_report(result: dict, section_no: int, *, include_empty: bool = False, plain_text: bool = False) -> tuple[str, int]:
     sections = _meeting_report_sections(result, include_empty=include_empty)
     if not sections:
         return "", section_no
 
-    content = f"## {section_no}. 회의록 보고서\n\n"
+    h2, h3, strong = ("", "", "") if plain_text else ("## ", "### ", "**")
+    content = f"{h2}{section_no}. 회의록 보고서\n\n"
     section_no += 1
     template_name = _meeting_report_template_name(result)
     if template_name:
-        content += f"**보고 양식:** {template_name}\n\n"
+        content += f"{strong}보고 양식:{strong} {template_name}\n\n"
     intro = _meeting_report_intro(result, sections)
     if intro:
-        content += f"### 보고서 개요\n\n{intro}\n\n"
+        content += f"{h3}보고서 개요\n\n{intro}\n\n"
     for section in sections:
-        content += f"### {section.get('title') or '보고서'}\n\n"
+        content += f"{h3}{section.get('title') or '보고서'}\n\n"
         content += f"{section.get('content') or '내용 없음'}\n\n"
     return content, section_no
 
 
-def export_markdown(result: dict, output_path: str) -> str:
+def export_markdown(result: dict, output_path: str, *, plain_text: bool = False) -> str:
     """
-    result.json 기반으로 Markdown 파일을 생성한다.
+    result.json 기반 문서를 생성한다. TXT는 본문을 보존하고 생성 표식만 생략한다.
     """
     os.makedirs(os.path.dirname(output_path), exist_ok=True)
     
     summary = result.get("summary", {})
     export_scope = result.get("export_scope") or "full"
     section_no = 1
+    h1, h2, h3, strong = ("", "", "", "") if plain_text else ("# ", "## ", "### ", "**")
     
-    md_content = f"# {summary.get('title', '회의록')}\n\n"
-    md_content += f"**파일명:** {result.get('source_file', '')}\n"
-    md_content += f"**처리일시:** {result.get('created_at', '')}\n\n"
+    md_content = f"{h1}{summary.get('title', '회의록')}\n\n"
+    md_content += f"{strong}파일명:{strong} {result.get('source_file', '')}\n"
+    md_content += f"{strong}처리일시:{strong} {result.get('created_at', '')}\n\n"
     if result.get("meeting_purpose"):
-        md_content += f"**회의 목적:** {result.get('meeting_purpose', '')}\n\n"
+        md_content += f"{strong}회의 목적:{strong} {result.get('meeting_purpose', '')}\n\n"
 
     if export_scope == "report":
-        report_content, section_no = _render_meeting_report(result, section_no, include_empty=True)
+        report_content, section_no = _render_meeting_report(result, section_no, include_empty=True, plain_text=plain_text)
         md_content += report_content
         with open(output_path, "w", encoding="utf-8") as f:
             f.write(md_content)
         return output_path
 
-    md_content += f"## {section_no}. 회의 요약\n\n"
+    md_content += f"{h2}{section_no}. 회의 요약\n\n"
     section_no += 1
     md_content += f"{summary.get('overview', '내용 없음')}\n\n"
 
-    md_content += f"## {section_no}. 주요 주제\n\n"
+    md_content += f"{h2}{section_no}. 주요 주제\n\n"
     section_no += 1
     for topic in summary.get("topics", []):
         md_content += f"- {topic}\n"
@@ -137,10 +139,10 @@ def export_markdown(result: dict, output_path: str) -> str:
 
     topic_sections = summary.get("topic_sections", []) or []
     if topic_sections:
-        md_content += f"## {section_no}. 주제별 내용\n\n"
+        md_content += f"{h2}{section_no}. 주제별 내용\n\n"
         section_no += 1
         for section in topic_sections:
-            md_content += f"### {section.get('topic', '주제')}\n\n"
+            md_content += f"{h3}{section.get('topic', '주제')}\n\n"
             if section.get("summary"):
                 md_content += f"{section.get('summary')}\n\n"
             for evidence in section.get("evidence", []) or []:
@@ -151,10 +153,10 @@ def export_markdown(result: dict, output_path: str) -> str:
 
     participant_summaries = summary.get("participant_summaries", []) or []
     if participant_summaries:
-        md_content += f"## {section_no}. 참석자별 요약 AI 초안\n\n"
+        md_content += f"{h2}{section_no}. 참석자별 요약 AI 초안\n\n"
         section_no += 1
         for participant in participant_summaries:
-            md_content += f"### {participant.get('participant', '참석자')}\n\n"
+            md_content += f"{h3}{participant.get('participant', '참석자')}\n\n"
             if participant.get("summary"):
                 md_content += f"{participant.get('summary')}\n\n"
             for point in participant.get("key_points", []) or []:
@@ -163,39 +165,39 @@ def export_markdown(result: dict, output_path: str) -> str:
                 md_content += f"- 할 일: {action}\n"
             md_content += "\n"
         
-    md_content += f"## {section_no}. 결정사항\n\n"
+    md_content += f"{h2}{section_no}. 결정사항\n\n"
     section_no += 1
     for dec in summary.get("decisions", []):
         md_content += f"- {dec}\n"
     md_content += "\n"
         
-    md_content += f"## {section_no}. 할 일\n\n"
+    md_content += f"{h2}{section_no}. 할 일\n\n"
     section_no += 1
     for act in summary.get("actions", []):
         md_content += f"- {act}\n"
     md_content += "\n"
         
-    md_content += f"## {section_no}. 확인 필요 사항\n\n"
+    md_content += f"{h2}{section_no}. 확인 필요 사항\n\n"
     section_no += 1
     for chk in summary.get("needs_check", []):
         md_content += f"- {chk}\n"
     md_content += "\n"
 
     if export_scope == "full":
-        report_content, section_no = _render_meeting_report(result, section_no)
+        report_content, section_no = _render_meeting_report(result, section_no, plain_text=plain_text)
         md_content += report_content
 
     if export_scope != "organized":
-        md_content += f"## {section_no}. 대화록\n\n"
+        md_content += f"{h2}{section_no}. 대화록\n\n"
         for seg in get_transcript_segments(result):
             time_str = f"[{_format_time(seg.get('start', 0.0))}]"
             speaker = seg.get("speaker_name") or seg.get("speaker") or ""
             text = seg.get("text", "")
 
             if speaker:
-                md_content += f"**{time_str} {speaker}:** {text}\n\n"
+                md_content += f"{strong}{time_str} {speaker}:{strong} {text}\n\n"
             else:
-                md_content += f"**{time_str}:** {text}\n\n"
+                md_content += f"{strong}{time_str}:{strong} {text}\n\n"
             
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(md_content)

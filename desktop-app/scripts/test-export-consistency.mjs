@@ -1,0 +1,111 @@
+import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { test } from 'node:test';
+import { runInNewContext } from 'node:vm';
+import ts from 'typescript';
+
+// Execute the actual pure builders without rendering or duplicating their implementation.
+const source = readFileSync(new URL('../src/MeetingDownloadControl.tsx', import.meta.url), 'utf8');
+const tree = ts.createSourceFile('MeetingDownloadControl.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const builders = tree.statements.filter(node => ts.isVariableStatement(node)
+  && !node.declarationList.declarations.some(item => ts.isIdentifier(item.name) && item.name.text === 'MeetingDownloadControl'));
+const exports = {};
+runInNewContext(ts.transpileModule(builders.map(node => node.getText(tree)).join('\n')
+  + '\nexport { buildFallbackText, buildExportPayload };', {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports });
+const { buildFallbackText, buildExportPayload } = exports;
+const repositorySource = readFileSync(new URL('../src/meetingRepository.ts', import.meta.url), 'utf8');
+const repositoryTree = ts.createSourceFile('meetingRepository.ts', repositorySource, ts.ScriptTarget.Latest, true);
+const normalizer = repositoryTree.statements.find(node => ts.isVariableStatement(node)
+  && node.declarationList.declarations.some(item => ts.isIdentifier(item.name) && item.name.text === 'normalizeMeetingRecord'));
+assert.ok(normalizer, 'Exercise the actual repository normalizer used on record reads');
+const repositoryExports = {};
+runInNewContext(ts.transpileModule(normalizer.getText(repositoryTree) + '\nexport { normalizeMeetingRecord };', {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: repositoryExports });
+const { normalizeMeetingRecord } = repositoryExports;
+const record = () => ({
+  id: 'frontend-only', title: '현재 제목', date: '2026-10-15 09:30', participants: '참석자01',
+  summary: '현재 정리', meetingPurpose: '현재 목적',
+  segments: [{ start: '00:00:00', end: '00:00:01', speaker: 'SPEAKER_00', displaySpeaker: '삭제한 이름', text: '원래 발언' }],
+  displaySegments: [{ start: '00:00:00', end: '00:00:01', speaker: 'SPEAKER_00', displaySpeaker: '삭제한 이름', text: '표시용 발언' }],
+  editedDisplaySegments: [{ start: '00:00:00', end: '00:00:01', speaker: 'SPEAKER_00', displaySpeaker: '삭제한 이름', text: '수정한 최신 발언' }],
+  speakerLabels: {},
+});
+
+await test('cleared labels never revive stale transcript names in local TXT/full fallback', () => {
+  const meeting = record();
+  const before = JSON.stringify(meeting);
+  for (const scope of ['transcript', 'full']) {
+    const text = buildFallbackText(meeting, scope);
+    assert.ok(text.includes('참석자01: 수정한 최신 발언'));
+    assert.equal(text.includes('삭제한 이름'), false);
+  }
+  assert.equal(JSON.stringify(meeting), before);
+});
+
+await test('explicit partial labels override names and leave unmapped speakers at defaults', () => {
+  const meeting = record();
+  meeting.speakerLabels = { SPEAKER_00: ' 새 이름 ' };
+  meeting.editedDisplaySegments.push({ ...meeting.segments[0], speaker: 'SPEAKER_01', displaySpeaker: '또 다른 예전 이름' });
+  const text = buildFallbackText(meeting, 'transcript');
+  assert.ok(text.includes('새 이름: 수정한 최신 발언'));
+  assert.ok(text.includes('참석자02: 원래 발언'));
+  assert.equal(text.includes('또 다른 예전 이름'), false);
+});
+
+await test('legacy records without an explicit label set retain their historical display names', () => {
+  const meeting = record();
+  delete meeting.speakerLabels;
+  const reopened = normalizeMeetingRecord(JSON.parse(JSON.stringify(meeting)));
+  assert.equal(reopened.speakerLabels, undefined);
+  assert.ok(buildFallbackText(reopened, 'transcript').includes('삭제한 이름: 수정한 최신 발언'));
+  assert.equal('speakerLabels' in JSON.parse(JSON.stringify(buildExportPayload(reopened, 'transcript', '파일'))), false);
+});
+
+await test('an explicit cleared label set survives reloading even with stale legacy labels', () => {
+  const meeting = record();
+  meeting.speaker_labels = { SPEAKER_00: '삭제한 이름' };
+  const reopened = normalizeMeetingRecord(JSON.parse(JSON.stringify(meeting)));
+  assert.equal(Object.keys(reopened.speakerLabels).length, 0);
+  const text = buildFallbackText(reopened, 'transcript');
+  assert.ok(text.includes('참석자01: 수정한 최신 발언'));
+  assert.equal(text.includes('삭제한 이름'), false);
+});
+
+await test('fallback and payload agree on edited, reverted and original transcript precedence', () => {
+  const meeting = record();
+  const check = expected => {
+    assert.ok(buildFallbackText(meeting, 'transcript').includes(expected));
+    assert.equal(buildExportPayload(meeting, 'transcript', '새 파일명').displaySegments[0].text, expected);
+  };
+  check('수정한 최신 발언');
+  meeting.editedDisplaySegments = [];
+  check('표시용 발언');
+  meeting.displaySegments = [];
+  check('원래 발언');
+});
+
+await test('organized fallback uses current labels for structured participant summaries', () => {
+  const meeting = record();
+  meeting.speakerContextSummaries = [{ speaker: 'SPEAKER_00', display_name: '삭제한 이름', summary: '참석자별 정리', key_points: [], actions: [] }];
+  const text = buildFallbackText(meeting, 'organized');
+  assert.ok(text.includes('- 참석자01: 참석자별 정리'));
+  assert.equal(text.includes('삭제한 이름'), false);
+});
+
+await test('frontend-only records can export every scope without backend output references', () => {
+  const meeting = record();
+  meeting.meetingReport = { templateId: 'minutes', generatedAt: 'now', content: '현재 보고서' };
+  for (const scope of ['transcript', 'organized', 'report', 'full']) {
+    const payload = buildExportPayload(meeting, scope, '파일/이름');
+    assert.equal(payload.id, meeting.id);
+    assert.equal(payload.exportScope, scope);
+    assert.equal(payload.downloadFilename, '파일-이름');
+    assert.equal(payload.jobId, undefined);
+    assert.equal(payload.outputFiles, undefined);
+    assert.equal(Object.keys(payload.speakerLabels).length, 0);
+    assert.ok(buildFallbackText(meeting, scope).includes('현재 제목'));
+  }
+});

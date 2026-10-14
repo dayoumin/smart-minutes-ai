@@ -400,16 +400,12 @@ def required_capability_for_request(method: str, path: str) -> str | None:
     if path == "/api/export-record" or path.startswith("/api/export-record/"):
         return "export"
     if path.startswith("/api/outputs/"):
-        if path.endswith("/sync-record") or normalized_method == "DELETE":
+        # A caller-supplied job ID must not change the capability of its operation.
+        _, _, operation = path[len("/api/outputs/"):].partition("/")
+        if operation == "sync-record" or normalized_method == "DELETE":
             return "meeting-storage"
-        if any(
-            marker in path
-            for marker in (
-                "/generate-",
-                "/generation-",
-                "/stop-generation",
-            )
-        ):
+        action = operation.split("/", 1)[0]
+        if action.startswith(("generate-", "generation-")) or action == "stop-generation":
             return "analysis"
         return "export"
     if path.startswith("/api/dev/asr-benchmarks"):

@@ -89,13 +89,17 @@ const getTauriApiBase = async (attempts = 5): Promise<string | null> => {
     return null;
 };
 
-const isHealthyApiBase = async (baseUrl: string): Promise<boolean> => {
+// Base discovery cannot use the common client: resolving its base would recurse.
+// Only a native restart result is trusted for credentialed health polling; never send
+// the desktop token to legacy port-discovery candidates.
+const isHealthyApiBase = async (baseUrl: string, authenticatedRestart = false): Promise<boolean> => {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), HEALTH_CHECK_TIMEOUT_MS);
     try {
         const response = await fetch(new URL('/api/health', baseUrl), {
             cache: 'no-store',
             signal: controller.signal,
+            headers: authenticatedRestart ? await getDesktopActionHeaders() : undefined,
         });
         return response.ok;
     } catch {
@@ -115,7 +119,7 @@ const discoverLocalApiBase = async (): Promise<string | null> => {
 
 const waitForHealthyApiBase = async (baseUrl: string, attempts = 30): Promise<boolean> => {
     for (let attempt = 0; attempt < attempts; attempt += 1) {
-        if (await isHealthyApiBase(baseUrl)) return true;
+        if (await isHealthyApiBase(baseUrl, true)) return true;
         await sleep(500);
     }
     return false;

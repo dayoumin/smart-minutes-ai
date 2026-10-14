@@ -93,6 +93,12 @@ const startServer = async () => {
 };
 
 const installBaseRoutes = async (page) => {
+  await page.route('**/api/settings', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ diarization: { generate_during_analysis: true }, privacy: { preserve_extracted_audio: true } }),
+  }));
+
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',

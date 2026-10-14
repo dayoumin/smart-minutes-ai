@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
 const savedAudioPath = 'C:\\Users\\User\\Downloads\\meeting-demo.wav';
@@ -269,29 +269,10 @@ const run = async () => {
     assert.equal(await page.getByText(autoSavePrivacyMessage, { exact: true }).count(), 0, 'a stale settings response must not replace the latest privacy message');
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
     await page.locator('.writer-file-privacy-note').waitFor({ state: 'hidden', timeout: 10000 });
-    await page.getByRole('button', { name: '음성 추출', exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '음성 추출', exact: true }).count(), 0, 'The extraction tool is not part of the current writer surface.');
+    assert.equal(await page.locator('input[accept="video/*,.mp4,.mov,.mkv,.avi,.webm"]').count(), 0, 'The hidden extraction tool must not expose a separate file picker.');
+    assert.equal(extractRequests, 0, 'Privacy and file-input interactions must not invoke the hidden extraction tool.');
 
-    await page.locator('input[accept="video/*,.mp4,.mov,.mkv,.avi,.webm"]').setInputFiles({
-      name: 'meeting-demo.mp4',
-      mimeType: 'video/mp4',
-      buffer: Buffer.from('fake video bytes'),
-    });
-
-    await page.getByText('영상 선택됨').waitFor({ timeout: 10000 });
-    await page.getByText('저장을 누르면 선택한 영상의 WAV 사본을 다운로드 폴더에 저장합니다.').waitFor({ timeout: 10000 });
-
-    const saveButton = page.getByRole('button', { name: '저장', exact: true });
-    await saveButton.waitFor({ timeout: 10000 });
-    await saveButton.click();
-
-    await page.getByText('음성 추출 중').waitFor({ timeout: 10000 });
-    await page.getByText('음성 추출 완료').waitFor({ timeout: 10000 });
-    await page.getByText(/다운로드 폴더에 WAV 파일을 저장했습니다/).waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '폴더 열기' }).click();
-
-    const openedPath = await page.evaluate(() => window.__openedSavedPath);
-    assert.equal(openedPath, savedAudioPath);
-    assert.equal(extractRequests, 1);
 
     console.log('ok - audio extract UI simulation');
   } catch (error) {

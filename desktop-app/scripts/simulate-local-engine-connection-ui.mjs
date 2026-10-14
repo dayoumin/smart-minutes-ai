@@ -104,6 +104,9 @@ const run = async () => {
   let page = null;
   let probeMode = 'unreachable';
   let pairingStartCount = 0;
+  let authRecoveryMode = 'off';
+  let renewalRequests = 0;
+  let recoveryApiRequests = 0;
 
   try {
     server = await startServer();
@@ -157,10 +160,37 @@ const run = async () => {
         }),
       });
     });
-    await page.route('**/api/health', route => route.fulfill({
-      status: 200,
+    const authRejection = route => route.fulfill({
+      status: 401,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      headers: {
+        'WWW-Authenticate': 'Bearer',
+        'Access-Control-Expose-Headers': 'WWW-Authenticate',
+        'Access-Control-Allow-Origin': new URL(APP_URL).origin,
+      },
+      body: JSON.stringify({ detail: 'local engine authorization required' }),
+    });
+    await page.route('**/api/session/renew', route => {
+      renewalRequests += 1;
+      if (authRecoveryMode === 'expired') return authRejection(route);
+      return route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          session_token: 'renewed-session-token-for-ui-test-long-enough',
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+          capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
+        }),
+      });
+    });
+    await page.route('**/api/outputs/ui-auth-recovery-probe/json', route => {
+      recoveryApiRequests += 1;
+      if (authRecoveryMode === 'expired' || recoveryApiRequests === 1) return authRejection(route);
+      assert.equal(route.request().headers().authorization, 'Bearer renewed-session-token-for-ui-test-long-enough');
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) });
+    });
+    await page.route('**/api/health', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }),
     }));
     await page.route('**/api/models/status', route => route.fulfill({
       status: 200,
@@ -201,6 +231,7 @@ const run = async () => {
     await dialog.waitFor({ state: 'visible' });
     const pairingCodeInput = dialog.getByRole('textbox', { name: '연결 코드', exact: true });
     await pairingCodeInput.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.activeElement?.id === 'local-engine-pairing-code');
     assert.equal(await pairingCodeInput.evaluate(element => document.activeElement === element), true);
     await pairingCodeInput.fill('77');
     await page.keyboard.press('Escape');
@@ -211,6 +242,7 @@ const run = async () => {
     await codeTrigger.click();
     await dialog.waitFor({ state: 'visible' });
     assert.equal(await pairingCodeInput.inputValue(), '', 'closing the dialog must clear the one-time code');
+    await page.waitForFunction(() => document.activeElement?.id === 'local-engine-pairing-code');
     await pairingCodeInput.press('Shift+Tab');
     const closeButton = dialog.getByRole('button', { name: '연결 코드 입력 닫기' });
     assert.equal(await closeButton.evaluate(element => document.activeElement === element), true);
@@ -249,7 +281,31 @@ const run = async () => {
       }));
       assert.equal(Math.max(overflow.body, overflow.root), 0, `connection UI must not overflow at ${width}px`);
     }
-    console.log('ok - local engine connection UI simulation');
+    authRecoveryMode = 'recover';
+    const recoveredStatus = await page.evaluate(async () => {
+      const { localEngineClient } = await import('/src/localEngineClient.ts');
+      return (await localEngineClient.request('/api/outputs/ui-auth-recovery-probe/json')).status;
+    });
+    assert.equal(recoveredStatus, 200, 'the mounted provider must register request recovery');
+    assert.equal(renewalRequests, 1);
+    assert.equal(recoveryApiRequests, 2);
+    await rail.getByText('분석 준비 완료').waitFor({ state: 'visible' });
+
+    authRecoveryMode = 'expired';
+    recoveryApiRequests = 0;
+    const expiredStatus = await page.evaluate(async () => {
+      const { localEngineClient } = await import('/src/localEngineClient.ts');
+      return (await localEngineClient.request('/api/outputs/ui-auth-recovery-probe/json')).status;
+    });
+    assert.equal(expiredStatus, 401);
+    assert.equal(renewalRequests, 2, 'failed renewal must not loop');
+    assert.equal(recoveryApiRequests, 1, 'failed renewal must not replay the API request');
+    await rail.getByText('연결이 만료되었습니다').waitFor({ state: 'visible' });
+    assert.equal(await analyzeButton.isDisabled(), true);
+    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '연결 상태 보존 회의');
+    assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '연결 전 입력 보존 확인');
+    await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
+    console.log('ok - local engine connection UI and auth recovery simulation');
   } catch (error) {
     console.error(error);
     if (page) console.error('body:', (await page.locator('body').innerText()).slice(0, 3000));

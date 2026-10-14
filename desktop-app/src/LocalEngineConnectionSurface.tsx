@@ -13,7 +13,7 @@ import {
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { Input } from './Input';
-import { useLocalEngineConnection } from './LocalEngineConnectionProvider';
+import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import {
     getLocalEngineConnectionView,
     LocalEngineConnectionAction,

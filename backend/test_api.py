@@ -2535,13 +2535,21 @@ class AnalyzeApiTest(unittest.TestCase):
             os.makedirs(os.path.dirname(paths.source_wav_path), exist_ok=True)
             Path(paths.source_wav_path).write_bytes(b"wav")
             with patch.object(main, "load_config", return_value={"paths": {"temp_dir": tmpdir}}):
-                response = self.client.get(
-                    "/api/outputs/unit_audio_origin_ok/audio",
-                    headers={"Origin": "http://localhost:5173"},
-                )
-
-        self.assertEqual(response.status_code, 200, response.text)
-        self.assertEqual(response.content, b"wav")
+                for origin in ("http://localhost:5173", "tauri://localhost"):
+                    with self.subTest(origin=origin):
+                        response = self.client.get(
+                            "/api/outputs/unit_audio_origin_ok/audio",
+                            headers={"Origin": origin},
+                        )
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertEqual(response.content, b"wav")
+                        head = self.client.head(
+                            "/api/outputs/unit_audio_origin_ok/audio",
+                            headers={"Origin": origin},
+                        )
+                        self.assertEqual(head.status_code, 200)
+                        self.assertEqual(head.content, b"")
+                        self.assertEqual(head.headers["content-length"], "3")
 
     def test_auto_save_completed_outputs_copies_enabled_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

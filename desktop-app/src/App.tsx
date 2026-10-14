@@ -7,7 +7,8 @@ import { Settings } from './Settings';
 import type { SettingsTab } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
-import { getApiBase, isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
+import { isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
+import { localEngineClient } from './localEngineClient';
 import { AppView, getInitialAppView } from './appView';
 import { AnalysisRecoveryCoordinator } from './AnalysisRecoveryCoordinator';
 import { StartWorkspace } from './StartWorkspace';
@@ -69,8 +70,8 @@ const toMeetingSegments = (segments: Array<Record<string, unknown>> = []): Meeti
     mixedSpeakerSplit: Boolean(segment.mixedSpeakerSplit ?? segment.mixed_speaker_split),
 }));
 
-const fetchBenchmarkPayload = async (apiBase: string, id: string): Promise<BenchmarkPayload> => {
-    const response = await fetch(new URL(`/api/dev/asr-benchmarks/${id}`, apiBase), { cache: 'no-store' });
+const fetchBenchmarkPayload = async (id: string): Promise<BenchmarkPayload> => {
+    const response = await localEngineClient.request(`/api/dev/asr-benchmarks/${encodeURIComponent(id)}`, { cache: 'no-store' });
     if (!response.ok) throw new Error(`Failed to load benchmark: ${id}`);
     const data = await response.json();
     return data.payload;
@@ -94,8 +95,7 @@ const seedAsrComparisonMeetings = async (): Promise<string | null> => {
 
     const existing = await getAllMeetings();
     const existingIds = new Set(existing.map(record => record.id));
-    const apiBase = await getApiBase();
-    const test4FastAlign = await fetchBenchmarkPayload(apiBase, 'asr_benchmark/faster_whisper_test4_90s_speaker_alignment_compare.json');
+    const test4FastAlign = await fetchBenchmarkPayload('asr_benchmark/faster_whisper_test4_90s_speaker_alignment_compare.json');
 
     const records: MeetingRecord[] = [
         {
@@ -133,8 +133,7 @@ const seedHermesComparisonMeetings = async (): Promise<string | null> => {
 
     const existing = await getAllMeetings();
     const existingIds = new Set(existing.map(record => record.id));
-    const apiBase = await getApiBase();
-    const fasterPayload = await fetchBenchmarkPayload(apiBase, 'asr_benchmark/hermes_faster_whisper_90s_compare.json');
+    const fasterPayload = await fetchBenchmarkPayload('asr_benchmark/hermes_faster_whisper_90s_compare.json');
     const faster = firstBenchmarkResult(fasterPayload);
 
     const records: MeetingRecord[] = [

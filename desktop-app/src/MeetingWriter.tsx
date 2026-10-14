@@ -1,4 +1,11 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+    upsertMeetingRecord,
+    deleteMeetingRecordForJob,
+    updateMeetingAnalysisStatus,
+} from './analysisMeetingPersistence';
+import type { AnalyzeResult } from './analysisMeetingPersistence';
+
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
@@ -24,18 +31,7 @@ import {
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { Input } from './Input';
-import {
-    addMeeting,
-    deleteMeeting,
-    getAllMeetings,
-    MeetingGenerationStatus,
-    MeetingParticipantSummary,
-    MeetingRecord,
-    MeetingSegment,
-    MeetingSpeakerContextSummary,
-    MeetingTopicSection,
-    updateMeeting,
-} from './meetingRepository';
+import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { readApiErrorMessage as readResponseError } from './apiError';
 import { ProgressBar } from './ProgressBar';
@@ -43,18 +39,15 @@ import { StatusBanner } from './StatusBanner';
 import { formatAnalysisDuration, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
 import {
-    ContextTemplate,
     DEFAULT_CONTEXT_TEMPLATE_ID,
     DEFAULT_REPORT_TEMPLATE_ID,
     getContextTemplateById,
     getReportTemplateById,
-    ReportTemplate,
-    TermGlossary,
 } from './meetingKnowledge';
 import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from './analysisJobRuntime';
 import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisResumeState';
 import { localEngineClient } from './localEngineClient';
-import { useLocalEngineConnection } from './LocalEngineConnectionProvider';
+import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
 import { LocalEngineConnectionSurface } from './LocalEngineConnectionSurface';
 
@@ -131,242 +124,6 @@ const getAnalysisProgressGuidance = (
         : '대화록 예상은 저장 기준입니다. 참석자 구분과 정리는 결과 화면에서 실행할 수 있습니다.';
 };
 
-export interface AnalyzeResult {
-    job_id?: string;
-    source_file?: string;
-    partial?: boolean;
-    status?: string;
-    heartbeat?: boolean;
-    progress?: number;
-    eta_seconds?: number | null;
-    etaSeconds?: number | null;
-    total_audio_seconds?: number;
-    totalAudioSeconds?: number;
-    completed_audio_seconds?: number;
-    completedAudioSeconds?: number;
-    transcript_ready?: boolean;
-    transcriptReady?: boolean;
-    summary?: string;
-    segments?: MeetingSegment[];
-    display_segments?: MeetingSegment[];
-    displaySegments?: MeetingSegment[];
-    topics?: string[];
-    topic_sections?: MeetingTopicSection[];
-    topicSections?: MeetingTopicSection[];
-    participant_summaries?: MeetingParticipantSummary[];
-    participantSummaries?: MeetingParticipantSummary[];
-    speaker_context_summaries?: MeetingSpeakerContextSummary[];
-    speakerContextSummaries?: MeetingSpeakerContextSummary[];
-    generation_status?: MeetingGenerationStatus;
-    generationStatus?: MeetingGenerationStatus;
-    actions?: string[];
-    decisions?: string[];
-    needs_check?: string[];
-    needsCheck?: string[];
-    diarization_skipped?: boolean;
-    diarizationSkipped?: boolean;
-    diarization_applied?: boolean;
-    diarizationApplied?: boolean;
-    diarization_requested?: boolean;
-    diarizationRequested?: boolean;
-    diarization_skip_message?: string;
-    diarizationSkipMessage?: string;
-    diarization_skip_reason?: string;
-    diarizationSkipReason?: string;
-    diarization_deferred?: boolean;
-    diarizationDeferred?: boolean;
-    diarization_defer_message?: string;
-    diarizationDeferMessage?: string;
-    selected_report_template_id?: string;
-    selectedReportTemplateId?: string;
-    report_template?: ReportTemplate;
-    reportTemplate?: ReportTemplate;
-    selected_context_template_id?: string;
-    selectedContextTemplateId?: string;
-    context_template?: ContextTemplate;
-    contextTemplate?: ContextTemplate;
-    selected_term_glossary_ids?: string[];
-    selectedTermGlossaryIds?: string[];
-    term_glossaries?: TermGlossary[];
-    termGlossaries?: TermGlossary[];
-    meeting?: {
-        source_file?: string;
-        job_id?: string;
-        meeting_purpose?: string;
-        selected_report_template_id?: string;
-        report_template?: ReportTemplate;
-        selected_context_template_id?: string;
-        context_template?: ContextTemplate;
-        selected_term_glossary_ids?: string[];
-        term_glossaries?: TermGlossary[];
-    };
-    outputs?: {
-        job_id?: string;
-        json?: string | null;
-        txt?: string | null;
-        md?: string | null;
-        docx?: string | null;
-        hwpx?: string | null;
-        audio?: string | null;
-    };
-    auto_saved_files?: Partial<Record<'hwpx' | 'audio', string>>;
-    auto_save_errors?: Partial<Record<'hwpx' | 'audio', string>>;
-    action?: string;
-    resume?: {
-        requested?: boolean;
-        mode?: string;
-        message?: string;
-        fallback_reason?: string | null;
-        reused_chunk_count?: number;
-    };
-}
-
-export const upsertMeetingRecord = async (record: MeetingRecord): Promise<string> => {
-    const meetings = await getAllMeetings();
-    const matches = meetings.filter(meeting => (
-        meeting.id === record.id
-        || Boolean(record.jobId && meeting.jobId === record.jobId)
-    ));
-    const byMostRecentlyUpdated = (latest: MeetingRecord | undefined, meeting: MeetingRecord): MeetingRecord => {
-        if (!latest) return meeting;
-        const latestUpdatedAt = Date.parse(latest.updatedAt || latest.createdAt || latest.date) || 0;
-        const meetingUpdatedAt = Date.parse(meeting.updatedAt || meeting.createdAt || meeting.date) || 0;
-        return meetingUpdatedAt > latestUpdatedAt ? meeting : latest;
-    };
-    const latestExisting = matches.reduce<MeetingRecord | undefined>(byMostRecentlyUpdated, undefined);
-    if (latestExisting) {
-        const completedExisting = matches
-            .filter(meeting => meeting.analysisStatus === 'completed')
-            .reduce<MeetingRecord | undefined>(byMostRecentlyUpdated, undefined);
-        const incomingRecord = completedExisting && record.analysisStatus !== 'completed'
-            ? completedExisting
-            : record;
-        const userEditedMatches = matches.filter(meeting => (
-            meeting.id !== meeting.jobId
-            || Boolean(meeting.folderId)
-            || meeting.pinned !== undefined
-            || Boolean(meeting.editedDisplaySegments?.length)
-            || Boolean(meeting.transcriptEditMeta?.edited)
-            || Boolean(meeting.transcriptEditMeta?.editedAt)
-            || Boolean(meeting.confirmedMinutes)
-            || Boolean(meeting.meetingReport)
-            || Boolean(Object.keys(meeting.speakerLabels || {}).length)
-        ));
-        const userEdited = userEditedMatches.reduce<MeetingRecord | undefined>(byMostRecentlyUpdated, undefined)
-            || latestExisting;
-        const existing = userEdited || latestExisting;
-        await updateMeeting({
-            ...incomingRecord,
-            id: existing.id,
-            title: userEdited.title || existing.title || incomingRecord.title,
-            meetingPurpose: userEdited.meetingPurpose ?? existing.meetingPurpose ?? incomingRecord.meetingPurpose,
-            createdAt: existing.createdAt,
-            folderId: userEdited.folderId ?? existing.folderId,
-            pinned: userEdited.pinned ?? existing.pinned,
-            sourceFile: userEdited.sourceFile || existing.sourceFile || incomingRecord.sourceFile,
-            speakerLabels: Object.keys(userEdited.speakerLabels || {}).length > 0
-                ? userEdited.speakerLabels
-                : existing.speakerLabels ?? incomingRecord.speakerLabels,
-            editedDisplaySegments: userEdited.editedDisplaySegments?.length
-                ? userEdited.editedDisplaySegments
-                : existing.editedDisplaySegments,
-            transcriptEditMeta: Object.keys(userEdited.transcriptEditMeta || {}).length > 0
-                ? userEdited.transcriptEditMeta
-                : existing.transcriptEditMeta,
-            confirmedMinutes: userEdited.confirmedMinutes ?? existing.confirmedMinutes,
-            meetingReport: userEdited.meetingReport ?? existing.meetingReport,
-        });
-        await Promise.all(
-            matches
-                .filter(meeting => meeting.id !== existing.id)
-                .map(meeting => deleteMeeting(meeting.id)),
-        );
-        return existing.id;
-    }
-    await addMeeting(record);
-    return record.id;
-};
-
-export const deleteMeetingRecordForJob = async (jobId: string): Promise<void> => {
-    const meetings = await getAllMeetings();
-    const matches = meetings.filter(meeting => meeting.id === jobId || meeting.jobId === jobId);
-    await Promise.all(matches.map(meeting => deleteMeeting(meeting.id)));
-};
-
-export const updateMeetingAnalysisStatus = async (
-    jobId: string,
-    analysisStatus: NonNullable<MeetingRecord['analysisStatus']>,
-): Promise<void> => {
-    const meeting = (await getAllMeetings()).find(item => item.id === jobId || item.jobId === jobId);
-    if (!meeting) return;
-    const meetingId = await upsertMeetingRecord({ ...meeting, analysisStatus });
-    window.dispatchEvent(new CustomEvent('meetings:updated', {
-        detail: { id: meetingId, openHistory: false },
-    }));
-};
-
-export const meetingRecordFromSavedAnalysis = (
-    data: AnalyzeResult,
-    draft: AnalysisResumeDraft,
-): MeetingRecord => ({
-    id: draft.jobId,
-    date: draft.date.replace('T', ' '),
-    title: draft.title.trim(),
-    participants: draft.participants || '',
-    meetingPurpose: draft.meetingPurpose?.trim() || '',
-    selectedReportTemplateId: data.selectedReportTemplateId
-        || data.selected_report_template_id
-        || draft.selectedReportTemplateId
-        || DEFAULT_REPORT_TEMPLATE_ID,
-    reportTemplate: data.reportTemplate
-        || data.report_template
-        || draft.reportTemplate
-        || getReportTemplateById(DEFAULT_REPORT_TEMPLATE_ID),
-    selectedContextTemplateId: data.selectedContextTemplateId
-        || data.selected_context_template_id
-        || DEFAULT_CONTEXT_TEMPLATE_ID,
-    contextTemplate: data.contextTemplate
-        || data.context_template
-        || getContextTemplateById(DEFAULT_CONTEXT_TEMPLATE_ID),
-    selectedTermGlossaryIds: data.selectedTermGlossaryIds
-        || data.selected_term_glossary_ids
-        || draft.selectedTermGlossaryIds
-        || [],
-    termGlossaries: data.termGlossaries
-        || data.term_glossaries
-        || draft.termGlossaries
-        || [],
-    summary: data.summary || '대화록을 저장했습니다.',
-    segments: data.segments || [],
-    displaySegments: data.displaySegments || data.display_segments || [],
-    speakerLabels: {},
-    sourceFile: data.source_file || draft.sourceFilename,
-    jobId: data.job_id || draft.jobId,
-    topics: data.topics || [],
-    topicSections: data.topicSections || data.topic_sections || [],
-    participantSummaries: data.participantSummaries || data.participant_summaries || [],
-    speakerContextSummaries: data.speakerContextSummaries || data.speaker_context_summaries || [],
-    generationStatus: data.generationStatus || data.generation_status || {},
-    actions: data.actions || [],
-    decisions: data.decisions || [],
-    needsCheck: data.needsCheck || data.needs_check || [],
-    analysisStatus: data.partial
-        ? draft.status === 'failed'
-            ? 'diarization_failed'
-            : draft.status === 'stopped' || draft.status === 'cancelled'
-                ? 'diarization_stopped'
-                : 'diarization_in_progress'
-        : 'completed',
-    diarizationSkipped: data.diarizationSkipped ?? data.diarization_skipped ?? false,
-    diarizationApplied: data.diarizationApplied ?? data.diarization_applied ?? false,
-    diarizationRequested: data.diarizationRequested ?? data.diarization_requested ?? true,
-    diarizationSkipMessage: data.diarizationSkipMessage || data.diarization_skip_message || '',
-    diarizationSkipReason: data.diarizationSkipReason || data.diarization_skip_reason || '',
-    diarizationDeferred: data.diarizationDeferred ?? data.diarization_deferred ?? false,
-    diarizationDeferMessage: data.diarizationDeferMessage || data.diarization_defer_message || '',
-    outputFiles: data.outputs,
-});
-
 interface ResumeCandidate {
     job_id: string;
     stage: string;
@@ -388,27 +145,6 @@ interface ResumeCandidate {
 interface ResumeCandidatesPayload {
     candidates?: ResumeCandidate[];
     recommended_job_id?: string | null;
-}
-
-export interface DraftStatusPayload {
-    drafts?: Array<{
-        job_id: string;
-        status: 'active' | 'cancelled' | 'failed' | 'completed' | 'stopped' | 'missing';
-        stage?: string;
-        updated_at?: string;
-        resume_supported?: boolean;
-        completed_chunk_count?: number;
-        last_progress?: {
-            message?: string;
-            progress?: number;
-            status?: string;
-            transcript_ready?: boolean;
-            transcriptReady?: boolean;
-            eta_seconds?: number | null;
-            etaSeconds?: number | null;
-        };
-        last_error?: string;
-    }>;
 }
 
 interface ModelStatus {
@@ -699,12 +435,11 @@ const getAutoSaveCompletionNote = (result: AnalyzeResult): string | undefined =>
 };
 
 const requestAnalysisStoragePreflight = async (
-    apiBase: string,
     selectedFile: File,
     durationSeconds: number | null,
     signal?: AbortSignal,
 ): Promise<AnalysisStoragePreflightPayload> => {
-    const response = await fetch(`${apiBase}/api/analyze/preflight`, {
+    const response = await localEngineClient.request('/api/analyze/preflight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -868,8 +603,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         const requestId = analysisSettingsRequestRef.current + 1;
         analysisSettingsRequestRef.current = requestId;
         try {
-            const apiBase = await getApiBase();
-            const response = await fetch(`${apiBase}/api/settings`);
+            const response = await localEngineClient.request('/api/settings');
             if (!response.ok) throw new Error(`settings=${response.status}`);
             const data = await response.json() as AnalysisSettingsResponse;
             if (analysisSettingsRequestRef.current !== requestId) return;
@@ -963,6 +697,73 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         return () => window.clearInterval(timer);
     }, [isExtractingAudio]);
 
+    const refreshReadiness = useCallback(async (options: ReadinessOptions = {}): Promise<ReadinessCheck> => {
+        if (ANALYSIS_MODE !== 'real') {
+            setReadinessState('ready');
+            setReadinessMessage('');
+            return { state: 'ready', message: '' };
+        }
+
+        let healthReachable = false;
+        const transportCheckId = localEngineConnectionRequired ? null : beginTransportCheck();
+        try {
+            const apiBase = await getApiBase();
+            await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
+            const healthResponse = await localEngineClient.request('/api/health');
+            await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
+            healthReachable = true;
+            if (transportCheckId !== null) {
+                reportTransport(transportCheckId, transportFromHealthEvidence(true));
+            }
+            if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
+
+            await healthResponse.json().catch(() => null);
+
+            const modelsResponse = await localEngineClient.request('/api/models/status');
+            await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
+            if (!modelsResponse.ok) {
+                const body = await modelsResponse.text().catch(() => '');
+                await writeFrontendLog(`readiness models non-ok body=${body.slice(0, 500)}`);
+                const message = options.soft
+                    ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
+                    : '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
+                setReadinessState(options.soft ? 'server-waiting' : 'error');
+                setReadinessMessage(message);
+                return { state: options.soft ? 'server-waiting' : 'error', message };
+            }
+
+            const payload = await modelsResponse.json() as ModelsPayload;
+            await writeFrontendLog(`readiness models payload ready=${payload.ready} count=${payload.models?.length ?? 0} errors=${payload.errors?.join(' | ') ?? ''}`);
+            setModelsPayload(payload);
+
+            if (payload.ready) {
+                setReadinessState('ready');
+                setReadinessMessage('');
+                return { state: 'ready', message: '', models: payload };
+            }
+
+            const missing = payload.models
+                .filter(model => model.required && !model.installed)
+                .map(model => getUserModelLabel(model))
+                .join(', ');
+            const message = payload.errors?.[0] || `분석을 시작하려면 ${missing || '필수 모델'} 준비가 필요합니다. 모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.`;
+            setReadinessState('missing-models');
+            setReadinessMessage(message);
+            return { state: 'missing-models', message, models: payload };
+        } catch (error) {
+            if (transportCheckId !== null) {
+                reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
+            }
+            await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+            const message = error instanceof Error && !options.soft
+                ? `분석 기능을 준비하고 있습니다. ${error.message}`
+                : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
+            setReadinessState('server-waiting');
+            setReadinessMessage(message);
+            return { state: 'server-waiting', message };
+        }
+    }, [beginTransportCheck, localEngineConnectionRequired, reportTransport]);
+
     useEffect(() => {
         if (ANALYSIS_MODE !== 'real') return;
         if (localEngineConnectionRequired && !localEngineAuthorizedForReadiness) {
@@ -1012,7 +813,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             window.removeEventListener('focus', syncReadiness);
             window.removeEventListener('analysis:settings-updated', handleSettingsUpdated);
         };
-    }, [localEngineAuthorizedForReadiness, localEngineConnectionRequired]);
+    }, [localEngineAuthorizedForReadiness, localEngineConnectionRequired, refreshReadiness]);
 
     const missingRequiredModels = useMemo(
         () => (modelsPayload?.models || []).filter(model => model.required && !model.installed),
@@ -1087,72 +888,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
     const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
 
-    const refreshReadiness = async (options: ReadinessOptions = {}): Promise<ReadinessCheck> => {
-        if (ANALYSIS_MODE !== 'real') {
-            setReadinessState('ready');
-            setReadinessMessage('');
-            return { state: 'ready', message: '' };
-        }
-
-        let healthReachable = false;
-        const transportCheckId = localEngineConnectionRequired ? null : beginTransportCheck();
-        try {
-            const apiBase = await getApiBase();
-            await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
-            const healthResponse = await localEngineClient.request('/api/health');
-            await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
-            healthReachable = true;
-            if (transportCheckId !== null) {
-                reportTransport(transportCheckId, transportFromHealthEvidence(true));
-            }
-            if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
-
-            await healthResponse.json().catch(() => null);
-
-            const modelsResponse = await localEngineClient.request('/api/models/status');
-            await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
-            if (!modelsResponse.ok) {
-                const body = await modelsResponse.text().catch(() => '');
-                await writeFrontendLog(`readiness models non-ok body=${body.slice(0, 500)}`);
-                const message = options.soft
-                    ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
-                    : '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
-                setReadinessState(options.soft ? 'server-waiting' : 'error');
-                setReadinessMessage(message);
-                return { state: options.soft ? 'server-waiting' : 'error', message };
-            }
-
-            const payload = await modelsResponse.json() as ModelsPayload;
-            await writeFrontendLog(`readiness models payload ready=${payload.ready} count=${payload.models?.length ?? 0} errors=${payload.errors?.join(' | ') ?? ''}`);
-            setModelsPayload(payload);
-
-            if (payload.ready) {
-                setReadinessState('ready');
-                setReadinessMessage('');
-                return { state: 'ready', message: '', models: payload };
-            }
-
-            const missing = payload.models
-                .filter(model => model.required && !model.installed)
-                .map(model => getUserModelLabel(model))
-                .join(', ');
-            const message = payload.errors?.[0] || `분석을 시작하려면 ${missing || '필수 모델'} 준비가 필요합니다. 모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.`;
-            setReadinessState('missing-models');
-            setReadinessMessage(message);
-            return { state: 'missing-models', message, models: payload };
-        } catch (error) {
-            if (transportCheckId !== null) {
-                reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
-            }
-            await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
-            const message = error instanceof Error && !options.soft
-                ? `분석 기능을 준비하고 있습니다. ${error.message}`
-                : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
-            setReadinessState('server-waiting');
-            setReadinessMessage(message);
-            return { state: 'server-waiting', message };
-        }
-    };
 
     const waitForBackendReady = async (): Promise<ReadinessCheck> => {
         const deadline = getNowMs() + BACKEND_READY_TIMEOUT_MS;
@@ -1344,10 +1079,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setDeletingResumeDraftIds(current => new Set(current).add(draft.jobId));
         try {
             if (ANALYSIS_MODE === 'real') {
-                const apiBase = await getApiBase();
                 let response: Response | null = null;
                 try {
-                    response = await fetch(`${apiBase}/api/analyze/drafts/${encodeURIComponent(draft.jobId)}`, {
+                    response = await localEngineClient.request(`/api/analyze/drafts/${encodeURIComponent(draft.jobId)}`, {
                         method: 'DELETE',
                     });
                 } catch {
@@ -1542,10 +1276,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setAudioExtractNotice(null);
             setErrorMessage('');
 
-            const apiBase = await getApiBase();
             const formData = new FormData();
             formData.append('file', sourceFile);
-            const response = await fetch(`${apiBase}/api/tools/extract-audio/save-copy`, {
+            const response = await localEngineClient.request('/api/tools/extract-audio/save-copy', {
                 method: 'POST',
                 body: formData,
             });
@@ -1646,10 +1379,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
 
         try {
-            const apiBase = await getApiBase();
             const startSettingsRequestId = analysisSettingsRequestRef.current + 1;
             analysisSettingsRequestRef.current = startSettingsRequestId;
-            const settingsResponse = await fetch(`${apiBase}/api/settings`, {
+            const settingsResponse = await localEngineClient.request('/api/settings', {
                 signal: analysisAbortControllerRef.current?.signal,
             });
             if (!settingsResponse.ok) throw new Error('분석 설정을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.');
@@ -1672,7 +1404,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const suppressedResumeKeys = new Set(listSuppressedResumeCandidateKeys());
             if (ANALYSIS_MODE === 'real' && file) {
                 try {
-                    const resumeResponse = await fetch(`${apiBase}/api/analyze/resume-candidates`, {
+                    const resumeResponse = await localEngineClient.request('/api/analyze/resume-candidates', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -1774,7 +1506,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             if (ANALYSIS_MODE === 'real' && file) {
                 setStatusMessage('저장 공간을 확인하고 있습니다.');
                 const storagePreflight = await requestAnalysisStoragePreflight(
-                    apiBase,
                     file,
                     fileDurationSeconds,
                     analysisAbortControllerRef.current?.signal,
@@ -1828,7 +1559,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             formData.append('file_last_modified', String((file as File).lastModified));
             formData.append('resume_requested', resumeRequested ? 'true' : 'false');
             formData.append('diarization_during_analysis', latestDiarizationDuringAnalysis ? 'true' : 'false');
-            const response = await fetch(`${apiBase}/api/analyze`, {
+            const response = await localEngineClient.stream('/api/analyze', {
                 method: 'POST',
                 body: formData,
                 headers: { Accept: 'text/event-stream' },
@@ -1866,7 +1597,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     return;
                 }
                 const savePromise = (async () => {
-                    const partialResponse = await fetch(`${apiBase}/api/analyze/${analysisJobId}/partial-result`);
+                    const partialResponse = await localEngineClient.request(`/api/analyze/${analysisJobId}/partial-result`);
                     if (!partialResponse.ok) {
                         throw new Error(`대화록 중간 저장본을 불러오지 못했습니다: ${partialResponse.status}`);
                     }
@@ -2260,7 +1991,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         analysisStopActionRef.current = action;
         const pendingMessage = action === 'stop'
             ? '분석을 중지하고 있습니다. 현재 처리 중인 구간이 끝나면 이어하기 기록으로 남깁니다.'
-            : '분석을 취소하고 있습니다. 현재 처리 중인 구간이 끝나면 이어하기 기록을 제거합니다.';
+            : '분석을 취소하고 있습니다. 현재 처리 중인 구간이 끝나면 진행 중 기록을 끝냅니다.';
         setStatusMessage(pendingMessage);
 
         if (!jobId) {
@@ -2292,8 +2023,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
         const stopDecisionPromise = (async (): Promise<AnalysisStopAction | null> => {
             try {
-                const apiBase = await getApiBase();
-                const response = await fetch(`${apiBase}/api/analyze/${encodeURIComponent(jobId)}/cancel`, {
+                const response = await localEngineClient.request(`/api/analyze/${encodeURIComponent(jobId)}/cancel`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action }),
@@ -2890,7 +2620,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-foreground">분석을 어떻게 처리할까요?</div>
                                 <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                    중지하면 같은 파일로 이어서 진행할 수 있고, 취소하면 이어하기 기록을 남기지 않습니다.
+                                    중지하면 같은 파일로 이어서 진행할 수 있습니다. 취소하면 이번 분석은 끝내고, 이미 만든 정리 결과는 남깁니다.
                                 </div>
                             </div>
                             <div className="analysis-stop-actions">
@@ -2908,8 +2638,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                     variant="outline"
                                     onClick={() => handleStopAnalysis('cancel')}
                                     disabled={isRequestingAnalysisStop}
-                                    aria-label="이어하기 기록을 남기지 않고 분석 취소"
-                                    title="이어하기 기록을 남기지 않음"
+                                    aria-label="진행 중 기록을 끝내고 분석 취소"
+                                    title="진행 중 기록을 끝냄"
                                 >
                                     {isRequestingAnalysisStop && analysisStopRequestedAction === 'cancel' ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
                                     취소

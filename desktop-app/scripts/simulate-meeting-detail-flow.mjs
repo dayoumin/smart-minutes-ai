@@ -1547,6 +1547,10 @@ const run = async () => {
     await page.keyboard.press('Tab');
     await page.keyboard.press('Tab');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => {
+      const activeElement = document.activeElement;
+      return activeElement instanceof HTMLElement && activeElement !== document.body && !activeElement.closest('[data-sidebar-record-menu]');
+    });
     assert.equal(await page.evaluate(() => {
       const activeElement = document.activeElement;
       return activeElement instanceof HTMLElement && activeElement !== document.body && !activeElement.closest('[data-sidebar-record-menu]');
@@ -2074,11 +2078,47 @@ const run = async () => {
     assert.equal(await otherTopicButton.isDisabled(), true);
     assert.equal(await page.locator('button:has-text("정리 중") .animate-spin').count(), 0);
 
+    // Complete A while B is still open: persistence must target A without
+    // clearing B's search or changing B's selected organization mode.
+    await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
+    const otherSearch = page.getByRole('textbox', { name: '현재 회의에서 검색' });
+    await otherSearch.fill('다른');
+    const readStoredMeeting = id => page.evaluate(async targetId => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      const db = await new Promise((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => reject(request.error);
+      });
+      try {
+        return await new Promise((resolve, reject) => {
+          const tx = db.transaction('meetings', 'readonly');
+          const getRequest = tx.objectStore('meetings').get(targetId);
+          getRequest.onsuccess = () => resolve(getRequest.result);
+          getRequest.onerror = () => reject(getRequest.error);
+        });
+      } finally {
+        db.close();
+      }
+    }, id);
+    const otherBeforeGeneration = await readStoredMeeting(otherMeetingId);
+    releaseTopicSectionsResponse();
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const status = (await readStoredMeeting(meetingId))?.generationStatus;
+      if ((status?.topicSections ?? status?.topic_sections) === 'completed') break;
+      await sleep(50);
+    }
+    const completedStatus = (await readStoredMeeting(meetingId))?.generationStatus;
+    assert.equal(completedStatus?.topicSections ?? completedStatus?.topic_sections, 'completed');
+    assert.deepEqual(await readStoredMeeting(otherMeetingId), otherBeforeGeneration);
+    assert.equal(await page.getByRole('heading', { name: '다른 회의록' }).count(), 1);
+    assert.equal(await otherSearch.inputValue(), '다른');
+    assert.equal(await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).getAttribute('aria-selected'), 'true');
+    assert.equal(await page.getByText('주제별 정리를 완료했습니다.').count(), 0);
+
     await page.getByText('시뮬레이션 회의록').first().click();
     await page.getByText('사용자가 다듬은 대화록입니다.').waitFor({ timeout: 10000 });
     await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '주제별 정리' }).click();
-    releaseTopicSectionsResponse();
     await page.getByText('AI 시스템 통제권과 지식 확장 방향을 정리했습니다.').waitFor({ timeout: 10000 });
     topicSectionsFailureCode = 'request_timeout';
     await topicButton.click();
@@ -2468,7 +2508,57 @@ const run = async () => {
     assert.notEqual(fallbackSelectedTitle, '기본 별칭 참석자 회의록');
     await page.getByRole('heading', { name: fallbackSelectedTitle, exact: true }).waitFor({ timeout: 10000 });
 
-    console.log('ok - meeting detail flow simulation');
+    // Exercise actual editing and IndexedDB rehydration, not just seeded edits.
+    const syncBodies = [];
+    const otherBeforeReopen = await readStoredMeeting(otherMeetingId);
+    await page.route(`**/api/outputs/${jobId}/sync-record`, route => {
+      syncBodies.push(JSON.parse(route.request().postData() ?? '{}'));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ outputs: {}, export_error: null }) });
+    });
+    await page.getByText('시뮬레이션 회의록', { exact: true }).first().click();
+    await page.getByRole('heading', { name: '시뮬레이션 회의록', exact: true }).waitFor();
+    await page.locator('.tab-list').getByRole('tab', { name: '대화록', exact: true }).click();
+    await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+    const reopenedText = '재열기 검증: 화면에서 저장한 최신 발언입니다.';
+    await page.getByLabel('김검토 대화록 수정').first().fill(reopenedText);
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(`/${jobId}/sync-record`)),
+      page.getByRole('button', { name: '저장', exact: true }).click(),
+    ]);
+    await page.getByText(reopenedText, { exact: true }).waitFor();
+    await page.getByRole('button', { name: '회의 정보 수정', exact: true }).click();
+    await page.getByRole('textbox', { name: '회의 제목', exact: true }).fill('재열기 검증 회의록');
+    await page.getByRole('textbox', { name: '회의 목적', exact: true }).fill('수정 내용과 생성 결과의 재열기 보존');
+    await Promise.all([
+      page.waitForResponse(response => response.url().endsWith(`/${jobId}/sync-record`)),
+      page.getByRole('button', { name: '저장', exact: true }).click(),
+    ]);
+    await page.getByRole('heading', { name: '재열기 검증 회의록', exact: true }).waitFor();
+    const savedBeforeReopen = await readStoredMeeting(meetingId);
+    assert.equal(savedBeforeReopen.editedDisplaySegments[0].text, reopenedText);
+    assert.equal(savedBeforeReopen.transcriptEditMeta.topicSectionsOutdated, true);
+    assert.equal(savedBeforeReopen.topicSections.length, 2);
+    assert.equal(syncBodies.at(-1).editedDisplaySegments[0].text, reopenedText);
+    assert.equal(syncBodies.at(-1).title, '재열기 검증 회의록');
+    await page.getByText('다른 회의록', { exact: true }).first().click();
+    await page.getByRole('heading', { name: '다른 회의록', exact: true }).waitFor();
+    assert.deepEqual(await readStoredMeeting(otherMeetingId), otherBeforeReopen);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByText('재열기 검증 회의록', { exact: true }).first().click();
+    await page.getByRole('heading', { name: '재열기 검증 회의록', exact: true }).waitFor();
+    await page.locator('.tab-list').getByRole('tab', { name: '대화록', exact: true }).click();
+    await page.getByText(reopenedText, { exact: true }).waitFor();
+    assert.deepEqual(await readStoredMeeting(meetingId), savedBeforeReopen);
+    assert.deepEqual(await readStoredMeeting(otherMeetingId), otherBeforeReopen);
+    const exportsBeforeReopen = exportBodies.length;
+    await page.getByRole('button', { name: '대화록 TXT 파일을 다운로드 폴더에 저장', exact: true }).click();
+    await page.getByRole('button', { name: '파일 저장', exact: true }).click();
+    for (let attempt = 0; attempt < 100 && exportBodies.length === exportsBeforeReopen; attempt += 1) await sleep(50);
+    assert.equal(exportBodies.length, exportsBeforeReopen + 1);
+    assert.equal(exportBodies.at(-1).displaySegments[0].text, reopenedText);
+    assert.equal(exportBodies.at(-1).exportScope, 'transcript');
+    assert.match(exportBodies.at(-1).title, /^재열기 검증 회의록/);
+    console.log('ok - meeting detail flow simulation (cross-meeting completion, edit/reopen and latest export payload)');
   } catch (error) {
     console.error(error);
     console.error('api calls:', apiCalls);

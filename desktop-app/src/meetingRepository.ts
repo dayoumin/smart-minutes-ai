@@ -167,7 +167,8 @@ const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => (
     topicSections: record.topicSections ?? record.topic_sections ?? [],
     displaySegments: record.displaySegments ?? record.display_segments ?? [],
     editedDisplaySegments: record.editedDisplaySegments ?? record.edited_display_segments ?? [],
-    speakerLabels: record.speakerLabels ?? record.speaker_labels ?? {},
+    // Keep legacy absence distinct from an explicit user-cleared label set ({}).
+    speakerLabels: record.speakerLabels ?? record.speaker_labels,
     participantSummaries: record.participantSummaries ?? record.participant_summaries ?? [],
     speakerContextSummaries: record.speakerContextSummaries ?? record.speaker_context_summaries ?? [],
     generationStatus: record.generationStatus ?? record.generation_status ?? {},

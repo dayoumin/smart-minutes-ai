@@ -629,6 +629,474 @@ const runCompletedMeetingRejectsStalePartialScenario = async (browser, fixtureUp
   }
 };
 
+const runLegacySavedMeetingRejectsStalePartialScenario = async (browser, fixtureUpload) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript(() => {
+    window.__meetingUpdateCount = 0;
+    window.addEventListener('meetings:updated', () => {
+      window.__meetingUpdateCount += 1;
+    });
+  });
+  const page = await context.newPage();
+  const draft = {
+    jobId: 'legacy-saved-meeting-job',
+    title: '예전 완료 기록',
+    date: '2026-05-13T09:30',
+    meetingPurpose: '상태 필드가 없는 완료 기록 보존',
+    sourceFilename: fixtureUpload.name,
+    sourceSize: fixtureUpload.size,
+    sourceLastModified: fixtureUpload.lastModified,
+    status: 'active',
+    transcriptReady: true,
+    createdAt: '2026-05-13T09:30:00.000Z',
+    updatedAt: '2026-05-13T09:45:00.000Z',
+    stage: 'diarizing',
+    lastMessage: '참석자 구분 중',
+    lastProgress: 70,
+  };
+
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      drafts: [{
+        job_id: draft.jobId,
+        status: 'active',
+        stage: 'diarizing',
+        active: true,
+        resume_supported: true,
+        completed_chunk_count: 1,
+        last_progress: { transcript_ready: true },
+      }],
+    }),
+  }));
+  await page.route('**/recoverable-result', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: draft.jobId,
+      source_file: fixtureUpload.name,
+      partial: true,
+      summary: '늦게 도착한 partial 결과',
+      segments: [{ start: '00:00', end: '00:02', speaker: '', text: '오래된 대화록' }],
+      display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '오래된 대화록' }],
+      diarization_requested: true,
+    }),
+  }));
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(({ meeting, resumeDraft }) => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      request.onerror = () => reject(request.error);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) db.createObjectStore('meetings', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('folders')) db.createObjectStore('folders', { keyPath: 'id' });
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction('meetings', 'readwrite');
+        transaction.objectStore('meetings').put(meeting);
+        transaction.oncomplete = () => {
+          db.close();
+          window.__meetingUpdateCount = 0;
+          window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([resumeDraft]));
+          window.dispatchEvent(new Event('analysis-resume-drafts:updated'));
+          resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+      };
+    }), { meeting: {
+      id: 'legacy-user-meeting-001',
+      jobId: draft.jobId,
+      date: '2026-05-13 09:30',
+      title: draft.title,
+      participants: '',
+      meetingPurpose: draft.meetingPurpose,
+      summary: '예전 저장 결과',
+      segments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '예전 대화록' }],
+      displaySegments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '예전 대화록' }],
+      speakerLabels: {},
+      sourceFile: fixtureUpload.name,
+      createdAt: '2026-05-13T09:30:00.000Z',
+      updatedAt: '2026-05-13T10:00:00.000Z',
+    }, resumeDraft: draft });
+    await page.waitForFunction(() => window.__meetingUpdateCount >= 1, undefined, { timeout: 10000 });
+    const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(meetings.length, 1);
+    assert.equal(meetings[0].id, 'legacy-user-meeting-001');
+    assert.equal(meetings[0].analysisStatus, undefined);
+    assert.equal(meetings[0].summary, '예전 저장 결과');
+    assert.equal(meetings[0].displaySegments[0].text, '예전 대화록');
+    console.log('ok - legacy saved meeting rejects stale partial scenario');
+  } finally {
+    await context.close();
+  }
+};
+
+const runGeneratedContentPreservationScenario = async (browser, fixtureUpload, spec) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
+  await context.addInitScript(() => {
+    window.__meetingUpdateCount = 0;
+    window.addEventListener('meetings:updated', () => {
+      window.__meetingUpdateCount += 1;
+    });
+  });
+  const page = await context.newPage();
+  const draft = {
+    jobId: spec.jobId,
+    title: spec.title,
+    date: '2026-05-13T09:30',
+    meetingPurpose: spec.purpose,
+    sourceFilename: fixtureUpload.name,
+    sourceSize: fixtureUpload.size,
+    sourceLastModified: fixtureUpload.lastModified,
+    status: spec.draftStatus || spec.remoteStatus,
+    transcriptReady: true,
+    createdAt: '2026-05-13T09:30:00.000Z',
+    updatedAt: '2026-05-13T09:45:00.000Z',
+    stage: spec.remoteStatus,
+    lastMessage: '참석자 구분을 이어서 확인합니다.',
+    lastProgress: 70,
+  };
+
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      drafts: [{
+        job_id: draft.jobId,
+        status: spec.remoteStatus,
+        stage: spec.remoteStatus,
+        active: spec.remoteStatus === 'active',
+        resume_supported: true,
+        completed_chunk_count: 1,
+        last_progress: { transcript_ready: true },
+      }],
+    }),
+  }));
+  await page.route('**/recoverable-result', route => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      job_id: draft.jobId,
+      source_file: fixtureUpload.name,
+      partial: spec.partial !== false,
+      summary: spec.incomingSummary || '늦게 도착한 partial 결과',
+      segments: [{ start: '00:00', end: '00:02', speaker: '', text: '복구된 중간 대화록' }],
+      display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '복구된 중간 대화록' }],
+      topic_sections: [],
+      ...(spec.partial === false ? {} : {
+        generation_status: {
+          summary: 'not_started',
+          topic_sections: 'not_started',
+          speaker_context_summaries: 'not_started',
+        },
+      }),
+      diarization_requested: true,
+    }),
+  }));
+
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.evaluate(({ meeting, resumeDraft }) => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB', 2);
+      request.onerror = () => reject(request.error);
+      request.onupgradeneeded = () => {
+        const db = request.result;
+        if (!db.objectStoreNames.contains('meetings')) db.createObjectStore('meetings', { keyPath: 'id' });
+        if (!db.objectStoreNames.contains('folders')) db.createObjectStore('folders', { keyPath: 'id' });
+      };
+      request.onsuccess = () => {
+        const db = request.result;
+        const transaction = db.transaction('meetings', 'readwrite');
+        transaction.objectStore('meetings').put(meeting);
+        transaction.oncomplete = () => {
+          db.close();
+          window.__meetingUpdateCount = 0;
+          window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([resumeDraft]));
+          window.dispatchEvent(new Event('analysis-resume-drafts:updated'));
+          resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+      };
+    }), {
+      meeting: {
+        id: spec.meetingId,
+        jobId: draft.jobId,
+        date: '2026-05-14 11:00',
+        title: draft.title,
+        participants: '',
+        meetingPurpose: draft.meetingPurpose,
+        summary: '보관할 회의 요약',
+        segments: [{ start: '00:00', end: '00:02', speaker: '', text: '보관할 대화록' }],
+        displaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '보관할 대화록' }],
+        topicSections: [{ topic: '보관할 주제', summary: '보관할 정리' }],
+        participantSummaries: [{ participant: '김바로', summary: '보관할 참석자 정리' }],
+        speakerContextSummaries: [{ speaker: 'SPEAKER_00', summary: '보관할 발언 정리' }],
+        topics: ['보관할 주제 이름'],
+        actions: ['보관할 할 일'],
+        decisions: ['보관할 결정'],
+        needsCheck: ['보관할 확인'],
+        generationStatus: { summary: 'completed', topicSections: 'completed', speakerContextSummaries: 'completed' },
+        speakerLabels: {},
+        sourceFile: fixtureUpload.name,
+        analysisStatus: spec.meetingStatus,
+        ...(spec.keepEditedTranscript ? {
+          editedDisplaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '사용자가 고친 대화록' }],
+          transcriptEditMeta: { edited: true, editedAt: '2026-05-13T10:00:00.000Z' },
+        } : {}),
+        ...(spec.seedOutdated ? {
+          transcriptEditMeta: {
+            summaryOutdated: true,
+            topicSectionsOutdated: true,
+            speakerContextOutdated: true,
+          },
+        } : {}),
+        createdAt: '2026-05-13T09:30:00.000Z',
+        updatedAt: '2026-05-13T10:00:00.000Z',
+      },
+      resumeDraft: draft,
+    });
+    await page.waitForFunction(() => window.__meetingUpdateCount >= 1, undefined, { timeout: 10000 });
+    const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
+      const request = indexedDB.open('MeetingHistoryDB');
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+      };
+    }));
+    assert.equal(meetings.length, 1);
+    assert.equal(meetings[0].id, spec.meetingId);
+    assert.equal(meetings[0].analysisStatus, spec.expectedAnalysisStatus);
+    assert.equal(meetings[0].date, '2026-05-14 11:00', 'Recovery must preserve the saved meeting date instead of using the stale draft date.');
+    assert.equal(meetings[0].summary, spec.expectSummary || '보관할 회의 요약');
+    assert.equal(meetings[0].displaySegments[0].text, '복구된 중간 대화록');
+    if (spec.keepEditedTranscript) {
+      assert.equal(meetings[0].editedDisplaySegments[0].text, '사용자가 고친 대화록');
+      assert.equal(meetings[0].transcriptEditMeta.edited, true);
+      assert.equal(Boolean(meetings[0].transcriptEditMeta.summaryOutdated), false);
+      assert.equal(Boolean(meetings[0].transcriptEditMeta.topicSectionsOutdated), false);
+      assert.equal(Boolean(meetings[0].transcriptEditMeta.speakerContextOutdated), false);
+      assert.equal(meetings[0].topicSections[0].topic, '보관할 주제');
+      assert.equal(meetings[0].summary, '보관할 회의 요약');
+    } else if (spec.expectOutdated === false) {
+      assert.equal(Boolean(meetings[0].transcriptEditMeta?.summaryOutdated), false);
+      assert.equal(Boolean(meetings[0].transcriptEditMeta?.topicSectionsOutdated), false);
+      assert.equal(Boolean(meetings[0].transcriptEditMeta?.speakerContextOutdated), false);
+    } else {
+      assert.equal(meetings[0].topicSections[0].topic, '보관할 주제');
+      assert.equal(meetings[0].participantSummaries[0].summary, '보관할 참석자 정리');
+      assert.equal(meetings[0].speakerContextSummaries[0].summary, '보관할 발언 정리');
+      assert.equal(meetings[0].actions[0], '보관할 할 일');
+      assert.equal(meetings[0].decisions[0], '보관할 결정');
+      assert.equal(meetings[0].needsCheck[0], '보관할 확인');
+      assert.equal(meetings[0].topics[0], '보관할 주제 이름');
+      assert.equal(meetings[0].generationStatus.summary, 'completed');
+      assert.equal(meetings[0].generationStatus.topicSections, 'completed');
+      assert.equal(meetings[0].generationStatus.speakerContextSummaries, 'completed');
+      assert.equal(meetings[0].generationStatus.topic_sections, undefined);
+      assert.equal(meetings[0].generationStatus.speaker_context_summaries, undefined);
+      assert.equal(meetings[0].transcriptEditMeta.summaryOutdated, true);
+      assert.equal(meetings[0].transcriptEditMeta.topicSectionsOutdated, true);
+      assert.equal(meetings[0].transcriptEditMeta.speakerContextOutdated, true);
+      assert.notEqual(meetings[0].transcriptEditMeta.edited, true);
+    }
+    if (spec.checkNote) {
+      await page.getByRole('button', { name: spec.title, exact: true }).click();
+      await page.getByRole('tab', { name: '기록 정리' }).click();
+      await page.getByText('현재 전체 요약은 이전 기준일 수 있습니다.').waitFor({ timeout: 10000 });
+    }
+    if (spec.keepEditedTranscript) {
+      await page.getByRole('button', { name: spec.title, exact: true }).click();
+      await page.getByRole('tab', { name: '대화록' }).click();
+      await page.getByText('사용자가 고친 대화록', { exact: true }).waitFor({ timeout: 10000 });
+      await page.getByRole('tab', { name: '기록 정리' }).click();
+      await page.getByText('보관할 회의 요약', { exact: true }).waitFor({ timeout: 10000 });
+      assert.equal(await page.getByText('현재 전체 요약은 이전 기준일 수 있습니다.').count(), 0);
+    }
+    console.log(`ok - ${spec.label}`);
+  } finally {
+    await context.close();
+  }
+};
+
+const runStoppedMeetingKeepsGeneratedSectionsScenario = (browser, fixtureUpload) => runGeneratedContentPreservationScenario(browser, fixtureUpload, {
+    label: 'stopped meeting keeps generated sections',
+    remoteStatus: 'stopped',
+    meetingStatus: 'diarization_stopped',
+    expectedAnalysisStatus: 'diarization_stopped',
+    jobId: 'stopped-generated-job',
+    meetingId: 'stopped-user-meeting-001',
+    title: '중지 후 정리한 회의',
+    purpose: '중지 기록의 주제 정리 보존',
+    checkNote: true,
+});
+
+const runFailedMeetingKeepsGeneratedSectionsScenario = (browser, fixtureUpload) => runGeneratedContentPreservationScenario(browser, fixtureUpload, {
+    label: 'failed meeting keeps generated sections',
+    remoteStatus: 'failed',
+    meetingStatus: 'diarization_failed',
+    expectedAnalysisStatus: 'diarization_failed',
+    jobId: 'failed-generated-job',
+    meetingId: 'failed-user-meeting-001',
+    title: '실패한 뒤 정리한 회의',
+    purpose: '실패 기록의 주제 정리 보존',
+    checkNote: false,
+});
+
+const runResumeMovesSettledMeetingToInProgressScenario = (browser, fixtureUpload) => runGeneratedContentPreservationScenario(browser, fixtureUpload, {
+    label: 'resume moves settled meeting to in progress',
+    remoteStatus: 'active',
+    meetingStatus: 'diarization_stopped',
+    expectedAnalysisStatus: 'diarization_in_progress',
+    jobId: 'resume-generated-job',
+    meetingId: 'resume-user-meeting-001',
+    title: '이어하기 중인 정리 회의',
+    purpose: '이어하기가 정리 결과를 유지',
+    checkNote: false,
+});
+
+const runEditedTranscriptSkipsOutdatedNoteScenario = (browser, fixtureUpload) => runGeneratedContentPreservationScenario(browser, fixtureUpload, {
+    label: 'edited transcript skips outdated note',
+    remoteStatus: 'stopped',
+    meetingStatus: 'diarization_stopped',
+    expectedAnalysisStatus: 'diarization_stopped',
+    jobId: 'edited-transcript-job',
+    meetingId: 'edited-transcript-meeting',
+    title: '고친 대화록이 남은 회의',
+    purpose: '고친 대화록은 이전 기준 안내를 켜지 않음',
+    checkNote: false,
+    keepEditedTranscript: true,
+});
+
+const runCompletedResultClearsOutdatedSummaryScenario = (browser, fixtureUpload) => runGeneratedContentPreservationScenario(browser, fixtureUpload, {
+    label: 'completed result clears outdated summary',
+    remoteStatus: 'completed',
+    draftStatus: 'stopped',
+    meetingStatus: 'diarization_stopped',
+    expectedAnalysisStatus: 'completed',
+    jobId: 'completed-clears-outdated-job',
+    meetingId: 'completed-clears-outdated-meeting',
+    title: '완료로 바뀐 정리 회의',
+    purpose: '완료 결과가 이전 기준 안내를 지움',
+    checkNote: false,
+    partial: false,
+    incomingSummary: '완료된 회의 요약',
+    expectSummary: '완료된 회의 요약',
+    expectOutdated: false,
+    seedOutdated: true,
+});
+
+const readMeetings = page => page.evaluate(() => new Promise((resolve, reject) => {
+    const request = indexedDB.open('MeetingHistoryDB');
+    request.onerror = () => reject(request.error);
+    request.onsuccess = () => {
+        const db = request.result;
+        const getAllRequest = db.transaction('meetings', 'readonly').objectStore('meetings').getAll();
+        getAllRequest.onerror = () => reject(getAllRequest.error);
+        getAllRequest.onsuccess = () => resolve(getAllRequest.result);
+    };
+}));
+
+const runResumeCancelKeepsUserResultScenario = async (browser) => {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
+    const page = await context.newPage();
+    const jobId = 'resume-cancel-user-result-job';
+    let releaseCleanup = () => {};
+    const cleanupCanReturn = new Promise(resolve => {
+        releaseCleanup = resolve;
+    });
+    await context.addInitScript(storedJobId => {
+        window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([{
+            jobId: storedJobId,
+            title: '이어하기 중 취소한 회의',
+            date: '2026-05-13T09:30',
+            meetingPurpose: '정리 결과를 남기는 취소',
+            sourceFilename: 'resume-draft-target.mp4',
+            status: 'active',
+            transcriptReady: true,
+            createdAt: '2026-05-13T09:30:00.000Z',
+            updatedAt: '2026-05-13T09:45:00.000Z',
+        }]));
+        window.localStorage.setItem('pendingCancelledAnalysisCleanups', JSON.stringify([storedJobId]));
+        window.localStorage.setItem('pendingAnalysisDraftCleanups', JSON.stringify([storedJobId]));
+    }, jobId);
+    await installBaseRoutes(page);
+    await page.route('**/api/analyze/drafts/*', async route => {
+        await cleanupCanReturn;
+        return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ drafts: [] }),
+    }));
+
+    try {
+        const deleteRequested = page.waitForRequest(request => (
+            request.method() === 'DELETE' && request.url().includes('/api/analyze/drafts/')
+        ));
+        await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+        await deleteRequested;
+        await page.evaluate(storedJobId => new Promise((resolve, reject) => {
+            const request = indexedDB.open('MeetingHistoryDB', 2);
+            request.onerror = () => reject(request.error);
+            request.onsuccess = () => {
+                const db = request.result;
+                const transaction = db.transaction('meetings', 'readwrite');
+                transaction.objectStore('meetings').put({
+                    id: storedJobId,
+                    jobId: storedJobId,
+                    date: '2026-05-13 09:30',
+                    title: '이어하기 중 취소한 회의',
+                    participants: '',
+                    summary: '보관할 회의 요약',
+                    segments: [{ start: '00:00', end: '00:02', speaker: '', text: '보관할 대화록' }],
+                    displaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '보관할 대화록' }],
+                    topicSections: [{ topic: '보관할 주제', summary: '보관할 정리' }],
+                    generationStatus: { summary: 'completed', topicSections: 'completed' },
+                    analysisStatus: 'diarization_in_progress',
+                });
+                transaction.oncomplete = () => {
+                    db.close();
+                    resolve();
+                };
+                transaction.onerror = () => reject(transaction.error);
+            };
+        }), jobId);
+        releaseCleanup();
+        await page.waitForFunction(storedJobId => {
+            const drafts = JSON.parse(window.localStorage.getItem('analysisResumeDrafts') ?? '[]');
+            return drafts.every(draft => draft.jobId !== storedJobId);
+        }, jobId, { timeout: 10000 });
+        const meetings = await readMeetings(page);
+        assert.equal(meetings.length, 1);
+        assert.equal(meetings[0].id, jobId);
+        assert.equal(meetings[0].analysisStatus, 'diarization_stopped');
+        assert.equal(meetings[0].summary, '보관할 회의 요약');
+        assert.equal(meetings[0].topicSections[0].topic, '보관할 주제');
+        console.log('ok - resume cancel keeps user result scenario');
+    } finally {
+        await context.close();
+    }
+};
+
 const runResumeDraftScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
@@ -999,6 +1467,8 @@ const runRemoteTerminalTranscriptRecoveryScenario = async (browser, fixtureUploa
     { name: 'failed-recovery-unavailable', remoteStatus: 'failed', recoverableStatus: 500, expectedAnalysisStatus: 'diarization_failed', expectedLabel: '참석자 구분 실패' },
     { name: 'stopped-recovery-unavailable', remoteStatus: 'stopped', recoverableStatus: 500, expectedAnalysisStatus: 'diarization_stopped', expectedLabel: '구분 중지' },
     { name: 'cancelled-crash-recovery', remoteStatus: 'missing', recoverableStatus: 404, expectedAnalysisStatus: null, expectedLabel: null, pendingCancellation: true },
+    { name: 'cancelled-keeps-stopped-meeting', remoteStatus: 'cancelled', recoverableStatus: 404, expectedAnalysisStatus: 'diarization_stopped', expectedLabel: null, pendingCancellation: true, seedAnalysisStatus: 'diarization_stopped' },
+    { name: 'cancelled-stops-owned-in-progress-meeting', remoteStatus: 'cancelled', recoverableStatus: 404, expectedAnalysisStatus: 'diarization_stopped', expectedLabel: null, pendingCancellation: true, seedAnalysisStatus: 'diarization_in_progress', seedMeetingId: 'owned-in-progress-meeting' },
   ]) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
     const page = await context.newPage();
@@ -1075,14 +1545,14 @@ const runRemoteTerminalTranscriptRecoveryScenario = async (browser, fixtureUploa
     });
     try {
       await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-      await page.evaluate(({ meetingJobId }) => new Promise((resolve, reject) => {
+      await page.evaluate(({ meetingJobId, seedAnalysisStatus, seedMeetingId }) => new Promise((resolve, reject) => {
         const request = indexedDB.open('MeetingHistoryDB', 2);
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
           const db = request.result;
           const transaction = db.transaction('meetings', 'readwrite');
           transaction.objectStore('meetings').put({
-            id: meetingJobId,
+            id: seedMeetingId || meetingJobId,
             jobId: meetingJobId,
             date: '2026-05-13 09:30',
             title: `${meetingJobId} 회의록`,
@@ -1091,12 +1561,16 @@ const runRemoteTerminalTranscriptRecoveryScenario = async (browser, fixtureUploa
             summary: '중간 저장 회의록',
             segments: [{ start: '00:00', end: '00:02', speaker: '', text: '저장된 중간 대화록' }],
             displaySegments: [{ start: '00:00', end: '00:02', speaker: '', text: '저장된 중간 대화록' }],
-            analysisStatus: 'diarization_in_progress',
+            analysisStatus: seedAnalysisStatus,
           });
           transaction.oncomplete = () => { db.close(); resolve(); };
           transaction.onerror = () => reject(transaction.error);
         };
-      }), { meetingJobId: jobId });
+      }), {
+        meetingJobId: jobId,
+        seedAnalysisStatus: testCase.seedAnalysisStatus || 'diarization_in_progress',
+        seedMeetingId: testCase.seedMeetingId,
+      });
       releaseCleanup();
       releaseRemoteStatus();
       if (testCase.pendingCancellation) {
@@ -1139,6 +1613,7 @@ const runRemoteTerminalTranscriptRecoveryScenario = async (browser, fixtureUploa
         assert.equal(meetings.length, 1);
         assert.equal(meetings[0].jobId, jobId);
         assert.equal(meetings[0].analysisStatus, testCase.expectedAnalysisStatus);
+        if (testCase.seedMeetingId) assert.equal(meetings[0].id, testCase.seedMeetingId);
       } else {
         assert.equal(meetings.filter(meeting => meeting.jobId === jobId).length, 0);
       }
@@ -2267,6 +2742,13 @@ const run = async () => {
     ['partial-record-failure', runPartialRecordFailureScenario],
     ['cancelled-recovery-import-race', runCancelledRecoveryImportRaceScenario],
     ['completed-meeting-rejects-stale-partial', runCompletedMeetingRejectsStalePartialScenario],
+    ['legacy-saved-meeting-rejects-stale-partial', runLegacySavedMeetingRejectsStalePartialScenario],
+    ['stopped-meeting-keeps-generated-sections', runStoppedMeetingKeepsGeneratedSectionsScenario],
+    ['failed-meeting-keeps-generated-sections', runFailedMeetingKeepsGeneratedSectionsScenario],
+    ['resume-moves-settled-meeting-to-in-progress', runResumeMovesSettledMeetingToInProgressScenario],
+    ['completed-result-clears-outdated-summary', runCompletedResultClearsOutdatedSummaryScenario],
+    ['edited-transcript-skips-outdated-note', runEditedTranscriptSkipsOutdatedNoteScenario],
+    ['resume-cancel-keeps-user-result', runResumeCancelKeepsUserResultScenario],
     ['resume-draft', runResumeDraftScenario],
     ['active-draft-backend-sync', runActiveDraftBackendSyncScenario],
     ['remote-terminal-transcript-recovery', runRemoteTerminalTranscriptRecoveryScenario],

@@ -3,7 +3,9 @@ import { CalendarDays, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileA
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
-import { isTauriRuntime, openSavedFileLocation, toApiUrl } from './apiBase';
+import { isTauriRuntime, openSavedFileLocation } from './apiBase';
+import { localEngineClient } from './localEngineClient';
+import { useMeetingAudioPlayback } from './useMeetingAudioPlayback';
 import { readApiErrorInfo as getGenerationErrorInfo, readApiErrorMessage as getGenerationErrorMessage } from './apiError';
 import { Input } from './Input';
 import { StatusBanner } from './StatusBanner';
@@ -57,7 +59,6 @@ interface MeetingHistoryProps {
 
 type OrganizeTab = 'summary' | 'topics' | 'speakers';
 type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries' | 'meetingReport';
-type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing';
 type DiarizationStopAction = 'cancel' | 'defer';
 type TemplateDeleteTarget = {
     kind: 'context';
@@ -929,8 +930,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const [transcriptSegmentDrafts, setTranscriptSegmentDrafts] = useState<MeetingSegment[]>([]);
     const [searchQuery, setSearchQuery] = useState('');
     const [isDownloading, setIsDownloading] = useState(false);
-    const [audioSourceUrl, setAudioSourceUrl] = useState('');
-    const [audioAvailability, setAudioAvailability] = useState<AudioAvailability>('idle');
+    const {
+        sourceUrl: audioSourceUrl, availability: audioAvailability, error: audioPlaybackError,
+        retry: retryAudioPlayback, markMissing: markAudioMissing, reportPlaybackError,
+    } = useMeetingAudioPlayback(selectedMeeting?.id, selectedMeeting?.jobId, selectedMeeting?.outputFiles?.audio);
     const [generatingKind, setGeneratingKind] = useState<GenerationKind | null>(null);
     const [topicGenerationIntent, setTopicGenerationIntent] = useState<TopicGenerationRequestIntent | null>(null);
     const [diarizationStartedAt, setDiarizationStartedAt] = useState<number | null>(null);
@@ -1162,7 +1165,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         let cancelled = false;
         const loadSummaryModelStatus = async () => {
             try {
-                const response = await fetch(await toApiUrl('/api/models/status'));
+                const response = await localEngineClient.request('/api/models/status');
                 if (!response.ok) throw new Error(`models=${response.status}`);
                 const payload = await response.json() as ModelsStatusResponse;
                 if (cancelled) return;
@@ -1218,8 +1221,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const jobId = selectedMeeting.jobId;
         const loadDiarizationProgress = async () => {
             try {
-                const progressUrl = await toApiUrl(`/api/outputs/${encodeURIComponent(jobId)}/generation-progress/diarization`);
-                const response = await fetch(progressUrl);
+                const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(jobId)}/generation-progress/diarization`);
                 if (!response.ok) return;
                 const payload = await response.json() as GenerationProgressResponse;
                 if (cancelled) return;
@@ -1270,8 +1272,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (inFlight) return;
             inFlight = true;
             try {
-                const progressUrl = await toApiUrl(`/api/outputs/${encodeURIComponent(jobId)}/generation-progress/diarization`);
-                const response = await fetch(progressUrl);
+                const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(jobId)}/generation-progress/diarization`);
                 if (!response.ok) return;
                 const payload = await response.json() as GenerationProgressResponse;
                 if (cancelled) return;
@@ -1341,36 +1342,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         return () => window.clearTimeout(timerId);
     }, [templateUndoToast]);
 
-    useEffect(() => {
-        let cancelled = false;
-        const loadAudioUrl = async () => {
-            if (!selectedMeeting?.jobId) {
-                setAudioSourceUrl('');
-                setAudioAvailability('idle');
-                return;
-            }
-            setAudioAvailability('checking');
-            const audioUrl = selectedMeeting.outputFiles?.audio
-                || `/api/outputs/${encodeURIComponent(selectedMeeting.jobId)}/audio`;
-            const resolved = await toApiUrl(audioUrl);
-            try {
-                const response = await fetch(resolved, { method: 'HEAD' });
-                if (!cancelled) {
-                    setAudioSourceUrl(response.ok ? resolved : '');
-                    setAudioAvailability(response.ok ? 'available' : 'missing');
-                }
-            } catch {
-                if (!cancelled) {
-                    setAudioSourceUrl('');
-                    setAudioAvailability('missing');
-                }
-            }
-        };
-        void loadAudioUrl();
-        return () => {
-            cancelled = true;
-        };
-    }, [selectedMeeting?.jobId, selectedMeeting?.outputFiles?.audio]);
 
     useEffect(() => {
         recordsRef.current = records;
@@ -1860,7 +1831,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const latestMeeting = await getMeetingById(meetingId);
         if (!latestMeeting) return null;
 
-        const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(jobId)}/sync-record`), {
+        const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(jobId)}/sync-record`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(latestMeeting),
@@ -1890,7 +1861,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setIsDownloading(true);
             setErrorMessage('');
             setNoticeMessage('');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(selectedMeeting.jobId)}/audio/save-copy`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(selectedMeeting.jobId)}/audio/save-copy`, {
                 method: 'POST',
             });
             if (!response.ok) {
@@ -2028,7 +1999,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 status: 'processing',
             });
             setGeneratingKind('diarization');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-diarization`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-diarization`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
@@ -2087,8 +2058,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (diarizationProgressJobIdRef.current === targetJobId) {
                 setDiarizationNow(getCurrentTimeMs());
                 if (detail === 'audio_required_for_diarization') {
-                    setAudioSourceUrl('');
-                    setAudioAvailability('missing');
+                    if (currentSelectedMeetingIdRef.current === targetMeeting.id) markAudioMissing();
                 }
                 setDiarizationProgress(current => ({
                     ...(current ?? {}),
@@ -2149,7 +2119,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setStoppingDiarizationAction(action);
             setErrorMessage('');
             diarizationStopActionRef.current = action;
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generation-stop/diarization`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generation-stop/diarization`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ action }),
@@ -2234,7 +2204,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setNoticeMessage('');
             setGeneratingKind('summary');
             setLocalGenerationStatus(targetMeeting.id, 'summary', 'generating');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-summary`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-summary`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
@@ -2271,6 +2241,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
                 setErrorMessage('회의 정보나 대화록이 바뀌어 이번 전체 요약은 저장하지 않았습니다. 다시 정리해 주세요.');
@@ -2281,6 +2252,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
             setOrganizeTab('summary');
             window.requestAnimationFrame(() => {
+                if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
                 document.querySelector('[data-summary-section="overview"]')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
             const nextSummaryStatus = data.generationStatus?.summary ?? data.generation_status?.summary;
@@ -2469,7 +2441,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setTopicGenerationIntent({ meetingId: targetMeeting.id, intent: 'all' });
             setGeneratingKind('topicSections');
             setLocalGenerationStatus(targetMeeting.id, 'topicSections', 'generating');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-sections`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-sections`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
@@ -2501,6 +2473,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
                 setErrorMessage('회의 정보나 대화록이 바뀌어 이번 주제별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
@@ -2515,6 +2488,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
             setOrganizeTab('topics');
             window.requestAnimationFrame(() => {
+                if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
                 topicSectionsSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
             setNoticeMessage('주제별 정리를 완료했습니다.');
@@ -2564,7 +2538,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setTopicGenerationIntent({ meetingId: targetMeeting.id, intent: 'custom' });
             setGeneratingKind('topicSections');
             setLocalGenerationStatus(targetMeeting.id, 'topicSections', 'generating');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-section`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-section`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
@@ -2599,6 +2573,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
                 setErrorMessage('회의 정보나 대화록이 바뀌어 이번 추가 주제 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
@@ -2655,7 +2630,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setNoticeMessage('');
             setGeneratingKind('speakerContextSummaries');
             setLocalGenerationStatus(targetMeeting.id, 'speakerContextSummaries', 'generating');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-speaker-context`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-speaker-context`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
@@ -2684,6 +2659,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
                 setErrorMessage('회의 정보나 대화록이 바뀌어 이번 참석자별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
@@ -2694,6 +2670,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
             setOrganizeTab('speakers');
             window.requestAnimationFrame(() => {
+                if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
                 speakerSummarySectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             });
             setNoticeMessage('참석자별 정리를 완료했습니다.');
@@ -2748,7 +2725,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setNoticeMessage('');
             setGeneratingKind('meetingReport');
             setLocalGenerationStatus(targetMeeting.id, 'meetingReport', 'generating');
-            const response = await fetch(await toApiUrl(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-report`), {
+            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-report`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
@@ -2771,6 +2748,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     outputFiles: data.outputs ?? currentMeeting.outputFiles,
                 };
             }, targetMeeting.id);
+            if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
                 setErrorMessage('회의 정보나 정리 내용이 바뀌어 이번 보고서는 저장하지 않았습니다. 다시 생성해 주세요.');
@@ -3939,7 +3917,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         crossOrigin="anonymous"
                                         preload="metadata"
                                         src={audioSourceUrl}
+                                        onError={reportPlaybackError}
                                     />
+                                )}
+                                {audioPlaybackError && (
+                                    <div className="detail-inline-note" role="status">
+                                        {audioPlaybackError}
+                                        <Button variant="ghost" onClick={retryAudioPlayback}>다시 확인</Button>
+                                    </div>
                                 )}
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note meeting-diarization-guidance" role="status">

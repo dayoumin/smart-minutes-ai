@@ -419,6 +419,7 @@ const run = async () => {
         && record?.transcriptEditMeta?.topicSectionsOutdated === false
         && record?.transcriptEditMeta?.speakerContextOutdated === false;
     }, { meetingId, customContextId }, { timeout: 10000 });
+    await page.waitForFunction(value => document.querySelector('select[aria-label="이번 정리 기준 선택"]')?.value === value, customContextId);
     assert.equal(await contextSelect.inputValue(), customContextId);
     await contextDescription.getByText('이번 정리 기준: 이사회 보고', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByText('정리 맥락을 복원했습니다.', { exact: true }).waitFor({ timeout: 10000 });
@@ -491,7 +492,7 @@ const run = async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('템플릿 선택 검증 회의록').first().click();
     await page.getByRole('tab', { name: '보고서', exact: true }).click();
-    await page.getByRole('heading', { name: '보고서', exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('tabpanel', { name: '보고서', exact: true }).waitFor({ timeout: 10000 });
     const reportCommandLayout = await page.locator('#meeting-detail-panel-report .detail-command-bar').evaluate(bar => {
       const primary = bar.querySelector('.detail-command-primary')?.getBoundingClientRect();
       const actions = bar.querySelector('.detail-command-actions')?.getBoundingClientRect();

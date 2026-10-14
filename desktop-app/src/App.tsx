@@ -358,7 +358,6 @@ export const App: React.FC = () => {
                 onTabChange={handleTabChange}
                 onOpenSettings={() => openSettings('general')}
                 onOpenStart={() => handleTabChange('start')}
-                onOpenArchive={() => handleTabChange('archive')}
                 newMeetingBlocked={analysisStartBlocked}
                 newMeetingBlockedReason={newMeetingBlockedReason}
                 resumeSelectionBlocked={analysisStartBlocked}

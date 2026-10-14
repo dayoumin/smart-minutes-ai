@@ -123,7 +123,8 @@ const runArchiveFlow = async browser => {
   const oldDate = '2020-01-15T10:00:00.000Z';
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '기록 찾기', exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '새 기록', exact: true }).first().waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.barorok-navigation').getByRole('button', { name: '기록 찾기', exact: true }).count(), 0, 'archive entry is hidden from the sidebar for now');
     await putMeetings(page, [
       {
         id: 'archive-recent-meeting',
@@ -159,7 +160,8 @@ const runArchiveFlow = async browser => {
       },
     ]);
 
-    await page.getByRole('button', { name: '기록 찾기', exact: true }).click();
+    const archiveUrl = new URL('?view=archive', APP_URL).toString();
+    await page.goto(archiveUrl, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '기록 찾기', exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('[data-shell-variant="document"]').count(), 1);
     await page.getByText('하반기 예산을 3천만 원으로 확정', { exact: true }).waitFor();
@@ -190,12 +192,8 @@ const runArchiveFlow = async browser => {
     const recentDecision = page.locator('.meeting-archive-item-decision').filter({ hasText: '하반기 예산을 3천만 원으로 확정' });
     await recentDecision.getByRole('button').click();
     await page.locator('.meeting-detail-shell').getByRole('heading', { name: '하반기 운영 회의' }).waitFor({ timeout: 10000 });
-    const archiveButton = page.getByRole('button', { name: '기록 찾기', exact: true });
-    await archiveButton.focus();
-    await page.keyboard.press('Enter');
-    await page.getByRole('heading', { name: '기록 찾기', exact: true }).waitFor();
-    assert.equal(await page.locator('[aria-current="page"]').count(), 1, 'sidebar should expose one current page');
-    assert.equal(await archiveButton.getAttribute('aria-current'), 'page');
+    await page.goto(archiveUrl, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '기록 찾기', exact: true }).waitFor({ timeout: 10000 });
     await page.setViewportSize({ width: 760, height: 720 });
     await assertNoHorizontalOverflow(page);
     console.log('ok - meeting archive search and decision timeline flow');

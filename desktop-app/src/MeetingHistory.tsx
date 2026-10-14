@@ -3395,7 +3395,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         setOrganizeTab('topics');
         setSelectedTopicKey(nextKey);
         window.requestAnimationFrame(() => {
-            topicSectionRefs.current[nextKey]?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            const section = topicSectionRefs.current[nextKey];
+            section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            // The clicked chip unmounts with the summary panel, so move focus to the opened topic.
+            section?.querySelector<HTMLElement>('.topic-section-heading')?.focus({ preventScroll: true });
         });
     };
 
@@ -3867,12 +3870,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 <div className="meeting-meta-line">
                                     <dl className="meeting-meta-list">
                                         <div className="meeting-meta-item">
-                                            <dt className="meeting-meta-label"><CalendarDays size={15} aria-hidden="true" /><span className="sr-only">일시</span></dt>
+                                            <dt className="meeting-meta-label" title="일시"><CalendarDays size={15} aria-hidden="true" /><span className="sr-only">일시</span></dt>
                                             <dd className="meeting-meta-value">{selectedMeeting.date}</dd>
                                         </div>
                                         {(selectedMeeting.meetingPurpose || selectedMeeting.participants) && (
                                             <div className="meeting-meta-item meeting-meta-item-purpose">
-                                                <dt className="meeting-meta-label">
+                                                <dt className="meeting-meta-label" title={selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}>
                                                     {selectedMeeting.meetingPurpose ? <Target size={15} aria-hidden="true" /> : <Users size={15} aria-hidden="true" />}
                                                     <span className="sr-only">{selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}</span>
                                                 </dt>
@@ -3886,7 +3889,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         )}
                                         {selectedMeeting.sourceFile && (
                                             <div className="meeting-meta-item meeting-meta-item-source">
-                                                <dt className="meeting-meta-label"><FileAudio size={15} aria-hidden="true" /><span className="sr-only">원본 파일</span></dt>
+                                                <dt className="meeting-meta-label" title="원본 파일"><FileAudio size={15} aria-hidden="true" /><span className="sr-only">원본 파일</span></dt>
                                                 <dd
                                                     className="meeting-meta-value meeting-meta-value-source"
                                                     title={selectedMeeting.sourceFile}
@@ -4263,13 +4266,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                                         <button
                                                                             type="button"
                                                                             className="topic-chip"
-                                                                            title="주제별 정리에서 보기"
+                                                                            title={toParticipantCopy(topic)}
                                                                             onClick={() => handleOpenTopicSection(topic)}
                                                                         >
                                                                             {renderSearchText(toParticipantCopy(topic))}
                                                                         </button>
                                                                     ) : (
-                                                                        <span className="topic-chip topic-chip-static">{renderSearchText(toParticipantCopy(topic))}</span>
+                                                                        <span className="topic-chip topic-chip-static" title={toParticipantCopy(topic)}>{renderSearchText(toParticipantCopy(topic))}</span>
                                                                     )}
                                                                 </li>
                                                             ))}
@@ -4357,13 +4360,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             ref={node => {
                                                                 const key = normalizeTopicKey(section.topic ?? '');
                                                                 if (!key) return;
-                                                                if (node && !topicSectionRefs.current[key]) {
+                                                                // Keep the first section per key, but replace nodes detached by a tab switch.
+                                                                if (node && !topicSectionRefs.current[key]?.isConnected) {
                                                                     topicSectionRefs.current[key] = node;
                                                                 }
                                                             }}
                                                             className={`detail-subtle-card ${selectedTopicKey === normalizeTopicKey(section.topic ?? '') ? 'topic-chip-active' : ''}`}
                                                         >
-                                                            <h4 className="font-semibold text-foreground">{renderSearchText(toParticipantCopy(section.topic))}</h4>
+                                                            <h4 className="topic-section-heading font-semibold text-foreground" tabIndex={-1}>{renderSearchText(toParticipantCopy(section.topic))}</h4>
                                                             <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(toParticipantCopy(section.summary))}</p>
                                                             {!!section.evidence?.length && (
                                                                 <ul className="detail-list mt-3">

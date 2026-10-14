@@ -66,7 +66,7 @@ AI 보조 디자인에서 시안·스킬·구현·검증을 적용하는 순서�
 
 ### 시작·새 회의록 고래·햇빛 테마 파일럿 예외
 
-- 사용자가 선택한 `docs/design-assets/barorok-concepts/new-record-whale-tail-selected-no-footer.png`, 첫 진입 시안 3종과 `new-record-whale-theme-layout-spec.md`는 시작·새 회의록 화면에 한해 이 문서의 일반 앱 프레임·작성 카드·하단 실행 영역 규칙보다 우선한다.
+- 사용자가 선택한 `docs/design-assets/barorok-concepts/new-record-whale-tail-selected-no-footer.png`, 첫 진입 시안 3종과 `new-record-whale-theme-layout-spec.md`는 시작·새 회의록 화면에 한해 이 문서의 일반 작성 카드·하단 실행 영역 규칙보다 우선한다. 단, 앱 프레임·사이드바·셸 크기는 아래 2026-10-14 절충안이 이 시안과 사양보다 우선한다.
 - 2026-10-14 절충안: 해양 장면은 시작·새 기록·분석 진행의 작업 영역 안에만 둔다. 앱 프레임, 사이드바 표면, 브랜드 위치는 모든 화면에서 같게 유지해 회의록을 열 때 앱이 바뀐 것처럼 보이지 않게 한다. 어두운 사이드바나 창 전체를 채우는 shell은 사용하지 않는다.
 - 새 기록 2열 레이아웃은 `MeetingWriter`의 입력·이어하기 상태에서만 표시하고, 분석 진행 내용의 내부 구조는 기존 기준을 유지한다. 회의 상세에는 해양 장면을 적용하지 않으며 설정은 현재 작업면 위의 기존 modal overlay로 유지한다.
 - 이 variant에서는 기존 workspace padding을 제거하고 해양 캔버스 하나만 세로 스크롤을 소유한다.

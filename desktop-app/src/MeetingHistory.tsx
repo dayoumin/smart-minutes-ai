@@ -4762,13 +4762,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         const needsSpeakerReview = segmentNeedsSpeakerReview(segment);
                                         const speakerTone = getSegmentSpeakerTone(segment, index);
                                         return (
+                                                <div className="script-time-range" title={`${segment.start} - ${segment.end}`}>
+                                                    {segment.start}<span className="sr-only"> - {segment.end}</span>
+                                                </div>
                                             <article key={`${segment.start}-${index}`} className={`speaker-turn script-row ${speakerTone} ${warning ? 'speaker-turn-warning' : ''}`}>
                                                 <div className="speaker-meta script-meta">
                                                     <div className="speaker-label">
                                                         <span className="speaker-dot" />
                                                         <span>{renderSearchText(segment.displaySpeaker || segment.speaker || '참석자')}</span>
                                                     </div>
-                                                    <div className="script-time-range">{segment.start} - {segment.end}</div>
                                                     <div className="script-badge-row">
                                                         {segment.timingApproximate && <span className="script-badge">시간 추정</span>}
                                                         {needsSpeakerReview && <span className="script-badge">참석자 확인 필요</span>}

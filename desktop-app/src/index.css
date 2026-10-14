@@ -3626,10 +3626,34 @@
   }
 
   .script-row {
-    @apply rounded-none border-0 px-2 py-4 md:grid-cols-[8.5rem_minmax(0,1fr)] md:px-3;
+    @apply items-start gap-x-3 gap-y-1 rounded-none border-0 px-2 py-3 md:px-3;
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas:
+      "time meta"
+      "text text";
     background-color: transparent;
     border-bottom: 1px solid var(--speaker-turn-border);
     box-shadow: none;
+  }
+
+  .script-row > .script-time-range {
+    grid-area: time;
+  }
+
+  .script-row > .script-meta {
+    grid-area: meta;
+  }
+
+  .script-row > :is(.script-text, .script-edit-textarea) {
+    grid-area: text;
+  }
+
+  @container meeting-detail (min-width: 40rem) {
+    .script-row {
+      @apply gap-x-4;
+      grid-template-columns: 4.5rem 7.5rem minmax(0, 1fr);
+      grid-template-areas: "time meta text";
+    }
   }
 
   .script-row:last-child {
@@ -3641,19 +3665,23 @@
   }
 
   .script-meta {
-    @apply flex flex-wrap content-start items-center gap-x-3 gap-y-1 md:grid md:items-start md:gap-1.5;
+    @apply flex min-w-0 flex-col items-start gap-1;
   }
 
   .script-meta .speaker-label {
-    @apply mb-0;
+    @apply mb-0 max-w-full text-sm leading-7;
   }
 
   .script-time-range {
-    @apply font-mono text-[11px] font-medium tracking-normal;
+    @apply font-mono text-xs font-medium leading-7 tracking-normal tabular-nums;
+    color: var(--speaker-meta);
   }
-
   .script-badge-row {
     @apply flex flex-wrap gap-1.5;
+  }
+
+  .script-badge-row:empty {
+    display: none;
   }
 
   .script-badge {

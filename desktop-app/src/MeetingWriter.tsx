@@ -1389,6 +1389,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const latestDiarizationDuringAnalysis = latestSettings.diarization?.generate_during_analysis ?? true;
             if (analysisSettingsRequestRef.current === startSettingsRequestId) {
                 setDiarizationDuringAnalysis(latestDiarizationDuringAnalysis);
+                setPreserveExtractedAudio(latestSettings.privacy?.preserve_extracted_audio ?? true);
+                setAutoSaveAudioCopy(latestSettings.privacy?.auto_save_audio_copy ?? false);
             }
             const modelsReady = await ensureModelsReady();
             if (!modelsReady) return;

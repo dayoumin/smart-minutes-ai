@@ -3398,7 +3398,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             const section = topicSectionRefs.current[nextKey];
             section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
             // The clicked chip unmounts with the summary panel, so move focus to the opened topic.
-            const focusTarget = section?.querySelector<HTMLElement>('.topic-section-heading')
+            const focusTarget = (section?.isConnected ? section.querySelector<HTMLElement>('.topic-section-heading') : null)
                 ?? document.getElementById('organize-mode-tab-topics');
             focusTarget?.focus({ preventScroll: true });
         });

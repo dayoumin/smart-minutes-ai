@@ -1,4 +1,45 @@
 # 0. Immediate queue
+- [ ] 2026-10-15 체계적 agent 점검: 다음 A4 실제 모델 품질·출시 접근성 실물 확인
+  - 원본: `docs/web-runtime-separation-implementation-plan.md`의 `6.5 2026-10-14 체계적 에이전트 점검 계획`. 제품·배포 / 연결·보안·개인정보 / 저장·복구·테스트의 독립 검토 3개를 통합했다.
+  - 순서: A1 저장 수명·최신 검사 → A2 연결·인증 → A3 저장·생성·내보내기 → A4 사용자 흐름·접근성·대표 모델 품질 → A5 설치·업데이트·다른 PC → A6 실제 HTTPS 출시 판정.
+  - 2026-10-14 A1 저장 보존 완료: 화면에서 저장·복구 함수를 분리하고 린트 5 errors·1 warning을 해소했다. 오래된 복구 초안이 사용자가 수정한 회의 일시를 덮는 결함을 재현·수정하고 날짜가 다른 회귀 조건을 추가했다.
+  - 검증: typecheck·변경 파일 lint·resume-draft 필터 8개·analysis-stop 7개·backend API 5개 통과. agent가 저장 및 복구 이벤트 관점을 검토했고 일시 보존 수정도 재검토했다. 정확한 명령·환경·증거는 원본의 A1 실행 결과에 기록했다.
+  - 2026-10-14 A1 후속: 과거 실패 시뮬레이션 5개를 최신 코드로 확인하고 모두 통과했다. 설정 응답 mock·현재 화면 진입·UI 반영 대기를 보강했고, 사이드바 메뉴의 위치 반영 후 포커스하도록 경합을 수정했다. 기능·키보드·데이터 보존 단언을 유지했으며 독립 agent 3개가 수정 후 검토에서 차단 사항 없음을 확인했다.
+  - A1 마지막 보류 해소: 의존성 복구 후 typecheck와 실제 프로젝트 ESLint 본체의 최종 변경 파일 검사, diff 검사가 통과했다. 이후 다른 AI의 디자인 변경은 별도 검증 대상이며 당시 5개 시뮬레이션 결과를 새 디자인 전체의 검증으로 확대하지 않는다.
+  - A2 백엔드 음성 읽기 완료: HEAD 사전 요청의 CORS 400을 재현하고 HEAD 허용과 인증 상태의 exact origin 검사를 수정했다. 보안 모듈 27개와 기존 audio·save-copy 6개 통과, 구현 후 보안·테스트 agent 검토에서 차단 없음. 웹 음성 읽기가 사용자 폴더의 파일 쓰기 허용으로 넓어지지 않으며 인증 미들웨어·권한은 그대로다.
+  - A2 공통 인증 복구 완료: 인증 단계의 Bearer 401만 1회 갱신·재시도한다. 동시 갱신 공유, 5초 제한, 본문 snapshot, 취소·새 연결·폐기 보호와 만료 전이를 구현했다. agent가 발견한 지연된 최초 401 및 사용자 작업 우선순위 경합 2건도 수정·재검토했다.
+  - 검증: `test:auth-recovery` 22개·`test:runtime-boundary`·typecheck·변경 파일 lint·backend 보안 27개·연결 UI 시뮬레이션 통과. 브라우저에서 실제 provider와 공통 client를 mock API로 검증했고 복구 실패 시 입력·선택 파일 보존을 확인했다. 실제 엔진·HTTPS 증거와 구분한다.
+  - 2026-10-15 A2 브라우저 음성 연결 완료: 기존 플레이어에 인증된 구간 스트리밍을 연결했다. 토큰을 재생 URL에 넣거나 음성을 통째로 내려받지 않으며 회의 전환·취소 시 자원을 정리한다. 기존 워커를 덮어쓰지 않고 PWA·오프라인 캐시로 범위를 넓히지 않았다.
+  - 검증: 전송 단위 9개·인증된 실제 브라우저 WAV 재생/탐색/회의 전환·기존 meeting-detail-flow·typecheck·변경 파일 lint·backend HEAD/Range·웹 자산 빌드 통과. 보안·테스트 agent 검토 및 지적 2개 수정 후 재검토에서 차단 없음. mock API 기반 Chromium 증거이며 실제 HTTPS·Chrome/Edge·장시간 음성 검증을 대체하지 않는다.
+  - 2026-10-15 A2 API 경로 점검 완료: 개발용 직접 조회 3개를 공통 client로 전환하고 native 재시작의 health 확인에만 인증을 적용했다. 무인증 포트 탐색에는 토큰을 보내지 않는다. 실제 API 45개 중 공개 3개 외 42개의 권한 분류를 대조했다. 작업 번호의 문자열로 결과 조회 권한이 달라지는 결함은 실패 재현 후 operation 기준으로 수정했다.
+  - 검증: 새 `test:api-auth-boundary` 6개·backend 보안 30개·기존 인증 복구 22개·runtime-boundary·typecheck·변경 파일 lint 통과. 보안/프런트 agent 2개의 구현 후 검토에서 이 수정 범위의 차단 없음. 상세 목록·예외·증거는 원본의 A2 API 경로 실행 결과를 따른다.
+  - 2026-10-15 A2 격리 API 통합 회귀 완료: 실제 main route·middleware에서 pairing→분석 SSE→기록 동기화→TXT/JSON/음성 HEAD·Range→삭제를 확인했다. 무효 세션과 권한 부족 요청은 파일·작업 목록을 바꾸지 않았다. AI 추론만 대체하고 직렬화·파일 작업은 임시 경로에서 실제 실행했다. 새6개와 기존 보안30개, 총36개 통과 및 구현 후 독립 agent 검토에서 차단 없음. 브라우저/공통 JS client/실제 HTTPS 통합 증거와 구분한다.
+  - 2026-10-15 A3 1차 완료: 편집/생성 후 저장된 TXT 누락 갱신 6곳, JSON 없는 기록 복원 시 camel/snake 생성 상태 충돌, 로컬 TXT에서 지운 참석자 이름 부활을 재현·수정했다. agent가 찾은 legacy 읽기 회귀도 수정해 이름 설정 누락과 명시적 `{}`를 저장소 정규화에서 구분한다. 생성 실패의 정상 내용 보존과 원본 없음의 payload 복원, 파일 쓰기 실패 후 재시도도 확인했다.
+  - 검증: API/일관성 11개+보안30개 총41개, 실제 repository normalizer·export builder 검사7개, generation-flow·typecheck·변경 파일 lint 통과. 독립 agent2개의 구현 후 검토·finding 재검토에서 현재 묶음 차단 없음. 실제 MD/DOCX/HWPX 다운로드/문서 레이아웃이나 전체 A3 완료로 확대하지 않는다.
+  - 2026-10-15 A3 후속 완료: A 생성이 B의 모드·완료 알림에 끼어드는 결함과 전체 TXT의 정리/보고서 누락을 재현·수정했다. 실제 UI 편집→저장→회의 전환→reload→재열기·최신 export payload를 확인했고, 실제 API 파일 11개 범위×형식의 내용·ZIP/XML·파일명·명시적 이름 삭제·보고 양식 snapshot을 검증했다.
+  - 검증: API13개+보안30개 총43개, meeting-detail-flow·generation-flow·export-consistency7개·typecheck·변경 lint 통과. 구현 후 독립 agent2개 검토와 scope 정규화 finding 수정 후 재검토에서 차단 없음. Word/한컴 실제 렌더링과 HTTPS 다운로드는 원본 출시 위험 표에 열림으로 기록했다.
+  - 2026-10-15 A4 화면/키보드 1차 완료: 모델 작업 메뉴의 키보드 진입·방향키·닫기 복귀와 항목 실행/확인 취소·삭제 후 초점 유실을 재현·수정했다. 비활성 메뉴·두 렌더 분기·취소/삭제 후 대체 초점을 확인했다. 독립 agent의 구현 후 finding도 수정·재검토해 현재 묶음 차단 없음.
+  - 검증: settings-model-management·edit-guard-flow·analysis-stop-flow의 failure-recovery/pending-cancellation-transition 대표 4개 명령, typecheck·변경 lint 통과. 상세 탭·하위 모드 키보드/ARIA, 편집 보호, 파일 교체 보존·오류 복구·취소 대기 잠금도 확인했다. 실제 NVDA/Narrator·native 확대와 대표 모델 품질 증거는 별도이며 원본 출시 위험 표에 기록했다.
+  - 다음 묶음: A4 실제 짧은 WAV/video·모델 미준비·생성 결과 근거/출처를 확인하고, 출시 전 실제 보조기술·확대 smoke를 수행한다. SQLite 기준 저장소·revision/백업/캐시 독립 보존은 기존 6단계 미완 관문이며 이번에 새 저장소를 구현하지 않았다. 운영 인증 강제와 실제 HTTPS·설치 관문은 그대로 열려 있다.
+  - Tauri 포함 인증 강제의 선행 작업: 기존 native 음성 src는 custom 인증 헤더가 없어 강제 시 HEAD만 성공하고 재생/Range GET은 401이 된다. 후속 Tauri 호환 작업으로 인증 전달을 구현하고 실제 WebView에서 재생·탐색·취소를 검증하기 전에는 Tauri까지 강제를 활성화하지 않는다. 현재 flag off의 즉시 회귀는 아니며 웹 우선 작업을 Rust·패키징 재설계로 확장하지 않는다.
+- [ ] 2026-10-05 최소 배포 후 다른 프로젝트 연결
+  - 순서: 분석 호출 인증 → 회의 상세·설정·내보내기 호출 인증 → 저장 수명 수정 → 실제 분석 모드와 설치 파일 → 다른 PC 배포 확인 → 다른 프로젝트에는 주소로 연결.
+  - 2026-10-05 완료: 작성·복구의 분석 호출을 `localEngineClient`로 옮김. typecheck, `test:analysis-stop-flow`, `test:resume-draft-flow` 통과.
+  - 2026-10-05 완료: 회의 상세 생성·진행, 설정, 내보내기, 사이드바 산출물 삭제를 같은 클라이언트로 옮김. typecheck, runtime-boundary, generation, topic, edit-guard, download, report, settings restart, settings model 통과. 음성 재생 주소와 개발용 벤치마크 호출, `/api/health` 탐색은 아직 직접 호출이다. 인증 강제와 다운로드 버튼은 아직 켜지 않음.
+  - 2026-10-05 완료: 취소 정리는 진행 중 초안만 지우고, 완료·중지·실패·예전 저장 기록은 남긴다. 상태 필드가 없는 예전 완료 기록은 중간 저장본으로 덮지 않는다. 대상 시뮬레이션 `remote-terminal-transcript-recovery`, `legacy-saved-meeting-rejects-stale-partial`, `completed-meeting-rejects-stale-partial`, `test:analysis-stop-flow` 통과.
+- [x] 2026-10-05 기능 점검: 저장 수명 두 건을 먼저 고친다
+  - 기준 점검 원본: `docs/web-runtime-separation-implementation-plan.md`의 `2026-10-05 기준 점검`. 커밋 `c20be64`. 통과한 명령은 그 행의 파일이 바뀌기 전에는 다시 실행하지 않는다.
+  - 2026-10-05 실행 결과: typecheck 통과, lint 실패 6건, runtime-boundary 통과, backend quick 115 tests 통과, 화면 시뮬레이션 13 통과·5 실패. 실패는 `test:resume-flow`, `test:audio-extract-ui`, `test:meeting-detail-flow`, `test:local-engine-connection-ui`, `test:template-selection-flow`.
+  - 저장 수명 두 건은 위 최소 배포 항목의 2026-10-05 완료 기록으로 닫았다.
+  - 판정: 지금 쓰는 회의록 흐름(시작, 새 기록, 분석·중지·이어하기, 대화록·기록 정리·보고서, 기록 찾기, 설정, 내보내기, 폴더)은 화면에 있다. 웹 MVP로 선언한 5~8단계(전체 API 인증, SQLite, 브라우저 파일, HTTPS 통합)는 계획표 그대로 미착수다. 빠진 것이 아니라 아직 열지 않은 단계다.
+  - 저장 결함 수정 결과: 취소는 진행 중 초안만 지운다. 완료·중지·실패 기록, 작업 번호와 다른 저장 기록, 대화록이 있는 예전 기록은 남긴다. 예전 완료 기록은 중간 저장본으로 바뀌지 않는다.
+  - 같은 흐름의 후속: 부분 결과(`partial`)인데 원격 상태가 `completed`면 복구가 완료로 가져오고, 기록 정리 버튼은 `jobId`와 대화록만 있으면 켜진다. 원본 JSON이 없으면 생성이 실패한다.
+  - 웹 연결은 preview다. `VITE_LOCAL_ENGINE_CONNECTION_UI` 또는 개발용 `?localEngineConnection=1`일 때만 보인다. 분석·상세·설정·내보내기 호출은 연결 클라이언트를 탄다. 데스크톱 사이드카는 인증 기본값이 꺼져 있다.
+  - 참석자 구분 토글은 새 기록 화면에서 빠지고 설정이 값을 소유한다. 기능 삭제가 아니라 위치 이동이다.
+  - 2026-10-05 완료: `scripts/start_dev_backend.ps1`가 `ANALYSIS_MODE`를 비워 두면 `real`로 띄운다. 데스크톱 실행과 웹 로컬 엔진과 같다. 설치 받기 버튼은 공개 HTTPS 주소 전에는 켜지 않는다.
+  - 2026-10-12 완료: 취소 안내는 진행 중 기록을 끝내고 이미 끝난 회의록은 둔다고 말한다. 저장 번호가 다른 진행 중 기록은 취소 때 지우지 않고 `구분 중지`로 바꾼다. 중지·실패 기록의 요약·주제·참석자·발언 정리는 빈 중간 결과가 덮지 않고, 대화록은 갱신된다. typecheck, `test:resume-draft-flow` 전체, `test:analysis-stop-flow` 통과.
+  - 2026-10-12 완료: 이어하기 중 취소는 정리 결과가 있으면 회의록을 지우지 않고 `구분 중지`로 남긴다. 대화록만 바뀌면 요약·주제·참석자 정리는 이전 기준이라고 표시한다. 완료 결과가 오면 그 안내는 꺼진다. 할 일·결정·확인도 빈 중간 결과가 지우지 않는다. 실패 회의와 이어하기 중 진행 상태 전환을 시뮬레이션에 넣었다. typecheck, `test:resume-draft-flow` 전체 통과.
+  - 2026-10-12 완료: 사용자가 고친 대화록이 화면에 남아 있으면 원본 대화록이 바뀌어도 이전 기준 안내를 켜지 않는다. `edited-transcript-skips-outdated-note`가 고친 문장 표시와 안내 없음을 확인했다.
 - [ ] 2026-08-12 집에서 확인: 새 회의록 바다 테마 후속 안정화
   - 분석 시작 직전 `/api/settings` 응답이 초기 설정 응답을 무효화하는 경우에도 `privacy.preserve_extracted_audio`와 `privacy.auto_save_audio_copy`를 최신 응답에서 함께 반영해, 분석 실패 후 입력 화면으로 돌아왔을 때 파일 보관 안내가 사라지지 않게 한다.
   - `simulate-resume-draft-flow.mjs`의 1600px 검증에 패널 폭 하한과 장식의 실제 표시 크기(`width > 0`, `height > 0`)를 추가한다. 현재 상한 검사만으로는 패널이 지나치게 작아지거나 고래가 숨겨지는 회귀를 놓칠 수 있다.

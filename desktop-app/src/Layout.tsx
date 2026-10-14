@@ -1,5 +1,4 @@
 import React from 'react';
-import { Header } from './Header';
 import { Sidebar } from './Sidebar';
 import { OceanBackdrop } from './OceanBackdrop';
 import { AppView, getAppShellVariant } from './appView';
@@ -39,8 +38,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
     const shellVariant = getAppShellVariant(activeTab);
     const oceanShellActive = shellVariant === 'ocean';
     return (
-        <div className={`barorok-app-frame flex min-w-[320px] flex-col overflow-hidden text-foreground ${oceanShellActive ? 'barorok-app-frame-minutes' : ''}`} data-shell-variant={shellVariant}>
-            {!oceanShellActive && <Header />}
+        <div className="barorok-app-frame flex min-w-[320px] flex-col overflow-hidden text-foreground" data-shell-variant={shellVariant}>
             <div className="barorok-shell-body flex min-h-0 flex-1 flex-row">
                 <Sidebar
                     activeTab={activeTab}

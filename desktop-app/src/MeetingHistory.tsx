@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, CalendarDays, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
+import { AudioLines, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -3950,16 +3950,26 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             <div className="meeting-status-grid">
                                                 <div className="meeting-status-item">
                                                     <span className="meeting-status-title">대화록</span>
-                                                    <span className={`status-pill status-${hasTranscriptData ? 'success' : 'neutral'}`}>
-                                                        {hasTranscriptData ? '완료' : '대기'}
-                                                    </span>
+                                                    {hasTranscriptData ? (
+                                                        <span className="status-done" role="img" aria-label="완료" title="완료">
+                                                            <CheckCircle2 size={17} aria-hidden="true" />
+                                                        </span>
+                                                    ) : (
+                                                        <span className="status-pill status-neutral">대기</span>
+                                                    )}
                                                 </div>
                                                 <div className="meeting-status-item" title={diarizationStatusTitle}>
                                                     <span className="meeting-status-title">참석자 구분</span>
                                                     <span className="meeting-status-actions">
-                                                        <span className={`status-pill status-${diarizationStatus.tone}`}>
-                                                            {diarizationStatus.label}
-                                                        </span>
+                                                        {diarizationStatus.label === '완료' ? (
+                                                            <span className="status-done" role="img" aria-label="완료" title="완료">
+                                                                <CheckCircle2 size={17} aria-hidden="true" />
+                                                            </span>
+                                                        ) : (
+                                                            <span className={`status-pill status-${diarizationStatus.tone}`}>
+                                                                {diarizationStatus.label}
+                                                            </span>
+                                                        )}
                                                         {(canGenerateDiarization || diarizationIsRunning) && (
                                                             <Button
                                                                 variant="outline"

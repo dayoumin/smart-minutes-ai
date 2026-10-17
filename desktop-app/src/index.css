@@ -614,6 +614,12 @@
     color: var(--status-current-fg);
   }
 
+  /* A finished step: check mark in the success colour (icon contrast 3.3:1); label for assistive tech. */
+  .status-done {
+    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center;
+    color: var(--status-success-progress);
+  }
+
   .status-pill {
     @apply inline-flex w-fit items-center gap-1 rounded-[var(--radius-btn)] px-2.5 py-1 text-xs font-semibold;
     background-color: var(--status-current-bg);
@@ -1507,8 +1513,13 @@
     @apply flex shrink-0 items-center justify-end gap-2;
   }
 
+  .writer-hint-action {
+    @apply h-10 shrink-0 px-3 text-xs;
+  }
+
   .writer-action-hint {
     @apply m-0 min-w-0 flex-1 text-sm text-muted-foreground sm:text-right;
+    word-break: keep-all;
   }
 
   .writer-start-button {

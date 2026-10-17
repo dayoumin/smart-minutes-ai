@@ -170,6 +170,7 @@ export const App: React.FC = () => {
     const closeGuardSourcesRef = useRef(new Map<string, boolean>());
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general');
+    const [settingsInitialSection, setSettingsInitialSection] = useState<'troubleshooting' | undefined>(undefined);
     const leaveGuardRef = React.useRef<() => boolean>(() => true);
     const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
     const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
@@ -217,8 +218,9 @@ export const App: React.FC = () => {
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(current => current === id ? fallbackId : current);
     };
-    const openSettings = (tab: SettingsTab = 'general') => {
+    const openSettings = (tab: SettingsTab = 'general', section?: 'troubleshooting') => {
         setSettingsInitialTab(tab);
+        setSettingsInitialSection(section);
         setIsSettingsOpen(true);
     };
 
@@ -387,6 +389,7 @@ export const App: React.FC = () => {
                         analysisStartBlocked={analysisStartBlocked}
                         analysisStartBlockedReason={newMeetingBlockedReason}
                         resumeDraftSelectionRequest={resumeDraftSelectionRequest}
+                        onOpenTroubleshooting={() => openSettings('general', 'troubleshooting')}
                         onRegisterLeaveGuard={(guard) => {
                             writerLeaveGuardRef.current = guard ?? (() => true);
                         }}
@@ -438,6 +441,7 @@ export const App: React.FC = () => {
                 <Settings
                     onClose={() => setIsSettingsOpen(false)}
                     initialTab={settingsInitialTab}
+                    initialSection={settingsInitialSection}
                     analysisActive={analysisStatus.active || remoteAnalysisActive || backendTaskActive}
                 />
             )}

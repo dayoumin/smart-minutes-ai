@@ -1,6 +1,8 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AudioLines, FileAudio, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
 import { Button } from './Button';
+import { isTauriRuntime } from './apiBase';
+import { toUserFacingAnalysisError } from './apiError';
 import {
     requestAnalysisRecoverySync,
     useAnalysisResumeSnapshot,
@@ -110,7 +112,9 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
                 <p>
                     {recoveryDraft.status === 'active'
                         ? '이전 분석이 아직 실행 중입니다. 완료되거나 다시 시작할 수 있는 상태가 되면 알려드릴게요.'
-                        : recoveryDraft.errorMessage || '같은 음성 파일을 선택하면 저장된 진행분부터 이어서 분석합니다.'}
+                        : recoveryDraft.errorMessage
+                            ? toUserFacingAnalysisError(recoveryDraft.errorMessage, { desktopApp: isTauriRuntime() })
+                            : '같은 음성 파일을 선택하면 저장된 진행분부터 이어서 분석합니다.'}
                 </p>
                 <span className="writer-recovery-meta"><FileAudio size={14} aria-hidden="true" />{recoveryDraft.sourceFilename}</span>
             </div>

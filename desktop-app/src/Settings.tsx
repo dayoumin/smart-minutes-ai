@@ -248,6 +248,8 @@ interface SettingsProps {
     onClose: () => void;
     analysisActive?: boolean;
     initialTab?: SettingsTab;
+    /** Scroll a section into view on open (the writer's 문제 해결 button). */
+    initialSection?: 'troubleshooting';
 }
 
 export type SettingsTab = 'general' | 'models';
@@ -407,7 +409,7 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
     }
 };
 
-export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general' }) => {
+export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general', initialSection }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
@@ -461,6 +463,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     useEffect(() => {
         setActiveTab(initialTab);
     }, [initialTab]);
+
+    useEffect(() => {
+        if (initialSection !== 'troubleshooting' || activeTab !== 'general') return undefined;
+        const frame = window.requestAnimationFrame(() => {
+            document.getElementById('settings-troubleshooting')?.scrollIntoView({ block: 'center' });
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [activeTab, initialSection]);
 
     useEffect(() => {
         const previouslyFocusedElement = previouslyFocusedElementRef.current;
@@ -1866,7 +1876,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             </div>
 
                             {isTauriRuntime() && (
-                                <div className="settings-group">
+                                <div className="settings-group" id="settings-troubleshooting">
                                     <h4>문제 해결</h4>
                                     <div className="settings-list">
                                         <div className="settings-row">

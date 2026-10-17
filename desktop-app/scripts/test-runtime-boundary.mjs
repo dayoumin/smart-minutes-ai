@@ -117,6 +117,20 @@ assert.equal(unreachableView.scene, 'unreachable');
 assert.equal(unreachableView.primaryAction, 'probe');
 assert.equal(unreachableView.primaryDisabled, false);
 assert.equal(unreachableView.secondaryAction, null, 'unverified installer downloads must not be shown as an action');
+const introWithInstaller = getLocalEngineConnectionView({
+  snapshot: viewSnapshot,
+  pairingPhase: 'idle',
+  connectionStarted: false,
+  installerAvailable: true,
+});
+assert.equal(introWithInstaller.secondaryAction, 'download', 'a configured installer is offered before the first connection attempt');
+assert.equal(introWithInstaller.secondaryLabel, '바로록 연결 받기');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'unreachable' },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+  installerAvailable: true,
+}).primaryLabel, '바로록 연결 받기', 'the engine has one name in every connection state');
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
   pairingPhase: 'idle',

@@ -50,10 +50,14 @@ import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
 import { LocalEngineConnectionSurface } from './LocalEngineConnectionSurface';
+import { toUserFacingAnalysisError } from './apiError';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
 const BACKEND_READY_INTERVAL_MS = 1_000;
+// After the first 45s the writer keeps checking slowly so the not-connected hint clears once the engine starts.
+const READINESS_SLOW_POLL_MS = 10_000;
+const DESKTOP_ENGINE_NOT_READY_MESSAGE = '분석 기능이 아직 준비되지 않았습니다. 첫 실행은 몇 분 걸릴 수 있으며, 계속되면 앱을 다시 실행해 주세요.';
 const ANALYSIS_STALL_WARNING_MS = 120_000;
 const LONG_MEDIA_NOTICE_SECONDS = 30 * 60;
 const VERY_LONG_MEDIA_NOTICE_SECONDS = 90 * 60;
@@ -201,6 +205,8 @@ interface ReadinessCheck {
     state: ReadinessState;
     message: string;
     models?: ModelsPayload;
+    /** The engine answered /api/health, even if it is not ready yet. */
+    reachable?: boolean;
 }
 
 interface ReadinessOptions {
@@ -475,11 +481,13 @@ interface MeetingWriterProps {
     analysisStartBlockedReason?: string;
     resumeDraftSelectionRequest?: { jobId: string; requestId: number } | null;
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
+    /** Opens Settings at 문제 해결 (desktop: restart the analysis engine). */
+    onOpenTroubleshooting?: () => void;
     /** Shown under the input form while no analysis, completion or resume selection is on screen. */
     idleCompanion?: React.ReactNode;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, idleCompanion }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, idleCompanion }) => {
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport } = useLocalEngineConnection();
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => toLocalDateTimeInputValue());
@@ -512,6 +520,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState<boolean | null>(null);
     const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
     const [readinessMessage, setReadinessMessage] = useState('');
+    // True once the load-time readiness loop gave up without reaching the analysis engine.
+    const [readinessTimedOut, setReadinessTimedOut] = useState(false);
+    const readinessLoopRef = useRef(0);
+    const [isRecheckingEngine, setIsRecheckingEngine] = useState(false);
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
     const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
     const [audioExtractFile, setAudioExtractFile] = useState<File | null>(null);
@@ -712,6 +724,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const healthResponse = await localEngineClient.request('/api/health');
             await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
             healthReachable = true;
+            setReadinessTimedOut(false);
             if (transportCheckId !== null) {
                 reportTransport(transportCheckId, transportFromHealthEvidence(true));
             }
@@ -756,11 +769,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             }
             await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const message = error instanceof Error && !options.soft
-                ? `분석 기능을 준비하고 있습니다. ${error.message}`
+                ? toUserFacingAnalysisError(error.message, { desktopApp: isTauriRuntime() })
                 : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
             setReadinessState('server-waiting');
             setReadinessMessage(message);
-            return { state: 'server-waiting', message };
+            return { state: 'server-waiting', message, reachable: healthReachable };
         }
     }, [beginTransportCheck, localEngineConnectionRequired, reportTransport]);
 
@@ -774,11 +787,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
         let cancelled = false;
         const syncReadiness = async () => {
+            // Only the newest loop keeps polling; focus and settings events start a fresh one.
+            const loopId = readinessLoopRef.current + 1;
+            readinessLoopRef.current = loopId;
+            const superseded = () => cancelled || loopId !== readinessLoopRef.current;
             const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
+            let finalCheckDone = false;
 
-            while (!cancelled && Date.now() < deadline) {
-                const check = await refreshReadiness({ soft: true });
-                if (cancelled) return;
+            while (!superseded()) {
+                const pastDeadline = Date.now() >= deadline;
+                // One strict check at the deadline, then soft checks every few seconds until the engine answers.
+                const check = await refreshReadiness({ soft: !pastDeadline || finalCheckDone });
+                if (superseded()) return;
 
                 if (check.state === 'ready') {
                     setErrorMessage('');
@@ -788,16 +808,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 }
 
                 if (check.state === 'missing-models') return;
-                await sleep(BACKEND_READY_INTERVAL_MS);
-            }
-
-            if (!cancelled) {
-                const check = await refreshReadiness();
-                if (check.state === 'ready') {
-                    setErrorMessage('');
-                    setStatusMessage('');
-                    setAnalysisPhase('idle');
+                if (pastDeadline) {
+                    if (check.state === 'error') return;
+                    if (check.state === 'server-waiting' && !check.reachable) setReadinessTimedOut(true);
+                    finalCheckDone = true;
                 }
+                await sleep(pastDeadline ? READINESS_SLOW_POLL_MS : BACKEND_READY_INTERVAL_MS);
             }
         };
 
@@ -880,9 +896,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || hasBlockingReadinessIssue
         || (localEngineConnectionRequired && !localEngineAnalysisReady)
         || analysisStartBlocked;
+    const engineUnreachable = readinessTimedOut && readinessState === 'server-waiting' && !localEngineConnectionRequired;
     const startButtonDescription = [
         analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
-        hasBlockingReadinessIssue && !isAnalyzing ? 'writer-readiness-hint' : '',
+        (hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing ? 'writer-readiness-hint' : '',
         localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-local-engine-requirement' : '',
     ].filter(Boolean).join(' ') || undefined;
 
@@ -909,8 +926,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
 
         const message = isTauriRuntime()
-            ? '분석 기능이 아직 준비되지 않았습니다. 앱을 종료한 뒤 다시 실행해 주세요.'
-            : '분석 서버가 아직 준비되지 않았습니다. 백엔드 서버를 실행한 뒤 다시 시도해 주세요.';
+            ? DESKTOP_ENGINE_NOT_READY_MESSAGE
+            : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.';
         setAnalysisPhase('error');
         setErrorMessage(message);
         setStatusMessage('');
@@ -941,6 +958,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setErrorMessage(check.message);
         setAnalysisPhase('error');
         return false;
+    };
+
+    // Re-check the engine from the not-connected hint without raising status banners.
+    const handleRecheckEngine = async () => {
+        setIsRecheckingEngine(true);
+        try {
+            const check = await refreshReadiness();
+            if (check.state === 'ready') {
+                setErrorMessage('');
+                setAnalysisPhase('idle');
+            }
+        } finally {
+            setIsRecheckingEngine(false);
+        }
     };
 
     const handleRefreshReadiness = async () => {
@@ -1939,7 +1970,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 setErrorMessage('');
                 return;
             }
-            const message = error instanceof Error ? error.message : '알 수 없는 오류가 발생했습니다.';
+            const message = toUserFacingAnalysisError(error instanceof Error ? error.message : '', { desktopApp: isTauriRuntime() });
             await writeFrontendLog(`analysis failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             saveResumeDraft('failed', {
                 stage: 'failed',
@@ -2514,10 +2545,27 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         {localEngineConnectionRequired && (
                             <LocalEngineConnectionSurface />
                         )}
-                        {hasBlockingReadinessIssue && !isAnalyzing && !localEngineConnectionRequired && (
+                        {(hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing && !localEngineConnectionRequired && (
                             <p id="writer-readiness-hint" className="writer-action-hint">
-                                {readinessState === 'missing-models' ? '필요한 모델을 받으면 분석을 시작할 수 있습니다. 아래 안내를 확인하세요.' : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
+                                {engineUnreachable
+                                    ? isTauriRuntime()
+                                        ? DESKTOP_ENGINE_NOT_READY_MESSAGE
+                                        : '이 PC의 분석 기능에 아직 연결되지 않았습니다. 바로록 연결을 실행해 주세요.'
+                                    : readinessState === 'missing-models' ? '필요한 모델을 받으면 분석을 시작할 수 있습니다. 아래 안내를 확인하세요.' : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
                             </p>
+                        )}
+                        {engineUnreachable && !isAnalyzing && (
+                            isTauriRuntime() && onOpenTroubleshooting ? (
+                                <Button variant="outline" className="writer-hint-action" onClick={onOpenTroubleshooting}>
+                                    <Settings size={15} aria-hidden="true" />
+                                    문제 해결
+                                </Button>
+                            ) : (
+                                <Button variant="outline" className="writer-hint-action" onClick={() => void handleRecheckEngine()} disabled={isRecheckingEngine}>
+                                    <RefreshCw size={15} className={isRecheckingEngine ? 'animate-spin' : ''} aria-hidden="true" />
+                                    {isRecheckingEngine ? '확인 중' : '다시 확인'}
+                                </Button>
+                            )
                         )}
                         <div className="writer-primary-actions">
                             <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>

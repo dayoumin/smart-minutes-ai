@@ -238,7 +238,12 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
             </div>
 
             <div className="local-engine-connection-actions">
-                {view.secondaryAction && view.secondaryLabel && (
+                {view.secondaryAction === 'download' && view.secondaryLabel && installerUrl ? (
+                    <a className="btn btn-outline local-engine-secondary-action" href={installerUrl}>
+                        <Download size={15} aria-hidden="true" />
+                        {view.secondaryLabel}
+                    </a>
+                ) : view.secondaryAction && view.secondaryLabel && (
                     <Button
                         variant="outline"
                         className="local-engine-secondary-action"

@@ -51,6 +51,29 @@ const mapApiErrorDetail = (detail: string): string | undefined => {
     return undefined;
 };
 
+const HANGUL_PATTERN = /[\uAC00-\uD7A3]/;
+const BROWSER_FETCH_FAILURE_PATTERN = /^(typeerror: )?(failed to fetch|networkerror when attempting to fetch resource\.?|load failed|network error)$/i;
+
+/** Turns an analysis failure (server detail, HTTP status, network error) into a sentence the user can act on. */
+export const toUserFacingAnalysisError = (raw: string | undefined, options: { desktopApp?: boolean } = {}): string => {
+    const message = (raw || '').trim();
+    if (!message) return '분석 중 문제가 생겼습니다. 다시 시도해 주세요.';
+    const mapped = mapApiErrorDetail(message);
+    if (mapped) return mapped;
+    if (BROWSER_FETCH_FAILURE_PATTERN.test(message)) {
+        return options.desktopApp
+            ? '분석 기능에 연결하지 못했습니다. 앱을 다시 실행한 뒤 다시 시도해 주세요.'
+            : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.';
+    }
+    const status = message.match(/^서버 응답 오류: (\d{3})$/);
+    if (status) {
+        return Number(status[1]) >= 500
+            ? '분석 중 문제가 생겼습니다. 잠시 뒤 다시 시도해 주세요.'
+            : '분석 요청을 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.';
+    }
+    return HANGUL_PATTERN.test(message) ? message : '분석 중 문제가 생겼습니다. 다시 시도해 주세요.';
+};
+
 export const parseApiErrorBody = (body: string, fallback: string): ApiErrorInfo => {
     const normalizedBody = body.trim();
     if (!normalizedBody) return { message: fallback };

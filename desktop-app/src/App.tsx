@@ -11,7 +11,7 @@ import { isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
 import { localEngineClient } from './localEngineClient';
 import { AppView, getInitialAppView } from './appView';
 import { AnalysisRecoveryCoordinator } from './AnalysisRecoveryCoordinator';
-import { StartWorkspace } from './StartWorkspace';
+import { RecentMeetingsPanel } from './RecentMeetingsPanel';
 import { MeetingArchive } from './MeetingArchive';
 import { useAnalysisResumeSnapshot } from './analysisResumeState';
 
@@ -24,7 +24,6 @@ interface AnalysisStatus {
     stalled?: boolean;
     transcriptReady?: boolean;
     etaSeconds?: number | null;
-    surfaceTone?: 'immersive' | 'calm';
 }
 
 interface BenchmarkScore {
@@ -268,7 +267,6 @@ export const App: React.FC = () => {
                 stalled: Boolean(detail.stalled),
                 transcriptReady: Boolean(detail.transcriptReady),
                 etaSeconds: typeof detail.etaSeconds === 'number' ? detail.etaSeconds : null,
-                surfaceTone: detail.surfaceTone === 'calm' ? 'calm' : 'immersive',
             });
         };
 
@@ -356,7 +354,7 @@ export const App: React.FC = () => {
                 selectedMeetingId={selectedMeetingId}
                 onTabChange={handleTabChange}
                 onOpenSettings={() => openSettings('general')}
-                onOpenStart={() => handleTabChange('start')}
+                onOpenStart={() => handleTabChange('minutes')}
                 newMeetingBlocked={analysisStartBlocked}
                 newMeetingBlockedReason={newMeetingBlockedReason}
                 resumeSelectionBlocked={analysisStartBlocked}
@@ -373,20 +371,6 @@ export const App: React.FC = () => {
                     setActiveTab('history');
                 }}
             >
-                <div className={activeTab === 'start' ? 'contents' : 'hidden'}>
-                    <StartWorkspace
-                        onCreateMeeting={handleCreateMeeting}
-                        onOpenMeeting={(id) => {
-                            setMeetingDetailOpenRequest(null);
-                            setSelectedMeetingId(id);
-                            setActiveTab('history');
-                        }}
-                        onResumeDraft={handleSelectResumeDraft}
-                        analysisActive={analysisStatus.active}
-                        newMeetingBlocked={analysisStartBlocked}
-                        newMeetingBlockedReason={newMeetingBlockedReason}
-                    />
-                </div>
                 <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
                     <MeetingWriter
                         key={writerSessionKey}
@@ -397,6 +381,18 @@ export const App: React.FC = () => {
                         onRegisterLeaveGuard={(guard) => {
                             writerLeaveGuardRef.current = guard ?? (() => true);
                         }}
+                        idleCompanion={activeTab === 'minutes' && (
+                            <RecentMeetingsPanel
+                                onOpenMeeting={(id) => {
+                                    if (!canLeaveCurrentMeeting()) return;
+                                    setMeetingDetailOpenRequest(null);
+                                    setSelectedMeetingId(id);
+                                    setActiveTab('history');
+                                }}
+                                onResumeDraft={handleSelectResumeDraft}
+                                newMeetingBlocked={analysisStartBlocked}
+                            />
+                        )}
                     />
                 </div>
                 <div className={activeTab === 'history' ? 'contents' : 'hidden'}>

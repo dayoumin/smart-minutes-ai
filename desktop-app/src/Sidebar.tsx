@@ -668,7 +668,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     return (
         <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex h-full max-h-none w-60 shrink-0 flex-col border-r px-3 py-3.5">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <button type="button" className="sidebar-brand" aria-label="바로록 시작 화면" aria-current={activeTab === 'start' ? 'page' : undefined} onClick={onOpenStart}>
+                <button type="button" className="sidebar-brand" aria-label="바로록 첫 화면" aria-current={activeTab === 'minutes' ? 'page' : undefined} onClick={onOpenStart}>
                     <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
                     <span className="app-brand-copy">
                         <strong>바로록</strong>

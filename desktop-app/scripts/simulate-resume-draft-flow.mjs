@@ -164,7 +164,6 @@ const runWriterLayoutScenario = async (browser) => {
     const startButton = page.getByRole('button', { name: '분석 시작' });
     await startButton.waitFor({ timeout: 10000 });
 
-    let wideBaseline = null;
     for (const viewport of [{ width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1600, height: 900 }, { width: 1280, height: 720 }, { width: 1024, height: 800 }]) {
       await page.setViewportSize(viewport);
       await page.waitForTimeout(100);
@@ -181,8 +180,7 @@ const runWriterLayoutScenario = async (browser) => {
         const title = rect('.writer-title');
         const fileButton = rect('.file-drop-zone');
         const startButton = rect('.writer-start-button');
-        const backdrop = rect('.ocean-backdrop');
-        const workspace = document.querySelector('.barorok-workspace-minutes');
+        const workspace = document.querySelector('.barorok-workspace');
         const frame = rect('.barorok-app-frame');
         const shell = rect('.barorok-shell-body');
         const navigation = rect('.barorok-navigation');
@@ -198,25 +196,14 @@ const runWriterLayoutScenario = async (browser) => {
           viewportBounds: [frame, shell, navigation, workspaceRect]
             .filter(Boolean)
             .map(element => ({ left: element.left, right: element.right })),
-          scrollHeight: workspace?.scrollHeight ?? 0,
-          clientHeight: workspace?.clientHeight ?? 0,
           overflowY: workspace ? getComputedStyle(workspace).overflowY : '',
           viewportHeight: window.innerHeight,
-          grid: grid && { left: grid.left, right: grid.right },
-          upload: upload && { top: upload.top, bottom: upload.bottom },
+          grid: grid && { left: grid.left, right: grid.right, width: grid.width },
+          upload: upload && { left: upload.left, top: upload.top, bottom: upload.bottom },
           info: info && { left: info.left, right: info.right, top: info.top, bottom: info.bottom },
-          uploadWidth: upload?.width ?? null,
-          infoWidth: info?.width ?? null,
           action: action && { left: action.left, right: action.right, top: action.top, bottom: action.bottom },
-          startButton: startButton && { left: startButton.left, right: startButton.right, width: startButton.width },
-          backdrop: backdrop && {
-            left: backdrop.left,
-            right: backdrop.right,
-            top: backdrop.top,
-            bottom: backdrop.bottom,
-            width: backdrop.width,
-            height: backdrop.height,
-          },
+          startButton: startButton && { right: startButton.right },
+          workspace: workspaceRect && { left: workspaceRect.left, right: workspaceRect.right },
           visibleBottoms: [title?.bottom, fileButton?.bottom, info?.bottom, action?.bottom, startButton?.bottom],
         };
       });
@@ -227,36 +214,23 @@ const runWriterLayoutScenario = async (browser) => {
         metrics.viewportBounds.every(bounds => bounds.left >= -1 && bounds.right <= viewport.width + 1),
         `${viewport.width}px app surfaces should remain inside viewport bounds`,
       );
-      assert.ok(metrics.grid && metrics.upload && metrics.info && metrics.action, 'writer layout elements should exist');
-      if (viewport.width > 1024) {
-        if (viewport.height >= 800) {
-          assert.ok(metrics.visibleBottoms.every(bottom => typeof bottom === 'number' && bottom <= metrics.viewportHeight), `${viewport.width}x${viewport.height} initial controls should fit in the viewport`);
-        } else {
-          assert.ok(metrics.scrollHeight >= metrics.clientHeight, 'low-height writer should keep the CTA reachable through its single canvas scroll');
-          assert.ok(['auto', 'scroll'].includes(metrics.overflowY), 'low-height writer should preserve canvas scrolling');
-        }
-        assert.ok(metrics.info.left > metrics.grid.left, `${viewport.width}px should use two columns`);
-        assert.ok(Math.abs(metrics.action.right - metrics.info.right) <= 1, 'wide action should align with the meeting panel right edge');
-        assert.ok(metrics.startButton && metrics.startButton.width >= 220 && metrics.startButton.width <= 240.5, 'wide CTA should keep the approved compact width');
-        if (viewport.width === 1440) {
-          wideBaseline = { uploadWidth: metrics.uploadWidth, infoWidth: metrics.infoWidth };
-        }
-        if (viewport.width === 1600) {
-          assert.ok(wideBaseline, '1440 baseline should be measured before 1600');
-          assert.ok(metrics.uploadWidth >= 583.5 && metrics.infoWidth >= 447.5, '1600 panels should reach their approved minimum fidelity widths');
-          assert.ok(metrics.uploadWidth <= 584.5 && metrics.infoWidth <= 448.5, '1600 panels should stop at their approved maximum widths');
-          assert.ok(metrics.backdrop && metrics.backdrop.right >= metrics.info.right, 'background plate should cover the complete writer rail');
-          assert.ok(metrics.backdrop.width > 0 && metrics.backdrop.height > 0, 'background decoration should keep a visible rendered size');
-        }
-      } else {
-        assert.ok(metrics.info.top >= metrics.upload.bottom - 1, '1024px should stack the writer sections in one column');
-        assert.ok(metrics.action.top >= metrics.info.bottom - 1, '1024px action bar should follow the stacked content');
-        assert.ok(metrics.scrollHeight >= metrics.clientHeight, '1024px should allow normal vertical scrolling when needed');
-        assert.ok(['auto', 'scroll'].includes(metrics.overflowY), '1024px workspace should allow vertical scrolling');
-      }
+      assert.ok(metrics.grid && metrics.upload && metrics.info && metrics.action && metrics.workspace, 'writer layout elements should exist');
+      assert.ok(metrics.grid.width <= 880.5, `${viewport.width}px writer column should stay within 880px`);
+      const leftGap = metrics.grid.left - metrics.workspace.left;
+      const rightGap = metrics.workspace.right - metrics.grid.right;
+      assert.ok(Math.abs(leftGap - rightGap) <= 16, `${viewport.width}px writer column should sit centered in the workspace`);
+      assert.ok(Math.abs(metrics.info.left - metrics.upload.left) <= 1, `${viewport.width}px should keep upload and meeting information in one column`);
+      assert.ok(metrics.info.top >= metrics.upload.bottom - 1, `${viewport.width}px meeting information should follow the upload zone`);
+      assert.ok(metrics.action.top >= metrics.info.bottom - 1, `${viewport.width}px action row should follow the meeting information`);
+      assert.ok(metrics.startButton && Math.abs(metrics.startButton.right - metrics.info.right) <= 1, 'analysis start should align with the meeting information right edge');
+      assert.ok(['auto', 'scroll'].includes(metrics.overflowY), 'workspace should keep normal vertical scrolling');
+      assert.ok(
+        metrics.visibleBottoms.every(bottom => typeof bottom === 'number' && bottom <= metrics.viewportHeight),
+        `${viewport.width}x${viewport.height} initial controls should fit in the viewport`,
+      );
       if (WRITER_CAPTURE_DIR) {
         await mkdir(WRITER_CAPTURE_DIR, { recursive: true });
-        await page.screenshot({ path: join(WRITER_CAPTURE_DIR, `new-record-ocean-${viewport.width}.png`), fullPage: true });
+        await page.screenshot({ path: join(WRITER_CAPTURE_DIR, `new-record-${viewport.width}x${viewport.height}.png`), fullPage: true });
       }
     }
     await page.setViewportSize({ width: 1280, height: 800 });
@@ -286,7 +260,7 @@ const runWriterLayoutScenario = async (browser) => {
     assert.equal(await requiredFileButton.getAttribute('aria-describedby'), 'writer-form-error');
     assert.equal(await page.locator('#writer-form-error').count(), 1, 'invalid controls should reference a real error description');
     if (WRITER_CAPTURE_DIR) {
-      await page.screenshot({ path: join(WRITER_CAPTURE_DIR, 'new-record-ocean-error-1280.png'), fullPage: true });
+      await page.screenshot({ path: join(WRITER_CAPTURE_DIR, 'new-record-error-1280.png'), fullPage: true });
     }
     console.log('ok - writer responsive layout scenario');
   } finally {

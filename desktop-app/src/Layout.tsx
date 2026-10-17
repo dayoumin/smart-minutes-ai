@@ -1,7 +1,6 @@
 import React from 'react';
 import { Sidebar } from './Sidebar';
-import { OceanBackdrop } from './OceanBackdrop';
-import { AppView, getAppShellVariant } from './appView';
+import { AppView } from './appView';
 
 interface AnalysisStatus {
     active: boolean;
@@ -12,7 +11,6 @@ interface AnalysisStatus {
     stalled?: boolean;
     transcriptReady?: boolean;
     etaSeconds?: number | null;
-    surfaceTone?: 'immersive' | 'calm';
 }
 
 export interface LayoutProps {
@@ -35,10 +33,8 @@ export interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
-    const shellVariant = getAppShellVariant(activeTab);
-    const oceanShellActive = shellVariant === 'ocean';
     return (
-        <div className="barorok-app-frame flex min-w-[320px] flex-col overflow-hidden text-foreground" data-shell-variant={shellVariant}>
+        <div className="barorok-app-frame flex min-w-[320px] flex-col overflow-hidden text-foreground">
             <div className="barorok-shell-body flex min-h-0 flex-1 flex-row">
                 <Sidebar
                     activeTab={activeTab}
@@ -56,8 +52,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onOpenAsrBenchmark={showAsrBenchmark ? () => onTabChange?.('asr-benchmark') : undefined}
                     analysisStatus={analysisStatus}
                 />
-                <main className={`barorok-workspace custom-scrollbar flex-1 ${oceanShellActive ? 'barorok-workspace-minutes' : 'overflow-auto p-4 sm:p-6 xl:p-8'}`}>
-                    {oceanShellActive && <OceanBackdrop tone={analysisStatus?.surfaceTone ?? (analysisStatus?.active ? 'calm' : 'immersive')} />}
+                <main className="barorok-workspace custom-scrollbar flex-1 overflow-auto p-4 sm:p-6 xl:p-8">
                     <div className="barorok-workspace-content">
                         {children}
                     </div>

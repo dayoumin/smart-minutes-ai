@@ -163,7 +163,6 @@ const runArchiveFlow = async browser => {
     const archiveUrl = new URL('?view=archive', APP_URL).toString();
     await page.goto(archiveUrl, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '기록 찾기', exact: true }).waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('[data-shell-variant="document"]').count(), 1);
     await page.getByText('하반기 예산을 3천만 원으로 확정', { exact: true }).waitFor();
     await page.getByText('구형 장비를 1년 더 유지', { exact: true }).waitFor();
     assert.equal(await page.locator('.meeting-archive-item-decision').count(), 3);

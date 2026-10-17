@@ -65,13 +65,6 @@ const LOCAL_ENGINE_CONNECTION_UI_ENABLED = import.meta.env.VITE_LOCAL_ENGINE_CON
         && new URLSearchParams(window.location.search).get('localEngineConnection') === '1');
 const getNowMs = (): number => Date.now();
 
-const WhaleTailIcon: React.FC = () => (
-    <span
-        className="writer-whale-tail-icon"
-        aria-hidden="true"
-    />
-);
-
 const getAdjustedEtaSeconds = (
     etaSeconds: number | null,
     receivedAt: number | null,
@@ -477,9 +470,11 @@ interface MeetingWriterProps {
     analysisStartBlockedReason?: string;
     resumeDraftSelectionRequest?: { jobId: string; requestId: number } | null;
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
+    /** Shown under the input form while no analysis, completion or resume selection is on screen. */
+    idleCompanion?: React.ReactNode;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, idleCompanion }) => {
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport } = useLocalEngineConnection();
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
@@ -674,10 +669,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 stalled: analysisStalled,
                 transcriptReady,
                 etaSeconds: adjustedEtaSeconds,
-                surfaceTone: isAnalyzing || analysisPhase === 'error' || Boolean(completionNotice) ? 'calm' : 'immersive',
             },
         }));
-    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisPhase, analysisStartedAt, analysisStalled, completionNotice, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
+    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
 
     useEffect(() => {
         if (!isAnalyzing) return;
@@ -2239,10 +2233,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     ? selectedResumeDraftActive ? '분석 상태' : '이어하기'
                     : '새 회의록';
 
-    const showOceanInput = !showAnalysisPanel && !completionNotice;
+    const showInputForm = !showAnalysisPanel && !completionNotice;
 
     return (
-        <div className={`writer-shell writer-shell-ocean ${showOceanInput ? 'writer-shell-ocean-input' : 'writer-shell-ocean-result'}`}>
+        <div className="writer-shell">
             {operationToast && (
                 <AppToast
                     message={operationToast.message}
@@ -2257,7 +2251,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 </div>
             </div>
 
-            <div className={`app-panel writer-panel ${!showAnalysisPanel && !completionNotice ? 'writer-panel-idle' : ''}`}>
+            <div className={`app-panel writer-panel ${showInputForm ? 'writer-panel-idle' : ''}`}>
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <span>{selectedResumeDraftActive
@@ -2286,7 +2280,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     </div>
                 )}
 
-                {!showAnalysisPanel && !completionNotice && (<div className="writer-input-grid">
+                {showInputForm && (<div className="writer-input-grid">
                 <section className="writer-section">
                     <div className="writer-section-heading">
                         <h3>{resumeSelectionActive ? '같은 영상·음성 파일 선택 *' : '영상·음성 파일 *'}</h3>
@@ -2509,7 +2503,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         <div className="writer-primary-actions">
                             <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
                                 {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-                                {!isAnalyzing && <WhaleTailIcon />}
                                 {isAnalyzing ? '분석 중' : buttonLabel}
                             </Button>
                         </div>
@@ -2777,6 +2770,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             {showProgressBar && !showAnalysisPanel && (
                 <ProgressBar value={transcriptProgressPercent} tone={errorMessage ? 'error' : 'primary'} label="대화록 생성률" />
             )}
+
+            {showInputForm && !resumeSelectionActive && !isAnalyzing && idleCompanion}
         </div>
     );
 };

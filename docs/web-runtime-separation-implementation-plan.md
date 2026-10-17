@@ -190,7 +190,7 @@ capability와 어댑터 동작으로 전달해 웹에서 실수로 Tauri command
 각 화면을 따로 구현하더라도 다음 품질 관문은 모든 단계에 공통 적용한다.
 
 1. 새 UI를 만들기 전에 `Button`, `IconButton`, `Input`, `StatusBanner`,
-   `ProgressBar`, `AppToast`, `Layout`, `Sidebar`, `OceanBackdrop`과
+   `ProgressBar`, `AppToast`, `Layout`, `Sidebar`와
    `index.css`의 공통 클래스·토큰을 먼저 확인한다.
 2. 같은 의미와 상태 전이를 가진 UI가 두 화면 이상에서 반복되거나 웹과
    Tauri가 함께 사용하면 공통 컴포넌트 또는 typed prop 계약으로 승격한다.
@@ -198,8 +198,8 @@ capability와 어댑터 동작으로 전달해 웹에서 실수로 Tauri command
 3. 화면 파일에서 원시 색상, 임의 radius·shadow·z-index를 추가하지 않는다.
    상태 색상, 표면, 포커스, 간격과 버튼 위계는 `docs/design.md`와 semantic
    token을 사용한다.
-4. 시작·새 기록의 해양 배경은 `OceanBackdrop`과 공통 shell이 소유한다.
-   HTML 버튼·입력·상태 문구를 배경 이미지에 합치지 않는다.
+4. 작업면 뒤에 사진·생성 이미지 배경을 두지 않는다(2026-10-17 방향 A에서
+   해양 배경 제거). HTML 버튼·입력·상태 문구를 이미지에 합치지 않는다.
 5. 로딩·성공·복구·차단·오류를 화면마다 새 배너로 만들지 않는다. 일시
    피드백은 toast, 지속 안내는 안정된 inline surface, 인증처럼 작업을
    중단시키는 결정만 dialog/full view를 사용한다.

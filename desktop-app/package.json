@@ -17,7 +17,7 @@
     "test:generation-flow": "node scripts/simulate-generation-flow.mjs",
     "test:resume-flow": "node scripts/simulate-resume-flow.mjs",
     "test:resume-draft-flow": "node scripts/simulate-resume-draft-flow.mjs",
-    "test:start-workspace-flow": "node scripts/simulate-start-workspace-flow.mjs",
+    "test:new-record-home-flow": "node scripts/simulate-new-record-home-flow.mjs",
     "test:meeting-archive-flow": "node scripts/simulate-meeting-archive-flow.mjs",
     "test:meeting-detail-layout": "node scripts/simulate-meeting-detail-layout.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",

@@ -470,6 +470,29 @@
     @apply p-4;
   }
 
+  /* Settings > 모델: one card per section, model options as divided rows (no box inside a box). */
+  .settings-model-guide {
+    @apply px-1 text-xs leading-relaxed text-muted-foreground;
+  }
+
+  .settings-model-list {
+    @apply grid;
+  }
+
+  .settings-model-row {
+    @apply py-3 text-sm;
+    border-top: 1px solid var(--border-default);
+  }
+
+  .settings-model-row:first-child {
+    @apply pt-1;
+    border-top: 0;
+  }
+
+  .settings-model-note {
+    @apply flex items-center gap-2 py-2 text-sm text-muted-foreground;
+  }
+
   .settings-row {
     @apply flex min-h-16 items-center justify-between gap-5 border-b border-border/70 px-4 py-3 last:border-b-0;
   }

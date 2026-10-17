@@ -1916,7 +1916,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 </div>
                             </div>
 
-                            <div className="rounded-md border border-border bg-background px-3 py-2 text-xs text-muted-foreground">
+                            <div className="settings-model-guide">
                                 <span className="font-semibold text-foreground">처음 준비:</span>{' '}
                                 {modelPreparationGuide}
                             </div>
@@ -1966,12 +1966,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 )}
 
                                 {isLoading && !models ? (
-                                    <div className="mt-3 flex items-center justify-center gap-2 rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">
+                                    <div className="settings-model-note mt-3">
                                         <RefreshCw size={16} className="animate-spin text-primary" aria-hidden="true" />
                                         모델 상태를 불러오는 중입니다.
                                     </div>
                                 ) : analysisModels.length > 0 ? (
-                                    <div className={`mt-3 grid gap-2 ${analysisModels.length > 1 ? 'sm:grid-cols-2' : ''}`}>
+                                    <div className="settings-model-list mt-2">
                                         {analysisModels.map(model => {
                                             const modelUrl = model.install_url || model.license_url || '';
                                             const modelName = model.repo_id || model.label;
@@ -1982,7 +1982,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             const progressPercent = getModelDownloadProgressPercent(modelDownloadStatus);
                                             const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
                                             return (
-                                                <div key={model.key} className="rounded-md border border-border bg-background p-3 text-sm">
+                                                <div key={model.key} className="settings-model-row">
                                                     <div className="flex items-center justify-between gap-3">
                                                         <div className="min-w-0">
                                                             <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>
@@ -2064,7 +2064,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         })}
                                     </div>
                                 ) : (
-                                    <div className="mt-3 rounded-md border border-border bg-background p-4 text-sm text-muted-foreground">
+                                    <div className="settings-model-note mt-3">
                                         {modelStatusErrorMessage || errorMessage
                                             ? '음성 인식 모델 상태 확인이 지연되고 있습니다. 모델을 다시 받을 필요는 없으며, 잠시 후 다시 확인해 주세요.'
                                             : '음성 인식 모델 상태를 아직 확인하지 못했습니다.'}
@@ -2210,7 +2210,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     </label>
                                 )}
                                 {summaryModelOptions.length > 0 && (
-                                    <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                                    <div className="settings-model-list mt-3">
                                         {summaryModelOptions.map((option, index) => {
                                             const optionModel = normalizeSummaryModelName(option.model);
                                             const pullStatus = optionModel ? ollamaPulls[optionModel] : undefined;
@@ -2242,7 +2242,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     ? option.label
                                                     : '');
                                             return (
-                                                <div key={menuKey} className="rounded-md border border-border bg-background p-3 text-sm">
+                                                <div key={menuKey} className="settings-model-row">
                                                     <div className="flex items-start justify-between gap-3">
                                                         <div className="min-w-0">
                                                             <div className="flex flex-wrap items-center gap-2">

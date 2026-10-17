@@ -622,7 +622,7 @@ const expectDisabled = async (locator, expected, message) => {
 };
 
 const openModelMenu = async (modelsPanel, modelName) => {
-  const card = modelsPanel.locator('.rounded-md.border.border-border.bg-background.p-3.text-sm').filter({ hasText: modelName }).first();
+  const card = modelsPanel.locator('.settings-model-row').filter({ hasText: modelName }).first();
   await card.getByRole('button', { name: `${modelName} 모델 작업` }).click();
   return card;
 };
@@ -800,13 +800,13 @@ const run = async () => {
       'summary model page link should open through the external URL path',
     );
     const gemma4e4bInitialCard = gemma4e4bInitialLink
-      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+      .locator('xpath=ancestor::div[contains(@class, "settings-model-row")][1]');
     await gemma4e4bInitialCard.getByText('권장', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsPanel.getByText('권장', { exact: true }).count(), 1, 'only the memory-recommended 4B card should carry the 권장 badge');
 
     const gemma4e2bReadyCard = modelsPanel
       .getByRole('link', { name: 'gemma4:e2b 모델 페이지' })
-      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+      .locator('xpath=ancestor::div[contains(@class, "settings-model-row")][1]');
     await gemma4e2bReadyCard.getByLabel('gemma4:e2b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await gemma4e2bReadyCard.getByRole('button', { name: 'gemma4:e2b 모델 작업' }).count(), 0, 'current ready summary model should not show a confusing overflow menu');
 
@@ -823,7 +823,7 @@ const run = async () => {
     await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 사용' }).click();
     const gemma4e4bCard = modelsPanel
       .getByRole('link', { name: 'gemma4:e4b 모델 페이지' })
-      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+      .locator('xpath=ancestor::div[contains(@class, "settings-model-row")][1]');
     await gemma4e4bCard.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await gemma4e4bCard.getByText('사용 중', { exact: true }).count(), 0);
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'gemma4:e4b', 'using a completed model should save it as the configured summary model');
@@ -888,7 +888,7 @@ const run = async () => {
     await modelsPanel.locator('select').selectOption('custom-ready:1b');
     const customReadyCard = modelsPanel
       .getByText('custom-ready:1b', { exact: true })
-      .locator('xpath=ancestor::div[contains(@class, "rounded-md") and contains(@class, "border")][1]');
+      .locator('xpath=ancestor::div[contains(@class, "settings-model-row")][1]');
     await customReadyCard.getByLabel('custom-ready:1b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await customReadyCard.getByRole('button', { name: 'custom-ready:1b 모델 작업' }).count(), 0, 'current custom-ready model should not show a confusing overflow menu');
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'custom-ready:1b', 'direct input installed model should save as the configured summary model');

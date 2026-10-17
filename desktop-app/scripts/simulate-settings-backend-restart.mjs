@@ -134,6 +134,8 @@ const installRoutes = async (page) => {
     delayNextSettingsPatchMs: 0,
     // When set, GET /api/settings waits on this promise (an engine that does not answer yet).
     settingsGetGate: null,
+    heldSettingsGets: 0,
+    abortedSettingsGets: 0,
   };
   let settingsState = {
     processing: { long_audio_chunk_seconds: 95, enable_long_audio_chunking: false },
@@ -344,9 +346,11 @@ const installRoutes = async (page) => {
         await sleep(delayMs);
       }
     } else if (routeState.settingsGetGate) {
+      routeState.heldSettingsGets += 1;
       await routeState.settingsGetGate;
       // The held request stands for the old engine: it fails once it is finally answered.
       await route.abort('connectionrefused');
+      routeState.abortedSettingsGets += 1;
       return;
     }
     await route.fulfill({
@@ -383,6 +387,10 @@ const installTauriMock = () => {
         }
         if (command === 'restart_backend') {
           window.__restartCalls += 1;
+          if (window.__restartShouldFail) {
+            window.__restartShouldFail = false;
+            throw new Error('restart did not finish in time');
+          }
           return 'http://127.0.0.1:17863';
         }
         if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
@@ -563,6 +571,10 @@ const run = async () => {
     routeState.settingsGetGate = new Promise(resolve => { releaseSettingsGet = resolve; });
     await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    for (let attempt = 0; attempt < 40 && routeState.heldSettingsGets === 0; attempt += 1) {
+      await sleep(100);
+    }
+    assert.equal(routeState.heldSettingsGets, 1, 'the settings load should be held so the dialog is still loading');
     await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should stay enabled while settings are still loading');
     const restartCallsBeforeLoadingRestart = await page.evaluate(() => window.__restartCalls);
     // Only the first load is held; the load after the restart answers normally.
@@ -578,10 +590,27 @@ const run = async () => {
     // Now the old, superseded load fails; it must not replace the restarted state with an error.
     releaseSettingsGet();
     await heldSettingsGate;
-    await sleep(600);
+    for (let attempt = 0; attempt < 40 && routeState.abortedSettingsGets === 0; attempt += 1) {
+      await sleep(100);
+    }
+    assert.equal(routeState.abortedSettingsGets, 1, 'the held load should have failed');
+    // Let the failed fetch settle in the page before checking that it changed nothing.
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
     assert.equal(await page.getByText('설정을 불러오지 못했습니다', { exact: false }).count(), 0, 'the superseded load should not leave an error behind');
     assert.equal(await page.getByText(/분석 기능을 다시 시작/).count(), 1, 'the restart result should stay');
     assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'the restarted settings should stay loaded');
+
+    // A restart that fails (for example an engine that came up slowly) should still end with loaded settings.
+    await page.keyboard.press('Escape');
+    await settingsDialog.waitFor({ state: 'detached', timeout: 10000 });
+    await page.evaluate(() => { window.__restartShouldFail = true; });
+    await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should be available');
+    await page.getByRole('button', { name: '재시작' }).click();
+    await page.getByText('재시작은 확인하지 못했지만 분석 기능에 다시 연결했습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'settings should be loaded again after a failed restart');
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '재시작', undefined, { timeout: 5000 });
 
     await runTroubleshootingEntryScene(browser);
 

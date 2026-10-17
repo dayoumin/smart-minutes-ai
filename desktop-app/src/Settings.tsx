@@ -464,6 +464,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     const troubleshootingScrolledRef = useRef(false);
     const restartButtonRef = useRef<HTMLButtonElement | null>(null);
+    const restartFocusPendingRef = useRef(false);
     useEffect(() => {
         // Scroll once when opened from the writer's 문제 해결 button, not on every return to the 일반 tab.
         if (initialSection !== 'troubleshooting' || activeTab !== 'general' || troubleshootingScrolledRef.current) return undefined;
@@ -1211,12 +1212,19 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     ]);
 
     useEffect(() => {
-        if (!modelStatusErrorMessage || !apiBase || !isModelStatusCheckFailure(modelStatusErrorMessage)) return;
+        if (isRestartingBackend || !modelStatusErrorMessage || !apiBase || !isModelStatusCheckFailure(modelStatusErrorMessage)) return;
         const timeoutId = window.setTimeout(() => {
             void loadModelsStatus(apiBase, { surfaceErrors: false });
         }, 5000);
         return () => window.clearTimeout(timeoutId);
-    }, [apiBase, loadModelsStatus, modelStatusErrorMessage]);
+    }, [apiBase, isRestartingBackend, loadModelsStatus, modelStatusErrorMessage]);
+
+    useEffect(() => {
+        if (isRestartingBackend || !restartFocusPendingRef.current) return;
+        restartFocusPendingRef.current = false;
+        const active = document.activeElement;
+        if (!active || active === document.body) restartButtonRef.current?.focus();
+    }, [isRestartingBackend]);
 
     useEffect(() => {
         if (!message) return;
@@ -1531,9 +1539,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             return;
         }
 
+        restartFocusPendingRef.current = document.activeElement === restartButtonRef.current;
         setIsRestartingBackend(true);
         settingsLoadSeqRef.current += 1;
         modelStatusRequestIdRef.current += 1;
+        setModelStatusErrorMessage('');
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
@@ -1548,9 +1558,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     : '재시작했습니다. 모델 상태는 잠시 후 자동으로 다시 확인합니다.',
             );
         } catch {
-            // The invalidated load will not clear isLoading itself.
-            setIsLoading(false);
-            setErrorMessage('재시작하지 못했습니다. 앱을 닫았다가 다시 열어 주세요.');
+            // The restart invalidated the load in flight, so read settings again: a slow engine may be up by now,
+            // and if it is not, the settings failure message keeps the automatic retry going.
+            const recovered = await loadSettings();
+            if (recovered) setMessage('재시작은 확인하지 못했지만 분석 기능에 다시 연결했습니다.');
         } finally {
             setIsRestartingBackend(false);
         }

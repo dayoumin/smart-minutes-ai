@@ -2428,7 +2428,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const organizeModelGuidanceMessage = summaryModelMessage || '요약 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
     // A generation that failed on a missing model or summary program says "설정에서 … 준비"; give it the way there.
     const errorNeedsModelSetup = Boolean(
-        onOpenSettings && !loadErrorMessage && errorMessage.includes('설정에서') && /모델|요약 프로그램/.test(errorMessage),
+        onOpenSettings && !loadErrorMessage && errorMessage.includes('설정에서') && /모델|요약 프로그램/.test(errorMessage)
+        && !(detailTab === 'summary' && summaryModelUnavailable),
     );
     const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
     const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;

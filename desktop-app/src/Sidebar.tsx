@@ -19,7 +19,7 @@ import {
     updateMeetingPinned,
 } from './meetingRepository';
 import { localEngineClient } from './localEngineClient';
-import { ProgressBar } from './ProgressBar';
+import { ProgressBar } from './components/common';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
 export interface SidebarProps {

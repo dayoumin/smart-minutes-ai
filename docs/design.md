@@ -86,6 +86,7 @@ AI 보조 디자인에서 시안·스킬·구현·검증을 적용하는 순서�
 
 ## 공통 클래스
 
+- 공통 React 컴포넌트(`Button`, `IconButton`, `Input`, `StatusBanner`, `ProgressBar`, `AppToast`)는 `desktop-app/src/components/common/`에 두고 `index.ts` 카탈로그에서 가져온다. 새 공통 컴포넌트를 만들기 전에 카탈로그를 먼저 확인하고, 추가하면 한 줄 설명과 함께 export한다.
 - `app-panel`, `app-panel-header`: 주요 작업 패널과 상단 정보 영역
 - `page-title`: 새 회의록·분석 진행·기록 찾기의 26px 화면 제목 (회의 상세 제목은 문서 제목이라 30px로 따로 둔다)
 - `icon-badge`: 청록 옅은 원 안의 40px 아이콘 (업로드, 분석 중 파일, 이어서 할 분석)

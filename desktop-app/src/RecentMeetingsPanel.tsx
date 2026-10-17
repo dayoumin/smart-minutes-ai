@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { AudioLines, FileAudio, Loader2, RefreshCw, RotateCcw } from 'lucide-react';
-import { Button } from './Button';
+import { Button } from './components/common';
 import { isTauriRuntime } from './apiBase';
 import { toUserFacingAnalysisError } from './apiError';
 import {

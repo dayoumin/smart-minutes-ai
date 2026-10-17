@@ -10,9 +10,7 @@ import {
     ShieldCheck,
     X,
 } from 'lucide-react';
-import { Button } from './Button';
-import { IconButton } from './IconButton';
-import { Input } from './Input';
+import { Button, IconButton, Input } from './components/common';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import {
     getLocalEngineConnectionView,

@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Check, Download, Loader2 } from 'lucide-react';
-import { Button } from './Button';
-import { Input } from './Input';
+import { Button, Input } from './components/common';
 import { MeetingRecord, MeetingSegment } from './meetingRepository';
 import { getDisplayTopics } from './meetingGeneration';
 import {

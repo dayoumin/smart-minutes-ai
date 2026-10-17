@@ -1,8 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Check, Loader2, Mail, MoreVertical, RefreshCw, Trash2, X } from 'lucide-react';
-import { Button } from './Button';
-import { ProgressBar } from './ProgressBar';
-import { StatusBanner } from './StatusBanner';
+import { Button, ProgressBar, StatusBanner } from './components/common';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
     DownloadFormat,

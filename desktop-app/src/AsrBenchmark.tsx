@@ -1,7 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FileText, RefreshCw } from 'lucide-react';
-import { Button } from './Button';
-import { StatusBanner } from './StatusBanner';
+import { Button, StatusBanner } from './components/common';
 import { localEngineClient } from './localEngineClient';
 
 interface BenchmarkListItem {

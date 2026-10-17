@@ -129,7 +129,7 @@ export const MeetingArchive: React.FC<MeetingArchiveProps> = ({ active, onOpenMe
                         <option value="365">최근 1년</option>
                     </select>
                 </label>
-                <div className="meeting-archive-filter-list" aria-label="기록 종류">
+                <div className="meeting-archive-filter-list" role="group" aria-label="기록 종류">
                     {filterOptions.map(option => (
                         <button
                             key={option.value}

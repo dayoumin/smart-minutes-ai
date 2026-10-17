@@ -2133,6 +2133,23 @@
     @apply mb-4 mt-0;
   }
 
+  /* Report tab: one reserved status line above the body, so state changes never move the report. */
+  .detail-report-status {
+    @apply mb-3 min-h-6 text-sm leading-6 text-muted-foreground;
+  }
+
+  .detail-report-status-warning {
+    color: var(--status-warning-fg);
+  }
+
+  .detail-report-status-error {
+    color: var(--status-error-fg);
+  }
+
+  .detail-report-archived {
+    @apply text-xs leading-relaxed text-muted-foreground;
+  }
+
   .detail-report-outline {
     @apply grid gap-3 rounded-[var(--radius-card)] border border-border/70 bg-background p-4 text-sm leading-relaxed text-muted-foreground;
   }
@@ -2485,15 +2502,14 @@
   }
 
   .meeting-archive-filter-list {
-    @apply col-span-2 flex flex-wrap items-center gap-1;
+    @apply col-span-2 flex flex-wrap items-end gap-1 border-b border-border;
   }
 
   .meeting-archive-filter-list button {
-    @apply min-h-9 rounded-[var(--radius-btn)] border border-transparent px-3 text-sm font-semibold text-muted-foreground transition-colors;
+    @apply min-h-10 border-0 bg-transparent px-3 text-sm font-semibold text-muted-foreground transition-colors;
   }
 
   .meeting-archive-filter-list button:hover {
-    background: var(--surface-action-hover-bg);
     color: var(--color-foreground);
   }
 
@@ -2503,9 +2519,8 @@
   }
 
   .meeting-archive-filter-list .meeting-archive-filter-active {
-    border-color: var(--topic-chip-active-border);
-    background: var(--topic-chip-active-bg);
-    color: var(--topic-chip-active-fg);
+    color: var(--color-foreground);
+    box-shadow: inset 0 -2px 0 var(--brand-primary);
   }
 
   .meeting-archive-result-heading {
@@ -2538,18 +2553,18 @@
   }
 
   .meeting-archive-item-decision .meeting-archive-marker {
-    background: var(--status-success-progress);
-    box-shadow: 0 0 0 1px var(--status-success-border);
+    background: var(--brand-primary);
+    box-shadow: 0 0 0 1px var(--brand-primary);
   }
 
   .meeting-archive-item-action .meeting-archive-marker {
-    background: var(--status-warning-fg);
-    box-shadow: 0 0 0 1px var(--status-warning-border);
+    background: var(--color-neutral-700);
+    box-shadow: 0 0 0 1px var(--color-neutral-700);
   }
 
   .meeting-archive-item-meeting .meeting-archive-marker {
-    background: var(--status-neutral-fg);
-    box-shadow: 0 0 0 1px var(--status-neutral-border);
+    background: var(--color-neutral-0);
+    box-shadow: 0 0 0 2px var(--color-neutral-500);
   }
 
   .meeting-archive-item > button {
@@ -2579,21 +2594,21 @@
   }
 
   .meeting-archive-kind-decision {
-    border-color: var(--status-success-border);
-    background: var(--status-success-bg);
-    color: var(--status-success-fg);
+    border-color: transparent;
+    background: var(--color-neutral-100);
+    color: var(--text-default);
   }
 
   .meeting-archive-kind-action {
-    border-color: var(--status-warning-border);
-    background: var(--status-warning-bg);
-    color: var(--status-warning-fg);
+    border-color: transparent;
+    background: var(--color-neutral-100);
+    color: var(--text-default);
   }
 
   .meeting-archive-kind-meeting {
-    border-color: var(--status-neutral-border);
-    background: var(--status-neutral-bg);
-    color: var(--status-neutral-fg);
+    border-color: transparent;
+    background: var(--color-neutral-100);
+    color: var(--text-muted);
   }
 
   .meeting-archive-item > button > strong {

@@ -3529,6 +3529,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             ? (hasGeneratedMeetingReport || meetingReportGenerationFailed ? '회의록 보고서 다시 생성' : '회의록 보고서 생성')
             : reportActionBlockedMessage || '기록 정리를 먼저 완료해 주세요.';
 
+    // Highest-priority report state for the single status line above the report body.
+    const reportStatus: { tone: 'neutral' | 'warning' | 'error'; text: string } | null = meetingReportIsGenerating
+        ? { tone: 'neutral', text: '회의록 보고서를 생성 중입니다. 기존 보고서가 있으면 완료 전까지 보관용으로 표시됩니다.' }
+        : reportActionBlockedMessage
+            ? { tone: 'warning', text: reportActionBlockedMessage }
+            : meetingReportGenerationFailed
+                ? { tone: 'error', text: '보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.' }
+                : !hasGeneratedMeetingReport
+                    ? { tone: 'neutral', text: '보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.' }
+                    : null;
+
     const renderRunIcon = (
         kind: GenerationKind,
         status: string,
@@ -4679,30 +4690,19 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                     {reportTemplateError}
                                 </div>
                             )}
-                            {reportActionBlockedMessage && (
-                                <InlineStateNote>
-                                    {reportActionBlockedMessage}
-                                </InlineStateNote>
-                            )}
-                            {meetingReportIsGenerating && (
-                                <InlineStateNote>
-                                    회의록 보고서를 생성 중입니다. 기존 보고서가 있으면 완료 전까지 보관용으로 표시됩니다.
-                                </InlineStateNote>
-                            )}
-                            {meetingReportIsStoredButNotCurrent && (
-                                <InlineStateNote>
-                                    현재 보고서는 이전 기록 정리 또는 보고 양식 기준으로 생성되었습니다. 아래 기존 보고서는 보관용으로 표시됩니다.
-                                </InlineStateNote>
-                            )}
-                            {meetingReportGenerationFailed && !meetingReportIsGenerating && (
-                                <InlineStateNote>
-                                    보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.
-                                </InlineStateNote>
-                            )}
+                            {/* One reserved status line: starting or finishing a report never pushes the body. */}
+                            <div className={`detail-report-status detail-report-status-${reportStatus?.tone ?? 'neutral'}`} aria-live="polite">
+                                {reportStatus?.text}
+                            </div>
                             {canShowAnyMeetingReport && selectedMeeting?.meetingReport ? (
                                 <div className="detail-report-result">
                                     {meetingReportTemplateName && (
                                         <div className="detail-report-meta">생성 양식: {meetingReportTemplateName}</div>
+                                    )}
+                                    {meetingReportIsStoredButNotCurrent && !meetingReportIsGenerating && (
+                                        <div className="detail-report-archived">
+                                            현재 보고서는 이전 기록 정리 또는 보고 양식 기준으로 생성되었습니다. 아래 기존 보고서는 보관용으로 표시됩니다.
+                                        </div>
                                     )}
                                     {(selectedMeeting.meetingReport.sections?.length ?? 0) > 0 ? (
                                         selectedMeeting.meetingReport.sections?.map(section => (
@@ -4727,11 +4727,6 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         ))}
                                     </div>
                                 </div>
-                            )}
-                            {!hasGeneratedMeetingReport && !reportActionBlockedMessage && !meetingReportIsGenerating && !meetingReportGenerationFailed && (
-                                <InlineStateNote>
-                                    보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.
-                                </InlineStateNote>
                             )}
                         </section>
                     )}

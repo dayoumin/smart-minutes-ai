@@ -24,8 +24,8 @@
 - 이 문서는 웹 MVP의 단일 실행 기준이다. 단계 상태, 다음 작업 묶음, 검증
   증거와 중단 사유는 이 문서에서 갱신한다.
 - `docs/web-local-engine-followup-plan.md`는 제품 방향과 사용자 흐름을 소유한다.
-- `docs/design.md`와 `docs/design-assets/barorok-production/`은 공통 UI의 디자인
-  권위다. 단계별 구현이 이 기준과 충돌하면 임의로 새 스타일을 만들지 않는다.
+- `docs/design.md`(2026-10-17 방향 A)가 공통 UI의 디자인 권위다. 이전 시안은
+  `docs/archive/design-2026-06-to-10/`에 보관했다. 단계별 구현이 이 기준과 충돌하면 임의로 새 스타일을 만들지 않는다.
 - `docs/browser-web-version-execution-plan.md`와
   `docs/browser-local-web-version-plan.md`는 순수 브라우저 엔진 후보의 보류
   자료이며 현재 실행 순서를 지시하지 않는다.

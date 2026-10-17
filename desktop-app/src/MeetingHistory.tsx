@@ -921,7 +921,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     detailOpenRequest,
     onCreateMeeting,
     newMeetingBlocked = false,
-    newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.',
+    newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.',
     onSelectMeetingId,
     onRegisterLeaveGuard,
     onOpenSettings,
@@ -2432,7 +2432,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         : '';
     const organizeModelGuidanceMessage = summaryRuntimeCanAutoStart
         ? '정리를 누르면 이 PC의 요약 프로그램을 자동으로 시작합니다. 시작에 실패하면 모델 설정을 확인해 주세요.'
-        : summaryModelMessage || '정리 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
+        : summaryModelMessage || '요약 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
     const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
     const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;
     const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;

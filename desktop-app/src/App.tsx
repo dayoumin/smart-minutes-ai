@@ -186,8 +186,8 @@ export const App: React.FC = () => {
     const analysisStartBlocked = pendingCancelledCleanupActive
         || (remoteDraftActive && !analysisStatus.active);
     const newMeetingBlockedReason = pendingCancelledCleanupActive
-        ? '취소한 분석을 정리하고 있습니다. 정리가 끝나면 새 기록을 만들 수 있습니다.'
-        : '다른 실행에서 진행 중인 분석이 끝난 뒤 새 기록을 만들 수 있습니다.';
+        ? '취소한 분석을 정리하고 있습니다. 정리가 끝나면 새 회의록을 만들 수 있습니다.'
+        : '다른 실행에서 진행 중인 분석이 끝난 뒤 새 회의록을 만들 수 있습니다.';
     const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
     const canLeaveCurrentMeeting = () => {
@@ -366,6 +366,7 @@ export const App: React.FC = () => {
                     }
                     handleTabChange('minutes');
                 }}
+                onOpenAnalysis={() => handleTabChange('minutes')}
                 newMeetingBlocked={analysisStartBlocked}
                 newMeetingBlockedReason={newMeetingBlockedReason}
                 resumeSelectionBlocked={analysisStartBlocked}

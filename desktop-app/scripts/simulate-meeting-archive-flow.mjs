@@ -123,7 +123,7 @@ const runArchiveFlow = async browser => {
   const oldDate = '2020-01-15T10:00:00.000Z';
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '새 기록', exact: true }).first().waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.barorok-navigation').getByRole('button', { name: '기록 찾기', exact: true }).count(), 0, 'archive entry is hidden from the sidebar for now');
     await putMeetings(page, [
       {

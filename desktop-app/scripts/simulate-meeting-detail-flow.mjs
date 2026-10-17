@@ -1495,7 +1495,7 @@ const run = async () => {
     await page.keyboard.press('Tab');
     await sidebarRecordMenu.getByLabel('오래된 고정 회의 폴더').selectOption('');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
-    const createMeetingButton = page.getByRole('button', { name: '새 기록', exact: true });
+    const createMeetingButton = page.getByRole('button', { name: '새 회의록', exact: true });
     await page.waitForFunction(element => document.activeElement === element, await createMeetingButton.elementHandle());
     await reviewFolderButton.click();
 

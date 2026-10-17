@@ -260,7 +260,7 @@ const runRecoveryScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await putMeeting(page, meetingAt('home-recovery-recent', '복구보다 오래된 최근 회의', Date.now() - DAY_MS));
     const recovery = page.locator('.writer-recovery');
-    await recovery.getByText('이어서 할 기록', { exact: true }).waitFor({ timeout: 10000 });
+    await recovery.getByText('이어서 할 분석', { exact: true }).waitFor({ timeout: 10000 });
     await recovery.getByRole('heading', { name: '이어갈 회의' }).waitFor();
     const recentAfterRecovery = page.getByRole('region', { name: '최근 회의록' });
     await recentAfterRecovery.waitFor({ timeout: 10000 });
@@ -270,7 +270,7 @@ const runRecoveryScene = async browser => {
       return { cardBottom: card?.bottom ?? 0, listTop: list?.top ?? 0 };
     });
     assert.ok(order.cardBottom <= order.listTop, 'the recovery card sits above the recent list, which stays reachable');
-    await recovery.getByRole('button', { name: '이어서 기록', exact: true }).click();
+    await recovery.getByRole('button', { name: '이어서 분석', exact: true }).click();
     await page.getByRole('heading', { name: /이어하기|분석 상태/, level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-recovery, .recent-meetings').count(), 0, 'companion hides while choosing the resume file');
     console.log('ok - recovery card resumes the saved analysis');
@@ -318,6 +318,55 @@ const runPendingCancellationLockScene = async browser => {
   }
 };
 
+const runAnalysisEntryPointScene = async browser => {
+  // While an analysis runs, 새 회의록 is disabled and the 분석 중 card is the way back to the progress view.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  await context.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const url = new URL(input instanceof Request ? input.url : String(input), window.location.href);
+      if (url.pathname === '/api/analyze' && String(init?.method || 'GET').toUpperCase() === 'POST') {
+        const encoder = new TextEncoder();
+        const stream = new ReadableStream({
+          start(controller) {
+            controller.enqueue(encoder.encode(`event: progress\ndata: ${JSON.stringify({ type: 'progress', progress: 30, status: 'transcribing', message: 'Transcribing chunk 1/4...' })}\n\n`));
+          },
+        });
+        return new Response(stream, { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+      }
+      return originalFetch(input, init);
+    };
+  });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  await page.route('**/api/analyze/draft-statuses', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ drafts: [] }) }));
+  await page.route('**/api/analyze/resume-candidates', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommended_job_id: null, candidates: [] }) }));
+  await page.route('**/api/analyze/preflight', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, level: 'ok', reason: 'enough_storage', required_bytes: 1, available_bytes: 1e9, message: 'ok' }) }));
+  page.on('dialog', dialog => dialog.accept());
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+    await putMeeting(page, meetingAt('entry-point-meeting', '진입점 확인 회의', Date.now() - DAY_MS));
+    await page.getByLabel('회의 목적 *').fill('분석 중 진입점 확인');
+    await page.setInputFiles('#meeting-file-input', { name: 'entry-point.m4a', mimeType: 'audio/mp4', buffer: Buffer.from('entry') });
+    await page.getByLabel('회의 제목 *').fill('진입점 분석');
+    await page.getByRole('button', { name: '분석 시작', exact: true }).click();
+    await page.locator('.writer-analysis-panel').waitFor({ timeout: 10000 });
+    const navigation = page.locator('.barorok-navigation');
+    const createButton = navigation.getByRole('button', { name: '새 회의록', exact: true });
+    await page.waitForFunction(() => document.querySelector('.barorok-navigation .sidebar-create-button')?.disabled === true);
+    assert.equal(await navigation.getByText('진행 중인 분석 보기', { exact: true }).count(), 0, 'the create button keeps its name during analysis');
+    assert.ok(await createButton.getAttribute('aria-describedby'), 'the disabled reason is linked for assistive tech');
+    await navigation.getByText('진입점 확인 회의').first().click();
+    await page.locator('.meeting-detail-shell').getByRole('heading', { name: '진입점 확인 회의' }).waitFor({ timeout: 10000 });
+    await navigation.locator('.sidebar-analysis-card').click();
+    await page.getByRole('heading', { name: '분석 진행', level: 2 }).waitFor({ timeout: 10000 });
+    console.log('ok - analysis keeps 새 회의록 disabled and the 분석 중 card returns to progress');
+  } finally {
+    await context.close();
+  }
+};
+
 const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
@@ -326,6 +375,7 @@ const run = async () => {
     await runRecentListScene(browser);
     await runRecoveryScene(browser);
     await runPendingCancellationLockScene(browser);
+    await runAnalysisEntryPointScene(browser);
   } finally {
     await browser.close();
     await stopServer(server);

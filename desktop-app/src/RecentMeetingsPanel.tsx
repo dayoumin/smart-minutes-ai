@@ -107,7 +107,7 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
         <section className="writer-recovery" aria-labelledby="writer-recovery-label writer-recovery-title">
             <span className="icon-badge" aria-hidden="true"><RotateCcw size={18} /></span>
             <div className="writer-recovery-copy">
-                <span id="writer-recovery-label" className="writer-recovery-label">{recoveryDraft.status === 'active' ? '분석 상태 확인 중' : '이어서 할 기록'}</span>
+                <span id="writer-recovery-label" className="writer-recovery-label">{recoveryDraft.status === 'active' ? '분석 상태 확인 중' : '이어서 할 분석'}</span>
                 <h3 id="writer-recovery-title">{recoveryDraft.title || recoveryDraft.sourceFilename}</h3>
                 <p>
                     {recoveryDraft.status === 'active'
@@ -126,7 +126,7 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
                         disabled={newMeetingBlocked}
                         aria-describedby={newMeetingBlocked ? 'writer-analysis-start-blocked' : undefined}
                     >
-                        이어서 기록
+                        이어서 분석
                     </Button>
                 )}
                 {(model.recoveryAction === 'refresh' || model.recoveryAction === 'wait') && (

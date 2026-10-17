@@ -30,6 +30,8 @@ export interface SidebarProps {
     onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenStart?: () => void;
+    /** The 분석 중 card: back to the analysis progress view. */
+    onOpenAnalysis?: () => void;
     onOpenArchive?: () => void;
     newMeetingBlocked?: boolean;
     newMeetingBlockedReason?: string;
@@ -136,7 +138,22 @@ const sortMeetingFolders = (folders: MeetingFolder[]): MeetingFolder[] => (
     })
 );
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
+// Focus fallback when a menu target disappears: the create button may be disabled during an analysis,
+// so fall back to the 분석 중 card and then the brand button.
+const focusSidebarFallback = (createButton: HTMLButtonElement | null, sidebar: HTMLElement | null) => {
+    if (createButton && !createButton.disabled) {
+        createButton.focus();
+        return;
+    }
+    const analysisCard = sidebar?.querySelector<HTMLElement>('.sidebar-analysis-card');
+    if (analysisCard) {
+        analysisCard.focus();
+        return;
+    }
+    sidebar?.querySelector<HTMLElement>('.sidebar-brand')?.focus();
+};
+
+export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [folders, setFolders] = useState<MeetingFolder[]>([]);
     const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
@@ -189,7 +206,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     fallbackTrigger.focus();
                     return;
                 }
-                createMeetingButtonRef.current?.focus();
+                focusSidebarFallback(createMeetingButtonRef.current, sidebarRef.current);
             });
         }
     };
@@ -309,7 +326,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 trigger.focus();
                 return;
             }
-            createMeetingButtonRef.current?.focus();
+            focusSidebarFallback(createMeetingButtonRef.current, sidebarRef.current);
         });
     };
 
@@ -363,7 +380,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 trigger.focus();
                 return;
             }
-            createMeetingButtonRef.current?.focus();
+            focusSidebarFallback(createMeetingButtonRef.current, sidebarRef.current);
         });
     }, [visibleRecords]);
 
@@ -637,7 +654,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         window.requestAnimationFrame(() => {
             const fallbackTrigger = fallbackFolderId ? folderMenuTriggerRefs.current.get(fallbackFolderId) : null;
             if (fallbackTrigger?.isConnected) fallbackTrigger.focus();
-            else createMeetingButtonRef.current?.focus();
+            else focusSidebarFallback(createMeetingButtonRef.current, sidebarRef.current);
         });
     };
 
@@ -678,17 +695,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     ref={createMeetingButtonRef}
                     type="button"
                     className="sidebar-create-button mb-3"
-                    disabled={newMeetingBlocked}
-                    aria-describedby={newMeetingBlocked ? 'sidebar-create-blocked' : undefined}
-                    title={newMeetingBlocked ? newMeetingBlockedReason : undefined}
+                    disabled={newMeetingBlocked || Boolean(analysisStatus?.active)}
+                    aria-describedby={newMeetingBlocked ? 'sidebar-create-blocked' : analysisStatus?.active ? 'sidebar-create-analysis-note' : undefined}
+                    title={newMeetingBlocked
+                        ? newMeetingBlockedReason
+                        : analysisStatus?.active ? '분석이 끝나면 새 회의록을 만들 수 있습니다. 진행 상황은 아래 분석 중 카드에서 볼 수 있습니다.' : undefined}
                     onClick={() => {
                         setOpenMenuId(null);
                         onCreateMeeting?.();
                     }}
                 >
-                    {analysisStatus?.active ? <Clock3 size={15} /> : <Plus size={15} />}
-                    {analysisStatus?.active ? '진행 중인 분석 보기' : '새 기록'}
+                    <Plus size={15} />
+                    새 회의록
                 </button>
+                {analysisStatus?.active && !newMeetingBlocked && (
+                    <span id="sidebar-create-analysis-note" className="sr-only">분석이 끝나면 새 회의록을 만들 수 있습니다. 진행 상황은 분석 중 카드에서 볼 수 있습니다.</span>
+                )}
                 {onOpenArchive && (
                     <button
                         type="button"
@@ -1071,7 +1093,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                     setShowResumeDrafts(current => !current);
                                 }}
                             >
-                                <span>미완료 분석 기록 {resumeDrafts.length}건</span>
+                                <span>이어서 할 분석 {resumeDrafts.length}건</span>
                                 {showResumeDrafts ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
                             </button>
                             {showResumeDrafts && (
@@ -1108,7 +1130,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                                 title={resultRecoveryPending
                                                     ? '완료된 분석 결과를 다시 가져오고 있습니다.'
                                                     : selectionBlocked
-                                                        ? '진행 중인 분석이 끝난 뒤 이어서 기록할 수 있습니다.'
+                                                        ? '진행 중인 분석이 끝난 뒤 이어서 분석할 수 있습니다.'
                                                         : undefined}
                                                 onClick={() => {
                                                     setOpenMenuId(null);
@@ -1134,8 +1156,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         <button
                             type="button"
                             className="sidebar-analysis-card"
-                            onClick={() => onCreateMeeting?.()}
+                            onClick={() => onOpenAnalysis?.()}
                         >
+                            <span className="sr-only">분석 진행 화면 열기. </span>
                             <div className="flex items-center justify-between gap-2">
                                 <span className="sidebar-analysis-title inline-flex items-center gap-1.5">
                                     <Loader2 size={13} className="animate-spin text-primary" />

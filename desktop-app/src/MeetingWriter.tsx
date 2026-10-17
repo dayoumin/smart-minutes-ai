@@ -366,7 +366,7 @@ const getResumePromptMessage = (candidate: ResumeCandidate): string => {
         ? `음성 인식 ${candidate.completed_chunk_count}/${candidate.chunk_count} 구간 완료`
         : '이전 분석 기록';
     return [
-        '같은 파일의 미완료 분석 후보를 찾았습니다.',
+        '같은 파일로 이어서 할 분석을 찾았습니다.',
         updatedAt ? `최근 상태: ${updatedAt}` : undefined,
         stageLabel ? `진행 단계: ${stageLabel}` : undefined,
         chunkLabel,
@@ -488,7 +488,7 @@ interface MeetingWriterProps {
     idleCompanion?: React.ReactNode;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, idleCompanion }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, idleCompanion }) => {
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport } = useLocalEngineConnection();
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => toLocalDateTimeInputValue());
@@ -1106,7 +1106,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         const draft = drafts.find(item => item.jobId === resumeDraftSelectionJobId);
         if (!draft) {
             setSelectedResumeDraftId(null);
-            setErrorMessage('선택한 미완료 분석 기록을 찾지 못했습니다.');
+            setErrorMessage('선택한 이어서 할 분석을 찾지 못했습니다.');
             return;
         }
         handleResumeDraftPrepare(draft);

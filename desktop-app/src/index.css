@@ -257,7 +257,7 @@
 
   /* Radius */
   --radius-sm: 0.5rem;
-  --radius-md: 0.75rem;
+  --radius-md: var(--radius-btn);
   --radius-lg: 1rem;
   --radius-xl: 1.5rem;
   --radius-2xl: 2rem;
@@ -700,6 +700,15 @@
   .sidebar-create-button:hover {
     background: var(--barorok-navigation-hover);
     color: var(--color-foreground);
+  }
+
+  .sidebar-create-button:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+
+  .sidebar-create-button:disabled:hover {
+    background: transparent;
   }
 
   .sidebar-create-button:focus-visible {
@@ -2114,7 +2123,8 @@
   }
 
   .detail-report-sections span {
-    @apply rounded-full bg-surface px-2.5 py-1 text-xs font-semibold text-muted-foreground ring-1 ring-border/70;
+    @apply rounded-[var(--radius-btn)] px-2 py-0.5 text-xs font-medium text-muted-foreground;
+    background-color: var(--color-neutral-100);
   }
 
   .detail-report-checklist {

@@ -138,7 +138,7 @@ const runTopicChipScenario = async browser => {
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '새 기록', exact: true }).first().waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
     await putMeetings(page, [topicMeeting]);
     await openMeeting(page, topicMeeting.title);
     await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
@@ -176,7 +176,7 @@ const runNarrowMetaScenario = async browser => {
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '새 기록', exact: true }).first().waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
     await putMeetings(page, [narrowMeeting]);
     await openMeeting(page, narrowMeeting.title);
     await page.locator('.meeting-status-grid').waitFor();
@@ -218,7 +218,7 @@ const runTranscriptRowScenario = async browser => {
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '새 기록', exact: true }).first().waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
     await putMeetings(page, [{ ...topicMeeting, id: 'layout-row-meeting', title: '대화록 행 확인' }]);
     await openMeeting(page, '대화록 행 확인');
     await page.locator('.script-row').first().waitFor();

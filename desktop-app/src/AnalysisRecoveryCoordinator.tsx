@@ -111,7 +111,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                         body: JSON.stringify({ job_ids: localDrafts.map(draft => draft.jobId) }),
                     });
                     if (!response.ok) {
-                        throw new Error(`미완료 분석 상태 확인 실패 (${response.status})`);
+                        throw new Error(`이어서 할 분석의 상태를 확인하지 못했습니다 (${response.status})`);
                     }
 
                     const payload = await response.json() as DraftStatusPayload;
@@ -307,7 +307,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
             } catch (error) {
                 if (mountedRef.current) {
                     setAnalysisResumeSyncState('error', {
-                        error: error instanceof Error ? error.message : '미완료 분석 상태를 확인하지 못했습니다.',
+                        error: error instanceof Error ? error.message : '이어서 할 분석의 상태를 확인하지 못했습니다.',
                     });
                 }
             } finally {

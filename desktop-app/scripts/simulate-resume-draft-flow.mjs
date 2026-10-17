@@ -1279,7 +1279,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
       buffer: Buffer.from('previous selected file'),
     });
     await page.getByText('이어하기-전-선택.mp3', { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: /미완료 분석 기록 2건/ }).click();
+    await page.getByRole('button', { name: /이어서 할 분석 2건/ }).click();
     page.once('dialog', dialog => dialog.accept());
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '중단된 회의' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
@@ -1996,7 +1996,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: /미완료 분석 기록 1건/ }).click();
+    await page.getByRole('button', { name: /이어서 할 분석 1건/ }).click();
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '새 분석 선택 회의' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
@@ -2070,7 +2070,7 @@ const runActiveDraftDeleteAfterBackendErrorScenario = async (browser, fixtureUpl
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: /미완료 분석 기록 1건/ }).click();
+    await page.getByRole('button', { name: /이어서 할 분석 1건/ }).click();
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '삭제할 진행 기록' }).click();
     await page.getByRole('heading', { name: '분석 상태' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '삭제할 진행 기록 분석 기록 삭제', exact: true }).click();
@@ -2478,7 +2478,7 @@ const expectLocalStorageJson = async (page, key, expected) => {
 };
 
 const selectSidebarResumeDraft = async (page, title) => {
-  const toggle = page.getByRole('button', { name: /미완료 분석 기록 \d+건/ });
+  const toggle = page.getByRole('button', { name: /이어서 할 분석 \d+건/ });
   if (await toggle.getAttribute('aria-expanded') !== 'true') {
     await toggle.click();
   }
@@ -2540,7 +2540,7 @@ const runPendingCancelledCleanupKeepsGlobalLockScenario = async (browser, fixtur
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const createButton = page.getByRole('button', { name: '새 기록', exact: true });
+    const createButton = page.getByRole('button', { name: '새 회의록', exact: true });
     await createButton.waitFor({ timeout: 10000 });
     assert.equal(await createButton.isDisabled(), true, 'pending cancellation must keep new analysis locked');
     await page.waitForTimeout(400);
@@ -2617,7 +2617,7 @@ const runCompletedJobPreservesSameFileActiveJobScenario = async (browser, fixtur
     ));
     assert.equal(statuses[completedDraft.jobId], 'completed');
     assert.equal(statuses[activeDraft.jobId], 'active');
-    assert.equal(await page.getByRole('button', { name: '새 기록', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '새 회의록', exact: true }).isDisabled(), true);
     console.log('ok - completed job preserves same-file active job scenario');
   } finally {
     await context.close();
@@ -2759,7 +2759,7 @@ const runCleanupLocalRemovalFailureRetriesScenario = async (browser, fixtureUplo
     }));
     assert.equal(retained.drafts.some(item => item.jobId === draft.jobId), true);
     assert.deepEqual(retained.pending, [draft.jobId]);
-    assert.equal(await page.getByRole('button', { name: '새 기록', exact: true }).isDisabled(), true);
+    assert.equal(await page.getByRole('button', { name: '새 회의록', exact: true }).isDisabled(), true);
 
     await page.evaluate(() => {
       window.__allowCleanupStorageWrites = true;
@@ -2770,7 +2770,7 @@ const runCleanupLocalRemovalFailureRetriesScenario = async (browser, fixtureUplo
       && window.localStorage.getItem('pendingCancelledAnalysisCleanups') === '[]'
     ));
     assert.ok(deleteRequestCount >= 1 && deleteRequestCount <= 2);
-    assert.equal(await page.getByRole('button', { name: '새 기록', exact: true }).isDisabled(), false);
+    assert.equal(await page.getByRole('button', { name: '새 회의록', exact: true }).isDisabled(), false);
     console.log('ok - cleanup local removal failure retries scenario');
   } finally {
     await context.close();

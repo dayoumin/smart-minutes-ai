@@ -23,6 +23,7 @@ export interface LayoutProps {
     onDeleteMeeting?: (id: string, fallbackId: string | null) => void;
     onSelectResumeDraft?: (jobId: string) => void;
     onOpenStart?: () => void;
+    onOpenAnalysis?: () => void;
     onOpenArchive?: () => void;
     newMeetingBlocked?: boolean;
     newMeetingBlockedReason?: string;
@@ -32,7 +33,7 @@ export interface LayoutProps {
     showAsrBenchmark?: boolean;
 }
 
-export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
+export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
     return (
         <div className="barorok-app-frame flex min-w-[320px] flex-col overflow-hidden text-foreground">
             <div className="barorok-shell-body flex min-h-0 flex-1 flex-row">
@@ -44,6 +45,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     onDeleteMeeting={onDeleteMeeting}
                     onSelectResumeDraft={onSelectResumeDraft}
                     onOpenStart={onOpenStart}
+                    onOpenAnalysis={onOpenAnalysis}
                     onOpenArchive={onOpenArchive}
                     newMeetingBlocked={newMeetingBlocked}
                     newMeetingBlockedReason={newMeetingBlockedReason}

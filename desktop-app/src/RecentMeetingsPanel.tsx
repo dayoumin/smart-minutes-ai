@@ -104,7 +104,7 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
         const draft = model.recoveryDraft;
         return (
             <section className="writer-recovery" aria-labelledby="writer-recovery-label writer-recovery-title">
-                <span className="writer-recovery-icon" aria-hidden="true"><RotateCcw size={18} /></span>
+                <span className="icon-badge" aria-hidden="true"><RotateCcw size={18} /></span>
                 <div className="writer-recovery-copy">
                     <span id="writer-recovery-label" className="writer-recovery-label">{draft.status === 'active' ? '분석 상태 확인 중' : '이어서 할 기록'}</span>
                     <h3 id="writer-recovery-title">{draft.title || draft.sourceFilename}</h3>

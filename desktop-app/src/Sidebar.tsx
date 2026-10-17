@@ -910,104 +910,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         </div>
                     </form>
                 )}
-                {resumeDrafts.length > 0 && !analysisStatus?.active && (
-                    <div className="mb-3">
-                        <button
-                            type="button"
-                            className="resume-summary-button w-full status-neutral"
-                            aria-expanded={showResumeDrafts}
-                            onClick={() => {
-                                setOpenMenuId(null);
-                                setShowResumeDrafts(current => !current);
-                            }}
-                        >
-                            <span>미완료 분석 기록 {resumeDrafts.length}건</span>
-                            {showResumeDrafts ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-                        </button>
-                        {showResumeDrafts && (
-                            <div className="mt-2 grid gap-1.5">
-                                {resumeSelectionBlocked && resumeDrafts.some(draft => draft.status !== 'active') && (
-                                    <p id="sidebar-resume-blocked" className="sidebar-action-note" role="status">
-                                        다른 분석이 끝난 뒤 이 기록을 이어갈 수 있습니다.
-                                    </p>
-                                )}
-                                {resumeDrafts.some(draft => draft.stage === 'recovering-result') && (
-                                    <p id="sidebar-result-recovery-pending" className="sidebar-action-note" role="status">
-                                        완료된 결과를 다시 가져오고 있습니다.
-                                    </p>
-                                )}
-                                {resumeDrafts.map(draft => {
-                                    const tone = getSidebarResumeDraftTone(draft);
-                                    const resultRecoveryPending = draft.stage === 'recovering-result';
-                                    const selectionBlocked = Boolean(
-                                        resultRecoveryPending
-                                        || (resumeSelectionBlocked && draft.status !== 'active'),
-                                    );
-                                    const selectionBlockedDescriptionId = resultRecoveryPending
-                                        ? 'sidebar-result-recovery-pending'
-                                        : selectionBlocked
-                                            ? 'sidebar-resume-blocked'
-                                            : undefined;
-                                    return (
-                                        <button
-                                            key={draft.jobId}
-                                            type="button"
-                                            className={`sidebar-resume-draft-button status-${tone} text-left`}
-                                            disabled={selectionBlocked}
-                                            aria-describedby={selectionBlockedDescriptionId}
-                                            title={resultRecoveryPending
-                                                ? '완료된 분석 결과를 다시 가져오고 있습니다.'
-                                                : selectionBlocked
-                                                    ? '진행 중인 분석이 끝난 뒤 이어서 기록할 수 있습니다.'
-                                                    : undefined}
-                                            onClick={() => {
-                                                setOpenMenuId(null);
-                                                onSelectResumeDraft?.(draft.jobId);
-                                            }}
-                                        >
-                                            <span className="flex min-w-0 items-center justify-between gap-2">
-                                                <span className="truncate font-medium text-foreground">{draft.title || draft.sourceFilename}</span>
-                                                <span className={`status-pill status-${tone}`}>{getSidebarResumeDraftStatus(draft)}</span>
-                                            </span>
-                                            <span className="mt-1 block truncate text-[11px] text-muted-foreground">{draft.sourceFilename}</span>
-                                            <span className="mt-1 block truncate text-[11px] text-muted-foreground">
-                                                {formatResumeDraftUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${formatSidebarStatus(draft.lastMessage)}` : ''}
-                                            </span>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-                        )}
-                    </div>
-                )}
-                {analysisStatus?.active && (
-                    <button
-                        type="button"
-                        className="sidebar-analysis-card mb-3"
-                        onClick={() => onCreateMeeting?.()}
-                    >
-                        <div className="flex items-center justify-between gap-2">
-                            <span className="sidebar-analysis-title inline-flex items-center gap-1.5">
-                                <Loader2 size={13} className="animate-spin text-primary" />
-                                분석 중
-                            </span>
-                            <span className="sidebar-analysis-elapsed">
-                                <Clock3 size={12} />
-                                {formatAnalysisDuration(analysisElapsedMs)}
-                            </span>
-                        </div>
-                        <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
-                            <span className="truncate">{formatSidebarStatus(analysisRawMessage)}</span>
-                            <span className="shrink-0">{sidebarEstimateLabel}</span>
-                        </div>
-                        <ProgressBar
-                            value={transcriptProgressPercent}
-                            size="sm"
-                            className="mt-2"
-                            decorative
-                        />
-                    </button>
-                )}
                 <div className="sidebar-section-header">
                     <span>회의록</span>
                 </div>
@@ -1154,6 +1056,108 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         </button>
                     )}
                 </div>
+                </div>
+                {/* Status dock: analysis progress and unfinished drafts sit above settings so the
+                    folder and record lists never shift when they appear. */}
+                <div className="sidebar-status-dock">
+                    {resumeDrafts.length > 0 && !analysisStatus?.active && (
+                        <div>
+                            <button
+                                type="button"
+                                className="resume-summary-button w-full status-neutral"
+                                aria-expanded={showResumeDrafts}
+                                onClick={() => {
+                                    setOpenMenuId(null);
+                                    setShowResumeDrafts(current => !current);
+                                }}
+                            >
+                                <span>미완료 분석 기록 {resumeDrafts.length}건</span>
+                                {showResumeDrafts ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+                            </button>
+                            {showResumeDrafts && (
+                                <div className="sidebar-status-dock-list custom-scrollbar">
+                                    {resumeSelectionBlocked && resumeDrafts.some(draft => draft.status !== 'active') && (
+                                        <p id="sidebar-resume-blocked" className="sidebar-action-note" role="status">
+                                            다른 분석이 끝난 뒤 이 기록을 이어갈 수 있습니다.
+                                        </p>
+                                    )}
+                                    {resumeDrafts.some(draft => draft.stage === 'recovering-result') && (
+                                        <p id="sidebar-result-recovery-pending" className="sidebar-action-note" role="status">
+                                            완료된 결과를 다시 가져오고 있습니다.
+                                        </p>
+                                    )}
+                                    {resumeDrafts.map(draft => {
+                                        const tone = getSidebarResumeDraftTone(draft);
+                                        const resultRecoveryPending = draft.stage === 'recovering-result';
+                                        const selectionBlocked = Boolean(
+                                            resultRecoveryPending
+                                            || (resumeSelectionBlocked && draft.status !== 'active'),
+                                        );
+                                        const selectionBlockedDescriptionId = resultRecoveryPending
+                                            ? 'sidebar-result-recovery-pending'
+                                            : selectionBlocked
+                                                ? 'sidebar-resume-blocked'
+                                                : undefined;
+                                        return (
+                                            <button
+                                                key={draft.jobId}
+                                                type="button"
+                                                className={`sidebar-resume-draft-button status-${tone} text-left`}
+                                                disabled={selectionBlocked}
+                                                aria-describedby={selectionBlockedDescriptionId}
+                                                title={resultRecoveryPending
+                                                    ? '완료된 분석 결과를 다시 가져오고 있습니다.'
+                                                    : selectionBlocked
+                                                        ? '진행 중인 분석이 끝난 뒤 이어서 기록할 수 있습니다.'
+                                                        : undefined}
+                                                onClick={() => {
+                                                    setOpenMenuId(null);
+                                                    onSelectResumeDraft?.(draft.jobId);
+                                                }}
+                                            >
+                                                <span className="flex min-w-0 items-center justify-between gap-2">
+                                                    <span className="truncate font-medium text-foreground">{draft.title || draft.sourceFilename}</span>
+                                                    <span className={`status-pill status-${tone}`}>{getSidebarResumeDraftStatus(draft)}</span>
+                                                </span>
+                                                <span className="mt-1 block truncate text-[11px] text-muted-foreground">{draft.sourceFilename}</span>
+                                                <span className="mt-1 block truncate text-[11px] text-muted-foreground">
+                                                    {formatResumeDraftUpdatedAt(draft.updatedAt)}{draft.lastMessage ? ` · ${formatSidebarStatus(draft.lastMessage)}` : ''}
+                                                </span>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            )}
+                        </div>
+                    )}
+                    {analysisStatus?.active && (
+                        <button
+                            type="button"
+                            className="sidebar-analysis-card"
+                            onClick={() => onCreateMeeting?.()}
+                        >
+                            <div className="flex items-center justify-between gap-2">
+                                <span className="sidebar-analysis-title inline-flex items-center gap-1.5">
+                                    <Loader2 size={13} className="animate-spin text-primary" />
+                                    분석 중
+                                </span>
+                                <span className="sidebar-analysis-elapsed">
+                                    <Clock3 size={12} />
+                                    {formatAnalysisDuration(analysisElapsedMs)}
+                                </span>
+                            </div>
+                            <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-xs text-muted-foreground">
+                                <span className="truncate">{formatSidebarStatus(analysisRawMessage)}</span>
+                                <span className="shrink-0">{sidebarEstimateLabel}</span>
+                            </div>
+                            <ProgressBar
+                                value={transcriptProgressPercent}
+                                size="sm"
+                                className="mt-2"
+                                decorative
+                            />
+                        </button>
+                    )}
                 </div>
                 {(onOpenSettings || onOpenAsrBenchmark) && (
                     <div className="mt-2 grid gap-0.5">

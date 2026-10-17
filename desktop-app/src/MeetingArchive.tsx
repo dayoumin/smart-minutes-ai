@@ -94,7 +94,7 @@ export const MeetingArchive: React.FC<MeetingArchiveProps> = ({ active, onOpenMe
         <section className="meeting-archive" aria-labelledby="meeting-archive-title">
             <header className="meeting-archive-header">
                 <div>
-                    <h1 id="meeting-archive-title">기록 찾기</h1>
+                    <h1 id="meeting-archive-title" className="page-title">기록 찾기</h1>
                     <p>여러 회의에 흩어진 결정과 할 일을 날짜순으로 확인합니다.</p>
                 </div>
                 <dl className="meeting-archive-counts" aria-label="저장된 기록 요약">
@@ -104,7 +104,7 @@ export const MeetingArchive: React.FC<MeetingArchiveProps> = ({ active, onOpenMe
                 </dl>
             </header>
 
-            <div className="app-panel meeting-archive-controls">
+            <div className="meeting-archive-controls">
                 <div className="meeting-archive-search-field">
                     <Search size={18} aria-hidden="true" />
                     <label className="sr-only" htmlFor="meeting-archive-search">선택한 종류의 기록 검색</label>

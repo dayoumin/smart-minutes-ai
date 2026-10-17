@@ -2247,11 +2247,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             )}
             <div className="writer-header">
                 <div>
-                    <h2 className="writer-title">{writerHeading}</h2>
+                    <h2 className="page-title">{writerHeading}</h2>
                 </div>
             </div>
 
-            <div className={`app-panel writer-panel ${showInputForm ? 'writer-panel-idle' : ''}`}>
+            <div className="writer-panel">
                 {resumeSelectionActive && (
                     <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                         <span>{selectedResumeDraftActive
@@ -2336,7 +2336,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             onDrop={handleMeetingFileDrop}
                         >
                             <div className="file-drop-zone-empty">
-                                <div className="file-upload-icon">
+                                <div className="icon-badge">
                                     <UploadCloud size={22} />
                                 </div>
                                 <div className="file-drop-copy min-w-0">
@@ -2353,7 +2353,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     ) : (
                         <div className="selected-file-card">
                             <div className="selected-file-main">
-                                <div className="file-upload-icon">
+                                <div className="icon-badge">
                                     <FileAudio size={20} />
                                 </div>
                                 <div className="min-w-0">
@@ -2386,12 +2386,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         </div>
                     )}
                     <div className="writer-file-support">
-                    {filePrivacyMessage && (
-                        <div className="writer-file-privacy-note">
-                            <ShieldCheck size={15} aria-hidden="true" />
-                            <span>{filePrivacyMessage}</span>
-                        </div>
-                    )}
+                    <div className="writer-file-privacy-slot">
+                        {filePrivacyMessage && (
+                            <div className="writer-file-privacy-note">
+                                <ShieldCheck size={15} aria-hidden="true" />
+                                <span>{filePrivacyMessage}</span>
+                            </div>
+                        )}
+                    </div>
                     {selectedFileGuidance && (
                         <div className="detail-inline-note">
                             {selectedFileGuidance}
@@ -2512,7 +2514,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 {showAnalysisPanel && (
                 <div className={`writer-analysis-panel ${showAnalysisFailure ? 'writer-analysis-panel-error' : ''}`}>
                     <div className="writer-analysis-file">
-                        <div className="writer-analysis-file-icon">
+                        <div className="icon-badge">
                             <FileAudio size={20} aria-hidden="true" />
                         </div>
                         <div className="min-w-0 flex-1">
@@ -2573,7 +2575,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 />
                             </div>
                         </div>
-                        <div className="flex shrink-0 flex-col gap-3 text-left sm:text-right">
+                        <div className="flex shrink-0 flex-col gap-3 text-left sm:min-w-[6.5rem] sm:text-right">
                             <div className="flex flex-wrap gap-5 sm:justify-end">
                                 <div>
                                     <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">

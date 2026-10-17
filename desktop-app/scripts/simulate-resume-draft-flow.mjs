@@ -177,7 +177,7 @@ const runWriterLayoutScenario = async (browser) => {
         const upload = rect('.writer-input-grid > .writer-section:first-child');
         const info = rect('.writer-info-column');
         const action = rect('.writer-action-bar');
-        const title = rect('.writer-title');
+        const title = rect('.writer-shell .page-title');
         const fileButton = rect('.file-drop-zone');
         const startButton = rect('.writer-start-button');
         const workspace = document.querySelector('.barorok-workspace');
@@ -1295,7 +1295,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await expectValue(page, '#meeting-title', '중단된 회의');
     await page.getByText('같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.').waitFor({ timeout: 10000 });
-    await page.locator('.app-panel').first().getByRole('button', { name: '이어하기', exact: true }).click();
+    await page.locator('.writer-panel').getByRole('button', { name: '이어하기', exact: true }).click();
     await page.getByText('이전 음성 인식 진행분 3개 구간을 재사용했습니다.').waitFor({ timeout: 10000 });
     assert.equal(resumeCandidatesCalled, true);
     assert.match(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\ndraft-job-001/);
@@ -1738,7 +1738,7 @@ const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await selectSidebarResumeDraft(page, '오래된 분석');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
-    await page.locator('.app-panel').first().getByRole('button', { name: '이어하기', exact: true }).click();
+    await page.locator('.writer-panel').getByRole('button', { name: '이어하기', exact: true }).click();
     await page.getByText('이전 분석 기록을 이어서 진행할 수 없습니다. 현재 재사용 후보로 확인되지 않았습니다. 새 분석으로 시작할 수 있습니다.').waitFor({ timeout: 10000 });
     await page.waitForFunction(() => {
       const stored = window.localStorage.getItem('analysisResumeDrafts');

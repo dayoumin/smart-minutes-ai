@@ -12,7 +12,7 @@
 
 /* ── 1. PRIMITIVE TOKENS (Raw values) ─────────────────────── */
 :root {
-  /* Brand Palette - LMO Deep Blue */
+  /* Reference palettes (status colours and the latent dark theme) */
   --color-blue-50: #eff6ff;
   --color-blue-100: #dbeafe;
   --color-blue-200: #bfdbfe;
@@ -26,25 +26,13 @@
   --color-teal-500: #06b6d4;
   --color-teal-600: #0891b2;
 
-  /* Barorok marine identity */
-  --barorok-ink: #0b1f33;
-  --barorok-ocean: #086b7a;
-  --barorok-ocean-deep: #06495c;
-  --barorok-sea-glass: #dff5f5;
-  --barorok-blue: #1267e8;
-  --barorok-blue-deep: #0b4fbd;
-  --barorok-mist: #f4f8fb;
-  --barorok-surface-base: var(--color-neutral-0);
-  --barorok-surface-accent: color-mix(in srgb, var(--barorok-blue) 5%, var(--color-neutral-0));
-  --barorok-surface-ocean: color-mix(in srgb, var(--barorok-ocean) 6%, var(--barorok-mist));
-  --barorok-shell-border: color-mix(in srgb, var(--barorok-ink) 11%, transparent);
+  /* Barorok identity */
   --barorok-teal: #0f7b83;
   --barorok-teal-deep: #0b6168;
   --barorok-teal-soft: #e5f2f2;
   --barorok-sidebar: #f7f7f5;
   --barorok-navigation-hover: color-mix(in srgb, var(--color-neutral-900) 5%, transparent);
   --barorok-navigation-active: #ededea;
-  --barorok-contour-line: color-mix(in srgb, var(--barorok-ocean) 9%, transparent);
 
   /* Neutral Palette */
   --color-neutral-0: #ffffff;
@@ -59,17 +47,6 @@
   --color-neutral-800: #292927;
   --color-neutral-900: #1c1c1b;
   --color-neutral-950: #0f0f0e;
-
-  /* Refero-inspired compact monochrome pilot tokens */
-  --refero-graphite: #0a0a0a;
-  --refero-pure-black: #000000;
-  --refero-carbon: #171717;
-  --refero-concrete: #737373;
-  --refero-ash: #a1a1a1;
-  --refero-smoke: #b9b9b9;
-  --refero-hairline: #e5e5e5;
-  --refero-mist: #f2f2f2;
-  --refero-chalk: #ffffff;
 }
 
 /* ── 2. SEMANTIC TOKENS (Light Mode) ──────────────────────── */
@@ -78,15 +55,15 @@
   --bg-page: var(--color-neutral-0);
   --bg-surface: rgba(255, 255, 255, 0.88);
   --bg-surface-hover: rgba(255, 255, 255, 0.95);
-  --bg-overlay: rgba(15, 23, 42, 0.45);
+  --bg-overlay: rgba(28, 28, 27, 0.42);
 
   /* Brand */
   --brand-primary: var(--barorok-teal);
   --brand-primary-fg: var(--color-neutral-0);
   --brand-primary-hover: var(--barorok-teal-deep);
   --brand-primary-soft: var(--barorok-teal-soft);
-  --brand-secondary: var(--color-teal-500);
-  --brand-secondary-hover: var(--color-teal-600);
+  --brand-secondary: var(--color-neutral-700);
+  --brand-secondary-hover: var(--color-neutral-800);
 
   /* Text */
   --text-default: var(--color-neutral-900);
@@ -98,7 +75,6 @@
   --border-default: rgba(0, 0, 0, 0.10);
   --border-strong: rgba(0, 0, 0, 0.18);
   --border-brand: rgba(15, 123, 131, 0.30);
-  /* blue-700 */
 
   /* Status */
   --status-info-bg: #eff6ff;
@@ -113,18 +89,18 @@
   --status-error-fg: #b91c1c;
   --status-error-border: #fecaca;
   --status-error-progress: #dc2626;
-  --status-success-bg: #ecfeff;
-  --status-success-fg: #155e75;
-  --status-success-border: #a5f3fc;
-  --status-success-progress: #0891b2;
-  --status-neutral-bg: rgba(248, 250, 252, 0.85);
+  --status-success-bg: #f0fdf4;
+  --status-success-fg: #166534;
+  --status-success-border: #bbf7d0;
+  --status-success-progress: #16a34a;
+  --status-neutral-bg: var(--color-neutral-50);
   --status-neutral-fg: var(--text-muted);
   --status-neutral-border: var(--border-default);
   --status-neutral-progress: var(--brand-primary);
   --status-action-bg: var(--color-neutral-0);
   --status-action-hover-bg: var(--color-neutral-100);
   --surface-action-hover-bg: var(--color-neutral-100);
-  --progress-track-bg: rgba(100, 116, 139, 0.22);
+  --progress-track-bg: color-mix(in srgb, var(--color-neutral-900) 12%, transparent);
   --topic-chip-bg: var(--color-neutral-0);
   --topic-chip-fg: var(--color-neutral-700);
   --topic-chip-border: var(--color-neutral-200);
@@ -152,18 +128,18 @@
   --speaker-tone-5-soft: #f5f3ff;
 
   /* Shadows */
-  --shadow-card: 0 1px 3px rgba(15, 23, 42, 0.08), 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-card-hover: 0 8px 24px rgba(15, 23, 42, 0.10), 0 0 0 1px rgba(30, 64, 175, 0.16);
-  --shadow-brand: 0 4px 14px rgba(30, 64, 175, 0.20);
-  --shadow-control: 0 1px 2px rgba(15, 23, 42, 0.06);
-  --shadow-overlay: 0 18px 48px rgba(15, 23, 42, 0.18), 0 2px 8px rgba(15, 23, 42, 0.08);
+  --shadow-control: 0 1px 2px rgba(28, 28, 27, 0.05);
+  --shadow-overlay: 0 18px 48px rgba(28, 28, 27, 0.16), 0 2px 8px rgba(28, 28, 27, 0.06);
 
   /* Effects */
-  --blur-glass: 20px;
   --focus-ring-color: var(--brand-primary);
   --focus-ring-soft: color-mix(in srgb, var(--brand-primary) 16%, transparent);
   --radius-card: 0.5rem;
   --radius-btn: 0.5rem;
+  --radius-control: var(--radius-btn);
+  /* Content rails: meeting document column and form/list column */
+  --rail-document: 52rem;
+  --rail-form: 55rem;
   --radius-dialog: 0.625rem;
   --radius-pill: 999px;
 }
@@ -209,10 +185,10 @@
   --status-error-fg: #fecaca;
   --status-error-border: rgba(248, 113, 113, 0.32);
   --status-error-progress: #f87171;
-  --status-success-bg: rgba(8, 145, 178, 0.18);
-  --status-success-fg: #a5f3fc;
-  --status-success-border: rgba(34, 211, 238, 0.30);
-  --status-success-progress: #22d3ee;
+  --status-success-bg: rgba(22, 163, 74, 0.18);
+  --status-success-fg: #bbf7d0;
+  --status-success-border: rgba(74, 222, 128, 0.30);
+  --status-success-progress: #4ade80;
   --status-neutral-bg: rgba(30, 41, 59, 0.72);
   --status-neutral-fg: var(--text-muted);
   --status-neutral-border: var(--border-default);
@@ -248,9 +224,6 @@
   --speaker-tone-5-soft: rgba(109, 40, 217, 0.18);
 
   /* Shadows */
-  --shadow-card: 0 2px 12px rgba(0, 0, 0, 0.40), 0 0 0 1.5px rgba(255, 255, 255, 0.08);
-  --shadow-card-hover: 0 8px 32px rgba(0, 0, 0, 0.60), 0 0 0 1.5px rgba(96, 165, 250, 0.30);
-  --shadow-brand: 0 4px 20px rgba(96, 165, 250, 0.30);
   --shadow-control: 0 1px 2px rgba(0, 0, 0, 0.30);
   --shadow-overlay: 0 20px 54px rgba(0, 0, 0, 0.56), 0 2px 10px rgba(0, 0, 0, 0.38);
 }
@@ -309,28 +282,6 @@
     color: var(--text-default);
     font-family: 'Pretendard', 'Inter', system-ui, sans-serif;
     @apply antialiased transition-colors duration-300;
-  }
-
-  body::before {
-    position: fixed;
-    inset: 0;
-    z-index: 0;
-    content: "";
-    pointer-events: none;
-    opacity: 0.62;
-    background:
-      repeating-radial-gradient(
-        ellipse at -8% 16%,
-        transparent 0 34px,
-        rgba(255, 255, 255, 0.15) 35px 36px,
-        transparent 37px 62px
-      ),
-      repeating-radial-gradient(
-        ellipse at 108% 82%,
-        transparent 0 42px,
-        var(--barorok-contour-line) 43px 44px,
-        transparent 45px 76px
-      );
   }
 
   #root {
@@ -394,35 +345,6 @@
   /* Interactive Text States */
   .text-interactive {
     @apply transition-colors duration-200 hover:text-primary active:scale-95 cursor-pointer inline-block;
-  }
-
-  /* Glass Surface Card */
-  .glass-card {
-    background: var(--bg-surface);
-    border: 1.5px solid var(--border-default);
-    box-shadow: var(--shadow-card);
-    border-radius: var(--radius-card);
-    backdrop-filter: blur(var(--blur-glass));
-    -webkit-backdrop-filter: blur(var(--blur-glass));
-    transition: box-shadow 0.2s ease, border-color 0.2s ease;
-  }
-
-  .glass-card:hover {
-    box-shadow: var(--shadow-card-hover);
-    border-color: var(--border-brand);
-  }
-
-  /* Drop Zone */
-  .drop-zone {
-    border: 2px dashed var(--border-brand);
-    border-radius: var(--radius-xl);
-    background: color-mix(in srgb, var(--brand-primary-soft) 50%, transparent);
-    transition: all 0.2s ease;
-  }
-
-  .drop-zone:hover {
-    background: var(--brand-primary-soft);
-    border-color: var(--brand-primary);
   }
 
   /* Custom Scrollbar */
@@ -543,7 +465,6 @@
   .settings-list,
   .settings-panel {
     @apply overflow-hidden rounded-[var(--radius-card)] border border-border bg-background;
-    box-shadow: var(--shadow-control);
   }
 
   .settings-panel {
@@ -624,7 +545,7 @@
 
   /* Status surfaces */
   .status-banner {
-    @apply rounded-[var(--radius-card)] border px-4 py-3 text-sm shadow-sm;
+    @apply rounded-[var(--radius-card)] border px-4 py-3 text-sm;
     background-color: var(--status-current-bg);
     border-color: var(--status-current-border);
     color: var(--status-current-fg);
@@ -712,7 +633,7 @@
   }
 
   .resume-summary-button {
-    @apply flex w-full items-center justify-between gap-2 rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs font-medium shadow-sm transition-colors;
+    @apply flex w-full items-center justify-between gap-2 rounded-[var(--radius-card)] border px-3 py-2 text-left text-xs font-medium transition-colors;
     background-color: var(--status-current-bg);
     border-color: var(--status-current-border);
     color: var(--status-current-fg);
@@ -723,7 +644,7 @@
   }
 
   .resume-draft-card {
-    @apply rounded-[var(--radius-card)] border px-3 py-3 shadow-sm;
+    @apply rounded-[var(--radius-card)] border px-3 py-3;
     background-color: var(--status-action-bg);
     border-color: var(--status-current-border);
   }
@@ -733,7 +654,7 @@
   }
 
   .sidebar-resume-draft-button {
-    @apply w-full rounded-md border px-3 py-2 shadow-sm transition-colors;
+    @apply w-full rounded-md border px-3 py-2 transition-colors;
     background-color: var(--status-action-bg);
     border-color: var(--status-current-border);
   }
@@ -787,6 +708,15 @@
 
   .sidebar-section-header {
     @apply flex min-h-8 items-center justify-between px-2.5 pb-1 pt-4 text-[11px] font-medium text-muted-foreground;
+  }
+
+  /* Fixed status area above settings: analysis progress and unfinished drafts. */
+  .sidebar-status-dock {
+    @apply mt-2 grid gap-2 empty:hidden;
+  }
+
+  .sidebar-status-dock-list {
+    @apply mt-2 grid max-h-[40vh] gap-1.5 overflow-y-auto;
   }
 
   .sidebar-section-action {
@@ -1054,8 +984,19 @@
   }
 
   /* Product surfaces */
+  .page-title {
+    @apply m-0 text-[26px] font-semibold leading-tight text-foreground;
+    letter-spacing: -0.02em;
+  }
+
+  .icon-badge {
+    @apply inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full;
+    background: var(--brand-primary-soft);
+    color: var(--brand-primary);
+  }
+
   .app-panel {
-    @apply rounded-[var(--radius-card)] border border-border bg-surface shadow-sm;
+    @apply rounded-[var(--radius-card)] border border-border bg-surface;
   }
 
   .app-panel-header {
@@ -1249,7 +1190,7 @@
   }
 
   .meeting-detail-shell {
-    @apply mx-auto w-full max-w-[52rem];
+    @apply mx-auto w-full max-w-[var(--rail-document)];
     container-name: meeting-detail;
     container-type: inline-size;
   }
@@ -1377,7 +1318,7 @@
   }
 
   .writer-shell {
-    @apply mx-auto flex w-full max-w-[55rem] flex-col gap-4 pb-10 pt-2 sm:pt-4;
+    @apply mx-auto flex w-full max-w-[var(--rail-form)] flex-col gap-4 pb-10 pt-2 sm:pt-4;
     container-name: writer;
     container-type: inline-size;
   }
@@ -1386,23 +1327,9 @@
     @apply flex min-h-9 items-end justify-between gap-3;
   }
 
-  .writer-title {
-    @apply m-0 text-[26px] font-semibold leading-tight text-foreground;
-    letter-spacing: -0.02em;
-  }
 
   .writer-panel {
-    @apply flex flex-col gap-4 p-4 sm:p-5;
-    background-color: var(--color-neutral-0);
-    border-color: var(--border-default);
-    box-shadow: none;
-  }
-
-  .writer-panel-idle {
-    @apply gap-0 p-0;
-    border: 0;
-    border-radius: 0;
-    background: transparent;
+    @apply flex flex-col gap-4;
   }
 
   .writer-input-grid {
@@ -1543,11 +1470,6 @@
     @apply flex shrink-0 items-center gap-2;
   }
 
-  .file-upload-icon {
-    @apply flex h-10 w-10 shrink-0 items-center justify-center rounded-full;
-    background: var(--brand-primary-soft);
-    color: var(--brand-primary);
-  }
 
   .writer-file-support {
     @apply grid gap-2 empty:hidden;
@@ -1555,6 +1477,10 @@
 
   .writer-file-tools {
     @apply flex min-w-0 flex-wrap items-center gap-2;
+  }
+
+  .writer-file-privacy-slot {
+    min-height: 1.25rem;
   }
 
   .writer-file-privacy-note {
@@ -1603,11 +1529,6 @@
     background: color-mix(in srgb, var(--brand-primary-soft) 45%, var(--color-neutral-0));
   }
 
-  .writer-recovery-icon {
-    @apply inline-flex h-9 w-9 items-center justify-center rounded-full;
-    background: var(--brand-primary-soft);
-    color: var(--brand-primary);
-  }
 
   .writer-recovery-copy {
     @apply flex min-w-0 flex-col gap-1;
@@ -1724,8 +1645,8 @@
     grid-template-columns: minmax(0, 1fr) auto;
     border-color: color-mix(in srgb, var(--local-engine-tone) 24%, var(--border-default));
     border-radius: var(--radius-card);
-    background: color-mix(in srgb, var(--local-engine-tone-soft) 64%, var(--barorok-surface-base));
-    color: var(--barorok-ink);
+    background: color-mix(in srgb, var(--local-engine-tone-soft) 64%, var(--color-neutral-0));
+    color: var(--text-default);
   }
 
   .local-engine-connection-info {
@@ -1773,7 +1694,7 @@
 
   .local-engine-connection-copy span {
     @apply text-xs leading-5;
-    color: color-mix(in srgb, var(--barorok-ink) 72%, var(--barorok-ocean));
+    color: var(--text-muted);
   }
 
   .local-engine-info-tip {
@@ -1785,12 +1706,12 @@
     border: 0;
     padding: 0;
     background: transparent;
-    color: color-mix(in srgb, var(--barorok-ink) 62%, var(--barorok-ocean));
+    color: var(--text-muted);
   }
 
   .local-engine-info-trigger:hover,
   .local-engine-info-trigger:focus-visible {
-    color: var(--barorok-ink);
+    color: var(--text-default);
     background: color-mix(in srgb, var(--local-engine-tone) 10%, transparent);
   }
 
@@ -1809,8 +1730,8 @@
     bottom: calc(100% + 0.45rem);
     border: 1px solid var(--border-default);
     border-radius: var(--radius-btn);
-    background: var(--barorok-surface-base);
-    color: var(--barorok-ink);
+    background: var(--color-neutral-0);
+    color: var(--text-default);
     box-shadow: var(--shadow-overlay);
     transition: opacity 120ms ease-out;
   }
@@ -1829,7 +1750,7 @@
   }
 
   .local-engine-help-action {
-    color: color-mix(in srgb, var(--barorok-ink) 74%, var(--barorok-ocean));
+    color: var(--text-muted);
   }
 
   .local-engine-help {
@@ -1837,12 +1758,12 @@
     grid-column: 1 / -1;
     padding-top: 0.5rem;
     border-top: 1px solid color-mix(in srgb, var(--local-engine-tone) 18%, transparent);
-    color: color-mix(in srgb, var(--barorok-ink) 76%, var(--barorok-ocean));
+    color: var(--text-muted);
   }
 
   .local-engine-pairing-backdrop {
     @apply fixed inset-0 z-[80] flex items-center justify-center p-4;
-    background: rgba(3, 24, 39, 0.56);
+    background: var(--bg-overlay);
     overscroll-behavior: contain;
   }
 
@@ -1907,47 +1828,38 @@
 
   .writer-analysis-panel {
     @apply grid gap-5 rounded-[var(--radius-card)] border p-5 sm:p-6;
-    border-color: color-mix(in srgb, var(--barorok-blue) 18%, var(--border-default));
-    background:
-      radial-gradient(circle at 94% 8%, rgba(18, 103, 232, 0.08), transparent 24%),
-      linear-gradient(145deg, var(--barorok-surface-base) 0%, var(--barorok-surface-accent) 64%, var(--barorok-surface-ocean) 100%);
-    box-shadow: 0 18px 48px rgba(11, 31, 51, 0.07);
+    border-color: var(--border-default);
+    background: var(--color-neutral-0);
   }
 
   .writer-analysis-panel-error {
-    border-color: color-mix(in srgb, var(--status-error-border) 72%, var(--border-default));
-    background:
-      radial-gradient(circle at 94% 8%, color-mix(in srgb, var(--status-error-bg) 72%, transparent), transparent 24%),
-      linear-gradient(145deg, var(--barorok-surface-base) 0%, color-mix(in srgb, var(--status-error-bg) 28%, var(--barorok-surface-base)) 68%, var(--status-error-bg) 100%);
+    border-color: var(--status-error-border);
+  }
+
+  /* Rows inside the analysis card are tinted, not boxed; the card grid owns the spacing. */
+  .writer-analysis-panel > :is(.detail-inline-note, .analysis-stop-panel) {
+    margin-top: 0;
+    border: 0;
+    background: var(--color-neutral-50);
   }
 
   .writer-analysis-file {
     @apply flex min-w-0 items-center gap-3 border-b pb-4;
-    border-color: color-mix(in srgb, var(--barorok-blue) 12%, var(--border-default));
+    border-color: var(--border-default);
   }
 
-  .writer-analysis-file-icon,
-  .writer-analysis-status-icon {
-    @apply flex h-11 w-11 shrink-0 items-center justify-center rounded-[var(--radius-btn)] border;
-    border-color: color-mix(in srgb, var(--barorok-blue) 22%, var(--border-default));
-    background: linear-gradient(145deg, #ffffff, #eaf4ff);
-    color: var(--barorok-blue);
-  }
 
   .writer-analysis-status-icon {
-    @apply mt-0.5 h-9 w-9 border-0 text-white;
-    background: linear-gradient(145deg, var(--barorok-blue), color-mix(in srgb, var(--barorok-blue) 72%, var(--barorok-ocean)));
-    box-shadow: 0 8px 18px rgba(18, 103, 232, 0.18);
+    @apply mt-0.5 flex h-9 w-9 shrink-0 items-center justify-center rounded-full text-white;
+    background: var(--brand-primary);
   }
 
   .writer-analysis-status-icon-warning {
     background: var(--status-warning-progress);
-    box-shadow: 0 8px 18px color-mix(in srgb, var(--status-warning-progress) 20%, transparent);
   }
 
   .writer-analysis-status-icon-error {
     background: var(--status-error-progress);
-    box-shadow: 0 8px 18px color-mix(in srgb, var(--status-error-progress) 20%, transparent);
   }
 
   .writer-analysis-title {
@@ -1968,13 +1880,12 @@
   }
 
   .writer-analysis-percent {
-    @apply shrink-0 text-sm font-semibold;
-    color: var(--barorok-blue);
+    @apply shrink-0 text-sm font-semibold tabular-nums;
+    color: var(--brand-primary);
   }
 
   .writer-analysis-elapsed {
-    @apply mt-1 text-sm font-semibold;
-    color: var(--barorok-blue);
+    @apply mt-1 text-sm font-semibold tabular-nums text-foreground;
   }
 
   .writer-analysis-stop-requested {
@@ -2016,7 +1927,7 @@
   }
 
   .detail-action-row-modern {
-    @apply border-border/60 bg-background/80 shadow-sm;
+    @apply border-border/60 bg-background/80;
   }
 
   .detail-work-surface {
@@ -2374,11 +2285,13 @@
   }
 
   .save-toast {
-    @apply absolute right-0 top-[calc(100%+0.5rem)] z-20 flex min-h-10 max-w-[calc(100vw-2rem)] items-center gap-2 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-sm shadow-sm;
+    @apply absolute right-0 top-[calc(100%+0.5rem)] z-20 flex min-h-10 max-w-[calc(100vw-2rem)] items-center gap-2 rounded-[var(--radius-card)] border border-border bg-background px-3 py-2 text-sm;
+    box-shadow: var(--shadow-overlay);
   }
 
   .operation-toast {
-    @apply fixed right-6 top-6 z-50 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-[var(--radius-card)] border px-4 py-3 text-sm shadow-lg;
+    @apply fixed right-6 top-6 z-50 flex max-w-[calc(100vw-2rem)] items-center gap-3 rounded-[var(--radius-card)] border px-4 py-3 text-sm;
+    box-shadow: var(--shadow-overlay);
     background-color: var(--status-current-bg);
     border-color: var(--status-current-border);
     color: var(--status-current-fg);
@@ -2446,23 +2359,20 @@
   }
 
   .meeting-archive {
-    @apply mx-auto w-full max-w-[74rem] pb-10;
+    @apply mx-auto w-full max-w-[var(--rail-form)] pb-10 pt-2 sm:pt-4;
   }
 
   .meeting-archive-header {
     @apply mb-5 flex items-end justify-between gap-6;
   }
 
-  .meeting-archive-header h1 {
-    @apply text-2xl font-bold tracking-[-0.035em] text-foreground;
-  }
 
   .meeting-archive-header p {
     @apply mt-1 text-sm leading-relaxed text-muted-foreground;
   }
 
   .meeting-archive-counts {
-    @apply flex shrink-0 items-center divide-x divide-border rounded-[var(--radius-card)] border border-border bg-background px-1 shadow-sm;
+    @apply flex shrink-0 items-center divide-x divide-border rounded-[var(--radius-card)] border border-border bg-background px-1;
   }
 
   .meeting-archive-counts > div {
@@ -2478,12 +2388,11 @@
   }
 
   .meeting-archive-controls {
-    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-3 p-4;
+    @apply grid grid-cols-[minmax(0,1fr)_auto] gap-3;
   }
 
   .meeting-archive-search-field {
-    @apply flex min-h-11 items-center gap-2.5 rounded-[var(--radius-btn)] border border-input bg-background px-3 text-muted-foreground;
-    box-shadow: var(--shadow-control);
+    @apply flex min-h-10 items-center gap-2.5 rounded-[var(--radius-btn)] border border-input bg-background px-3 text-muted-foreground;
   }
 
   .meeting-archive-search-field:focus-within {
@@ -2496,8 +2405,7 @@
   }
 
   .meeting-archive-period-field {
-    @apply flex min-h-11 items-center gap-2 rounded-[var(--radius-btn)] border border-input bg-background px-3 text-muted-foreground;
-    box-shadow: var(--shadow-control);
+    @apply flex min-h-10 items-center gap-2 rounded-[var(--radius-btn)] border border-input bg-background px-3 text-muted-foreground;
   }
 
   .meeting-archive-period-field:focus-within {
@@ -2510,7 +2418,7 @@
   }
 
   .meeting-archive-filter-list {
-    @apply col-span-2 flex flex-wrap items-center gap-1 border-t border-border pt-3;
+    @apply col-span-2 flex flex-wrap items-center gap-1;
   }
 
   .meeting-archive-filter-list button {
@@ -2523,7 +2431,8 @@
   }
 
   .meeting-archive-filter-list button:focus-visible {
-    @apply outline-none ring-2 ring-primary/30;
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
   }
 
   .meeting-archive-filter-list .meeting-archive-filter-active {
@@ -2561,6 +2470,11 @@
     box-shadow: 0 0 0 1px var(--brand-primary);
   }
 
+  .meeting-archive-item-decision .meeting-archive-marker {
+    background: var(--status-success-progress);
+    box-shadow: 0 0 0 1px var(--status-success-border);
+  }
+
   .meeting-archive-item-action .meeting-archive-marker {
     background: var(--status-warning-fg);
     box-shadow: 0 0 0 1px var(--status-warning-border);
@@ -2572,17 +2486,17 @@
   }
 
   .meeting-archive-item > button {
-    @apply grid w-full gap-2 rounded-[var(--radius-card)] border border-border bg-background px-5 py-4 text-left shadow-sm transition;
+    @apply grid w-full gap-2 rounded-[var(--radius-card)] border border-border bg-background px-5 py-4 text-left transition-colors;
   }
 
   .meeting-archive-item > button:hover {
-    border-color: color-mix(in srgb, var(--brand-primary) 28%, var(--border-default));
-    box-shadow: var(--shadow-panel);
-    transform: translateY(-1px);
+    border-color: var(--border-brand);
+    background: var(--color-neutral-50);
   }
 
   .meeting-archive-item > button:focus-visible {
-    @apply outline-none ring-2 ring-primary/30 ring-offset-2 ring-offset-background;
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
   }
 
   .meeting-archive-item-meta {
@@ -2750,7 +2664,7 @@
   }
 
   .topic-chip {
-    @apply max-w-72 cursor-pointer truncate rounded-full border px-3 py-1 text-xs font-medium shadow-sm transition-colors;
+    @apply max-w-72 cursor-pointer truncate rounded-full border px-3 py-1 text-xs font-medium transition-colors;
     background-color: var(--topic-chip-bg);
     border-color: var(--topic-chip-border);
     color: var(--topic-chip-fg);

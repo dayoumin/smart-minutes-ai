@@ -464,8 +464,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setActiveTab(initialTab);
     }, [initialTab]);
 
+    const troubleshootingScrolledRef = useRef(false);
     useEffect(() => {
-        if (initialSection !== 'troubleshooting' || activeTab !== 'general') return undefined;
+        // Scroll once when opened from the writer's 문제 해결 button, not on every return to the 일반 tab.
+        if (initialSection !== 'troubleshooting' || activeTab !== 'general' || troubleshootingScrolledRef.current) return undefined;
+        troubleshootingScrolledRef.current = true;
         const frame = window.requestAnimationFrame(() => {
             document.getElementById('settings-troubleshooting')?.scrollIntoView({ block: 'center' });
         });

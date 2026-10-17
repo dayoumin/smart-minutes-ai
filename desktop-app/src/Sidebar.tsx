@@ -61,7 +61,7 @@ const formatSidebarStatus = (message: string): string => {
     const baseMessage = (message || '분석 시작 중')
         .replace(' 같은 단계가 오래 걸리고 있습니다. 진행이 바뀌지 않으면 취소 후 다시 시도해 주세요.', '');
     const chunk = getChunkProgress(baseMessage);
-    if (chunk) return `음성 인식 ${chunk.current}/${chunk.total} 처리 중`;
+    if (chunk) return `음성 인식 ${chunk.current}/${chunk.total} 구간`;
     const statusMap: Record<string, string> = {
         '업로드 파일 저장 완료': '파일 저장 완료',
         '음성 인식 모델 확인 중': '모델 확인 중',

@@ -3961,8 +3961,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 <div className="meeting-status-item" title={diarizationStatusTitle}>
                                                     <span className="meeting-status-title">참석자 구분</span>
                                                     <span className="meeting-status-actions">
-                                                        {diarizationStatus.label === '완료' ? (
-                                                            <span className="status-done" role="img" aria-label="완료" title="완료">
+                                                        {diarizationStatus.tone === 'success' ? (
+                                                            <span className="status-done" role="img" aria-label={diarizationStatus.label}>
                                                                 <CheckCircle2 size={17} aria-hidden="true" />
                                                             </span>
                                                         ) : (

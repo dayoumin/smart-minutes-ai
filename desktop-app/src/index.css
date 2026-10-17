@@ -1513,6 +1513,18 @@
     @apply flex shrink-0 items-center justify-end gap-2;
   }
 
+  .writer-action-notes {
+    @apply flex min-w-0 flex-1 flex-col gap-1;
+  }
+
+  .writer-action-notes .writer-action-hint {
+    flex: none;
+  }
+
+  .writer-action-hint.writer-action-hint-error {
+    color: var(--status-error-fg);
+  }
+
   .writer-hint-action {
     @apply h-10 shrink-0 px-3 text-xs;
   }
@@ -2000,7 +2012,7 @@
   }
 
   .detail-inline-select {
-    @apply inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-[var(--radius-btn)] border border-border bg-background px-3 py-2 text-xs text-muted-foreground sm:w-auto sm:min-w-72;
+    @apply inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-[var(--radius-btn)] border border-border bg-background px-3 py-2 text-xs text-muted-foreground sm:w-auto sm:min-w-60;
   }
 
   .detail-context-actions {

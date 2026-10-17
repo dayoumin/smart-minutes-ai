@@ -6,7 +6,7 @@ import {
 import type { AnalyzeResult } from './analysisMeetingPersistence';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, Download, FileAudio, FolderOpen, Loader2, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -68,6 +68,7 @@ const LOCAL_ENGINE_CONNECTION_UI_ENABLED = import.meta.env.VITE_LOCAL_ENGINE_CON
         && typeof window !== 'undefined'
         && new URLSearchParams(window.location.search).get('localEngineConnection') === '1');
 const getNowMs = (): number => Date.now();
+const REQUIRED_FIELDS_ERROR_PREFIX = '필수 항목을 확인해 주세요';
 // datetime-local expects local wall-clock time; toISOString() would be UTC (9 hours early in KST).
 const toLocalDateTimeInputValue = (value: Date = new Date()): string => {
     const pad = (part: number) => String(part).padStart(2, '0');
@@ -285,7 +286,7 @@ const translateStatusMessage = (message: string): string => {
     const baseMessage = isStalled ? normalized.slice(0, -stallSuffix.length) : normalized;
     const chunkMatch = baseMessage.match(/^Transcribing chunk (\d+)\/(\d+)/);
     if (chunkMatch) {
-        return `음성 인식 ${chunkMatch[1]}/${chunkMatch[2]} 처리 중`;
+        return `음성 인식 ${chunkMatch[1]}/${chunkMatch[2]} 구간`;
     }
 
     const statusMap: Record<string, string> = {
@@ -897,9 +898,22 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || (localEngineConnectionRequired && !localEngineAnalysisReady)
         || analysisStartBlocked;
     const engineUnreachable = readinessTimedOut && readinessState === 'server-waiting' && !localEngineConnectionRequired;
+    // The required-field error is shown in the action row (beside 분석 시작) instead of a banner below the fold.
+    // Live list of what is still missing after a start attempt; it disappears as soon as the fields are filled.
+    const formErrorInline = hasAttemptedStart && missingFields.length > 0 && !localEngineConnectionRequired && !isAnalyzing;
+    const showReadinessHint = (hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing && !localEngineConnectionRequired;
+    // ready=false can also mean an unusable device or a status error; only offer 모델 받기 when a required model is really missing.
+    const modelsMissing = readinessState === 'missing-models' && missingRequiredModels.length > 0;
+    // Where the hint's button leads: missing models -> Settings > 모델; otherwise 문제 해결 (desktop) / 다시 확인 (web).
+    const readinessAction: 'models' | 'troubleshoot' | 'recheck' | null = !showReadinessHint
+        ? null
+        : modelsMissing && onOpenSettings
+            ? 'models'
+            : isTauriRuntime() && onOpenTroubleshooting ? 'troubleshoot' : 'recheck';
     const startButtonDescription = [
         analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
-        (hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing ? 'writer-readiness-hint' : '',
+        formErrorInline ? 'writer-form-error' : '',
+        showReadinessHint ? 'writer-readiness-hint' : '',
         localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-local-engine-requirement' : '',
     ].filter(Boolean).join(' ') || undefined;
 
@@ -1386,7 +1400,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setProgress(0);
             setStatusMessage('');
             setCompletionNotice(null);
-            setErrorMessage(`필수 항목을 확인해 주세요: ${missingFields.join(', ')}`);
+            setErrorMessage(`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`);
             return;
         }
 
@@ -2545,27 +2559,41 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         {localEngineConnectionRequired && (
                             <LocalEngineConnectionSurface />
                         )}
-                        {(hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing && !localEngineConnectionRequired && (
+                        {(formErrorInline || showReadinessHint) && (
+                            <div className="writer-action-notes">
+                        {formErrorInline && (
+                            <p id="writer-form-error" className="writer-action-hint writer-action-hint-error">
+                                {`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`}
+                            </p>
+                        )}
+                        {showReadinessHint && (
                             <p id="writer-readiness-hint" className="writer-action-hint">
                                 {engineUnreachable
                                     ? isTauriRuntime()
                                         ? DESKTOP_ENGINE_NOT_READY_MESSAGE
                                         : '이 PC의 분석 기능에 아직 연결되지 않았습니다. 바로록 연결을 실행해 주세요.'
-                                    : readinessState === 'missing-models' ? '필요한 모델을 받으면 분석을 시작할 수 있습니다. 아래 안내를 확인하세요.' : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
+                                    : modelsMissing ? '분석에 필요한 모델이 아직 없습니다. 모델을 받으면 바로 시작할 수 있습니다.' : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
                             </p>
                         )}
-                        {engineUnreachable && !isAnalyzing && (
-                            isTauriRuntime() && onOpenTroubleshooting ? (
-                                <Button variant="outline" className="writer-hint-action" onClick={onOpenTroubleshooting}>
-                                    <Settings size={15} aria-hidden="true" />
-                                    문제 해결
-                                </Button>
-                            ) : (
-                                <Button variant="outline" className="writer-hint-action" onClick={() => void handleRecheckEngine()} disabled={isRecheckingEngine}>
-                                    <RefreshCw size={15} className={isRecheckingEngine ? 'animate-spin' : ''} aria-hidden="true" />
-                                    {isRecheckingEngine ? '확인 중' : '다시 확인'}
-                                </Button>
-                            )
+                            </div>
+                        )}
+                        {readinessAction === 'models' && (
+                            <Button variant="outline" className="writer-hint-action" onClick={onOpenSettings}>
+                                <Download size={15} aria-hidden="true" />
+                                모델 받기
+                            </Button>
+                        )}
+                        {readinessAction === 'troubleshoot' && (
+                            <Button variant="outline" className="writer-hint-action" onClick={onOpenTroubleshooting}>
+                                <Settings size={15} aria-hidden="true" />
+                                문제 해결
+                            </Button>
+                        )}
+                        {readinessAction === 'recheck' && (
+                            <Button variant="outline" className="writer-hint-action" onClick={() => void handleRecheckEngine()} disabled={isRecheckingEngine}>
+                                <RefreshCw size={15} className={isRecheckingEngine ? 'animate-spin' : ''} aria-hidden="true" />
+                                {isRecheckingEngine ? '확인 중' : '다시 확인'}
+                            </Button>
                         )}
                         <div className="writer-primary-actions">
                             <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
@@ -2644,9 +2672,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 <div>
                                     <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
                                         <span>경과 시간</span>
-                                        <span title="분석을 시작한 뒤 지난 시간입니다." className="inline-flex items-center">
-                                            <CircleHelp size={13} />
-                                        </span>
                                     </div>
                                     <div className="writer-analysis-elapsed">{elapsedLabel}</div>
                                 </div>
@@ -2819,7 +2844,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 </StatusBanner>
             )}
 
-            {errorMessage && !showAnalysisFailure && (
+            {errorMessage && !showAnalysisFailure && !(errorMessage.startsWith(REQUIRED_FIELDS_ERROR_PREFIX) && !localEngineConnectionRequired) && (
                 <StatusBanner id="writer-form-error" tone="error">
                     {errorMessage}
                 </StatusBanner>

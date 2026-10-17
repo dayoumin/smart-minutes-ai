@@ -38,8 +38,12 @@
   --barorok-surface-accent: color-mix(in srgb, var(--barorok-blue) 5%, var(--color-neutral-0));
   --barorok-surface-ocean: color-mix(in srgb, var(--barorok-ocean) 6%, var(--barorok-mist));
   --barorok-shell-border: color-mix(in srgb, var(--barorok-ink) 11%, transparent);
-  --barorok-navigation-hover: color-mix(in srgb, var(--barorok-blue) 5%, transparent);
-  --barorok-navigation-active: color-mix(in srgb, var(--barorok-blue) 10%, var(--barorok-mist));
+  --barorok-teal: #0f7b83;
+  --barorok-teal-deep: #0b6168;
+  --barorok-teal-soft: #e5f2f2;
+  --barorok-sidebar: #f7f7f5;
+  --barorok-navigation-hover: color-mix(in srgb, var(--color-neutral-900) 5%, transparent);
+  --barorok-navigation-active: #ededea;
   --barorok-contour-line: color-mix(in srgb, var(--barorok-ocean) 9%, transparent);
 
   /* New-record ocean sunlight pilot */
@@ -56,17 +60,17 @@
 
   /* Neutral Palette */
   --color-neutral-0: #ffffff;
-  --color-neutral-50: #f8fafc;
-  --color-neutral-100: #f1f5f9;
-  --color-neutral-200: #e2e8f0;
-  --color-neutral-300: #cbd5e1;
-  --color-neutral-400: #94a3b8;
-  --color-neutral-500: #64748b;
-  --color-neutral-600: #475569;
-  --color-neutral-700: #334155;
-  --color-neutral-800: #1e293b;
-  --color-neutral-900: #0f172a;
-  --color-neutral-950: #020617;
+  --color-neutral-50: #fafaf8;
+  --color-neutral-100: #f4f4f2;
+  --color-neutral-200: #eaeae7;
+  --color-neutral-300: #d6d6d1;
+  --color-neutral-400: #9c9c97;
+  --color-neutral-500: #6b6b67;
+  --color-neutral-600: #52524e;
+  --color-neutral-700: #3d3d3a;
+  --color-neutral-800: #292927;
+  --color-neutral-900: #1c1c1b;
+  --color-neutral-950: #0f0f0e;
 
   /* Refero-inspired compact monochrome pilot tokens */
   --refero-graphite: #0a0a0a;
@@ -83,16 +87,16 @@
 /* ── 2. SEMANTIC TOKENS (Light Mode) ──────────────────────── */
 :root {
   /* Backgrounds */
-  --bg-page: var(--color-neutral-50);
+  --bg-page: var(--color-neutral-0);
   --bg-surface: rgba(255, 255, 255, 0.88);
   --bg-surface-hover: rgba(255, 255, 255, 0.95);
   --bg-overlay: rgba(15, 23, 42, 0.45);
 
   /* Brand */
-  --brand-primary: var(--color-blue-800);
+  --brand-primary: var(--barorok-teal);
   --brand-primary-fg: var(--color-neutral-0);
-  --brand-primary-hover: var(--color-blue-900);
-  --brand-primary-soft: var(--color-blue-50);
+  --brand-primary-hover: var(--barorok-teal-deep);
+  --brand-primary-soft: var(--barorok-teal-soft);
   --brand-secondary: var(--color-teal-500);
   --brand-secondary-hover: var(--color-teal-600);
 
@@ -105,7 +109,7 @@
   /* Borders */
   --border-default: rgba(0, 0, 0, 0.10);
   --border-strong: rgba(0, 0, 0, 0.18);
-  --border-brand: rgba(29, 78, 216, 0.30);
+  --border-brand: rgba(15, 123, 131, 0.30);
   /* blue-700 */
 
   /* Status */
@@ -136,9 +140,9 @@
   --topic-chip-bg: var(--color-neutral-0);
   --topic-chip-fg: var(--color-neutral-700);
   --topic-chip-border: var(--color-neutral-200);
-  --topic-chip-active-bg: rgba(29, 78, 216, 0.08);
-  --topic-chip-active-fg: var(--brand-primary);
-  --topic-chip-active-border: rgba(29, 78, 216, 0.30);
+  --topic-chip-active-bg: var(--brand-primary-soft);
+  --topic-chip-active-fg: var(--brand-primary-hover);
+  --topic-chip-active-border: var(--border-brand);
   --speaker-turn-bg: var(--color-neutral-0);
   --speaker-turn-hover-bg: var(--color-neutral-50);
   --speaker-turn-border: var(--color-neutral-200);
@@ -168,7 +172,7 @@
 
   /* Effects */
   --blur-glass: 20px;
-  --focus-ring-color: color-mix(in srgb, var(--brand-primary) 72%, transparent);
+  --focus-ring-color: var(--brand-primary);
   --focus-ring-soft: color-mix(in srgb, var(--brand-primary) 16%, transparent);
   --radius-card: 0.5rem;
   --radius-btn: 0.5rem;
@@ -285,8 +289,8 @@
   --color-primary-foreground: var(--brand-primary-fg);
   --color-secondary-foreground: var(--text-default);
   --color-muted-foreground: var(--text-muted);
-  --color-accent: var(--color-blue-100);
-  --color-accent-foreground: var(--color-blue-700);
+  --color-accent: var(--brand-primary-soft);
+  --color-accent-foreground: var(--brand-primary-hover);
   --color-destructive: oklch(0.577 0.245 27.325);
   --color-input: var(--border-default);
   --color-ring: var(--brand-primary);
@@ -313,10 +317,7 @@
     min-height: 100dvh;
     overflow: hidden;
     isolation: isolate;
-    background:
-      radial-gradient(circle at 5% 4%, rgba(8, 107, 122, 0.24), transparent 33rem),
-      radial-gradient(circle at 96% 92%, rgba(18, 103, 232, 0.2), transparent 34rem),
-      linear-gradient(145deg, #0a5670 0%, #74cbd2 48%, #e5f7f7 100%);
+    background: var(--color-neutral-0);
     color: var(--text-default);
     font-family: 'Pretendard', 'Inter', system-ui, sans-serif;
     @apply antialiased transition-colors duration-300;
@@ -427,12 +428,12 @@
   .drop-zone {
     border: 2px dashed var(--border-brand);
     border-radius: var(--radius-xl);
-    background: rgba(29, 78, 216, 0.04);
+    background: color-mix(in srgb, var(--brand-primary-soft) 50%, transparent);
     transition: all 0.2s ease;
   }
 
   .drop-zone:hover {
-    background: rgba(29, 78, 216, 0.08);
+    background: var(--brand-primary-soft);
     border-color: var(--brand-primary);
   }
 
@@ -758,7 +759,15 @@
   }
 
   .sidebar-utility-button {
-    @apply flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-semibold text-foreground transition-colors hover:bg-muted/40;
+    @apply flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal text-foreground transition-colors;
+  }
+
+  .sidebar-utility-button:hover {
+    background: var(--barorok-navigation-hover);
+  }
+
+  .sidebar-utility-button svg {
+    @apply text-subtle;
   }
 
   .sidebar-utility-button:focus-visible {
@@ -771,7 +780,7 @@
   }
 
   .sidebar-create-button {
-    @apply flex min-h-11 w-full items-center gap-2 rounded-[var(--radius-control)] border border-transparent bg-transparent px-3 py-2 text-left text-sm font-semibold text-foreground shadow-none transition-colors;
+    @apply flex min-h-9 w-full items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-1.5 text-left text-sm font-medium text-foreground shadow-none transition-colors;
   }
 
   .sidebar-create-button:hover {
@@ -780,28 +789,26 @@
   }
 
   .sidebar-create-button:focus-visible {
-    @apply outline-none ring-2 ring-primary/30;
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: -2px;
   }
 
   .sidebar-action-note {
     @apply -mt-2 mb-3 px-3 text-[11px] leading-relaxed text-muted-foreground;
   }
 
-  .sidebar-folder-toolbar {
-    @apply mb-2;
+  .sidebar-section-header {
+    @apply flex min-h-8 items-center justify-between px-2.5 pb-1 pt-4 text-[11px] font-medium text-muted-foreground;
   }
 
-  .sidebar-folder-create-button {
-    @apply flex h-9 min-w-0 items-center gap-2 rounded-[var(--radius-control)] border border-transparent bg-transparent px-2.5 text-left text-[13px] font-medium text-foreground transition-colors;
+  .sidebar-section-action {
+    @apply inline-flex h-6 w-6 items-center justify-center rounded-md text-muted-foreground transition-colors;
   }
 
-  .sidebar-folder-create-button:hover {
+  .sidebar-section-action:hover,
+  .sidebar-section-action[aria-expanded="true"] {
     background: var(--barorok-navigation-hover);
-    color: var(--brand-primary);
-  }
-
-  .sidebar-folder-create-button:focus-visible {
-    @apply outline-none ring-2 ring-primary/30;
+    color: var(--color-foreground);
   }
 
   .sidebar-folder-list {
@@ -840,7 +847,11 @@
   }
 
   .sidebar-folder-button {
-    @apply flex min-w-0 cursor-grab items-center gap-2 rounded-[var(--radius-control)] px-3 py-2 text-left text-xs font-medium text-muted-foreground transition-colors active:cursor-grabbing;
+    @apply flex min-w-0 cursor-grab items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal text-foreground transition-colors active:cursor-grabbing;
+  }
+
+  .sidebar-folder-button svg {
+    @apply shrink-0 text-subtle;
   }
 
   .sidebar-folder-button span {
@@ -858,7 +869,7 @@
 
   .sidebar-folder-button-active {
     background: var(--barorok-navigation-active);
-    color: var(--brand-primary);
+    @apply font-medium;
   }
 
   .sidebar-record-row {
@@ -905,7 +916,16 @@
   }
 
   .sidebar-record-meta-slot {
-    @apply relative h-6 w-20 shrink-0;
+    @apply relative h-6 w-11 shrink-0;
+  }
+
+  /* Status labels (e.g. 참석자 구분 실패) take their own width instead of overlapping the title. */
+  .sidebar-record-meta-slot-status {
+    @apply w-auto min-w-11 max-w-[6.5rem];
+  }
+
+  .sidebar-record-meta-slot-status .sidebar-record-age {
+    @apply static block leading-6;
   }
 
   .sidebar-record-age {
@@ -944,16 +964,11 @@
   }
 
   .barorok-app-frame {
-    width: min(calc(100vw - clamp(32px, 5vw, 96px)), 85rem);
-    height: calc(100dvh - clamp(32px, 5vw, 64px));
-    margin: clamp(16px, 2.5vw, 32px) auto;
+    width: 100vw;
+    height: 100dvh;
+    margin: 0;
     isolation: isolate;
-    border: 1px solid var(--barorok-shell-border);
-    border-radius: 16px;
-    background-color: var(--barorok-mist);
-    box-shadow:
-      0 26px 76px rgba(3, 43, 62, 0.22),
-      0 2px 10px rgba(11, 31, 51, 0.08);
+    background-color: var(--color-neutral-0);
   }
 
   .barorok-workspace-minutes {
@@ -1011,7 +1026,7 @@
   }
 
   .sidebar-brand {
-    @apply mb-6 flex shrink-0 items-center gap-3 px-2 py-2;
+    @apply mb-3 flex shrink-0 items-center gap-2.5 px-2 py-1;
     width: 100%;
     border: 0;
     border-radius: var(--radius-btn);
@@ -1334,24 +1349,9 @@
     transform: translateY(0);
   }
 
-  @media (max-width: 1025px) {
-    .barorok-app-frame {
-      width: 100vw;
-      height: 100dvh;
-      margin: 0;
-      border: 0;
-      border-radius: 0;
-      box-shadow: none;
-    }
-  }
-
   .app-brand-mark {
-    @apply inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-[11px] text-white;
-    background:
-      linear-gradient(145deg, color-mix(in srgb, var(--barorok-ocean) 68%, white), var(--barorok-blue) 68%);
-    box-shadow:
-      0 10px 24px rgba(18, 103, 232, 0.22),
-      inset 0 1px 0 rgba(255, 255, 255, 0.3);
+    @apply inline-flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-[7px] text-white;
+    background: var(--brand-primary);
   }
 
   .app-brand-copy {
@@ -1359,40 +1359,28 @@
   }
 
   .app-brand-copy strong {
-    @apply truncate text-lg font-bold text-foreground;
-    letter-spacing: -0.03em;
-  }
-
-  .app-brand-copy small {
-    @apply truncate text-[11px] text-muted-foreground;
+    @apply truncate text-[15px] font-bold text-foreground;
+    letter-spacing: -0.01em;
   }
 
   .barorok-navigation {
-    --brand-primary: var(--barorok-blue);
-    --brand-primary-hover: var(--barorok-blue-deep);
-    --brand-secondary: var(--barorok-ocean);
-    --brand-secondary-hover: var(--barorok-ocean-deep);
-    --brand-primary-soft: #eef5ff;
-    background:
-      linear-gradient(180deg, color-mix(in srgb, white 22%, var(--barorok-mist)), var(--barorok-mist));
-    border-color: var(--barorok-shell-border);
+    background: var(--barorok-sidebar);
+    border-color: var(--color-neutral-200);
   }
 
   .barorok-workspace {
-    background:
-      radial-gradient(circle at 92% 4%, rgba(18, 103, 232, 0.035), transparent 20rem),
-      var(--barorok-mist);
+    background: var(--color-neutral-0);
   }
 
   .sidebar-analysis-card {
     @apply min-h-10 w-full rounded-[var(--radius-control)] border px-3 py-2 text-left transition-colors;
-    border-color: color-mix(in srgb, var(--barorok-blue) 14%, var(--border-default));
-    background: var(--barorok-navigation-active);
-    box-shadow: inset 3px 0 0 color-mix(in srgb, var(--barorok-blue) 70%, transparent);
+    border-color: var(--border-brand);
+    background: var(--brand-primary-soft);
+    box-shadow: inset 3px 0 0 var(--brand-primary);
   }
 
   .sidebar-analysis-card:hover {
-    background: color-mix(in srgb, var(--barorok-blue) 13%, var(--barorok-mist));
+    background: color-mix(in srgb, var(--brand-primary) 14%, white);
   }
 
   .sidebar-analysis-title {

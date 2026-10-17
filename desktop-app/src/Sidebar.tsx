@@ -666,13 +666,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     };
 
     return (
-        <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex h-full max-h-none w-[17rem] shrink-0 flex-col border-r border-border p-4">
+        <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex h-full max-h-none w-60 shrink-0 flex-col border-r px-3 py-3.5">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <button type="button" className="sidebar-brand" aria-label="바로록 시작 화면" aria-current={activeTab === 'start' ? 'page' : undefined} onClick={onOpenStart}>
-                    <span className="app-brand-mark" aria-hidden="true"><AudioLines size={22} /></span>
+                    <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
                     <span className="app-brand-copy">
                         <strong>바로록</strong>
-                        <small>개인용 로컬 회의록</small>
                     </span>
                 </button>
                 <button
@@ -687,7 +686,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         onCreateMeeting?.();
                     }}
                 >
-                    {analysisStatus?.active ? <Clock3 size={17} /> : <Plus size={17} />}
+                    {analysisStatus?.active ? <Clock3 size={15} /> : <Plus size={15} />}
                     {analysisStatus?.active ? '진행 중인 분석 보기' : '새 기록'}
                 </button>
                 {newMeetingBlocked && (
@@ -710,19 +709,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     </button>
                 )}
                 <div className="sidebar-content-scroll custom-scrollbar">
-                <div className="sidebar-folder-toolbar">
+                <div className="sidebar-folder-toolbar sidebar-section-header">
+                    <span>폴더</span>
                     <button
                         type="button"
-                        className="sidebar-folder-create-button"
+                        className="sidebar-section-action"
                         aria-label="폴더 만들기"
+                        title="폴더 만들기"
                         aria-expanded={showFolderForm}
                         onClick={() => {
                             setOpenFolderMenuId(null);
                             setShowFolderForm(current => !current);
                         }}
                     >
-                        <FolderPlus size={16} />
-                        <span>폴더 만들기</span>
+                        <FolderPlus size={15} aria-hidden="true" />
                     </button>
                 </div>
                 {folders.length > 0 && (
@@ -1008,6 +1008,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         />
                     </button>
                 )}
+                <div className="sidebar-section-header">
+                    <span>회의록</span>
+                </div>
                 <div ref={recordsListRef} className="flex flex-col" data-sidebar-records>
                     {visibleRecords.length ? (
                         visibleRecords.map(record => {
@@ -1025,27 +1028,27 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                     key={record.id}
                                     className={`group sidebar-record-row ${isSelected ? 'sidebar-record-row-active' : ''}`}
                                 >
-                                <div className="flex items-start gap-1 px-2 py-1.5">
+                                <div className="flex items-center gap-1 px-2 py-1.5">
                                     <button
                                         type="button"
-                                        className="flex min-w-0 flex-1 items-start gap-2 text-left"
+                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
                                         onClick={() => handleSelectRecord(record.id)}
                                         title={record.title}
                                         aria-current={isSelected ? 'page' : undefined}
                                     >
                                         <Pin
                                             size={12}
-                                            className={`mt-0.5 shrink-0 ${record.pinned ? 'text-primary' : 'text-transparent'}`}
+                                            className={`shrink-0 ${record.pinned ? 'text-primary' : 'hidden'}`}
                                         />
-                                        <div className={`min-w-0 flex-1 truncate text-[13px] font-semibold ${isSelected ? 'text-primary' : 'text-foreground'}`}>
+                                        <div className={`min-w-0 flex-1 truncate text-sm text-foreground ${isSelected ? 'font-medium' : 'font-normal'}`}>
                                             {record.title}
                                         </div>
                                     </button>
-                                    <div className="sidebar-record-meta-slot">
+                                    <div className={`sidebar-record-meta-slot ${analysisStateLabel ? 'sidebar-record-meta-slot-status' : ''}`}>
                                         <span
-                                            className="sidebar-record-age truncate text-[11px] text-muted-foreground"
+                                            className="sidebar-record-age truncate text-xs text-muted-foreground"
                                             data-sidebar-record-age
-                                            title={record.date}
+                                            title={analysisStateLabel ? `${analysisStateLabel} · ${record.date}` : record.date}
                                         >
                                             {analysisStateLabel || formatRecordElapsedTime(record)}
                                         </span>
@@ -1153,7 +1156,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 </div>
                 </div>
                 {(onOpenSettings || onOpenAsrBenchmark) && (
-                    <div className="mt-3 grid gap-1 border-t border-border pt-3">
+                    <div className="mt-2 grid gap-0.5">
                         {onOpenSettings && (
                             <button
                                 type="button"

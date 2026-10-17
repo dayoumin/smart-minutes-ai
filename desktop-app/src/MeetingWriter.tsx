@@ -64,6 +64,11 @@ const LOCAL_ENGINE_CONNECTION_UI_ENABLED = import.meta.env.VITE_LOCAL_ENGINE_CON
         && typeof window !== 'undefined'
         && new URLSearchParams(window.location.search).get('localEngineConnection') === '1');
 const getNowMs = (): number => Date.now();
+// datetime-local expects local wall-clock time; toISOString() would be UTC (9 hours early in KST).
+const toLocalDateTimeInputValue = (value: Date = new Date()): string => {
+    const pad = (part: number) => String(part).padStart(2, '0');
+    return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}T${pad(value.getHours())}:${pad(value.getMinutes())}`;
+};
 
 const getAdjustedEtaSeconds = (
     etaSeconds: number | null,
@@ -477,7 +482,7 @@ interface MeetingWriterProps {
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 기록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, idleCompanion }) => {
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport } = useLocalEngineConnection();
     const [title, setTitle] = useState('');
-    const [date, setDate] = useState(new Date().toISOString().slice(0, 16));
+    const [date, setDate] = useState(() => toLocalDateTimeInputValue());
     const [initialDateValue, setInitialDateValue] = useState(date);
     const [meetingPurpose, setMeetingPurpose] = useState('');
     const [selectedReportTemplateId, setSelectedReportTemplateId] = useState(DEFAULT_REPORT_TEMPLATE_ID);
@@ -669,9 +674,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 stalled: analysisStalled,
                 transcriptReady,
                 etaSeconds: adjustedEtaSeconds,
+                completionVisible: Boolean(completionNotice),
             },
         }));
-    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisStartedAt, analysisStalled, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
+    }, [analysisEtaReceivedAt, analysisEtaSeconds, analysisNow, analysisStartedAt, analysisStalled, completionNotice, isAnalyzing, progress, rawStatusMessage, statusMessage, transcriptReady]);
 
     useEffect(() => {
         if (!isAnalyzing) return;
@@ -876,6 +882,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || analysisStartBlocked;
     const startButtonDescription = [
         analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
+        hasBlockingReadinessIssue && !isAnalyzing ? 'writer-readiness-hint' : '',
         localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-local-engine-requirement' : '',
     ].filter(Boolean).join(' ') || undefined;
 
@@ -1016,7 +1023,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             suppressResumeCandidateKey(getResumeDraftKey(selectedResumeDraft));
         }
         clearResumeSelectionOnly();
-        setStatusMessage('새 분석을 처음부터 시작합니다.');
+        setStatusMessage('');
+        showOperationToast('새 분석을 처음부터 시작합니다.');
     };
 
     const handleResumeDraftPrepare = React.useCallback((draft: AnalysisResumeDraft) => {
@@ -1120,7 +1128,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             clearResumeDraftSelection();
         }
         if (deleted) {
-            setStatusMessage(deleteNotice);
+            setStatusMessage('');
+            showOperationToast(deleteNotice);
         }
     };
 
@@ -1333,6 +1342,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             return;
         }
         if (analysisInFlightRef.current || isAnalyzing) {
+            return;
+        }
+
+        if (resumeAwaitingFile && !selectedResumeDraftUnavailable) {
+            fileInputRef.current?.click();
             return;
         }
 
@@ -1875,7 +1889,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setTitle('');
             setMeetingPurpose('');
             setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
-            const nextInitialDate = new Date().toISOString().slice(0, 16);
+            const nextInitialDate = toLocalDateTimeInputValue();
             setInitialDateValue(nextInitialDate);
             setDate(nextInitialDate);
             clearResumeDraftSelection();
@@ -1918,9 +1932,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 setProgress(0);
                 setRawStatusMessage('');
                 updateAnalysisEtaSeconds(null);
-                setStatusMessage(requestedStopAction === 'cancel'
-                    ? '분석을 취소했습니다.'
-                    : '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.');
+                setStatusMessage('');
                 showOperationToast(requestedStopAction === 'cancel'
                     ? '분석을 취소했습니다.'
                     : '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.', 'warning');
@@ -2004,7 +2016,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setAnalysisStopRequestedAction(null);
             setIsRequestingAnalysisStop(false);
             analysisStopActionRef.current = null;
-            setStatusMessage(action === 'cancel' ? '분석을 취소했습니다.' : '분석을 중지했습니다.');
+            setStatusMessage('');
             showOperationToast(action === 'cancel' ? '분석을 취소했습니다.' : '분석을 중지했습니다.', 'warning');
             return;
         }
@@ -2205,11 +2217,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         ? getSelectedFileProcessingGuidance(fileDurationSeconds, diarizationDuringAnalysis)
         : null;
     const filePrivacyMessage = preserveExtractedAudio === true && autoSaveAudioCopy === true
-        ? '분석용 음성을 회의록과 함께 보관하고 다운로드 폴더에도 사본을 저장합니다.'
+        ? '회의록과 분석용 음성을 이 PC에 보관하고, 다운로드 폴더에도 음성 사본을 저장합니다.'
         : preserveExtractedAudio === false
-        ? '분석용 임시 음성은 완료 후 삭제됩니다.'
+        ? '회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.'
         : preserveExtractedAudio === true
-            ? '분석용 음성을 회의록과 함께 보관합니다.'
+            ? '회의록과 분석용 음성을 이 PC에만 보관합니다.'
             : null;
 
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
@@ -2502,6 +2514,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         {localEngineConnectionRequired && (
                             <LocalEngineConnectionSurface />
                         )}
+                        {hasBlockingReadinessIssue && !isAnalyzing && !localEngineConnectionRequired && (
+                            <p id="writer-readiness-hint" className="writer-action-hint">
+                                {readinessState === 'missing-models' ? '필요한 모델을 받으면 분석을 시작할 수 있습니다. 아래 안내를 확인하세요.' : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
+                            </p>
+                        )}
                         <div className="writer-primary-actions">
                             <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
                                 {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
@@ -2530,7 +2547,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 <AlertCircle size={18} aria-hidden="true" />
                             </div>
                             <div className="min-w-0 flex-1">
-                                <div className="writer-analysis-result-title">분석을 마치지 못했습니다</div>
                                 <div className="writer-analysis-result-message break-words">{errorMessage}</div>
                                 <div className="writer-analysis-result-actions">
                                     <Button variant="primary" onClick={handleStartAnalysis} disabled={analysisStartBlocked} aria-describedby={analysisStartBlocked ? 'writer-analysis-start-blocked' : undefined}>
@@ -2617,7 +2633,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-foreground">분석을 어떻게 처리할까요?</div>
                                 <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                    중지하면 같은 파일로 이어서 진행할 수 있습니다. 취소하면 이번 분석은 끝내고, 이미 만든 정리 결과는 남깁니다.
+                                    중지하면 나중에 같은 파일로 이어서 분석할 수 있습니다. 취소하면 이번 분석을 끝내고, 지금까지 만든 대화록과 정리 결과는 남깁니다.
                                 </div>
                             </div>
                             <div className="analysis-stop-actions">
@@ -2659,7 +2675,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 {completionNotice && (
                     <StatusBanner
                         tone="success"
-                        heading="분석이 완료되었습니다"
+                        heading={completionNotice.title}
                         className="writer-completion-panel"
                         action={(
                             <Button onClick={handleOpenCompletedMeeting}>
@@ -2668,7 +2684,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         )}
                     >
                         <div className="writer-completion-record">
-                            <span className="break-words font-semibold text-foreground">{completionNotice.title}</span>
                             <span className="break-all text-sm text-muted-foreground">{completionNotice.sourceFilename}</span>
                         </div>
                         <div>

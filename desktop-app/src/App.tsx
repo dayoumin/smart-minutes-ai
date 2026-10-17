@@ -24,6 +24,7 @@ interface AnalysisStatus {
     stalled?: boolean;
     transcriptReady?: boolean;
     etaSeconds?: number | null;
+    completionVisible?: boolean;
 }
 
 interface BenchmarkScore {
@@ -267,6 +268,7 @@ export const App: React.FC = () => {
                 stalled: Boolean(detail.stalled),
                 transcriptReady: Boolean(detail.transcriptReady),
                 etaSeconds: typeof detail.etaSeconds === 'number' ? detail.etaSeconds : null,
+                completionVisible: Boolean(detail.completionVisible),
             });
         };
 
@@ -354,7 +356,14 @@ export const App: React.FC = () => {
                 selectedMeetingId={selectedMeetingId}
                 onTabChange={handleTabChange}
                 onOpenSettings={() => openSettings('general')}
-                onOpenStart={() => handleTabChange('minutes')}
+                onOpenStart={() => {
+                    // A finished analysis notice is stale once the user has moved on; the logo starts a fresh record.
+                    if (analysisStatus.completionVisible && !analysisStatus.active && !analysisStartBlocked) {
+                        handleCreateMeeting();
+                        return;
+                    }
+                    handleTabChange('minutes');
+                }}
                 newMeetingBlocked={analysisStartBlocked}
                 newMeetingBlockedReason={newMeetingBlockedReason}
                 resumeSelectionBlocked={analysisStartBlocked}

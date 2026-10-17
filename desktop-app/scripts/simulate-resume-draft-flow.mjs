@@ -269,9 +269,9 @@ const runWriterLayoutScenario = async (browser) => {
 };
 
 const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
-  const stalePrivacyMessage = '분석용 임시 음성은 완료 후 삭제됩니다.';
-  const preloadPrivacyMessage = '분석용 음성을 회의록과 함께 보관합니다.';
-  const startPrivacyMessage = '분석용 음성을 회의록과 함께 보관하고 다운로드 폴더에도 사본을 저장합니다.';
+  const stalePrivacyMessage = '회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.';
+  const preloadPrivacyMessage = '회의록과 분석용 음성을 이 PC에만 보관합니다.';
+  const startPrivacyMessage = '회의록과 분석용 음성을 이 PC에 보관하고, 다운로드 폴더에도 음성 사본을 저장합니다.';
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   let settingsReadCount = 0;
@@ -1828,7 +1828,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.getByLabel('회의 목적 *').fill('재개 후보 숨김 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
     const completionPanel = page.locator('.writer-panel .writer-completion-panel');
     await completionPanel.waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'the ready command bar must not compete with the completed result');
@@ -2003,7 +2003,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByRole('button', { name: '새 분석', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.getByText('분석이 완료되었습니다').waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
     await page.getByText('대화록을 확인하고 필요한 정리를 실행하세요.', { exact: false }).waitFor({ timeout: 10000 });
     const completionPanel = page.locator('.writer-panel .writer-completion-panel');
     await completionPanel.waitFor({ timeout: 10000 });

@@ -368,7 +368,7 @@ const runScenario = async (
     await assertProjectPage(page);
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
     assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일 *', '회의 정보']);
-    await page.getByText('분석용 임시 음성은 완료 후 삭제됩니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
     const titleInput = page.getByLabel('회의 제목 *');
     await page.getByLabel('회의 목적 *').fill('분석 중 중지와 취소 동작 확인');
     const fileChooserPromise = page.waitForEvent('filechooser');

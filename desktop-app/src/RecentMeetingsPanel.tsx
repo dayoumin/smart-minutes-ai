@@ -46,7 +46,7 @@ const formatRowDate = (time: number, now: number): string => {
     return new Intl.DateTimeFormat('ko-KR', { month: 'long', day: 'numeric' }).format(date);
 };
 
-/** New-record companion: resumable analysis first, otherwise the most recent meetings (replaces the old start screen). */
+/** New-record companion: the resumable-analysis card (if any) above the most recent meetings (replaces the old start screen). */
 export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpenMeeting, onResumeDraft, newMeetingBlocked = false }) => {
     const recoverySnapshot = useAnalysisResumeSnapshot();
     const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
@@ -100,44 +100,45 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
     const initialRecoveryCheckPending = recoverySnapshot.lastSuccessfulSyncAt === null
         && (recoverySnapshot.syncStatus === 'idle' || recoverySyncing);
 
-    if (model.scene === 'recovery' && model.recoveryDraft) {
-        const draft = model.recoveryDraft;
-        return (
-            <section className="writer-recovery" aria-labelledby="writer-recovery-label writer-recovery-title">
-                <span className="icon-badge" aria-hidden="true"><RotateCcw size={18} /></span>
-                <div className="writer-recovery-copy">
-                    <span id="writer-recovery-label" className="writer-recovery-label">{draft.status === 'active' ? '분석 상태 확인 중' : '이어서 할 기록'}</span>
-                    <h3 id="writer-recovery-title">{draft.title || draft.sourceFilename}</h3>
-                    <p>
-                        {draft.status === 'active'
-                            ? '이전 분석이 아직 실행 중입니다. 완료되거나 다시 시작할 수 있는 상태가 되면 알려드릴게요.'
-                            : draft.errorMessage || '같은 음성 파일을 선택하면 저장된 진행분부터 이어서 분석합니다.'}
-                    </p>
-                    <span className="writer-recovery-meta"><FileAudio size={14} aria-hidden="true" />{draft.sourceFilename}</span>
-                </div>
-                <div className="writer-recovery-actions">
-                    {model.recoveryAction === 'resume' && (
-                        <Button
-                            onClick={() => onResumeDraft(draft.jobId)}
-                            disabled={newMeetingBlocked}
-                            aria-describedby={newMeetingBlocked ? 'writer-analysis-start-blocked' : undefined}
-                        >
-                            이어서 기록
-                        </Button>
-                    )}
-                    {(model.recoveryAction === 'refresh' || model.recoveryAction === 'wait') && (
-                        <Button variant="outline" onClick={requestAnalysisRecoverySync} disabled={recoverySyncing}>
-                            {recoverySyncing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
-                            {recoverySyncing ? '확인 중' : model.recoveryAction === 'refresh' ? '다시 확인' : '상태 확인'}
-                        </Button>
-                    )}
-                </div>
-            </section>
-        );
-    }
+    const recoveryDraft = model.scene === 'recovery' ? model.recoveryDraft : null;
+    const recoveryCard = recoveryDraft && (
+        <section className="writer-recovery" aria-labelledby="writer-recovery-label writer-recovery-title">
+            <span className="icon-badge" aria-hidden="true"><RotateCcw size={18} /></span>
+            <div className="writer-recovery-copy">
+                <span id="writer-recovery-label" className="writer-recovery-label">{recoveryDraft.status === 'active' ? '분석 상태 확인 중' : '이어서 할 기록'}</span>
+                <h3 id="writer-recovery-title">{recoveryDraft.title || recoveryDraft.sourceFilename}</h3>
+                <p>
+                    {recoveryDraft.status === 'active'
+                        ? '이전 분석이 아직 실행 중입니다. 완료되거나 다시 시작할 수 있는 상태가 되면 알려드릴게요.'
+                        : recoveryDraft.errorMessage || '같은 음성 파일을 선택하면 저장된 진행분부터 이어서 분석합니다.'}
+                </p>
+                <span className="writer-recovery-meta"><FileAudio size={14} aria-hidden="true" />{recoveryDraft.sourceFilename}</span>
+            </div>
+            <div className="writer-recovery-actions">
+                {model.recoveryAction === 'resume' && (
+                    <Button
+                        variant="outline"
+                        onClick={() => onResumeDraft(recoveryDraft.jobId)}
+                        disabled={newMeetingBlocked}
+                        aria-describedby={newMeetingBlocked ? 'writer-analysis-start-blocked' : undefined}
+                    >
+                        이어서 기록
+                    </Button>
+                )}
+                {(model.recoveryAction === 'refresh' || model.recoveryAction === 'wait') && (
+                    <Button variant="outline" onClick={requestAnalysisRecoverySync} disabled={recoverySyncing}>
+                        {recoverySyncing ? <Loader2 size={15} className="animate-spin" /> : <RefreshCw size={15} />}
+                        {recoverySyncing ? '확인 중' : model.recoveryAction === 'refresh' ? '다시 확인' : '상태 확인'}
+                    </Button>
+                )}
+            </div>
+        </section>
+    );
 
+    // The recovery card never hides the recent list, so an unwanted draft cannot bury recent meetings.
+    let recentSection: React.ReactNode = null;
     if (meetingsError) {
-        return (
+        recentSection = (
             <section className="recent-meetings" aria-label="최근 회의록">
                 <div className="recent-meetings-error" role="status">
                     <span>{meetingsError}</span>
@@ -148,30 +149,36 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
                 </div>
             </section>
         );
+    } else if (!initialRecoveryCheckPending && recentGroups.length > 0) {
+        recentSection = (
+            <section className="recent-meetings" aria-labelledby="recent-meetings-title">
+                <h3 id="recent-meetings-title" className="recent-meetings-title">최근 회의록</h3>
+                {recentGroups.map(group => (
+                    <div key={group.label} className="recent-meetings-group">
+                        <div className="recent-meetings-group-label">{group.label}</div>
+                        <ul className="recent-meetings-list">
+                            {group.rows.map(({ meeting, dateLabel }) => (
+                                <li key={meeting.id}>
+                                    <button type="button" className="recent-meeting-row" onClick={() => onOpenMeeting(meeting.id)}>
+                                        <AudioLines size={16} aria-hidden="true" className="recent-meeting-icon" />
+                                        <span className="recent-meeting-title">{meeting.title}</span>
+                                        <span className="recent-meeting-purpose">{meeting.meetingPurpose?.trim() || ''}</span>
+                                        <span className="recent-meeting-date">{dateLabel}</span>
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
+                    </div>
+                ))}
+            </section>
+        );
     }
 
-    if (initialRecoveryCheckPending || !recentGroups.length) return null;
-
+    if (!recoveryCard && !recentSection) return null;
     return (
-        <section className="recent-meetings" aria-labelledby="recent-meetings-title">
-            <h3 id="recent-meetings-title" className="recent-meetings-title">최근 회의록</h3>
-            {recentGroups.map(group => (
-                <div key={group.label} className="recent-meetings-group">
-                    <div className="recent-meetings-group-label">{group.label}</div>
-                    <ul className="recent-meetings-list">
-                        {group.rows.map(({ meeting, dateLabel }) => (
-                            <li key={meeting.id}>
-                                <button type="button" className="recent-meeting-row" onClick={() => onOpenMeeting(meeting.id)}>
-                                    <AudioLines size={16} aria-hidden="true" className="recent-meeting-icon" />
-                                    <span className="recent-meeting-title">{meeting.title}</span>
-                                    <span className="recent-meeting-purpose">{meeting.meetingPurpose?.trim() || ''}</span>
-                                    <span className="recent-meeting-date">{dateLabel}</span>
-                                </button>
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            ))}
-        </section>
+        <>
+            {recoveryCard}
+            {recentSection}
+        </>
     );
 };

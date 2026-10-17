@@ -689,11 +689,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     {analysisStatus?.active ? <Clock3 size={15} /> : <Plus size={15} />}
                     {analysisStatus?.active ? '진행 중인 분석 보기' : '새 기록'}
                 </button>
-                {newMeetingBlocked && (
-                    <p id="sidebar-create-blocked" className="sidebar-action-note" role="status">
-                        {newMeetingBlockedReason}
-                    </p>
-                )}
                 {onOpenArchive && (
                     <button
                         type="button"
@@ -1060,6 +1055,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 {/* Status dock: analysis progress and unfinished drafts sit above settings so the
                     folder and record lists never shift when they appear. */}
                 <div className="sidebar-status-dock">
+                    {newMeetingBlocked && (
+                        <p id="sidebar-create-blocked" className="sidebar-action-note" role="status">
+                            {newMeetingBlockedReason}
+                        </p>
+                    )}
                     {resumeDrafts.length > 0 && !analysisStatus?.active && (
                         <div>
                             <button

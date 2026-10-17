@@ -182,7 +182,7 @@ const run = async () => {
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
     assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일 *', '회의 정보']);
-    await page.getByText('분석용 음성을 회의록과 함께 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('회의록과 분석용 음성을 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
     const desktopLayout = await page.evaluate(() => {
       const dropZone = document.querySelector('.file-drop-zone')?.getBoundingClientRect();
       const support = document.querySelector('.writer-file-support')?.getBoundingClientRect();
@@ -206,7 +206,7 @@ const run = async () => {
       auto_save_audio_copy: true,
     };
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    const autoSavePrivacyMessage = '분석용 음성을 회의록과 함께 보관하고 다운로드 폴더에도 사본을 저장합니다.';
+    const autoSavePrivacyMessage = '회의록과 분석용 음성을 이 PC에 보관하고, 다운로드 폴더에도 음성 사본을 저장합니다.';
     await page.getByText(autoSavePrivacyMessage, { exact: true }).waitFor({ timeout: 10000 });
 
     await page.unroute('**/api/settings');
@@ -256,7 +256,7 @@ const run = async () => {
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
     await staleSettingsRequested;
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    await page.getByText('분석용 임시 음성은 완료 후 삭제됩니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
     const staleSettingsResponseFinished = page.waitForResponse(response => (
       response.url().endsWith('/api/settings') && response.status() === 200
     )).then(response => response.finished());

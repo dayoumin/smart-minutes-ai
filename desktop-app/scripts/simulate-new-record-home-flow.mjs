@@ -262,7 +262,14 @@ const runRecoveryScene = async browser => {
     const recovery = page.locator('.writer-recovery');
     await recovery.getByText('이어서 할 기록', { exact: true }).waitFor({ timeout: 10000 });
     await recovery.getByRole('heading', { name: '이어갈 회의' }).waitFor();
-    assert.equal(await page.locator('.recent-meetings').count(), 0, 'recovery takes the companion slot before the recent list');
+    const recentAfterRecovery = page.getByRole('region', { name: '최근 회의록' });
+    await recentAfterRecovery.waitFor({ timeout: 10000 });
+    const order = await page.evaluate(() => {
+      const card = document.querySelector('.writer-recovery')?.getBoundingClientRect();
+      const list = document.querySelector('.recent-meetings')?.getBoundingClientRect();
+      return { cardBottom: card?.bottom ?? 0, listTop: list?.top ?? 0 };
+    });
+    assert.ok(order.cardBottom <= order.listTop, 'the recovery card sits above the recent list, which stays reachable');
     await recovery.getByRole('button', { name: '이어서 기록', exact: true }).click();
     await page.getByRole('heading', { name: /이어하기|분석 상태/, level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-recovery, .recent-meetings').count(), 0, 'companion hides while choosing the resume file');

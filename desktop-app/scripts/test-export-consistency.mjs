@@ -9,11 +9,21 @@ const source = readFileSync(new URL('../src/MeetingDownloadControl.tsx', import.
 const tree = ts.createSourceFile('MeetingDownloadControl.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
 const builders = tree.statements.filter(node => ts.isVariableStatement(node)
   && !node.declarationList.declarations.some(item => ts.isIdentifier(item.name) && item.name.text === 'MeetingDownloadControl'));
+// Imported helpers are loaded from their real source so the builders keep using them.
+const generationSource = readFileSync(new URL('../src/meetingGeneration.ts', import.meta.url), 'utf8');
+const generationTree = ts.createSourceFile('meetingGeneration.ts', generationSource, ts.ScriptTarget.Latest, true);
+const displayTopicsHelper = generationTree.statements.find(node => ts.isVariableStatement(node)
+  && node.declarationList.declarations.some(item => ts.isIdentifier(item.name) && item.name.text === 'getDisplayTopics'));
+assert.ok(displayTopicsHelper, 'Load the shared display-topic helper used by the export builders');
+const generationExports = {};
+runInNewContext(ts.transpileModule(displayTopicsHelper.getText(generationTree) + '\nexport { getDisplayTopics };', {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: generationExports });
 const exports = {};
 runInNewContext(ts.transpileModule(builders.map(node => node.getText(tree)).join('\n')
   + '\nexport { buildFallbackText, buildExportPayload };', {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports });
+}).outputText, { exports, getDisplayTopics: generationExports.getDisplayTopics });
 const { buildFallbackText, buildExportPayload } = exports;
 const repositorySource = readFileSync(new URL('../src/meetingRepository.ts', import.meta.url), 'utf8');
 const repositoryTree = ts.createSourceFile('meetingRepository.ts', repositorySource, ts.ScriptTarget.Latest, true);
@@ -108,4 +118,30 @@ await test('frontend-only records can export every scope without backend output 
     assert.equal(Object.keys(payload.speakerLabels).length, 0);
     assert.ok(buildFallbackText(meeting, scope).includes('현재 제목'));
   }
+});
+
+await test('organized fallback lists topic section titles once under 주요 주제', () => {
+  const meeting = record();
+  meeting.topics = ['장비 교정', '음향 장비 교정', ' 음향 장비 교정 '];
+  meeting.topicSections = [
+    { topic: '음향 장비 교정', summary: '교정 본문' },
+    { topic: '어획량 감소와 수온', summary: '수온 본문' },
+  ];
+  const text = buildFallbackText(meeting, 'organized');
+  assert.ok(text.includes('[주요 주제]\n- 음향 장비 교정\n- 어획량 감소와 수온\n'));
+  assert.equal(text.includes('- 장비 교정\n'), false);
+  meeting.topicSections = [];
+  const fallbackLines = buildFallbackText(meeting, 'organized').split('\n');
+  const topicStart = fallbackLines.indexOf('[주요 주제]');
+  assert.deepEqual(fallbackLines.slice(topicStart + 1, topicStart + 3), ['- 장비 교정', '- 음향 장비 교정']);
+  assert.equal(fallbackLines[topicStart + 3]?.startsWith('- ') ?? false, false, 'whitespace-only duplicates should not repeat');
+});
+
+await test('organized fallback skips malformed generated topic values instead of throwing', () => {
+  const meeting = record();
+  meeting.topics = [3, null, ' 예산 '];
+  meeting.topicSections = [{ topic: null, summary: '본문' }];
+  const lines = buildFallbackText(meeting, 'organized').split('\n');
+  const start = lines.indexOf('[주요 주제]');
+  assert.deepEqual(lines.slice(start + 1, start + 2), ['- 예산']);
 });

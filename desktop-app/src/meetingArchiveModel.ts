@@ -1,4 +1,5 @@
 import type { MeetingRecord } from './meetingRepository';
+import { getDisplayTopics } from './meetingGeneration';
 
 export type MeetingArchiveKind = 'decision' | 'action' | 'meeting';
 export type MeetingArchiveFilter = 'decisions' | 'actions' | 'meetings' | 'all';
@@ -54,10 +55,7 @@ export const buildMeetingArchiveItems = (meetings: MeetingRecord[]): MeetingArch
             meeting.date,
             meeting.participants,
         ].filter(Boolean).join(' '));
-        const topics = Array.from(new Set([
-            ...(meeting.topics ?? []),
-            ...(meeting.topicSections ?? []).map(section => section.topic),
-        ].filter(Boolean))).slice(0, 4);
+        const topics = getDisplayTopics(meeting.topics, meeting.topicSections).slice(0, 4);
         const base = {
             meetingId: meeting.id,
             meetingTitle: meeting.title || '제목 없는 회의',

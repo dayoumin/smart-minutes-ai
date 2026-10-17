@@ -4,6 +4,7 @@ import re
 import zipfile
 from typing import Any
 
+from pipeline.summary_display import get_display_topics
 from pipeline.transcript_display import get_transcript_segments
 
 
@@ -179,7 +180,7 @@ def _report_lines(result: dict) -> list[str]:
             summary.get("overview") or "내용 없음",
         ]
     )
-    lines.extend(_line_text_items("2. 주요 주제", summary.get("topics", []) or []))
+    lines.extend(_line_text_items("2. 주요 주제", get_display_topics(summary)))
     lines.extend(_topic_section_text_items(summary.get("topic_sections", []) or []))
     lines.extend(_participant_summary_text_items(summary.get("participant_summaries", []) or []))
     lines.extend(_line_text_items("5. 결정 사항", summary.get("decisions", []) or []))

@@ -19,6 +19,7 @@
     "test:resume-draft-flow": "node scripts/simulate-resume-draft-flow.mjs",
     "test:start-workspace-flow": "node scripts/simulate-start-workspace-flow.mjs",
     "test:meeting-archive-flow": "node scripts/simulate-meeting-archive-flow.mjs",
+    "test:meeting-detail-layout": "node scripts/simulate-meeting-detail-layout.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",
     "test:close-guard-flow": "node scripts/simulate-close-guard-flow.mjs",
     "test:writer-model-readiness": "node scripts/simulate-writer-model-readiness.mjs",

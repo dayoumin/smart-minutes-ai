@@ -51,7 +51,7 @@
 - [ ] 2026-10-14 디자인 정합성 후속 (보류 P3)
   - 2026-10-14 완료 커밋: `8f9f5cd`(셸·사이드바 통일) → `e8699f6`(상세 메타 한 줄) → `658a6e4`(사이드바 기록 찾기 숨김) → `bdeadad`(대화록 한 줄 행) → `3654924`(부분 커밋 JSX 복구) → `b4ed780`(주요 주제 칩) → `e5b31c8`(agent 검토 반영). 검증: `desktop-app/scripts/simulate-meeting-detail-layout.mjs`.
   - 2026-10-15 완료: 회의 목적 예시 문구를 줄여 1280×720 잘림 해소, 설정 모델 탭은 모델명을 유지하고 `가볍고 빠름`·`정리 품질 우선` 설명을 덧붙임(관리 화면이라 이름은 필요).
-  - 남은 후보: 내려받는 파일 `[주요 내용]`의 주제 중복(`MeetingDownloadControl.tsx`, 다른 작업이 수정 중이라 보류).
+  - 2026-10-17 완료: 화면·기록 찾기·로컬 TXT·백엔드 MD/DOCX/HWPX의 `주요 주제`를 같은 규칙(주제별 정리 제목 우선, 공백·대소문자 중복 제거)으로 통일했다. TXT 제목도 `[주요 주제]`로 맞췄다. 공통 함수: 프런트 `getDisplayTopics`, 백엔드 `pipeline/summary_display.py`.
   - 보류 P3: 주제별 정리가 이전 기준(outdated)일 때 칩이 옛 제목을 보여줌, 공백 차이만 있는 주제의 칩 중복, 메타·시간 `title`의 중복 낭독 가능성, 원본 파일 아이콘이 음성 저장 버튼과 같음, 긴 영문 화자명이 7.5rem 열을 넘침, 운영 빌드에서도 숨긴 `MeetingArchive`가 마운트됨, `package.json`에 `test:meeting-detail-layout` 스크립트 미등록.
 - [ ] 2026-07-29 바로록 데스크톱·웹 제품 전환
   - 상위 계획과 결정 기록: `docs/barorok-desktop-web-redesign-plan.html`.

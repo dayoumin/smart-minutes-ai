@@ -8,6 +8,7 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import RGBColor
 
+from pipeline.summary_display import get_display_topics
 from pipeline.transcript_display import get_transcript_segments
 
 
@@ -288,7 +289,7 @@ def export_docx(
     # 주요 주제
     doc.add_heading(f"{section_no}. 주요 주제", level=1)
     section_no += 1
-    for topic in summary.get("topics", []):
+    for topic in get_display_topics(summary):
         doc.add_paragraph(topic, style='List Bullet')
 
     topic_sections = summary.get("topic_sections", []) or []

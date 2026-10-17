@@ -15,6 +15,7 @@ import { formatAnalysisDuration } from './analysisTimeEstimate';
 import { AppToast, AppToastMessage, AppToastTone } from './AppToast';
 import {
     canGenerateSpeakerContext as canGenerateSpeakerContextFromState,
+    getDisplayTopics,
     getMeetingReportGenerationStatus,
     getSpeakerGenerationStatus,
     getSummaryGenerationStatus,
@@ -2839,12 +2840,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const summaryMatches = hasGeneratedSummary
         && (!contentQuery || Boolean(selectedMeeting?.summary.toLowerCase().includes(contentQuery)));
-    const allTopics = useMemo(() => {
-        // Topic section titles supersede summary keywords; the backend appends them to `topics`, so merging both repeats near-identical items.
-        const sectionTopics = (selectedMeeting?.topicSections?.map(section => section.topic) ?? []).filter(Boolean);
-        if (sectionTopics.length) return Array.from(new Set(sectionTopics));
-        return Array.from(new Set((selectedMeeting?.topics ?? []).filter(Boolean)));
-    }, [selectedMeeting]);
+    const allTopics = useMemo(
+        () => getDisplayTopics(selectedMeeting?.topics, selectedMeeting?.topicSections),
+        [selectedMeeting],
+    );
     const visibleTopics = useMemo(
         () => allTopics.filter(topic => !contentQuery || topic.toLowerCase().includes(contentQuery)),
         [allTopics, contentQuery],

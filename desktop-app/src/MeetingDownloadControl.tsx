@@ -3,6 +3,7 @@ import { Check, Download, Loader2 } from 'lucide-react';
 import { Button } from './Button';
 import { Input } from './Input';
 import { MeetingRecord, MeetingSegment } from './meetingRepository';
+import { getDisplayTopics } from './meetingGeneration';
 import {
     DownloadFormat,
     DOWNLOAD_FORMAT_CHANGE_EVENT,
@@ -136,8 +137,9 @@ const buildOrganizedText = (meeting: MeetingRecord): string => {
         '',
     ];
 
-    if (meeting.topics?.length) {
-        lines.push('[주요 내용]', ...meeting.topics.map(topic => `- ${topic}`), '');
+    const displayTopics = getDisplayTopics(meeting.topics, meeting.topicSections);
+    if (displayTopics.length) {
+        lines.push('[주요 주제]', ...displayTopics.map(topic => `- ${topic}`), '');
     }
     if (meeting.topicSections?.length) {
         lines.push('[주제별 정리]');

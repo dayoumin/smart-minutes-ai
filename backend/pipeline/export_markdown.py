@@ -1,6 +1,7 @@
 import os
 import re
 
+from pipeline.summary_display import get_display_topics
 from pipeline.transcript_display import get_transcript_segments
 
 
@@ -133,7 +134,7 @@ def export_markdown(result: dict, output_path: str, *, plain_text: bool = False)
 
     md_content += f"{h2}{section_no}. 주요 주제\n\n"
     section_no += 1
-    for topic in summary.get("topics", []):
+    for topic in get_display_topics(summary):
         md_content += f"- {topic}\n"
     md_content += "\n"
 

@@ -14,6 +14,28 @@ export interface TopicSectionShape {
     topic?: string;
 }
 
+/**
+ * Topics shown as "주요 주제" on screen and in exports. Topic section titles supersede summary
+ * keywords (the backend appends them to `topics`, so merging both repeats near-identical items).
+ * Mirrors backend `pipeline.summary_display.get_display_topics`.
+ */
+export const getDisplayTopics = (
+    topics: readonly unknown[] | undefined,
+    topicSections: readonly (TopicSectionShape | null | undefined)[] | undefined,
+): string[] => {
+    // Generated JSON is not schema-checked per item, so skip non-string values instead of throwing.
+    const clean = (value: unknown): string => (typeof value === 'string' ? value.trim() : '');
+    const sectionTopics = (topicSections ?? []).map(section => clean(section?.topic)).filter(Boolean);
+    const source = sectionTopics.length ? sectionTopics : (topics ?? []).map(clean).filter(Boolean);
+    const seen = new Set<string>();
+    return source.filter(topic => {
+        const key = topic.toLocaleLowerCase();
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+    });
+};
+
 const pickGenerationStatus = (
     baseStatus: MeetingGenerationStatusShape | undefined,
     patchStatus: MeetingGenerationStatusShape | undefined,

@@ -137,9 +137,8 @@
   --radius-card: 0.5rem;
   --radius-btn: 0.5rem;
   --radius-control: var(--radius-btn);
-  /* Content rails: meeting document column and form/list column */
-  --rail-document: 52rem;
-  --rail-form: 55rem;
+  /* Content rail shared by every work surface (detail, new record, analysis, archive) */
+  --rail-content: 55rem;
   --radius-dialog: 0.625rem;
   --radius-pill: 999px;
 }
@@ -1191,7 +1190,7 @@
   }
 
   .meeting-detail-shell {
-    @apply mx-auto w-full max-w-[var(--rail-document)];
+    @apply mx-auto w-full max-w-[var(--rail-content)];
     container-name: meeting-detail;
     container-type: inline-size;
   }
@@ -1303,15 +1302,17 @@
   }
 
   .detail-mode-switch {
-    @apply inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-full border border-border/70 bg-muted/45 p-1;
+    @apply inline-flex min-h-10 max-w-full flex-wrap items-center gap-1 rounded-[var(--radius-btn)] border border-border p-1;
+    background-color: var(--color-neutral-100);
   }
 
   .detail-mode-switch .tab-button {
-    @apply rounded-full border-0 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-background/80 hover:text-foreground;
+    @apply rounded-[var(--radius-btn)] border-0 px-3 py-1.5 text-xs font-semibold text-muted-foreground hover:bg-background hover:text-foreground;
   }
 
   .detail-mode-switch .tab-button-active {
-    @apply bg-background text-foreground shadow-sm ring-1 ring-border/70;
+    @apply bg-background text-foreground ring-1 ring-border;
+    box-shadow: var(--shadow-control);
   }
 
   .summary-block {
@@ -1319,7 +1320,7 @@
   }
 
   .writer-shell {
-    @apply mx-auto flex w-full max-w-[var(--rail-form)] flex-col gap-4 pb-10 pt-2 sm:pt-4;
+    @apply mx-auto flex w-full max-w-[var(--rail-content)] flex-col gap-4 pb-10 pt-2 sm:pt-4;
     container-name: writer;
     container-type: inline-size;
   }
@@ -1988,7 +1989,7 @@
   }
 
   .detail-inline-select {
-    @apply inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-full border border-border/80 bg-background px-3 py-2 text-xs text-muted-foreground sm:w-auto sm:min-w-72;
+    @apply inline-flex h-10 w-full min-w-0 items-center justify-between gap-2 rounded-[var(--radius-btn)] border border-border bg-background px-3 py-2 text-xs text-muted-foreground sm:w-auto sm:min-w-72;
   }
 
   .detail-context-actions {
@@ -1996,7 +1997,7 @@
   }
 
   .detail-context-button {
-    @apply h-10 shrink-0 rounded-full px-3 text-xs;
+    @apply h-10 shrink-0 rounded-[var(--radius-btn)] px-3 text-xs;
   }
 
   .detail-context-menu-wrap {
@@ -2004,7 +2005,7 @@
   }
 
   .detail-context-menu-button {
-    @apply h-10 w-10 rounded-full;
+    @apply h-10 w-10 rounded-[var(--radius-btn)];
   }
 
   .detail-context-menu {
@@ -2013,7 +2014,7 @@
   }
 
   .detail-context-menu button {
-    @apply flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-45;
+    @apply flex w-full items-center gap-2 rounded-[var(--radius-btn)] px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-[var(--surface-action-hover-bg)] disabled:cursor-not-allowed disabled:opacity-45;
   }
 
   .detail-context-menu button svg {
@@ -2369,7 +2370,7 @@
   }
 
   .meeting-archive {
-    @apply mx-auto w-full max-w-[var(--rail-form)] pb-10 pt-2 sm:pt-4;
+    @apply mx-auto w-full max-w-[var(--rail-content)] pb-10 pt-2 sm:pt-4;
   }
 
   .meeting-archive-header {

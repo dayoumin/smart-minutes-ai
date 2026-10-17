@@ -1804,7 +1804,7 @@ const run = async () => {
     await skippedOrganizeTab.click();
     await page.getByText('모델 필요').waitFor({ timeout: 10000 });
     await page.getByText('요약 모델이 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 모델 상태를 확인해 주세요.').waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '모델', exact: true }).click();
+    await page.getByRole('button', { name: '모델 준비', exact: true }).click();
     const settingsModelsTab = page.getByRole('tab', { name: '모델' });
     await settingsModelsTab.waitFor({ timeout: 10000 });
     assert.equal(await settingsModelsTab.getAttribute('aria-selected'), 'true');
@@ -1830,10 +1830,10 @@ const run = async () => {
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
     await page.getByText('이미 저장된 참석자별 정리입니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('button.detail-action-button[aria-label="참석자별 정리"]').isDisabled(), true);
-    await page.getByRole('button', { name: '모델', exact: true }).click();
+    await page.getByRole('button', { name: '모델 준비', exact: true }).click();
     summaryReady = true;
     await page.getByRole('button', { name: '설정 닫기' }).click();
-    await page.getByRole('button', { name: '모델', exact: true }).click();
+    await page.getByRole('button', { name: '모델 준비', exact: true }).click();
     await page.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();

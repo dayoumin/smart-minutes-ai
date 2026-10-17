@@ -900,6 +900,22 @@ const getMeetingReportTemplateName = (meeting: MeetingRecord | null | undefined)
     return report.templateId;
 };
 
+const MEETING_DATE_TIME_FORMAT = new Intl.DateTimeFormat('ko-KR', {
+    year: 'numeric', month: 'long', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit',
+});
+const MEETING_DATE_FORMAT = new Intl.DateTimeFormat('ko-KR', { year: 'numeric', month: 'long', day: 'numeric', weekday: 'short' });
+
+/** Shows a stored meeting date ("YYYY-MM-DD HH:mm", datetime-local or ISO) as e.g. 2026년 10월 17일 (토) 오후 4:58. */
+const formatMeetingDateTime = (value?: string): string => {
+    const raw = (value || '').trim();
+    const dateOnly = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (dateOnly) {
+        return MEETING_DATE_FORMAT.format(new Date(Number(dateOnly[1]), Number(dateOnly[2]) - 1, Number(dateOnly[3])));
+    }
+    const parsed = new Date(raw.includes('T') ? raw : raw.replace(' ', 'T'));
+    return raw && !Number.isNaN(parsed.getTime()) ? MEETING_DATE_TIME_FORMAT.format(parsed) : raw;
+};
+
 export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     selectedMeetingId,
     detailOpenRequest,
@@ -3436,7 +3452,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 : '주제별 정리를 먼저 하면 참석자별 정리를 실행할 수 있습니다.'
         : '';
     const reportActionBlockedMessage = summaryModelUnavailable
-        ? organizeModelGuidanceMessage
+        ? summaryModelMessage || '요약 모델이 준비되면 보고서를 만들 수 있습니다.'
         : !selectedMeeting?.jobId
             ? '이 회의록은 분석 결과와 연결되어 있지 않아 보고서를 생성할 수 없습니다.'
             : !hasGeneratedSummary
@@ -3867,7 +3883,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 <dl className="meeting-meta-list">
                                     <div className="meeting-meta-item">
                                         <dt className="meeting-meta-label"><CalendarDays size={15} aria-hidden="true" /><span>일시</span></dt>
-                                        <dd className="meeting-meta-value">{selectedMeeting.date}</dd>
+                                        <dd className="meeting-meta-value">{formatMeetingDateTime(selectedMeeting.date)}</dd>
                                     </div>
                                     {selectedMeeting.meetingPurpose && (
                                         <div className="meeting-meta-item meeting-meta-item-purpose">
@@ -4057,7 +4073,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                     className="mb-4"
                                     action={onOpenSettings ? (
                                         <Button variant="outline" onClick={onOpenSettings}>
-                                            모델
+                                            모델 준비
                                         </Button>
                                     ) : undefined}
                                 >

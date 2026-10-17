@@ -161,11 +161,19 @@ const installRoutes = async (page) => {
 
   await page.route(`**/api/outputs/${jobId}/generate-report`, route => {
     reportAttemptCount += 1;
-    if (reportAttemptCount === 1 || reportAttemptCount === 3) {
+    if (reportAttemptCount === 1) {
       return route.fulfill({
         status: 500,
         contentType: 'application/json',
         body: JSON.stringify({ detail: '보고서 생성 실패' }),
+      });
+    }
+    if (reportAttemptCount === 3) {
+      // A missing summary model: the error notice should offer the way to model setup.
+      return route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ detail: { code: 'model_missing', message: 'raw model path', retryable: false, user_action: 'open_settings', generation_kind: 'meeting_report' } }),
       });
     }
 
@@ -382,6 +390,11 @@ const run = async () => {
 
     await reportButton.click();
     await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(
+      await page.locator('.status-banner-error').getByRole('button', { name: '모델 준비', exact: true }).count(),
+      0,
+      'a generic failure should not point at model setup',
+    );
     await page.waitForFunction(async ({ meetingId }) => {
       const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
@@ -440,6 +453,8 @@ const run = async () => {
       ).count(),
       0,
     );
+    const modelSetupError = page.locator('.status-banner-error').filter({ hasText: '사용할 요약 모델을 찾지 못했습니다.' });
+    await modelSetupError.getByRole('button', { name: '모델 준비', exact: true }).waitFor({ timeout: 10000 });
     record = await readMeeting(page);
     assert.equal(record.generationStatus.meetingReport, 'failed');
     assert.equal(record.selectedReportTemplateId, 'custom-report-edge');

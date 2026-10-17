@@ -132,6 +132,8 @@ const installRoutes = async (page) => {
       diarizationInstalled: true,
     },
     delayNextSettingsPatchMs: 0,
+    // When set, GET /api/settings waits on this promise (an engine that does not answer yet).
+    settingsGetGate: null,
   };
   let settingsState = {
     processing: { long_audio_chunk_seconds: 95, enable_long_audio_chunking: false },
@@ -341,6 +343,11 @@ const installRoutes = async (page) => {
       if (delayMs > 0) {
         await sleep(delayMs);
       }
+    } else if (routeState.settingsGetGate) {
+      await routeState.settingsGetGate;
+      // The held request stands for the old engine: it fails once it is finally answered.
+      await route.abort('connectionrefused');
+      return;
     }
     await route.fulfill({
       status: 200,
@@ -358,6 +365,54 @@ const installRoutes = async (page) => {
   return routeState;
 };
 
+const installTauriMock = () => {
+  window.__restartCalls = 0;
+  window.__openedUrls = [];
+  window.open = (url) => {
+    window.__openedUrls.push(String(url));
+    return null;
+  };
+  window.__TAURI__ = {
+    core: {
+      invoke: async (command, args = {}) => {
+        if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
+        if (command === 'get_desktop_action_token') return 'desktop-test-token';
+        if (command === 'open_external_url') {
+          window.__openedUrls.push(String(args.url));
+          return undefined;
+        }
+        if (command === 'restart_backend') {
+          window.__restartCalls += 1;
+          return 'http://127.0.0.1:17863';
+        }
+        if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
+        throw new Error(`unexpected command ${command}`);
+      },
+    },
+  };
+};
+
+const runTroubleshootingEntryScene = async (browser) => {
+  // The writer's 문제 해결 shortcut (engine never answers) should land on 재시작, not only scroll to it.
+  const context = await browser.newContext({ viewport: { width: 1360, height: 860 } });
+  try {
+    const page = await context.newPage();
+    await page.addInitScript(installTauriMock);
+    await installRoutes(page);
+    await page.route('**/api/health', route => route.abort());
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    const troubleshootButton = page.getByRole('button', { name: '문제 해결', exact: true });
+    // The writer waits out its first-start window (45s) before calling the engine unreachable.
+    await troubleshootButton.waitFor({ state: 'visible', timeout: 70000 });
+    await troubleshootButton.click();
+    await page.getByRole('dialog', { name: '설정' }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '재시작', undefined, { timeout: 5000 });
+    console.log('ok - 문제 해결 opens Settings with focus on 재시작');
+  } finally {
+    await context.close();
+  }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -367,32 +422,7 @@ const run = async () => {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
     page = await browser.newPage({ viewport: { width: 1360, height: 860 } });
-    await page.addInitScript(() => {
-      window.__restartCalls = 0;
-      window.__openedUrls = [];
-      window.open = (url) => {
-        window.__openedUrls.push(String(url));
-        return null;
-      };
-      window.__TAURI__ = {
-        core: {
-          invoke: async (command, args = {}) => {
-            if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
-            if (command === 'get_desktop_action_token') return 'desktop-test-token';
-            if (command === 'open_external_url') {
-              window.__openedUrls.push(String(args.url));
-              return undefined;
-            }
-            if (command === 'restart_backend') {
-              window.__restartCalls += 1;
-              return 'http://127.0.0.1:17863';
-            }
-            if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
-            throw new Error(`unexpected command ${command}`);
-          },
-        },
-      };
-    });
+    await page.addInitScript(installTauriMock);
     const routeState = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle' });
     assert.equal(
@@ -525,6 +555,35 @@ const run = async () => {
       'latest audio auto-save value should win over the earlier delayed response',
     );
     assert.equal(await autoSaveAudioCheckbox.isChecked(), false, 'delayed save response should not re-check the audio auto-save box');
+
+    // An engine that does not answer keeps settings loading; 재시작 must stay usable instead of waiting it out.
+    await page.keyboard.press('Escape');
+    await settingsDialog.waitFor({ state: 'detached', timeout: 10000 });
+    let releaseSettingsGet = () => undefined;
+    routeState.settingsGetGate = new Promise(resolve => { releaseSettingsGet = resolve; });
+    await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should stay enabled while settings are still loading');
+    const restartCallsBeforeLoadingRestart = await page.evaluate(() => window.__restartCalls);
+    // Only the first load is held; the load after the restart answers normally.
+    const heldSettingsGate = routeState.settingsGetGate;
+    routeState.settingsGetGate = null;
+    await page.getByRole('button', { name: '재시작' }).click();
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      if (await page.evaluate(() => window.__restartCalls) > restartCallsBeforeLoadingRestart) break;
+      await sleep(250);
+    }
+    assert.equal(await page.evaluate(() => window.__restartCalls), restartCallsBeforeLoadingRestart + 1, 'restart should run while loading');
+    await page.getByText(/분석 기능을 다시 시작/).waitFor({ state: 'visible', timeout: 10000 });
+    // Now the old, superseded load fails; it must not replace the restarted state with an error.
+    releaseSettingsGet();
+    await heldSettingsGate;
+    await sleep(600);
+    assert.equal(await page.getByText('설정을 불러오지 못했습니다', { exact: false }).count(), 0, 'the superseded load should not leave an error behind');
+    assert.equal(await page.getByText(/분석 기능을 다시 시작/).count(), 1, 'the restart result should stay');
+    assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'the restarted settings should stay loaded');
+
+    await runTroubleshootingEntryScene(browser);
 
     console.log('ok - settings backend restart simulation');
   } catch (error) {

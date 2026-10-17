@@ -463,14 +463,26 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [initialTab]);
 
     const troubleshootingScrolledRef = useRef(false);
+    const restartButtonRef = useRef<HTMLButtonElement | null>(null);
     useEffect(() => {
         // Scroll once when opened from the writer's 문제 해결 button, not on every return to the 일반 tab.
         if (initialSection !== 'troubleshooting' || activeTab !== 'general' || troubleshootingScrolledRef.current) return undefined;
-        troubleshootingScrolledRef.current = true;
+        let focusFrame = 0;
         const frame = window.requestAnimationFrame(() => {
-            document.getElementById('settings-troubleshooting')?.scrollIntoView({ block: 'center' });
+            // Mark done only once it runs: StrictMode's mount-unmount-mount cancels the first frame.
+            troubleshootingScrolledRef.current = true;
+            const section = document.getElementById('settings-troubleshooting');
+            section?.scrollIntoView({ block: 'center' });
+            // The dialog focuses its close button on the first frame; the user came for 재시작, so move there next.
+            focusFrame = window.requestAnimationFrame(() => {
+                const restartButton = restartButtonRef.current;
+                if (restartButton && !restartButton.disabled) restartButton.focus({ preventScroll: true });
+            });
         });
-        return () => window.cancelAnimationFrame(frame);
+        return () => {
+            window.cancelAnimationFrame(frame);
+            window.cancelAnimationFrame(focusFrame);
+        };
     }, [activeTab, initialSection]);
 
     useEffect(() => {
@@ -1041,7 +1053,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
     }, [apiBase, applySettingsToForm, loadModelsStatus]);
 
+    // A restart can start a new load while an earlier one is still waiting; only the newest may update the form.
+    const settingsLoadSeqRef = useRef(0);
     const loadSettings = useCallback(async (): Promise<boolean> => {
+        const loadSeq = settingsLoadSeqRef.current + 1;
+        settingsLoadSeqRef.current = loadSeq;
+        const superseded = () => loadSeq !== settingsLoadSeqRef.current;
         setIsLoading(true);
         setErrorMessage('');
         setMessage('');
@@ -1049,6 +1066,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setOllamaInstallNoticeMessage('');
         try {
             const base = await getApiBase();
+            if (superseded()) return false;
             setApiBase(base);
             const settingsResponse = await fetchWithTimeout(`${base}/api/settings`);
 
@@ -1057,6 +1075,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
 
             const nextSettings = await settingsResponse.json() as SettingsPayload;
+            if (superseded()) return false;
             setSettings(nextSettings);
             applySettingsToForm(nextSettings);
             lastSavedGeneralKeyRef.current = generalSettingsKey({
@@ -1071,13 +1090,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const nextModels = await loadModelsStatus(base);
             return Boolean(nextModels);
         } catch (error) {
+            if (superseded()) return false;
             setSettings(null);
             setModels(null);
             setModelStatusErrorMessage('');
             setErrorMessage(getSettingsFailureMessage(error));
             return false;
         } finally {
-            setIsLoading(false);
+            if (!superseded()) setIsLoading(false);
         }
     }, [applySettingsToForm, generalSettingsKey, loadModelsStatus]);
 
@@ -1087,12 +1107,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [loadSettings]);
 
     useEffect(() => {
-        if (settings || isLoading || !errorMessage.includes('설정을 불러오지 못했습니다')) return;
+        if (settings || isLoading || isRestartingBackend || !errorMessage.includes('잠시 후 자동으로 다시 확인합니다')) return;
         const timeoutId = window.setTimeout(() => {
             void loadSettings();
         }, 5000);
         return () => window.clearTimeout(timeoutId);
-    }, [errorMessage, isLoading, loadSettings, settings]);
+    }, [errorMessage, isLoading, isRestartingBackend, loadSettings, settings]);
 
     useEffect(() => {
         if (activeTab !== 'models' || !apiBase || analysisModels.length === 0) return;
@@ -1512,6 +1532,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
 
         setIsRestartingBackend(true);
+        settingsLoadSeqRef.current += 1;
+        modelStatusRequestIdRef.current += 1;
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
@@ -1526,6 +1548,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     : '재시작했습니다. 모델 상태는 잠시 후 자동으로 다시 확인합니다.',
             );
         } catch {
+            // The invalidated load will not clear isLoading itself.
+            setIsLoading(false);
             setErrorMessage('재시작하지 못했습니다. 앱을 닫았다가 다시 열어 주세요.');
         } finally {
             setIsRestartingBackend(false);
@@ -1550,7 +1574,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setActiveTab(nextTab.key);
         window.requestAnimationFrame(() => document.getElementById(`settings-${nextTab.key}-tab`)?.focus());
     };
-    const canRestartBackend = isTauriRuntime() && !analysisActive && !isLoading && !isSaving && !isRestartingBackend;
+    // Not gated on isLoading: when the engine does not answer, each load waits up to 20s before the 5s retry,
+    // and 재시작 is exactly what the user needs then.
+    const canRestartBackend = isTauriRuntime() && !analysisActive && !isSaving && !isRestartingBackend;
     const gpuUsable = Boolean(models?.stt_device_status?.gpu_usable);
     const gpuDetected = Boolean(models?.stt_device_status?.gpu_detected);
     const gpuReason = models?.stt_device_status?.gpu_reason || 'CPU를 기본으로 사용합니다.';
@@ -1883,14 +1909,16 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         <div className="settings-row">
                                             <span className="settings-row-copy">
                                                 <span className="settings-row-title">분석 기능 재시작</span>
-                                                <span className="settings-row-description">
+                                                <span id="settings-restart-description" className="settings-row-description">
                                                     모델 상태가 계속 갱신되지 않을 때만 사용합니다.
                                                     {analysisActive ? ' 진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : ''}
                                                 </span>
                                             </span>
                                             <Button
+                                                ref={restartButtonRef}
                                                 variant="outline"
                                                 className="shrink-0"
+                                                aria-describedby="settings-restart-description"
                                                 onClick={() => void handleRestartBackend()}
                                                 disabled={!canRestartBackend}
                                                 title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 기능을 다시 시작합니다.'}

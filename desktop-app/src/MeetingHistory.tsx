@@ -2425,9 +2425,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const organizeTabDisabledMessage = !hasTranscriptData
         ? '대화록이 있어야 기록 정리를 사용할 수 있습니다.'
         : '';
-    const organizeModelGuidanceMessage = summaryRuntimeCanAutoStart
-        ? '정리를 누르면 이 PC의 요약 프로그램을 자동으로 시작합니다. 시작에 실패하면 모델 설정을 확인해 주세요.'
-        : summaryModelMessage || '요약 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
+    const organizeModelGuidanceMessage = summaryModelMessage || '요약 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
+    // A generation that failed on a missing model or summary program says "설정에서 … 준비"; give it the way there.
+    const errorNeedsModelSetup = Boolean(
+        onOpenSettings && !loadErrorMessage && errorMessage.includes('설정에서') && /모델|요약 프로그램/.test(errorMessage),
+    );
     const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
     const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;
     const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;
@@ -3760,7 +3762,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     return (
         <div className="meeting-detail-shell">
             {(loadErrorMessage || errorMessage) && (
-                <StatusBanner tone="error" className="mb-4">
+                <StatusBanner
+                    tone="error"
+                    className="mb-4"
+                    action={errorNeedsModelSetup ? (
+                        <Button variant="outline" onClick={onOpenSettings}>
+                            모델 준비
+                        </Button>
+                    ) : undefined}
+                >
                     {loadErrorMessage || errorMessage}
                 </StatusBanner>
             )}
@@ -4082,10 +4092,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             aria-labelledby="meeting-detail-tab-summary"
                             className="space-y-6"
                         >
-                            {(summaryModelUnavailable || summaryRuntimeCanAutoStart) && (
+                            {/* Only when the user must act. A runtime that starts itself on 정리 needs no standing notice. */}
+                            {summaryModelUnavailable && (
                                 <StatusBanner
-                                    tone={summaryRuntimeCanAutoStart ? 'info' : 'warning'}
-                                    heading={summaryRuntimeCanAutoStart ? '정리 준비' : '모델 필요'}
+                                    tone="warning"
+                                    heading="모델 필요"
                                     className="mb-4"
                                     action={onOpenSettings ? (
                                         <Button variant="outline" onClick={onOpenSettings}>

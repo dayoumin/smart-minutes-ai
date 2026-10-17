@@ -181,22 +181,32 @@ const runNarrowMetaScenario = async browser => {
     await openMeeting(page, narrowMeeting.title);
     await page.locator('.meeting-status-grid').waitFor();
     const metrics = await page.evaluate(() => {
-      const rect = selector => document.querySelector(selector)?.getBoundingClientRect();
-      const list = rect('.meeting-meta-list');
-      const status = rect('.meeting-status-grid');
-      const listElement = document.querySelector('.meeting-meta-list');
+      const list = document.querySelector('.meeting-meta-list');
+      const listRect = list?.getBoundingClientRect();
+      const rows = [...document.querySelectorAll('.meeting-meta-item')].map(row => {
+        const label = row.querySelector('.meeting-meta-label').getBoundingClientRect();
+        const value = row.querySelector('.meeting-meta-value').getBoundingClientRect();
+        return { overflow: row.scrollWidth - row.clientWidth, labelRight: label.right, valueLeft: value.left, valueRight: value.right };
+      });
+      // Measure the actual inline content, not the stretched block boxes.
+      const inlineParts = [...document.querySelectorAll('.meeting-status-grid .status-pill, .meeting-status-grid button, .meeting-participant-chip, .meeting-meta-value-source')];
+      const statusParts = [...document.querySelectorAll('.meeting-status-grid .status-pill, .meeting-status-grid button')];
       return {
-        intersects: Boolean(list && status
-          && list.left < status.right && status.left < list.right
-          && list.top < status.bottom && status.top < list.bottom),
-        listOverflow: listElement ? listElement.scrollWidth - listElement.clientWidth : null,
+        rowCount: rows.length,
+        rowOverflow: Math.max(...rows.map(row => row.overflow)),
+        labelOverlap: rows.some(row => row.labelRight > row.valueLeft + 1),
+        valueOutside: inlineParts.some(part => listRect && part.getBoundingClientRect().right > listRect.right + 1),
+        statusInside: statusParts.length > 0 && statusParts.every(part => listRect && part.getBoundingClientRect().right <= listRect.right + 1),
         documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       };
     });
-    assert.equal(metrics.intersects, false, 'meta list and status chips should not overlap');
-    assert.ok(metrics.listOverflow !== null && metrics.listOverflow <= 1, `meta list overflowed by ${metrics.listOverflow}px`);
+    assert.ok(metrics.rowCount >= 4, `expected property rows, got ${metrics.rowCount}`);
+    assert.ok(metrics.rowOverflow <= 1, `a property row overflowed by ${metrics.rowOverflow}px`);
+    assert.equal(metrics.labelOverlap, false, 'property labels should not overlap their values');
+    assert.equal(metrics.valueOutside, false, 'property values should stay inside the list');
+    assert.equal(metrics.statusInside, true, 'status chips should stay inside the property list');
     assert.ok(metrics.documentOverflow <= 0, `document overflowed by ${metrics.documentOverflow}px`);
-    console.log('ok - narrow meeting meta line wraps without overlap');
+    console.log('ok - narrow meeting property rows fit without overlap');
   } finally {
     await context.close();
   }

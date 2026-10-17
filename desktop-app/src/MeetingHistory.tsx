@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { CalendarDays, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
+import { AudioLines, CalendarDays, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
 import { Button } from './Button';
 import { IconButton } from './IconButton';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
@@ -992,6 +992,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const selectedMeetingRef = useRef<MeetingRecord | null>(null);
     const recordsRef = useRef<MeetingRecord[]>([]);
     const loadRecordsRequestIdRef = useRef(0);
+    // Set when a requested meeting was missing; the follow-up reload that restores the open meeting keeps that notice.
+    const missingMeetingNoticeRef = useRef(false);
     const meetingUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
     const hydratedMeetingIdRef = useRef<string | null>(null);
     const canLeaveMeetingRef = useRef<(nextMeetingId: string | null) => boolean>(() => true);
@@ -1094,7 +1096,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             || Boolean(changesSelectedMeeting && !requestedMeetingIsCached);
         try {
             setIsLoading(shouldShowBlockingLoadingState);
-            if (shouldShowBlockingLoadingState || changesSelectedMeeting) setLoadErrorMessage('');
+            if (shouldShowBlockingLoadingState || changesSelectedMeeting) {
+                missingMeetingNoticeRef.current = false;
+                setLoadErrorMessage('');
+            }
             if (changesSelectedMeeting) setErrorMessage('');
             const data = await getAllMeetings();
             if (requestId !== loadRecordsRequestIdRef.current) return;
@@ -1107,6 +1112,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     ? sorted.find(record => record.id === currentMeeting.id) ?? currentMeeting
                     : sorted[0] ?? null;
             if (requestedMeetingId && !nextMeeting) {
+                missingMeetingNoticeRef.current = true;
                 setLoadErrorMessage('선택한 회의록을 찾지 못했습니다. 회의 기록을 새로고침한 뒤 다시 시도해 주세요.');
                 setRecords(sorted);
                 if (currentMeetingBeforeLoad) onSelectMeetingId?.(currentMeetingBeforeLoad.id);
@@ -1114,9 +1120,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
             setRecords(sorted);
             setSelectedMeeting(nextMeeting);
-            setLoadErrorMessage('');
+            if (!missingMeetingNoticeRef.current || changesSelectedMeeting) {
+                missingMeetingNoticeRef.current = false;
+                setLoadErrorMessage('');
+            }
         } catch {
             if (requestId !== loadRecordsRequestIdRef.current) return;
+            missingMeetingNoticeRef.current = false;
             setLoadErrorMessage('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.');
             if (currentMeetingBeforeLoad) {
                 onSelectMeetingId?.(currentMeetingBeforeLoad.id);
@@ -3102,6 +3112,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             displaySpeaker: resolveSpeakerName(segment.speaker, segment.displaySpeaker),
         }));
     }, [effectiveStoredDisplaySegments, resolveSpeakerName]);
+    // Speaker names only describe participants when speakers were actually separated.
+    const participantNames = useMemo(() => {
+        if (selectedMeeting?.diarizationApplied !== true && speakersInTranscript.length < 2) return [];
+        return Array.from(new Set(displaySegments.map(segment => (segment.displaySpeaker || '').trim()).filter(Boolean)));
+    }, [displaySegments, selectedMeeting?.diarizationApplied, speakersInTranscript.length]);
+    const showAudioRow = Boolean(audioSourceUrl || audioPlaybackError || audioAvailability === 'checking' || audioAvailability === 'available');
     const visibleSegments = useMemo(
         () => displaySegments.filter(segment => !contentQuery || [
             segment.speaker,
@@ -3645,14 +3661,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const meetingDetailSkeleton = (
         <div className="meeting-detail-shell" aria-busy="true" aria-live="polite">
-            <article className="app-panel overflow-hidden">
-                <div className="app-panel-header">
+            <article className="app-panel meeting-detail-frame">
+                <div className="app-panel-header meeting-detail-overview">
                     <div className="meeting-detail-heading">
                         <div className="meeting-skeleton-line meeting-skeleton-title" />
-                        <div className="meeting-skeleton-line meeting-skeleton-meta" />
+                        <div className="grid gap-1" aria-hidden="true">
+                            {[0, 1, 2, 3, 4].map(row => <div key={row} className="meeting-skeleton-line meeting-skeleton-meta" />)}
+                        </div>
                     </div>
                 </div>
-                <div className="detail-main-nav px-5">
+                <div className="detail-main-nav">
                     <div className="tab-list meeting-skeleton-tabs" aria-hidden="true">
                         <div className="meeting-skeleton-pill" />
                         <div className="meeting-skeleton-pill" />
@@ -3755,7 +3773,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 </div>
             )}
 
-            <article className="app-panel meeting-detail-frame overflow-hidden">
+            <article className="app-panel meeting-detail-frame">
                 <div className="app-panel-header meeting-detail-overview">
                     <div className="meeting-detail-overview-main">
                         <div className="meeting-detail-title-row">
@@ -3846,85 +3864,105 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             </div>
                         ) : (
                             <>
-                                <div className="meeting-meta-line">
-                                    <dl className="meeting-meta-list">
+                                <dl className="meeting-meta-list">
+                                    <div className="meeting-meta-item">
+                                        <dt className="meeting-meta-label"><CalendarDays size={15} aria-hidden="true" /><span>일시</span></dt>
+                                        <dd className="meeting-meta-value">{selectedMeeting.date}</dd>
+                                    </div>
+                                    {selectedMeeting.meetingPurpose && (
+                                        <div className="meeting-meta-item meeting-meta-item-purpose">
+                                            <dt className="meeting-meta-label"><Target size={15} aria-hidden="true" /><span>회의 목적</span></dt>
+                                            <dd className="meeting-meta-value" title={selectedMeeting.meetingPurpose}>
+                                                {selectedMeeting.meetingPurpose}
+                                            </dd>
+                                        </div>
+                                    )}
+                                    {(participantNames.length > 0 || selectedMeeting.participants) && (
                                         <div className="meeting-meta-item">
-                                            <dt className="meeting-meta-label" title="일시"><CalendarDays size={15} aria-hidden="true" /><span className="sr-only">일시</span></dt>
-                                            <dd className="meeting-meta-value">{selectedMeeting.date}</dd>
+                                            <dt className="meeting-meta-label"><Users size={15} aria-hidden="true" /><span>참석자</span></dt>
+                                            <dd className="meeting-meta-value">
+                                                {participantNames.length ? (
+                                                    <ul className="meeting-participant-chips">
+                                                        {participantNames.slice(0, 8).map(name => <li key={name} className="meeting-participant-chip">{name}</li>)}
+                                                        {participantNames.length > 8 && (
+                                                            <li className="meeting-participant-chip" title={participantNames.slice(8).join(', ')}>외 {participantNames.length - 8}명</li>
+                                                        )}
+                                                    </ul>
+                                                ) : selectedMeeting.participants}
+                                            </dd>
                                         </div>
-                                        {(selectedMeeting.meetingPurpose || selectedMeeting.participants) && (
-                                            <div className="meeting-meta-item meeting-meta-item-purpose">
-                                                <dt className="meeting-meta-label" title={selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}>
-                                                    {selectedMeeting.meetingPurpose ? <Target size={15} aria-hidden="true" /> : <Users size={15} aria-hidden="true" />}
-                                                    <span className="sr-only">{selectedMeeting.meetingPurpose ? '회의 목적' : '참석자'}</span>
-                                                </dt>
-                                                <dd
-                                                    className="meeting-meta-value"
-                                                    title={selectedMeeting.meetingPurpose || selectedMeeting.participants}
-                                                >
-                                                    {selectedMeeting.meetingPurpose || selectedMeeting.participants}
-                                                </dd>
-                                            </div>
-                                        )}
-                                        {selectedMeeting.sourceFile && (
-                                            <div className="meeting-meta-item meeting-meta-item-source">
-                                                <dt className="meeting-meta-label" title="원본 파일"><FileAudio size={15} aria-hidden="true" /><span className="sr-only">원본 파일</span></dt>
-                                                <dd
-                                                    className="meeting-meta-value meeting-meta-value-source"
-                                                    title={selectedMeeting.sourceFile}
-                                                >
-                                                    {selectedMeeting.sourceFile}
-                                                </dd>
-                                            </div>
-                                        )}
-                                    </dl>
-                                    <div className="meeting-status-grid">
-                                        <div className="meeting-status-item">
-                                            <span className="meeting-status-title">대화록</span>
-                                            <span className={`status-pill status-${hasTranscriptData ? 'success' : 'neutral'}`}>
-                                                {hasTranscriptData ? '완료' : '대기'}
-                                            </span>
-                                        </div>
-                                        <div className="meeting-status-item" title={diarizationStatusTitle}>
-                                            <span className="meeting-status-title">참석자 구분</span>
-                                            <span className="meeting-status-actions">
-                                                <span className={`status-pill status-${diarizationStatus.tone}`}>
-                                                    {diarizationStatus.label}
-                                                </span>
-                                                {(canGenerateDiarization || diarizationIsRunning) && (
-                                                    <Button
-                                                        variant="outline"
-                                                        className="meeting-status-run-button"
-                                                        aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                                        title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
-                                                        disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : generatingKind !== null}
-                                                        onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
-                                                    >
-                                                        {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
-                                                        {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
-                                                    </Button>
+                                    )}
+                                    {showAudioRow && (
+                                        <div className="meeting-meta-item meeting-meta-item-audio">
+                                            <dt className="meeting-meta-label"><AudioLines size={15} aria-hidden="true" /><span>음성</span></dt>
+                                            <dd className="meeting-meta-value meeting-audio-slot">
+                                                {audioSourceUrl ? (
+                                                    <audio
+                                                        className="meeting-audio-player"
+                                                        aria-label="추출 음성"
+                                                        controls
+                                                        crossOrigin="anonymous"
+                                                        preload="metadata"
+                                                        src={audioSourceUrl}
+                                                        onError={reportPlaybackError}
+                                                    />
+                                                ) : audioPlaybackError ? (
+                                                    <span className="meeting-audio-error" role="status">
+                                                        {audioPlaybackError}
+                                                        <Button variant="ghost" onClick={retryAudioPlayback}>다시 확인</Button>
+                                                    </span>
+                                                ) : (
+                                                    <span className="text-[13px] text-muted-foreground">확인 중</span>
                                                 )}
-                                            </span>
+                                            </dd>
                                         </div>
+                                    )}
+                                    {selectedMeeting.sourceFile && (
+                                        <div className="meeting-meta-item meeting-meta-item-source">
+                                            <dt className="meeting-meta-label"><FileAudio size={15} aria-hidden="true" /><span>원본 파일</span></dt>
+                                            <dd
+                                                className="meeting-meta-value meeting-meta-value-source"
+                                                title={selectedMeeting.sourceFile}
+                                            >
+                                                {selectedMeeting.sourceFile}
+                                            </dd>
+                                        </div>
+                                    )}
+                                    <div className="meeting-meta-item meeting-meta-item-status">
+                                        <dt className="meeting-meta-label"><ListChecks size={15} aria-hidden="true" /><span>처리 상태</span></dt>
+                                        <dd className="meeting-meta-value">
+                                            <div className="meeting-status-grid">
+                                                <div className="meeting-status-item">
+                                                    <span className="meeting-status-title">대화록</span>
+                                                    <span className={`status-pill status-${hasTranscriptData ? 'success' : 'neutral'}`}>
+                                                        {hasTranscriptData ? '완료' : '대기'}
+                                                    </span>
+                                                </div>
+                                                <div className="meeting-status-item" title={diarizationStatusTitle}>
+                                                    <span className="meeting-status-title">참석자 구분</span>
+                                                    <span className="meeting-status-actions">
+                                                        <span className={`status-pill status-${diarizationStatus.tone}`}>
+                                                            {diarizationStatus.label}
+                                                        </span>
+                                                        {(canGenerateDiarization || diarizationIsRunning) && (
+                                                            <Button
+                                                                variant="outline"
+                                                                className="meeting-status-run-button"
+                                                                aria-label={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                                title={diarizationStopRequested ? `참석자 구분 ${diarizationStopLabel}` : diarizationIsRunning ? '참석자 구분 중지/취소' : '참석자 구분 실행'}
+                                                                disabled={diarizationIsRunning ? (isStoppingDiarization || diarizationStopRequested) : generatingKind !== null}
+                                                                onClick={diarizationIsRunning ? handleOpenDiarizationStopConfirm : handleGenerateDiarization}
+                                                            >
+                                                                {diarizationStopRequested ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : diarizationIsRunning ? <Square size={13} aria-hidden="true" /> : renderRunIcon('diarization', 'not_started')}
+                                                                {diarizationStopRequested ? diarizationStopLabel : diarizationIsRunning ? '중지/취소' : '실행'}
+                                                            </Button>
+                                                        )}
+                                                    </span>
+                                                </div>
+                                            </div>
+                                        </dd>
                                     </div>
-                                </div>
-                                {audioSourceUrl && (
-                                    <audio
-                                        className="meeting-audio-player"
-                                        aria-label="추출 음성"
-                                        controls
-                                        crossOrigin="anonymous"
-                                        preload="metadata"
-                                        src={audioSourceUrl}
-                                        onError={reportPlaybackError}
-                                    />
-                                )}
-                                {audioPlaybackError && (
-                                    <div className="detail-inline-note" role="status">
-                                        {audioPlaybackError}
-                                        <Button variant="ghost" onClick={retryAudioPlayback}>다시 확인</Button>
-                                    </div>
-                                )}
+                                </dl>
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note meeting-diarization-guidance" role="status">
                                         {toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.')}
@@ -4221,7 +4259,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         id="organize-mode-panel-summary"
                                         role="tabpanel"
                                         aria-labelledby="organize-mode-tab-summary"
-                                        className="space-y-3"
+                                        className="space-y-5"
                                         data-summary-section="overview"
                                     >
                                         {summaryOutdated && hasGeneratedSummary && (
@@ -4241,10 +4279,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             </InlineStateNote>
                                         )}
                                         {hasResultHighlights && (
-                                            <div className="grid gap-3">
+                                            <div className="grid gap-6">
                                                 {!!visibleTopics.length && (
                                                     <div className="summary-topic-row">
-                                                        <div className="text-xs font-semibold text-muted-foreground">주요 주제</div>
+                                                        <h3 className="text-xs font-semibold text-muted-foreground">주요 주제</h3>
                                                         <ul className="summary-topic-list">
                                                             {visibleTopics.map((topic, index) => (
                                                                 <li key={`${topic}-${index}`}>
@@ -4267,7 +4305,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 )}
                                                 {!!visibleDecisions.length && (
                                                     <div className="detail-subtle-card">
-                                                        <div className="mb-2 text-xs font-semibold text-muted-foreground">결정사항</div>
+                                                        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">결정사항</h3>
                                                         <ul className="detail-list">
                                                             {visibleDecisions.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
                                                         </ul>
@@ -4275,7 +4313,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 )}
                                                 {!!visibleActions.length && (
                                                     <div className="detail-subtle-card">
-                                                        <div className="mb-2 text-xs font-semibold text-muted-foreground">할 일</div>
+                                                        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">할 일</h3>
                                                         <ul className="detail-list">
                                                             {visibleActions.map((action, index) => <li key={`${action}-${index}`}>{renderSearchText(toParticipantCopy(action))}</li>)}
                                                         </ul>
@@ -4284,8 +4322,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             </div>
                                         )}
                                         {hasNeedsCheckContent && (
-                                            <div className="detail-subtle-card">
-                                                <div className="mb-2 text-xs font-semibold text-muted-foreground">추가 확인</div>
+                                            <div className="detail-subtle-card detail-needs-check">
+                                                <h3 className="mb-2 text-xs font-semibold text-muted-foreground">추가 확인</h3>
                                                 <ul className="detail-list">
                                                     {visibleNeedsCheck.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
                                                 </ul>

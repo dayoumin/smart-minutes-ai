@@ -1433,22 +1433,17 @@
     @apply grid gap-3;
   }
 
+  /* Direction A meeting detail: an open document column, not a card. */
   .meeting-detail-frame {
-    @apply border-border/80 bg-surface;
+    @apply rounded-none border-0 bg-transparent shadow-none;
   }
 
   .meeting-detail-overview {
-    @apply p-0;
-    background:
-      linear-gradient(
-        180deg,
-        color-mix(in srgb, var(--color-surface) 96%, var(--brand-primary-soft)) 0%,
-        var(--color-surface) 72%
-      );
+    @apply border-0 bg-transparent p-0;
   }
 
   .meeting-detail-overview-main {
-    @apply grid gap-3 px-5 pb-4 pt-5;
+    @apply grid gap-4 px-0 pb-0 pt-1;
   }
 
   .meeting-detail-title-row {
@@ -1456,53 +1451,60 @@
   }
 
   .meeting-detail-title {
-    @apply max-w-4xl break-words text-2xl font-semibold leading-tight tracking-[-0.02em] text-foreground;
-  }
-
-  .meeting-meta-line {
-    @apply flex min-w-0 flex-wrap items-center justify-between gap-x-6 gap-y-2;
+    @apply break-words text-[1.875rem] font-bold leading-10 tracking-[-0.02em] text-foreground;
   }
 
   .meeting-meta-list {
-    @apply m-0 flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1.5 text-sm;
-    flex: 1 1 18rem;
+    @apply m-0 grid min-w-0 gap-0.5;
   }
 
   .meeting-meta-item {
-    @apply flex min-w-0 max-w-full shrink-0 items-center gap-1.5;
-  }
-
-  .meeting-meta-item-purpose {
-    flex: 1 1 0;
-    min-width: min(10rem, 100%);
-  }
-
-  .meeting-meta-item-purpose .meeting-meta-value {
-    @apply line-clamp-2 whitespace-normal;
-  }
-
-  .meeting-meta-item-source {
-    flex: 0 1 12rem;
+    @apply grid min-w-0 grid-cols-[7.5rem_minmax(0,1fr)] items-start gap-2 py-1;
   }
 
   .meeting-meta-label {
-    @apply m-0 inline-flex shrink-0 text-muted-foreground;
+    @apply m-0 inline-flex min-h-5 items-center gap-2 text-[13px] leading-5 text-muted-foreground;
+  }
+
+  .meeting-meta-label svg {
+    @apply shrink-0 text-subtle;
   }
 
   .meeting-meta-value {
-    @apply m-0 min-w-0 truncate font-medium text-foreground;
+    @apply m-0 min-w-0 text-sm leading-5 text-foreground;
   }
 
-  .meeting-meta-item:first-child .meeting-meta-value {
-    @apply whitespace-nowrap;
+  /* Reserve the audio row while the source is checked so rows below do not jump. */
+  .meeting-audio-slot {
+    @apply flex min-h-9 items-center;
+  }
+
+  .meeting-meta-item-audio .meeting-meta-label {
+    @apply min-h-9;
+  }
+
+  .meeting-audio-error {
+    @apply inline-flex flex-wrap items-center gap-x-2 text-[13px] text-muted-foreground;
+  }
+
+  .meeting-meta-item-purpose .meeting-meta-value {
+    @apply line-clamp-2;
   }
 
   .meeting-meta-value-source {
-    @apply block;
+    @apply block truncate text-[13px] text-muted-foreground;
+  }
+
+  .meeting-participant-chips {
+    @apply m-0 flex list-none flex-wrap gap-1.5 p-0;
+  }
+
+  .meeting-participant-chip {
+    @apply rounded-md bg-[var(--surface-action-hover-bg)] px-2 py-0.5 text-xs text-foreground;
   }
 
   .meeting-status-grid {
-    @apply flex shrink-0 flex-wrap items-center gap-x-4 gap-y-2;
+    @apply flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2;
   }
 
   .meeting-status-item {
@@ -1526,7 +1528,7 @@
   }
 
   .meeting-audio-player {
-    @apply h-9 w-full;
+    @apply h-9 w-full max-w-[26rem];
   }
 
   .detail-download-button {
@@ -1579,12 +1581,34 @@
   }
 
   .meeting-detail-body {
-    @apply px-5 pb-5 pt-5;
-    background-color: var(--color-surface);
+    @apply px-0 pb-10 pt-6;
+    background-color: transparent;
+  }
+
+  .detail-callout {
+    @apply text-[15px] leading-7 text-foreground;
+  }
+
+  /* Summary sections read as one document: headings and lists, no boxed cards. */
+  #organize-mode-panel-summary .detail-subtle-card {
+    @apply rounded-none border-0 bg-transparent p-0;
+  }
+
+  #organize-mode-panel-summary .detail-list {
+    @apply list-disc pl-5;
+  }
+
+  #organize-mode-panel-summary .detail-list li::marker {
+    color: var(--brand-primary);
+  }
+
+  #organize-mode-panel-summary .detail-needs-check {
+    @apply rounded-[var(--radius-card)] px-3.5 py-3;
+    background: var(--status-warning-bg);
   }
 
   .meeting-detail-shell {
-    @apply mx-auto w-full max-w-[82.5rem];
+    @apply mx-auto w-full max-w-[52rem];
     container-name: meeting-detail;
     container-type: inline-size;
   }
@@ -1615,7 +1639,7 @@
   }
 
   .meeting-skeleton-meta {
-    @apply h-7 w-full max-w-xl;
+    @apply h-6 w-full max-w-md;
   }
 
   .meeting-skeleton-tabs {
@@ -1627,7 +1651,7 @@
   }
 
   .meeting-skeleton-search {
-    @apply h-10 w-full rounded-full lg:max-w-sm;
+    @apply h-10 w-full rounded-full sm:max-w-[15rem];
   }
 
   .meeting-skeleton-actions {
@@ -1659,7 +1683,15 @@
   }
 
   .detail-main-nav {
-    @apply flex flex-col gap-3 border-t border-border bg-background/70 px-5 py-3.5 lg:flex-row lg:items-center lg:justify-between;
+    @apply mt-7 flex flex-col gap-3 border-b border-border sm:flex-row sm:items-end sm:justify-between;
+  }
+
+  .detail-main-nav .tab-list {
+    @apply border-b-0;
+  }
+
+  .detail-main-nav .detail-search-field {
+    @apply mb-2 sm:max-w-[15rem];
   }
 
   .detail-search-field {
@@ -2741,24 +2773,6 @@
     margin-left: auto;
   }
 
-  @container meeting-detail (min-width: 64rem) {
-    .meeting-detail-overview-main {
-      @apply gap-3 px-7 pb-5 pt-6;
-    }
-
-    .meeting-detail-title {
-      @apply text-[1.75rem];
-    }
-
-    .detail-main-nav {
-      @apply px-7;
-    }
-
-    .meeting-detail-body {
-      @apply px-6 pb-6 pt-6;
-    }
-  }
-
   .detail-command-primary {
     @apply flex min-h-10 w-full min-w-0 flex-1 flex-col gap-2 sm:flex-row sm:items-center;
   }
@@ -2773,17 +2787,6 @@
 
   .detail-secondary-action {
     @apply shrink-0;
-  }
-
-  @container meeting-detail (min-width: 64rem) {
-    .detail-command-bar {
-      @apply flex-row items-center justify-between;
-    }
-
-    .detail-command-primary,
-    .detail-command-actions {
-      @apply w-auto;
-    }
   }
 
   @container meeting-detail (min-width: 40rem) {

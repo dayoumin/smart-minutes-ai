@@ -352,12 +352,13 @@ const modelStatus = ({ sttInstalled = true, downloadable = true } = {}) => ({
 });
 
 const installRoutes = async (page, options = {}) => {
-  const { engineDown = false, model = {}, drafts = [], analyze = null, generation = {} } = options;
+  const { engineDown = false, model = {}, drafts = [], analyze = null, generation = {}, holdSettings = false, holdModels = false } = options;
   await page.route('**/api/**', route => (engineDown ? route.abort('connectionrefused') : route.fulfill(json({ detail: 'not mocked' }, 404))));
   if (engineDown) return;
   await page.route('**/api/health', route => route.fulfill(json({ ok: true })));
-  await page.route('**/api/settings', route => route.fulfill(json(SETTINGS)));
-  await page.route('**/api/models/status', route => route.fulfill(json(modelStatus(model))));
+  // hold* keep a response pending so the loading state stays on screen.
+  await page.route('**/api/settings', route => (holdSettings && route.request().method() === 'GET' ? hangForever() : route.fulfill(json(SETTINGS))));
+  await page.route('**/api/models/status', route => (holdModels ? hangForever() : route.fulfill(json(modelStatus(model)))));
   await page.route('**/api/models/ollama/runtime-status', route => route.fulfill(json(modelStatus(model).ollama_runtime_status)));
   await page.route('**/api/models/download-status**', route => route.fulfill(json({ active: false, status: 'idle' })));
   await page.route('**/api/models/ollama/pull-status**', route => route.fulfill(json({ active: false, status: 'idle' })));
@@ -668,6 +669,14 @@ const captures = [
       await page.getByText('모델 상태를 불러오는 중입니다').first().waitFor({ state: 'detached', timeout: 20000 });
       await page.waitForTimeout(400);
     },
+  },
+  {
+    id: 'S8', note: '설정 일반, 엔진 응답 전(설정 요청 보류)', routes: { holdSettings: true },
+    steps: async page => { await ready(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await page.waitForTimeout(600); },
+  },
+  {
+    id: 'S9', note: '설정 모델, 모델 상태 응답 전(상태 요청 보류)', routes: { holdModels: true },
+    steps: async page => { await ready(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await openTab(page, '모델'); await page.waitForTimeout(600); },
   },
   {
     id: 'B2', note: '사이드바 회의록 행 메뉴',

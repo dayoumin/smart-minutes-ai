@@ -1830,10 +1830,14 @@ const run = async () => {
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '참석자별 정리' }).click();
     await page.getByText('이미 저장된 참석자별 정리입니다.').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('button.detail-action-button[aria-label="참석자별 정리"]').isDisabled(), true);
-    await page.getByRole('button', { name: '모델 준비', exact: true }).click();
     summaryReady = true;
-    await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.getByRole('button', { name: '모델 준비', exact: true }).click();
+    await page.getByRole('button', { name: '설정 닫기' }).click();
+    // Settings re-read the now-ready status, so the detail screen drops its 모델 준비 shortcut;
+    // check the ready guidance through the sidebar instead of racing that refresh.
+    await page.getByRole('button', { name: '모델 준비', exact: true }).waitFor({ state: 'hidden', timeout: 12000 });
+    await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
+    await page.getByRole('tab', { name: '모델' }).click();
     await page.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();

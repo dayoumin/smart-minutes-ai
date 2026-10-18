@@ -236,12 +236,58 @@ const runTranscriptRowScenario = async browser => {
   }
 };
 
+const runAudioRowScenario = async browser => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  // Hold the audio check so the 확인 중 state can be measured before the 404 arrives.
+  let releaseAudioCheck = () => undefined;
+  let audioCheckGate = new Promise(resolve => { releaseAudioCheck = resolve; });
+  await page.route('**/api/outputs/*/audio', async route => {
+    await audioCheckGate;
+    return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
+  });
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
+    const outputs = job => ({ job_id: job, json: `/api/outputs/${job}/json`, txt: `/api/outputs/${job}/txt` });
+    // diarizationApplied keeps the participant guidance line (DT-11), which follows a missing audio file, out of this check.
+    await putMeetings(page, [
+      { ...baseMeeting, id: 'layout-audio-unknown', title: '음성 확인 회의', jobId: 'layout-audio-unknown-job', diarizationApplied: true },
+      { ...baseMeeting, id: 'layout-audio-none', title: '음성 미보관 회의', jobId: 'layout-audio-none-job', diarizationApplied: true, outputFiles: outputs('layout-audio-none-job') },
+    ]);
+    const tabListTop = () => page.getByRole('tablist', { name: '회의록 상세' }).evaluate(element => Math.round(element.getBoundingClientRect().top));
+
+    // A record that may have audio keeps the row through the check and shows 음성 없음 after a 404.
+    await openMeeting(page, '음성 확인 회의');
+    const audioRow = page.locator('.meeting-meta-item-audio');
+    await audioRow.getByText('확인 중', { exact: true }).waitFor({ timeout: 10000 });
+    const topWhileChecking = await tabListTop();
+    releaseAudioCheck();
+    await audioRow.getByText('음성 없음', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await tabListTop(), topWhileChecking, 'a missing audio file should not collapse the row and shift the tabs');
+
+    // A full output list without audio means the engine kept none: no row, not even while checking.
+    audioCheckGate = new Promise(resolve => { releaseAudioCheck = resolve; });
+    await openMeeting(page, '음성 미보관 회의');
+    assert.equal(await page.locator('.meeting-meta-item-audio').count(), 0, 'no audio row should show while the check is pending');
+    releaseAudioCheck();
+    await page.waitForTimeout(500);
+    assert.equal(await page.locator('.meeting-meta-item-audio').count(), 0, 'a record whose outputs list no audio should not show the audio row');
+    console.log('ok - the audio row keeps its place through the check and stays hidden when no audio was kept');
+  } finally {
+    releaseAudioCheck();
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const browser = await chromium.launch({ headless: true });
 try {
   await runTopicChipScenario(browser);
   await runNarrowMetaScenario(browser);
   await runTranscriptRowScenario(browser);
+  await runAudioRowScenario(browser);
 } finally {
   await browser.close();
   await stopServer(server);

@@ -573,8 +573,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setSummaryModelInput(nextSummaryModel);
     }, []);
 
+    // Engine-backed values only: the download format is a browser preference saved on change.
     const generalSettingsKey = useCallback((values: {
-        downloadFormat: DownloadFormat;
         diarizationDuringAnalysis: boolean;
         sttDevice: 'cpu' | 'cuda';
         preprocessingEnabled: boolean;
@@ -1101,7 +1101,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setSettings(nextSettings);
             applySettingsToForm(nextSettings);
             lastSavedGeneralKeyRef.current = generalSettingsKey({
-                downloadFormat: getDownloadFormatPreference(),
                 diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? false,
                 sttDevice: nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu',
                 preprocessingEnabled: nextSettings.preprocessing?.enabled ?? true,
@@ -1400,7 +1399,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
 
         const requestValues = {
-            downloadFormat,
             diarizationDuringAnalysis,
             sttDevice,
             preprocessingEnabled,
@@ -1446,7 +1444,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(nextSettings);
-            setDownloadFormatPreference(downloadFormat);
             window.dispatchEvent(new Event('analysis:settings-updated'));
             await loadModelsStatus(base, { surfaceErrors: false });
             if (currentGeneralKeyRef.current === requestKey) {
@@ -1466,7 +1463,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         autoSaveAudioCopy,
         autoSaveHwpxCopy,
         diarizationDuringAnalysis,
-        downloadFormat,
         generalSettingsKey,
         loadModelsStatus,
         preserveExtractedAudio,
@@ -1514,6 +1510,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             await loadModelsStatus(base, { surfaceErrors: false });
             setSaveState('saved');
         } catch (error) {
+            setSummaryModelInput(normalizeSummaryModelName(settings.summary?.model));
             setErrorMessage(error instanceof Error ? error.message : '요약 모델 저장 중 오류가 발생했습니다.');
             setSaveState('idle');
         } finally {
@@ -1523,7 +1520,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     useEffect(() => {
         const nextKey = generalSettingsKey({
-            downloadFormat,
             diarizationDuringAnalysis,
             sttDevice,
             preprocessingEnabled,
@@ -1542,7 +1538,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         autoSaveAudioCopy,
         autoSaveHwpxCopy,
         diarizationDuringAnalysis,
-        downloadFormat,
         generalSettingsKey,
         isLoading,
         isRestartingBackend,
@@ -1554,6 +1549,34 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         sttDevice,
     ]);
 
+    // Closing within the save delay (or while an earlier save is in flight) must not drop the change:
+    // send the latest values on unmount. Only after settings loaded, so StrictMode's trial unmount stays quiet.
+    const saveGeneralSettingsRef = useRef(saveGeneralSettings);
+    useEffect(() => {
+        saveGeneralSettingsRef.current = saveGeneralSettings;
+    }, [saveGeneralSettings]);
+    const generalSettingsLoadedRef = useRef(false);
+    useEffect(() => {
+        generalSettingsLoadedRef.current = Boolean(settings);
+    }, [settings]);
+    useEffect(() => () => {
+        if (generalSettingsLoadedRef.current && currentGeneralKeyRef.current !== lastSavedGeneralKeyRef.current) {
+            void saveGeneralSettingsRef.current();
+        }
+    }, []);
+
+    const handleDownloadFormatChange = (nextFormat: DownloadFormat) => {
+        setDownloadFormat(nextFormat);
+        try {
+            setDownloadFormatPreference(nextFormat);
+        } catch {
+            setErrorMessage('다운로드 형식을 저장하지 못했습니다. 브라우저 저장 공간을 확인해 주세요.');
+            return;
+        }
+        // Keep an engine save's 저장 중 visible until it finishes.
+        if (!isSaving) setSaveState('saved');
+    };
+
     const handleRestartBackend = async () => {
         if (analysisActive) {
             setErrorMessage('진행 중인 분석이 끝난 뒤 재시작할 수 있습니다.');
@@ -1561,6 +1584,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
 
         restartFocusPendingRef.current = document.activeElement === restartButtonRef.current;
+        // A change still inside the save delay would be overwritten by the reload after the restart.
+        if (settings && currentGeneralKeyRef.current !== lastSavedGeneralKeyRef.current) {
+            await saveGeneralSettings();
+        }
         setIsRestartingBackend(true);
         settingsLoadSeqRef.current += 1;
         modelStatusRequestIdRef.current += 1;
@@ -1644,8 +1671,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaSystemStopped = ollamaConnection?.status === 'system_stopped';
     const ollamaManagedStopped = ollamaConnection?.status === 'managed_stopped';
     const ollamaRuntimePreparing = ollamaConnection?.status === 'managed_starting' || models?.summary_reason === 'runtime_preparing';
-    const summaryModelInventoryUnknown = ollamaRuntimePreparing || summaryModelStatus?.inventory_checked === false;
-    const ollamaMissing = ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable);
+    // Without a status payload nothing is known yet: never conclude a model or the summary program is missing.
+    const summaryModelInventoryUnknown = !models || ollamaRuntimePreparing || summaryModelStatus?.inventory_checked === false;
+    const ollamaMissing = Boolean(models) && (ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable));
     const ollamaModelActionsReady = Boolean(ollamaServerReady || ollamaCanAutoStart);
     const showOllamaRuntimeAction = Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
     const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection, models?.summary_reason);
@@ -1678,7 +1706,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         : ollamaSystemStopped
             ? '1. 음성 인식 모델을 준비합니다. 2. Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인합니다. 3. 회의 요약 모델을 받습니다.'
         : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램을 받습니다. 3. 회의 요약 모델을 받습니다.';
-    const summaryModelOllamaHelp = ollamaRuntimePreparing
+    const summaryModelOllamaHelp = !models
+        ? (isLoading ? '' : '모델 상태를 확인하지 못했습니다.')
+        : ollamaRuntimePreparing
         ? '요약 프로그램이 준비 중이라 회의 요약 모델 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.'
         : summaryModelInventoryUnknown
             ? '회의 요약 모델 보유 여부를 아직 확인하지 못했습니다. 준비 상태를 다시 확인해 주세요.'
@@ -1701,6 +1731,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaInstallNoticeTone: 'info' | 'warning' = ollamaInstallNotice.includes('열지 못했습니다') ? 'warning' : 'info';
     const errorHeading = errorMessage.includes('Ollama') ? '요약 프로그램 설치 필요' : '설정 확인 실패';
     const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
+    // Engine-backed switches show no guessed default before the engine answers, and cannot be changed then.
+    // Settings arrive before the slower model status, so only the settings payload gates them.
+    // A restart reloads them, so changes made meanwhile would be overwritten.
+    const generalSettingsReady = Boolean(settings) && !isRestartingBackend;
+    const renderEngineSetting = (control: React.ReactNode) => (generalSettingsReady ? control : (
+        <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
+            {isLoading || isRestartingBackend ? '불러오는 중' : '불러오지 못함'}
+        </span>
+    ));
     const renderDismissButton = (label: string, onClick: () => void) => (
         <button
             type="button"
@@ -1840,7 +1879,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         </span>
                                         <select
                                             value={downloadFormat}
-                                            onChange={event => setDownloadFormat(event.target.value as DownloadFormat)}
+                                            onChange={event => handleDownloadFormatChange(event.target.value as DownloadFormat)}
                                             className="select-field settings-row-select"
                                         >
                                             <option value="hwpx">HWPX</option>
@@ -1854,12 +1893,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <span className="settings-row-title">회의 요약 HWPX 자동 저장</span>
                                             <span className="settings-row-description">요약이 만들어지면 다운로드 폴더에도 저장합니다.</span>
                                         </span>
-                                        <input
-                                            type="checkbox"
-                                            className="settings-switch"
-                                            checked={autoSaveHwpxCopy}
-                                            onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
-                                        />
+                                        {renderEngineSetting(
+                                            <input
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={autoSaveHwpxCopy}
+                                                onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
+                                            />
+                                        )}
                                     </label>
                                 </div>
                             </div>
@@ -1872,26 +1913,30 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <span className="settings-row-title">분석 장치</span>
                                             <span className="settings-row-description">{gpuStatusText}</span>
                                         </span>
-                                        <select
-                                            value={sttDevice}
-                                            onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
-                                            className="select-field settings-row-select"
-                                        >
-                                            <option value="cpu">CPU 기본 사용</option>
-                                            <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
-                                        </select>
+                                        {renderEngineSetting(
+                                            <select
+                                                value={sttDevice}
+                                                onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
+                                                className="select-field settings-row-select"
+                                            >
+                                                <option value="cpu">CPU 기본 사용</option>
+                                                <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
+                                            </select>
+                                        )}
                                     </label>
                                     <label className="settings-row">
                                         <span className="settings-row-copy">
                                             <span className="settings-row-title">음성 정리</span>
                                             <span className="settings-row-description">분석하기 좋은 형태로 정리합니다.</span>
                                         </span>
-                                        <input
-                                            type="checkbox"
-                                            className="settings-switch"
-                                            checked={preprocessingEnabled}
-                                            onChange={event => setPreprocessingEnabled(event.target.checked)}
-                                        />
+                                        {renderEngineSetting(
+                                            <input
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={preprocessingEnabled}
+                                                onChange={event => setPreprocessingEnabled(event.target.checked)}
+                                            />
+                                        )}
                                     </label>
                                     <label
                                         className="settings-row"
@@ -1901,12 +1946,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <span className="settings-row-title">참석자 구분까지 이어서 실행</span>
                                             <span className="settings-row-description">끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행할 수 있습니다.</span>
                                         </span>
-                                        <input
-                                            type="checkbox"
-                                            className="settings-switch"
-                                            checked={diarizationDuringAnalysis}
-                                            onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
-                                        />
+                                        {renderEngineSetting(
+                                            <input
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={diarizationDuringAnalysis}
+                                                onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
+                                            />
+                                        )}
                                     </label>
                                 </div>
                             </div>
@@ -1919,25 +1966,29 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <span className="settings-row-title">음성 재생 파일 보관</span>
                                             <span className="settings-row-description">다시 듣기와 나중에 참석자 구분에 사용합니다.</span>
                                         </span>
-                                        <input
-                                            type="checkbox"
-                                            className="settings-switch"
-                                            checked={preserveExtractedAudio}
-                                            onChange={event => setPreserveExtractedAudio(event.target.checked)}
-                                        />
+                                        {renderEngineSetting(
+                                            <input
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={preserveExtractedAudio}
+                                                onChange={event => setPreserveExtractedAudio(event.target.checked)}
+                                            />
+                                        )}
                                     </label>
                                     <label className="settings-row">
                                         <span className="settings-row-copy">
                                             <span className="settings-row-title">음성 파일 자동 저장</span>
                                             <span className="settings-row-description">보관한 음성을 다운로드 폴더에도 저장합니다.</span>
                                         </span>
-                                        <input
-                                            type="checkbox"
-                                            className="settings-switch"
-                                            checked={preserveExtractedAudio && autoSaveAudioCopy}
-                                            onChange={event => setAutoSaveAudioCopy(event.target.checked)}
-                                            disabled={!preserveExtractedAudio}
-                                        />
+                                        {renderEngineSetting(
+                                            <input
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={preserveExtractedAudio && autoSaveAudioCopy}
+                                                onChange={event => setAutoSaveAudioCopy(event.target.checked)}
+                                                disabled={!preserveExtractedAudio}
+                                            />
+                                        )}
                                     </label>
                                 </div>
                             </div>
@@ -2247,24 +2298,42 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     </div>
                                 )}
 
-                                {summaryModelOptions.length > 0 && (
+                                {!models && isLoading && (
+                                    <div className="settings-model-note mt-3">
+                                        <RefreshCw size={16} className="animate-spin text-primary" aria-hidden="true" />
+                                        모델 상태를 불러오는 중입니다.
+                                    </div>
+                                )}
+                                {models && summaryModelOptions.length > 0 && (
                                     <label className="mt-4 block">
                                         <span className="text-xs font-semibold text-muted-foreground">모델 선택</span>
                                         <div className="mt-2">
                                             <select
                                                 ref={summaryModelSelectRef}
                                                 value={summaryModelInput}
-                                                onChange={event => setSummaryModelInput(event.target.value)}
+                                                onChange={event => {
+                                                    // Choosing applies at once, like 사용 in the list below.
+                                                    const nextModel = normalizeSummaryModelName(event.target.value);
+                                                    setSummaryModelInput(nextModel);
+                                                    if (nextModel && nextModel !== configuredSummaryModel) void handleSaveSummaryModel(nextModel);
+                                                }}
+                                                disabled={isSaving || summaryModelInventoryUnknown}
                                                 className="select-field"
                                             >
-                                                {summaryModelOptions.map(option => (
-                                                    <option key={option.model} value={option.model}>
-                                                        {[
-                                                            option.model,
-                                                            getSummaryModelTraitLabel(option.model),
-                                                        ].filter(Boolean).join(' · ')}{option.model === recommendedSummaryModel ? ' (권장)' : ''}
-                                                    </option>
-                                                ))}
+                                                {summaryModelOptions.map(option => {
+                                                    const optionModel = normalizeSummaryModelName(option.model);
+                                                    // A model not on this PC cannot be applied here; 받기 in the list fetches it.
+                                                    const optionUnavailable = !isSummaryOptionInstalled(optionModel) && optionModel !== selectedSummaryModel;
+                                                    return (
+                                                        <option key={option.model} value={option.model} disabled={optionUnavailable}>
+                                                            {[
+                                                                option.model,
+                                                                getSummaryModelTraitLabel(option.model),
+                                                                optionUnavailable ? '받기 필요' : '',
+                                                            ].filter(Boolean).join(' · ')}{option.model === recommendedSummaryModel ? ' (권장)' : ''}
+                                                        </option>
+                                                    );
+                                                })}
                                             </select>
                                         </div>
                                         <span className="mt-2 block truncate text-xs text-muted-foreground">{summaryModelHint}</span>
@@ -2275,7 +2344,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         )}
                                     </label>
                                 )}
-                                {summaryModelOptions.length > 0 && (
+                                {models && summaryModelOptions.length > 0 && (
                                     <div className="settings-model-list mt-3">
                                         {summaryModelOptions.map((option, index) => {
                                             const optionModel = normalizeSummaryModelName(option.model);
@@ -2546,6 +2615,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             className="h-9 w-16 shrink-0 px-2"
                                             disabled={
                                                 !customSummaryModel
+                                                || !models
                                                 || (customSummaryPull?.status === 'cancelling')
                                                 || (customSummaryInstalled && isSaving)
                                                 || (customSummaryReadyToPull && !ollamaModelActionsReady)

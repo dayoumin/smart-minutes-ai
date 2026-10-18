@@ -534,7 +534,16 @@ const run = async () => {
     assert.equal(restartCalls, 1, 'restart command should run once');
     await page.getByText(/분석 기능을 다시 시작/).waitFor({ state: 'visible', timeout: 10000 });
 
+    // The download format is a browser preference: saved at once, never through the engine.
     await page.getByLabel('다운로드 형식').selectOption('docx');
+    assert.equal(
+      await page.evaluate(() => window.localStorage.getItem('smart-minutes-download-format')),
+      'docx',
+      'the download format should be stored as soon as it changes',
+    );
+    await sleep(900);
+    assert.equal(routeState.settingsPatches.length, 0, 'the download format must not write engine settings');
+    await page.getByLabel('회의 요약 HWPX 자동 저장').check();
     for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {
       await sleep(250);
     }
@@ -564,9 +573,23 @@ const run = async () => {
     );
     assert.equal(await autoSaveAudioCheckbox.isChecked(), false, 'delayed save response should not re-check the audio auto-save box');
 
-    // An engine that does not answer keeps settings loading; 재시작 must stay usable instead of waiting it out.
+    // Closing right after a change, inside the save delay, must still send it.
+    routeState.settingsPatches.length = 0;
+    await page.getByLabel('음성 정리').uncheck();
     await page.keyboard.press('Escape');
     await settingsDialog.waitFor({ state: 'detached', timeout: 10000 });
+    for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {
+      await sleep(100);
+    }
+    assert.equal(
+      routeState.settingsPatches.at(-1)?.preprocessing?.enabled,
+      false,
+      'a change made just before closing settings should still be saved',
+    );
+    // The saved change makes the writer re-read settings; let that finish before holding the next load.
+    await sleep(1000);
+
+    // An engine that does not answer keeps settings loading; 재시작 must stay usable instead of waiting it out.
     let releaseSettingsGet = () => undefined;
     routeState.settingsGetGate = new Promise(resolve => { releaseSettingsGet = resolve; });
     await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
@@ -575,6 +598,10 @@ const run = async () => {
       await sleep(100);
     }
     assert.equal(routeState.heldSettingsGets, 1, 'the settings load should be held so the dialog is still loading');
+    // Before the engine answers, engine-backed controls show no guessed value and cannot be changed.
+    assert.equal(await settingsDialog.getByRole('checkbox').count(), 0, 'no engine-backed switch should render before settings load');
+    assert.equal(await settingsDialog.getByText('불러오는 중', { exact: true }).count(), 6, 'each engine-backed control should show 불러오는 중');
+    assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'the browser-only download format stays usable while loading');
     await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should stay enabled while settings are still loading');
     const restartCallsBeforeLoadingRestart = await page.evaluate(() => window.__restartCalls);
     // Only the first load is held; the load after the restart answers normally.
@@ -598,7 +625,7 @@ const run = async () => {
     await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
     assert.equal(await page.getByText('설정을 불러오지 못했습니다', { exact: false }).count(), 0, 'the superseded load should not leave an error behind');
     assert.equal(await page.getByText(/분석 기능을 다시 시작/).count(), 1, 'the restart result should stay');
-    assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'the restarted settings should stay loaded');
+    assert.equal(await page.getByLabel('음성 재생 파일 보관').isEnabled(), true, 'the restarted settings should stay loaded');
 
     // A restart that fails (for example an engine that came up slowly) should still end with loaded settings.
     await page.keyboard.press('Escape');
@@ -609,7 +636,8 @@ const run = async () => {
     await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should be available');
     await page.getByRole('button', { name: '재시작' }).click();
     await page.getByText('재시작은 확인하지 못했지만 분석 기능에 다시 연결했습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'settings should be loaded again after a failed restart');
+    await page.getByLabel('음성 재생 파일 보관').waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await page.getByLabel('음성 재생 파일 보관').isEnabled(), true, 'settings should be loaded again after a failed restart');
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '재시작', undefined, { timeout: 5000 });
 
     await runTroubleshootingEntryScene(browser);

@@ -380,8 +380,9 @@ const installRoutes = async (page, state) => {
     });
   });
 
-  await page.route('**/api/models/status', route => {
+  await page.route('**/api/models/status', async route => {
     state.modelStatusRequests.push(Date.now());
+    if (state.modelStatusGate) await state.modelStatusGate;
     const configuredModel = state.settingsState.summary.model;
     route.fulfill({
       status: 200,
@@ -674,8 +675,25 @@ const run = async () => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
 
     const settingsButton = page.getByRole('complementary').getByRole('button', { name: '설정' });
-    await settingsButton.click();
     const settingsDialog = page.getByRole('dialog', { name: '설정' });
+    // Until model status arrives nothing may be concluded missing: no download action, no select.
+    let releaseModelStatus = () => undefined;
+    state.modelStatusGate = new Promise(resolve => { releaseModelStatus = resolve; });
+    await settingsButton.click();
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    await page.getByRole('tab', { name: '모델' }).click();
+    const loadingModelsPanel = page.locator('#settings-models-panel');
+    await loadingModelsPanel.getByText('모델 상태를 불러오는 중입니다.').first().waitFor({ state: 'visible', timeout: 10000 });
+    // The custom-input button is already disabled here; its 받기 accessible name is the separate SB-10 issue.
+    assert.equal(await loadingModelsPanel.getByRole('button', { name: /받기$/, disabled: false }).count(), 0, 'no download action may be usable before model status arrives');
+    assert.equal(await loadingModelsPanel.locator('select').count(), 0, 'the summary model select should wait for model status');
+    state.modelStatusGate = null;
+    releaseModelStatus();
+    await loadingModelsPanel.locator('select').waitFor({ state: 'visible', timeout: 10000 });
+    await page.keyboard.press('Escape');
+    await settingsDialog.waitFor({ state: 'detached', timeout: 10000 });
+
+    await settingsButton.click();
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.querySelector('[role="dialog"]')?.contains(document.activeElement));
     let focusState = await getSettingsFocusState(page);
@@ -775,7 +793,12 @@ const run = async () => {
     await modelsPanel.getByRole('button', { name: '모델 준비 상태 다시 확인' }).click();
     await modelsPanel.getByText('요약 프로그램은 필요한 작업을 시작할 때 실행됩니다.', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
     await modelsPanel.getByText('받을 모델의 받기를 누르면 요약 프로그램을 자동으로 시작합니다.', { exact: false }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.locator('select').selectOption('gemma4:e4b');
+    assert.equal(
+      // Locator.isDisabled() does not read a native disabled <option>; check the property itself.
+      await modelsPanel.locator('select option[value="gemma4:e4b"]').evaluate(option => option.disabled),
+      true,
+      'a model not on this PC should not be choosable in the select',
+    );
     assert.equal(
       await modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' }).count(),
       1,
@@ -810,8 +833,6 @@ const run = async () => {
     await gemma4e2bReadyCard.getByLabel('gemma4:e2b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await gemma4e2bReadyCard.getByRole('button', { name: 'gemma4:e2b 모델 작업' }).count(), 0, 'current ready summary model should not show a confusing overflow menu');
 
-    await modelsPanel.locator('select').selectOption('gemma4:e4b');
-    await modelsPanel.getByText('아래 목록에서 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
     const gemma4e4bDownloadButton = modelsPanel.getByRole('button', { name: 'gemma4:e4b 모델 받기' });
     assert.match(await gemma4e4bDownloadButton.getAttribute('class'), /btn-outline/, 'summary model download should use the weaker outline button style');
     await gemma4e4bDownloadButton.click();
@@ -828,6 +849,17 @@ const run = async () => {
     assert.equal(await gemma4e4bCard.getByText('사용 중', { exact: true }).count(), 0);
     assert.equal(state.settingsPatches.at(-1)?.summary?.model, 'gemma4:e4b', 'using a completed model should save it as the configured summary model');
     await gemma4e4bCard.getByLabel('gemma4:e4b 모델 준비됨').waitFor({ state: 'visible', timeout: 10000 });
+    const summarySelect = modelsPanel.locator('select');
+    assert.equal(await summarySelect.inputValue(), 'gemma4:e4b', 'the select should show the configured model');
+    for (const model of ['user-ready:1b', 'gemma4:e4b']) {
+      const patchesBefore = state.settingsPatches.length;
+      await summarySelect.selectOption(model);
+      for (let attempt = 0; attempt < 50 && state.settingsPatches.length === patchesBefore; attempt += 1) {
+        await page.waitForTimeout(100);
+      }
+      assert.equal(state.settingsPatches.at(-1)?.summary?.model, model, `choosing ${model} in the select should save it at once`);
+      await modelsPanel.getByLabel(`${model} 모델 준비됨`).waitFor({ state: 'visible', timeout: 10000 });
+    }
     assert.equal(await gemma4e4bCard.getByRole('button', { name: 'gemma4:e4b 모델 작업' }).count(), 0, 'newly selected ready summary model should not show a confusing overflow menu');
 
     const beforeRunningSummaryMetrics = await getLayoutMetrics(modelsPanel);

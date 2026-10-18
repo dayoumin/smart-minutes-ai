@@ -3136,7 +3136,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         if (selectedMeeting?.diarizationApplied !== true && speakersInTranscript.length < 2) return [];
         return Array.from(new Set(displaySegments.map(segment => (segment.displaySpeaker || '').trim()).filter(Boolean)));
     }, [displaySegments, selectedMeeting?.diarizationApplied, speakersInTranscript.length]);
-    const showAudioRow = Boolean(audioSourceUrl || audioPlaybackError || audioAvailability === 'checking' || audioAvailability === 'available');
+    // A full result output list (with `json`) names `audio` only when the engine kept it, so such a
+    // record never reserves the row. Partial or older records may have audio: they keep the row's
+    // place through the check, showing 음성 없음 rather than collapsing and shifting the tabs up.
+    const audioRowMayHaveAudio = !selectedMeeting?.outputFiles?.json || Boolean(selectedMeeting.outputFiles.audio);
+    const showAudioRow = Boolean(
+        audioSourceUrl
+        || audioAvailability === 'available'
+        || (audioRowMayHaveAudio && (audioPlaybackError || audioAvailability === 'checking' || audioAvailability === 'missing')),
+    );
     const visibleSegments = useMemo(
         () => displaySegments.filter(segment => !contentQuery || [
             segment.speaker,
@@ -3950,7 +3958,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                         <Button variant="ghost" onClick={retryAudioPlayback}>다시 확인</Button>
                                                     </span>
                                                 ) : (
-                                                    <span className="text-[13px] text-muted-foreground">확인 중</span>
+                                                    <span className="text-[13px] text-muted-foreground">
+                                                        {audioAvailability === 'missing' ? '음성 없음' : '확인 중'}
+                                                    </span>
                                                 )}
                                             </dd>
                                         </div>

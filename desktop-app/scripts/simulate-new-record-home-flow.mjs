@@ -367,6 +367,23 @@ const runAnalysisEntryPointScene = async browser => {
   }
 };
 
+const runPrivacyNoteWithoutEngineScene = async browser => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  await page.route('**/api/**', route => route.abort('connectionrefused'));
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+    // Without an engine answer the reserved line still states the local-only promise instead of staying blank.
+    await page.locator('.writer-file-privacy-note')
+      .getByText('음성 파일은 이 PC에서만 처리하고, 회의록은 이 PC에만 보관합니다.', { exact: true })
+      .waitFor({ timeout: 10000 });
+    console.log('ok - new-record home keeps the local-only note without an engine answer');
+  } finally {
+    await context.close();
+  }
+};
+
 const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
@@ -376,6 +393,7 @@ const run = async () => {
     await runRecoveryScene(browser);
     await runPendingCancellationLockScene(browser);
     await runAnalysisEntryPointScene(browser);
+    await runPrivacyNoteWithoutEngineScene(browser);
   } finally {
     await browser.close();
     await stopServer(server);

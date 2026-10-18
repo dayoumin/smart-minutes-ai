@@ -268,7 +268,10 @@ const run = async () => {
     }));
     assert.equal(await page.getByText(autoSavePrivacyMessage, { exact: true }).count(), 0, 'a stale settings response must not replace the latest privacy message');
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    await page.locator('.writer-file-privacy-note').waitFor({ state: 'hidden', timeout: 10000 });
+    // An unreadable setting drops the exact wording, but the reserved line keeps the local-only promise.
+    await page.locator('.writer-file-privacy-note')
+      .getByText('음성 파일은 이 PC에서만 처리하고, 회의록은 이 PC에만 보관합니다.', { exact: true })
+      .waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('button', { name: '음성 추출', exact: true }).count(), 0, 'The extraction tool is not part of the current writer surface.');
     assert.equal(await page.locator('input[accept="video/*,.mp4,.mov,.mkv,.avi,.webm"]').count(), 0, 'The hidden extraction tool must not expose a separate file picker.');
     assert.equal(extractRequests, 0, 'Privacy and file-input interactions must not invoke the hidden extraction tool.');

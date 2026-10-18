@@ -2308,7 +2308,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         ? '회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.'
         : preserveExtractedAudio === true
             ? '회의록과 분석용 음성을 이 PC에만 보관합니다.'
-            : null;
+            // Before (or without) an engine answer the local-only promise still holds; the exact wording follows the setting.
+            : '음성 파일은 이 PC에서만 처리하고, 회의록은 이 PC에만 보관합니다.';
 
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
     const transcriptProgressPercent = getTranscriptReadyProgressPercent(

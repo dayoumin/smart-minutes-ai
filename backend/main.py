@@ -6,6 +6,7 @@ import hmac
 import os
 import json
 import logging
+import math
 import queue
 import re
 import shutil
@@ -17,6 +18,7 @@ import time
 import urllib.request
 import zipfile
 from datetime import datetime, timezone
+from contextvars import copy_context
 from pathlib import Path
 from typing import AsyncIterator
 from xml.etree import ElementTree
@@ -73,6 +75,7 @@ from model_manager import (
     read_ollama_model_inventory,
     resolve_model_path,
 )
+from media_limits import MediaDurationError, enforce_media_duration, validate_media_duration
 from ollama_utils import (
     ensure_ollama_server_running,
     find_embedded_ollama_executable,
@@ -165,6 +168,8 @@ ANALYSIS_STALL_ERROR_SECONDS = 180
 ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS = 600
 ANALYSIS_STALL_ERROR_SECONDS_PREPARE = 300
 ANALYSIS_STALL_ERROR_SECONDS_TRANSCRIBE = 600
+ANALYSIS_DIARIZATION_TIMEOUT_MIN_SECONDS = 600
+ANALYSIS_DIARIZATION_TIMEOUT_MAX_SECONDS = 7200
 GENERATION_PROGRESS_TTL_SECONDS = 60 * 60
 GENERATION_PROGRESS_MAX_ENTRIES = 128
 DETAIL_SUMMARY_INPUT_CHANGED = "summary_input_changed"
@@ -697,9 +702,24 @@ def _record_analysis_heartbeat(job_id: str, progress_payload: dict) -> None:
         logging.exception("Failed to record analysis heartbeat")
 
 
+def _is_diarization_progress(last_progress: dict) -> bool:
+    return last_progress.get("stage") == "diarization" or str(last_progress.get("message") or "").startswith("Speaker Diarization")
+
+
 def get_analysis_stall_timeout_seconds(last_progress: dict) -> int:
     message = str(last_progress.get("message") or "")
     progress_value = int(last_progress.get("progress") or 0)
+    if _is_diarization_progress(last_progress):
+        duration = last_progress.get("total_audio_seconds")
+        eta = last_progress.get("eta_seconds")
+        if isinstance(duration, (int, float)) and not isinstance(duration, bool) and math.isfinite(duration) and duration > 0:
+            eta = _initial_diarization_eta_seconds(min(duration, ANALYSIS_DIARIZATION_TIMEOUT_MAX_SECONDS))
+        if not isinstance(eta, (int, float)) or isinstance(eta, bool) or not math.isfinite(eta) or eta <= 0:
+            eta = 0
+        return min(
+            ANALYSIS_DIARIZATION_TIMEOUT_MAX_SECONDS,
+            max(ANALYSIS_DIARIZATION_TIMEOUT_MIN_SECONDS, math.ceil(min(eta, ANALYSIS_DIARIZATION_TIMEOUT_MAX_SECONDS) * 2)),
+        )
     if message.startswith("Converting to WAV"):
         return ANALYSIS_STALL_ERROR_SECONDS_PREPROCESS
     if message.startswith("Transcribing chunk"):
@@ -3105,6 +3125,8 @@ def _summary_status(summary: dict) -> str:
 
 
 def _generation_http_exception(error: BaseException, generation_kind: str) -> HTTPException:
+    if isinstance(error, MediaDurationError):
+        return HTTPException(status_code=error.http_status, detail=error.as_detail())
     failure = classify_generation_exception(error)
     return HTTPException(
         status_code=failure.http_status,
@@ -3859,7 +3881,7 @@ async def generate_output_diarization(job_id: str, payload: dict | None = Body(N
 
         _record_generation_progress(generation_key, 15, "음성 파일 확인 중")
         _raise_if_generation_stopped(generation_key)
-        source_duration_seconds = get_wav_duration_seconds(source_audio_path)
+        source_duration_seconds = _require_analysis_wav_duration(source_audio_path)
         diarization_eta_seconds = _initial_diarization_eta_seconds(source_duration_seconds)
         decision = _diarization_resource_decision(
             config,
@@ -4860,6 +4882,17 @@ def _resolve_job_audio_path(config: dict, job_id: str) -> str | None:
     return None
 
 
+def _require_analysis_wav_duration(path: str) -> float:
+    from pipeline.chunk_audio import get_wav_duration_seconds
+
+    try:
+        return enforce_media_duration(get_wav_duration_seconds(path))
+    except MediaDurationError:
+        raise
+    except Exception:
+        raise MediaDurationError("media_duration_unavailable") from None
+
+
 def _safe_source_filename(value) -> str:
     if not isinstance(value, str):
         return ""
@@ -5016,6 +5049,7 @@ def _restore_job_audio_path_for_diarization(
     source_path = os.path.abspath(source_path)
     if not os.path.isfile(source_path):
         return None
+    validate_media_duration(source_path)
 
     temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
@@ -5042,6 +5076,7 @@ def _restore_job_audio_path_for_diarization(
     )
     if not os.path.isfile(source_wav_path) or os.path.getsize(source_wav_path) <= 0:
         return None
+    _require_analysis_wav_duration(source_wav_path)
 
     preprocessing_applied = (
         preprocess_result.get("preprocessing", {})
@@ -5725,12 +5760,15 @@ async def analyze_meeting(
     if mode == "real":
         analysis_job_id = _validate_job_id(job_id) if job_id else datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         try:
-            cancel_event = ANALYSIS_JOBS.create(analysis_job_id)
+            cancel_event = ANALYSIS_JOBS.create(analysis_job_id, admission_pending=True)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         config = load_config()
         try:
-            upload_path = await save_analysis_upload(file, analysis_job_id)
+            upload_path = await save_analysis_upload(
+                file, analysis_job_id, verify_duration=True, verify_cached_audio=resume_requested,
+                cancel_event=cancel_event,
+            )
             _seed_analysis_job_state(
                 job_id=analysis_job_id,
                 config=config,
@@ -5739,7 +5777,36 @@ async def analyze_meeting(
                 source_last_modified=file_last_modified,
                 resume_requested=resume_requested,
             )
-        except Exception:
+        except MediaDurationError as exc:
+            ANALYSIS_JOBS.remove(analysis_job_id, cancel_event)
+            raise HTTPException(status_code=exc.http_status, detail=exc.as_detail()) from exc
+        except AnalysisCancelledError:
+            # Admission has not taken ownership of the previous upload/checkpoints.
+            # Match the existing SSE stop/cancel contract without changing that saved work.
+            action = ANALYSIS_JOBS.get_action(analysis_job_id) or "stop"
+            ANALYSIS_JOBS.remove(analysis_job_id, cancel_event)
+
+            async def admission_cancelled_events():
+                status = "stopped" if action == "stop" else "cancelled"
+                yield sse_event({
+                    "type": status, "mode": "real", "progress": 0, "status": status,
+                    "action": action, "eta_seconds": None, "preserve_existing": True,
+                    "message": (
+                        "분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다."
+                        if action == "stop" else "분석을 취소했습니다."
+                    ),
+                }, event=status)
+                yield sse_event("[DONE]", event="done")
+
+            return StreamingResponse(
+                admission_cancelled_events(), media_type="text/event-stream",
+                headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
+            )
+        except asyncio.CancelledError:
+            # save_analysis_upload releases this registry entry only after its native probe
+            # and staged-file cleanup have actually finished.
+            raise
+        except BaseException:
             ANALYSIS_JOBS.remove(analysis_job_id, cancel_event)
             raise
         return StreamingResponse(
@@ -5990,28 +6057,83 @@ async def cancel_analysis(job_id: str, payload: dict | None = Body(None)) -> dic
     action = str((payload or {}).get("action") or "stop").strip().lower()
     if action not in {"stop", "cancel"}:
         raise HTTPException(status_code=400, detail="invalid_cancel_action")
+    cancel_requested, preserve_existing = ANALYSIS_JOBS.cancel_with_admission(job_id, action)
     return {
         "job_id": job_id,
         "action": action,
-        "cancel_requested": ANALYSIS_JOBS.cancel(job_id, action),
+        "cancel_requested": cancel_requested,
+        "preserve_existing": preserve_existing,
     }
 
 
-async def save_analysis_upload(file: UploadFile, job_id: str) -> str:
+async def save_analysis_upload(
+    file: UploadFile, job_id: str, *, verify_duration: bool = False, verify_cached_audio: bool = False,
+    cancel_event: threading.Event | None = None,
+) -> str:
     config = load_config()
     temp_dir = resolve_config_path(config["paths"]["temp_dir"])
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
     ensure_job_checkpoint_dirs(checkpoint_paths)
     suffix = Path(file.filename or "upload").suffix
     upload_path = get_job_upload_path(checkpoint_paths, suffix)
+    descriptor, staged_path = tempfile.mkstemp(prefix=".incoming_", suffix=suffix, dir=checkpoint_paths.upload_dir)
+    os.close(descriptor)
+    probe_future = None
+
+    def raise_if_cancelled():
+        if cancel_event is not None and cancel_event.is_set():
+            raise AnalysisCancelledError("분석이 취소되었습니다.")
+
+    def remove_staged(_future=None):
+        if _future is not None and not _future.cancelled():
+            _future.exception()  # Consume a failed probe after its async waiter was cancelled.
+        try:
+            os.remove(staged_path)
+        except FileNotFoundError:
+            pass
 
     try:
-        with open(upload_path, "wb") as buffer:
+        raise_if_cancelled()
+        with open(staged_path, "wb") as buffer:
             while chunk := await file.read(1024 * 1024):
+                raise_if_cancelled()
                 buffer.write(chunk)
-    except Exception:
-        if os.path.exists(upload_path):
-            os.remove(upload_path)
+        raise_if_cancelled()
+        if verify_duration:
+            def inspect_media():
+                validate_media_duration(staged_path)
+                if verify_cached_audio and os.path.isfile(checkpoint_paths.source_wav_path):
+                    if _load_job_state(checkpoint_paths).get("source_wav_completed"):
+                        _require_analysis_wav_duration(checkpoint_paths.source_wav_path)
+
+            probe_future = asyncio.get_running_loop().run_in_executor(None, inspect_media)
+            try:
+                await asyncio.shield(probe_future)
+            except Exception:
+                # A previously accepted user stop/cancel takes precedence over validation.
+                raise_if_cancelled()
+                raise
+        raise_if_cancelled()
+        # Cancellation and this ownership transition share the registry lock. No await
+        # separates a successful claim, upload promotion, and the caller's state seed.
+        if cancel_event is not None and not ANALYSIS_JOBS.claim_admission(job_id, cancel_event):
+            raise AnalysisCancelledError("분석이 취소되었습니다.")
+        os.replace(staged_path, upload_path)
+    except BaseException as exc:
+        cleanup = remove_staged
+        if isinstance(exc, asyncio.CancelledError) and cancel_event is not None:
+            cancel_event.set()
+
+            def cleanup(_future=None):
+                try:
+                    remove_staged(_future)
+                finally:
+                    ANALYSIS_JOBS.remove(job_id, cancel_event)
+
+        if probe_future is not None and not probe_future.done():
+            probe_future.add_done_callback(cleanup)
+        else:
+            cleanup()
         raise
 
     return upload_path
@@ -6066,13 +6188,15 @@ async def stream_real_analysis(
         "eta_seconds": None,
     }
     last_real_progress_at = time.monotonic()
+    diarization_deadline_at: float | None = None
+    watchdog_error: dict | None = None
 
     def raise_if_cancelled() -> None:
         if cancel_event.is_set():
             raise AnalysisCancelledError("분석이 취소되었습니다.")
 
     def report_progress(step: str, progress: int, metadata: dict | None = None) -> None:
-        nonlocal last_progress, last_real_progress_at
+        nonlocal last_progress, last_real_progress_at, diarization_deadline_at
         raise_if_cancelled()
         last_real_progress_at = time.monotonic()
         last_progress = {
@@ -6084,6 +6208,11 @@ async def stream_real_analysis(
             "eta_seconds": None,
             **(metadata or {}),
         }
+        if _is_diarization_progress(last_progress):
+            if diarization_deadline_at is None:
+                diarization_deadline_at = last_real_progress_at + get_analysis_stall_timeout_seconds(last_progress)
+        else:
+            diarization_deadline_at = None
         loop.call_soon_threadsafe(
             queue.put_nowait,
             last_progress,
@@ -6124,8 +6253,64 @@ async def stream_real_analysis(
 
         return config
 
+    def persist_watchdog_error() -> None:
+        if watchdog_error is None:
+            return
+        _write_job_state(checkpoint_paths, {
+            "stage": "failed", "failed": True, "cancelled": False,
+            "resume_supported": True, "cleanup_policy": "preserve_checkpoints",
+            "last_error": watchdog_error["message"], "last_error_code": "analysis_stage_timeout",
+            "timed_out_stage": watchdog_error.get("stage"),
+            "last_heartbeat_at": datetime.now().isoformat(),
+            "last_progress": dict(watchdog_error),
+        })
+
+    def finish_cancelled_worker(message: str) -> dict:
+        cancel_action = ANALYSIS_JOBS.get_action(job_id) or "stop"
+        if watchdog_error is not None and cancel_action != "cancel":
+            persist_watchdog_error()
+            return dict(watchdog_error)
+        cancelled_status = "stopped" if cancel_action == "stop" else "cancelled"
+        cancelled_message = (
+            "분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다."
+            if cancel_action == "stop" else message
+        )
+        _write_job_state(checkpoint_paths, {
+            "stage": cancelled_status, "cancelled": True, "cancel_action": cancel_action,
+            "resume_supported": cancel_action == "stop",
+            "cleanup_policy": "delete_resume_artifacts" if cancel_action == "cancel" else "preserve_checkpoints",
+            "last_heartbeat_at": datetime.now().isoformat(),
+            "last_progress": {"message": cancelled_message, "progress": 0, "status": cancelled_status, "eta_seconds": None},
+        })
+        if cancel_action == "cancel":
+            try:
+                _delete_resume_artifacts(job_id)
+            except Exception:
+                logging.exception("Failed to delete cancelled analysis draft artifacts")
+        return {
+            "type": cancelled_status, "mode": "real", "progress": 0, "status": cancelled_status,
+            "action": cancel_action, "message": cancelled_message, "eta_seconds": None,
+        }
+
     async def worker() -> None:
         upload_path = ""
+        pipeline_future: asyncio.Future | None = None
+        worker_cancelled = False
+
+        def cleanup_owned_worker(_future=None) -> None:
+            try:
+                if _future is not None and not _future.cancelled():
+                    _future.exception()
+                if worker_cancelled:
+                    finish_cancelled_worker("분석이 취소되었습니다.")
+                if upload_path:
+                    config = load_config()
+                    if not config["privacy"].get("save_original_audio_copy", False) and os.path.exists(upload_path):
+                        os.remove(upload_path)
+            except Exception:
+                logging.exception("Failed to clean up uploaded analysis file")
+            finally:
+                ANALYSIS_JOBS.remove(job_id, cancel_event)
         try:
             raise_if_cancelled()
             upload_path = await save_upload()
@@ -6153,14 +6338,11 @@ async def stream_real_analysis(
                 "source_filename": source_filename or (file.filename if file else ""),
             }
             raise_if_cancelled()
-            result = await asyncio.to_thread(
-                process_audio_pipeline,
-                upload_path,
-                job_id,
-                config,
-                report_progress,
-                cancel_event,
+            pipeline_future = loop.run_in_executor(
+                None, copy_context().run, process_audio_pipeline, upload_path, job_id, config, report_progress, cancel_event,
             )
+            # Cancelling the async waiter must not release a still-running native worker's job/upload.
+            result = await asyncio.shield(pipeline_future)
             raise_if_cancelled()
             result_data = result["result_data"]
             result_settings = result_data.get("settings", {}) if isinstance(result_data, dict) else {}
@@ -6222,49 +6404,25 @@ async def stream_real_analysis(
             await queue.put(final_data)
             await queue.put("[DONE]")
         except AnalysisCancelledError as exc:
-            cancel_action = ANALYSIS_JOBS.get_action(job_id) or "stop"
-            cancelled_status = "stopped" if cancel_action == "stop" else "cancelled"
-            cancelled_message = (
-                "분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다."
-                if cancel_action == "stop"
-                else str(exc)
-            )
-            _write_job_state(checkpoint_paths, {
-                "stage": cancelled_status,
-                "cancelled": True,
-                "cancel_action": cancel_action,
-                "resume_supported": cancel_action == "stop",
-                "cleanup_policy": "delete_resume_artifacts" if cancel_action == "cancel" else "preserve_checkpoints",
-                "last_heartbeat_at": datetime.now().isoformat(),
-                "last_progress": {
-                    "message": cancelled_message,
-                    "progress": 0,
-                    "status": cancelled_status,
-                    "eta_seconds": None,
-                },
-            })
-            if cancel_action == "cancel":
-                try:
-                    _delete_resume_artifacts(job_id)
-                except Exception:
-                    logging.exception("Failed to delete cancelled analysis draft artifacts")
-            await queue.put({
-                "type": cancelled_status,
-                "mode": "real",
-                "progress": 0,
-                "status": cancelled_status,
-                "action": cancel_action,
-                "message": cancelled_message,
-                "eta_seconds": None,
-            })
+            await queue.put(finish_cancelled_worker(str(exc)))
             await queue.put("[DONE]")
+        except asyncio.CancelledError:
+            cancel_event.set()
+            worker_cancelled = True
+            raise
         except Exception as exc:
+            if cancel_event.is_set():
+                await queue.put(finish_cancelled_worker(str(exc)))
+                await queue.put("[DONE]")
+                return
+            duration_detail = exc.as_detail() if isinstance(exc, MediaDurationError) else {}
             _write_job_state(checkpoint_paths, {
                 "stage": "failed",
                 "failed": True,
                 "resume_supported": True,
                 "last_heartbeat_at": datetime.now().isoformat(),
                 "last_error": str(exc),
+                **({"last_error_code": exc.code} if isinstance(exc, MediaDurationError) else {}),
                 "last_progress": {
                     "message": str(exc),
                     "progress": 100,
@@ -6279,18 +6437,14 @@ async def stream_real_analysis(
                 "status": "error",
                 "message": str(exc),
                 "eta_seconds": None,
+                **duration_detail,
             })
             await queue.put("[DONE]")
         finally:
-            try:
-                if upload_path:
-                    config = load_config()
-                    if not config["privacy"].get("save_original_audio_copy", False) and os.path.exists(upload_path):
-                        os.remove(upload_path)
-            except Exception:
-                logging.exception("Failed to clean up uploaded analysis file")
-            finally:
-                ANALYSIS_JOBS.remove(job_id, cancel_event)
+            if pipeline_future is not None and not pipeline_future.done():
+                pipeline_future.add_done_callback(cleanup_owned_worker)
+            else:
+                cleanup_owned_worker()
 
     task = asyncio.create_task(worker())
 
@@ -6306,22 +6460,28 @@ async def stream_real_analysis(
                         yield sse_event("[DONE]", event="done")
                         break
                 else:
-                    stall_timeout_seconds = get_analysis_stall_timeout_seconds(last_progress)
-                    if time.monotonic() - last_real_progress_at >= stall_timeout_seconds:
-                        cancel_event.set()
-                        _record_analysis_heartbeat(job_id, last_progress)
-                        yield sse_event({
-                            "type": "error",
-                            "mode": "real",
-                            "progress": last_progress.get("progress", 0),
-                            "status": "error",
-                            "message": "같은 분석 단계가 너무 오래 진행되지 않았습니다. 분석을 중단하고 다시 시도해 주세요.",
-                        }, event="error")
-                        yield sse_event("[DONE]", event="done")
-                        break
-                    _record_analysis_heartbeat(job_id, last_progress)
-                    yield sse_event(make_analysis_heartbeat(last_progress), event="progress")
-                    continue
+                    payload = None
+            if not task.done():
+                expired = (
+                    time.monotonic() >= diarization_deadline_at
+                    if diarization_deadline_at is not None
+                    else payload is None and time.monotonic() - last_real_progress_at >= get_analysis_stall_timeout_seconds(last_progress)
+                )
+                if expired:
+                    cancel_event.set()
+                    watchdog_error = {
+                        "type": "error", "mode": "real", "progress": last_progress.get("progress", 0),
+                        "status": "error", "code": "analysis_stage_timeout", "stage": last_progress.get("stage"),
+                        "message": "같은 분석 단계가 너무 오래 진행되지 않았습니다. 분석을 중단하고 다시 시도해 주세요.",
+                    }
+                    persist_watchdog_error()
+                    yield sse_event(watchdog_error, event="error")
+                    yield sse_event("[DONE]", event="done")
+                    break
+            if payload is None:
+                _record_analysis_heartbeat(job_id, last_progress)
+                yield sse_event(make_analysis_heartbeat(last_progress), event="progress")
+                continue
             if payload == "[DONE]":
                 yield sse_event("[DONE]", event="done")
                 break
@@ -6435,7 +6595,7 @@ def process_audio_pipeline(
 ) -> dict:
     from pipeline.align_speakers import align_segments_with_speakers
     from pipeline.audio_preprocess import convert_to_wav
-    from pipeline.chunk_audio import apply_time_offset, get_wav_duration_seconds, split_wav_by_duration
+    from pipeline.chunk_audio import ChunkTimestampError, apply_time_offset, get_wav_duration_seconds, split_wav_by_duration
     from pipeline.diarize import diarize_audio
     from pipeline.export_docx import export_docx
     from pipeline.export_hwpx import export_hwpx
@@ -6450,6 +6610,7 @@ def process_audio_pipeline(
     else:
         config = normalize_app_config(config)
     meeting_context = meeting_context or config.get("_meeting_context") or {}
+    validate_media_duration(input_file)
 
     def _raise_if_cancelled():
         if cancel_event is not None and cancel_event.is_set():
@@ -6474,6 +6635,13 @@ def process_audio_pipeline(
     compatible_config_fingerprints = _analysis_compatible_config_fingerprints(config)
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
     existing_state = _load_job_state(checkpoint_paths)
+    if (
+        existing_state.get("source_wav_completed")
+        and os.path.isfile(checkpoint_paths.source_wav_path)
+        and existing_state.get("input_fingerprint") == input_fingerprint
+        and existing_state.get("config_fingerprint") in compatible_config_fingerprints
+    ):
+        _require_analysis_wav_duration(checkpoint_paths.source_wav_path)
     resume_requested = bool(existing_state.get("resume_requested"))
     resume_mode = "fresh_start"
     resume_message = ""
@@ -6542,6 +6710,7 @@ def process_audio_pipeline(
             "progress": prog,
             "status": "processing",
             "eta_seconds": None,
+            "stage": current_stage,
             **extra,
         }
         state_update = {
@@ -6601,10 +6770,7 @@ def process_audio_pipeline(
             preprocessing=config.get("preprocessing", {}),
         )
         preprocessing_applied = preprocess_result.get("preprocessing", {}) if isinstance(preprocess_result, dict) else {}
-    try:
-        source_wav_duration = get_wav_duration_seconds(temp_wav_path)
-    except Exception:
-        source_wav_duration = float(existing_state.get("source_wav_duration") or 0.0)
+    source_wav_duration = _require_analysis_wav_duration(temp_wav_path)
     source_wav_size = os.path.getsize(temp_wav_path) if os.path.exists(temp_wav_path) else 0
     diarization_config = config.get("diarization", {})
     diarization_enabled = bool(diarization_config.get("enabled", False))
@@ -6848,9 +7014,14 @@ def process_audio_pipeline(
                 checkpoint_payload
                 and _stt_chunk_checkpoint_matches(checkpoint_payload, chunk, idx, execution_fingerprint)
             ):
+                adjusted_segments = apply_time_offset(
+                    checkpoint_payload["segments"],
+                    float(chunk.get("offset", 0.0)),
+                    duration_seconds=effective_chunk_durations[idx] or None,
+                )
                 reused_chunk_count += 1
                 _mark_chunk_completed(idx)
-                collected_segments.extend(apply_time_offset(checkpoint_payload["segments"], float(chunk.get("offset", 0.0))))
+                collected_segments.extend(adjusted_segments)
                 completed_audio_seconds += effective_chunk_durations[idx]
                 continue
             try:
@@ -6864,12 +7035,17 @@ def process_audio_pipeline(
                     fallback_model_path=fallback_stt_model_path if allow_internal_fallback else None,
                 )
                 _raise_if_cancelled()
+                adjusted_segments = apply_time_offset(
+                    chunk_segments,
+                    float(chunk.get("offset", 0.0)),
+                    duration_seconds=effective_chunk_durations[idx] or None,
+                )
                 atomic_write_json(chunk_checkpoint_path, {
                     **_stt_chunk_checkpoint_metadata(chunk, idx, execution_fingerprint),
                     "segments": chunk_segments,
                 })
                 _mark_chunk_completed(idx)
-                collected_segments.extend(apply_time_offset(chunk_segments, float(chunk.get("offset", 0.0))))
+                collected_segments.extend(adjusted_segments)
                 completed_audio_seconds += effective_chunk_durations[idx]
                 measured_audio_seconds += effective_chunk_durations[idx]
                 measured_real_seconds += max(time.monotonic() - chunk_started_at, 0.0)
@@ -6887,7 +7063,7 @@ def process_audio_pipeline(
             stt_model_path,
             allow_internal_fallback=True,
         )
-    except AnalysisCancelledError:
+    except (AnalysisCancelledError, ChunkTimestampError):
         raise
     except Exception:
         if not fallback_stt_model_path:
@@ -7052,6 +7228,7 @@ def process_audio_pipeline(
                     "Speaker Diarization & Alignment...",
                     70,
                     eta_seconds=_initial_diarization_eta_seconds(source_wav_duration),
+                    total_audio_seconds=source_wav_duration,
                 )
                 _raise_if_cancelled()
                 diarize_model_path = config["paths"]["diarization_model"]

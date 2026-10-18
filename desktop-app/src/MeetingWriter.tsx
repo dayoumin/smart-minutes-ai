@@ -31,7 +31,8 @@ import {
 import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone } from './components/common';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
-import { readApiErrorMessage as readResponseError } from './apiError';
+import { readApiErrorInfo, readApiErrorMessage as readResponseError } from './apiError';
+import { getAnalysisDurationLimitError } from './analysisMediaLimit';
 import { formatAnalysisDuration, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import {
     DEFAULT_CONTEXT_TEMPLATE_ID,
@@ -85,6 +86,7 @@ const getSelectedFileProcessingGuidance = (
     durationSeconds: number | null,
     includeDiarizationDuringAnalysis: boolean,
 ): string | null => {
+    if (getAnalysisDurationLimitError(durationSeconds)) return null;
     if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
     if (includeDiarizationDuringAnalysis) {
         if (durationSeconds >= PARTICIPANT_SEPARATION_CAUTION_SECONDS) {
@@ -518,9 +520,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [analysisEtaReceivedAt, setAnalysisEtaReceivedAt] = useState<number | null>(null);
     const transcriptReadyRef = useRef(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
-    const [errorMessage, setErrorMessage] = useState('');
+    const [storedErrorMessage, setErrorMessage] = useState('');
     const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
+    const fileDurationLimitError = getAnalysisDurationLimitError(fileDurationSeconds);
+    const errorMessage = (!isAnalyzing && fileDurationLimitError) || storedErrorMessage;
     const [preserveExtractedAudio, setPreserveExtractedAudio] = useState<boolean | null>(null);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState<boolean | null>(null);
     const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
@@ -572,6 +576,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const analysisResumeDraftIdRef = useRef<string | null>(null);
     const analysisStopActionRef = useRef<AnalysisStopAction | null>(null);
     const analysisStopAcceptedActionRef = useRef<AnalysisStopAction | null>(null);
+    const analysisPreserveExistingRef = useRef(false);
+    const analysisResumeDraftBeforeRequestRef = useRef<AnalysisResumeDraft | undefined>(undefined);
     const analysisStopDecisionPromiseRef = useRef<Promise<AnalysisStopAction | null> | null>(null);
     const analysisFinalMeetingSavePromiseRef = useRef<Promise<string> | null>(null);
     const transcriptMeetingSavePromiseRef = useRef<Promise<void> | null>(null);
@@ -895,6 +901,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || Boolean(matchingActiveDraft)
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
+        || Boolean(fileDurationLimitError)
         || hasBlockingReadinessIssue
         || (localEngineConnectionRequired && !localEngineAnalysisReady)
         || analysisStartBlocked;
@@ -1045,6 +1052,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             resumeUnavailableReason: existing?.resumeUnavailableReason,
             completedChunkCount: existing?.completedChunkCount,
         });
+    };
+
+    const restoreUnadmittedAnalysis = (jobId: string) => {
+        removePendingCancelledAnalysisCleanup(jobId);
+        removePendingAnalysisDraftCleanup(jobId);
+        const previousDraft = analysisResumeDraftBeforeRequestRef.current;
+        if (previousDraft) upsertAnalysisResumeDraft(previousDraft);
+        else removeAnalysisResumeDraft(jobId);
     };
 
     const clearResumeSelectionOnly = () => {
@@ -1389,6 +1404,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         if (analysisInFlightRef.current || isAnalyzing) {
             return;
         }
+        if (fileDurationLimitError) {
+            setErrorMessage(fileDurationLimitError);
+            return;
+        }
 
         if (resumeAwaitingFile && !selectedResumeDraftUnavailable) {
             fileInputRef.current?.click();
@@ -1421,6 +1440,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setIsRequestingAnalysisStop(false);
         analysisStopActionRef.current = null;
         analysisStopAcceptedActionRef.current = null;
+        analysisPreserveExistingRef.current = false;
+        analysisResumeDraftBeforeRequestRef.current = undefined;
         analysisStopDecisionPromiseRef.current = null;
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         setErrorMessage('');
@@ -1431,6 +1452,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             videoFileInputRef.current.value = '';
         }
 
+        let mediaAdmissionRejected = false;
         try {
             const startSettingsRequestId = analysisSettingsRequestRef.current + 1;
             analysisSettingsRequestRef.current = startSettingsRequestId;
@@ -1578,6 +1600,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             if (!claimAnalysisJob(analysisJobId)) {
                 throw new Error('분석 기록을 정리하고 있습니다. 잠시 후 다시 시도해 주세요.');
             }
+            analysisResumeDraftBeforeRequestRef.current = getAnalysisResumeDraft(analysisJobId);
             const recoverySaved = saveResumeDraft('active', {
                 jobId: analysisJobId,
                 stage: 'uploaded',
@@ -1622,17 +1645,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             });
 
             if (!response.ok) {
-                const detailText = await response.text().catch(() => '');
-                let message = detailText;
-                if (detailText.startsWith('{')) {
-                    try {
-                        const parsedDetail = JSON.parse(detailText) as { detail?: string };
-                        message = parsedDetail.detail || detailText;
-                    } catch {
-                        message = detailText;
-                    }
-                }
-                throw new Error(message || `서버 응답 오류: ${response.status}`);
+                const errorInfo = await readApiErrorInfo(response, `서버 응답 오류: ${response.status}`);
+                mediaAdmissionRejected = errorInfo.code === 'duration_limit_exceeded'
+                    || errorInfo.code === 'media_duration_unavailable';
+                // Keep legacy string details while also accepting structured backend error codes.
+                throw new Error(errorInfo.detail || errorInfo.message);
             }
 
             const reader = response.body?.getReader();
@@ -1739,12 +1756,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 for (const dataStr of parseSseChunk(completeChunk)) {
                     if (dataStr === '[DONE]') continue;
 
-                    let parsed: AnalyzeResult & { message?: string };
+                    let parsed: AnalyzeResult & { message?: string; preserve_existing?: boolean };
                     try {
-                        parsed = JSON.parse(dataStr) as AnalyzeResult & { message?: string };
+                        parsed = JSON.parse(dataStr) as AnalyzeResult & { message?: string; preserve_existing?: boolean };
                     } catch {
                         console.warn('Ignoring malformed SSE event:', dataStr);
                         continue;
+                    }
+                    if (parsed.preserve_existing === true && (parsed.status === 'stopped' || parsed.status === 'cancelled')) {
+                        analysisPreserveExistingRef.current = true;
                     }
                     if (typeof parsed.progress === 'number') {
                         setProgress(Math.min(100, Math.max(0, parsed.progress)));
@@ -1768,7 +1788,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             await writeFrontendLog(`partial meeting save error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                         }
                     }
-                    if (parsed.message && !analysisStopActionRef.current) {
+                    if (parsed.message && !analysisStopActionRef.current && !analysisPreserveExistingRef.current) {
                         setRawStatusMessage(parsed.message);
                         setStatusMessage(translateStatusMessage(parsed.message));
                         saveResumeDraft('active', {
@@ -1939,12 +1959,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setDate(nextInitialDate);
             clearResumeDraftSelection();
         } catch (error) {
+            // A terminal response can arrive before its cancel ACK. Keep ownership until
+            // the ACK identifies whether this attempt ever took over the existing job.
+            const pendingStopDecision = analysisStopDecisionPromiseRef.current;
+            if (pendingStopDecision) await pendingStopDecision;
             if (analysisCancelledRef.current || (error instanceof DOMException && error.name === 'AbortError')) {
                 const requestedStopAction = analysisStopActionRef.current;
                 const existingDraft = analysisResumeDraftIdRef.current
                     ? getAnalysisResumeDraft(analysisResumeDraftIdRef.current)
                     : undefined;
-                if (requestedStopAction === 'cancel') {
+                if (analysisPreserveExistingRef.current) {
+                    const unadmittedJobId = analysisResumeDraftIdRef.current;
+                    if (unadmittedJobId) restoreUnadmittedAnalysis(unadmittedJobId);
+                } else if (requestedStopAction === 'cancel') {
                     const cancelledJobId = analysisResumeDraftIdRef.current;
                     if (file) {
                         suppressResumeCandidateKey(getResumeDraftKey(toResumeDraftFileKey(file)));
@@ -1964,7 +1991,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     });
                 }
                 const stoppedJobId = existingDraft?.jobId || analysisResumeDraftIdRef.current;
-                if (requestedStopAction !== 'cancel' && stoppedJobId && (transcriptReadyRef.current || existingDraft?.transcriptReady)) {
+                if (!analysisPreserveExistingRef.current && requestedStopAction !== 'cancel' && stoppedJobId && (transcriptReadyRef.current || existingDraft?.transcriptReady)) {
                     try {
                         await queueMeetingMutation(
                             stoppedJobId,
@@ -1986,15 +2013,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             }
             const message = toUserFacingAnalysisError(error instanceof Error ? error.message : '', { desktopApp: isTauriRuntime() });
             await writeFrontendLog(`analysis failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
-            saveResumeDraft('failed', {
-                stage: 'failed',
-                lastMessage: rawStatusMessage || statusMessage,
-                lastProgress: progress,
-                lastEtaSeconds: null,
-                errorMessage: message,
-            });
             const failedJobId = analysisResumeDraftIdRef.current;
-            if (failedJobId && transcriptReadyRef.current) {
+            if (mediaAdmissionRejected || analysisPreserveExistingRef.current) {
+                // Admission did not change backend progress; keep the matching local recovery state too.
+                if (failedJobId) restoreUnadmittedAnalysis(failedJobId);
+            } else {
+                saveResumeDraft('failed', {
+                    stage: 'failed',
+                    lastMessage: rawStatusMessage || statusMessage,
+                    lastProgress: progress,
+                    lastEtaSeconds: null,
+                    errorMessage: message,
+                });
+            }
+            if (!mediaAdmissionRejected && !analysisPreserveExistingRef.current && failedJobId && transcriptReadyRef.current) {
                 try {
                     await queueMeetingMutation(
                         failedJobId,
@@ -2018,6 +2050,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             analysisResumeDraftIdRef.current = null;
             analysisStopActionRef.current = null;
             analysisStopAcceptedActionRef.current = null;
+            analysisPreserveExistingRef.current = false;
+            analysisResumeDraftBeforeRequestRef.current = undefined;
             analysisStopDecisionPromiseRef.current = null;
             analysisFinalMeetingSavePromiseRef.current = null;
             setIsAnalyzing(false);
@@ -2081,8 +2115,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ action }),
                 });
-                const payload = await response.json().catch(() => null) as { cancel_requested?: boolean } | null;
+                const payload = await response.json().catch(() => null) as { cancel_requested?: boolean; preserve_existing?: boolean } | null;
                 if (response.ok && payload?.cancel_requested) {
+                    if (payload.preserve_existing === true) analysisPreserveExistingRef.current = true;
                     analysisStopAcceptedActionRef.current = action;
                     return action;
                 }
@@ -2109,6 +2144,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setIsAnalysisStopConfirmOpen(false);
             setStatusMessage('중지할 분석을 찾지 못했습니다.');
             showOperationToast('중지할 분석을 찾지 못했습니다.', 'neutral');
+            return;
+        }
+        if (analysisPreserveExistingRef.current) {
+            restoreUnadmittedAnalysis(jobId);
+            setErrorMessage('');
+            setIsAnalysisStopConfirmOpen(false);
             return;
         }
         if (action === 'cancel') {

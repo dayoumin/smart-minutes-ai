@@ -722,11 +722,165 @@ const runFailureScenario = async (browser, fixture) => {
   }
 };
 
+// Admission is not a takeover of the previous job. Both ACK/terminal orders must
+// leave its browser record and local resume progress untouched (API is mocked).
+const runAdmissionScenario = async (browser, fixture, action, { terminalFirst = false, existing = true, missingTerminal = false } = {}) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const draft = {
+    jobId: 'admission-existing-job', title: '이전 진행분 보존', date: '2026-10-18T09:30',
+    meetingPurpose: '인수 전 중지 검사', participants: '', sourceFilename: fixture.name,
+    sourceSize: fixture.size, sourceLastModified: fixture.lastModified, status: 'stopped', stage: 'stopped',
+    completedChunkCount: 2, lastProgress: 42, lastMessage: 'Transcribing chunk 2/4...',
+    resumeEligible: true, createdAt: '2026-10-18T00:30:00.000Z', updatedAt: '2026-10-18T00:35:00.000Z',
+  };
+  await context.addInitScript(({ draft, existing }) => {
+    if (existing) localStorage.setItem('analysisResumeDrafts', JSON.stringify([draft]));
+  }, { draft, existing });
+  const page = await context.newPage();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let analyzeJobId;
+  let deletes = 0;
+  let markAnalyze;
+  const analyzeStarted = new Promise(resolve => { markAnalyze = resolve; });
+  let releaseAnalyze;
+  const analyzeCanFinish = new Promise(resolve => { releaseAnalyze = resolve; });
+  let markCancel;
+  const cancelRequested = new Promise(resolve => { markCancel = resolve; });
+  let releaseAck;
+  const ackCanFinish = new Promise(resolve => { releaseAck = resolve; });
+  let markTerminal;
+  const terminalSent = new Promise(resolve => { markTerminal = resolve; });
+  const readMeetings = () => page.evaluate(() => new Promise((resolve, reject) => {
+    const open = indexedDB.open('MeetingHistoryDB');
+    open.onerror = () => reject(open.error);
+    open.onsuccess = () => {
+      const db = open.result;
+      const tx = db.transaction('meetings', 'readonly');
+      const get = tx.objectStore('meetings').getAll();
+      get.onsuccess = () => resolve(get.result);
+      get.onerror = () => reject(get.error);
+      tx.oncomplete = () => db.close();
+    };
+  }));
+  try {
+    await installBaseRoutes(page);
+    await page.route('**/api/analyze/draft-statuses', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ drafts: existing ? [{
+      job_id: draft.jobId, status: 'stopped', stage: 'stopped', resume_supported: true, active: false,
+      completed_chunk_count: 2, last_progress: { progress: 42, message: draft.lastMessage, status: 'stopped' },
+    }] : [] }) }));
+    await page.route('**/api/analyze/resume-candidates', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+      recommended_job_id: existing ? draft.jobId : null,
+      candidates: existing ? [{ job_id: draft.jobId, stage: 'stopped', active: false, resume_supported: true, chunk_count: 4, completed_chunk_count: 2 }] : [],
+    }) }));
+    await page.route(/\/api\/analyze\/drafts\/[^/]+$/, route => {
+      deletes += 1;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    });
+    await page.route('**/api/analyze', async route => {
+      analyzeJobId = multipartField(route.request().postDataBuffer().toString('utf8'), 'job_id');
+      markAnalyze();
+      await analyzeCanFinish;
+      const status = action === 'stop' ? 'stopped' : 'cancelled';
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: missingTerminal ? '' : [
+        `event: ${status}`,
+        `data: ${JSON.stringify({ type: status, status, action, preserve_existing: true, progress: 0, eta_seconds: null, message: '분석 요청을 중단했습니다.' })}`,
+        '', 'event: done', 'data: [DONE]', '', '',
+      ].join('\n') });
+      markTerminal();
+    });
+    await page.route(/\/api\/analyze\/[^/]+\/cancel$/, async route => {
+      markCancel();
+      if (terminalFirst) await ackCanFinish;
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
+        job_id: analyzeJobId, action, cancel_requested: true, preserve_existing: true,
+      }) });
+    });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await assertProjectPage(page);
+    if (existing) {
+      await page.evaluate(record => new Promise((resolve, reject) => {
+        const open = indexedDB.open('MeetingHistoryDB');
+        open.onerror = () => reject(open.error);
+        open.onsuccess = () => {
+          const db = open.result;
+          const tx = db.transaction('meetings', 'readwrite');
+          tx.objectStore('meetings').put(record);
+          tx.oncomplete = () => { db.close(); resolve(); };
+          tx.onerror = () => reject(tx.error);
+        };
+      }), { id: draft.jobId, jobId: draft.jobId, title: draft.title, date: draft.date, participants: '',
+        summary: '이전 요약 보존', segments: [{ start: '00:00', end: '00:02', speaker: 'SPEAKER_00', text: '이전 대화록 보존' }],
+        speakerLabels: { SPEAKER_00: '기존 참석자' }, analysisStatus: 'diarization_stopped', createdAt: draft.createdAt, updatedAt: draft.updatedAt });
+      await page.getByRole('button', { name: /이어서 할 분석 1건/ }).click();
+      await page.locator('.sidebar-resume-draft-button').filter({ hasText: draft.title }).click();
+      await page.getByRole('heading', { name: '이어하기', exact: true }).waitFor();
+    } else {
+      await page.locator('#meeting-title').fill('인수 전 새 분석 취소');
+      await page.locator('#meeting-purpose').fill('인수 전 중지 검사');
+    }
+    await page.setInputFiles('#meeting-file-input', fixture.path);
+    await page.waitForFunction(() => !document.querySelector('.writer-start-button')?.disabled);
+    const beforeDrafts = await readLocalStorageJson(page, 'analysisResumeDrafts') ?? [];
+    const beforeMeetings = await readMeetings();
+    await page.locator('.writer-start-button').click();
+    await analyzeStarted;
+    if (existing) assert.equal(analyzeJobId, draft.jobId);
+    await page.getByRole('button', { name: '중지/취소', exact: true }).click();
+    await page.locator('.analysis-stop-panel').getByRole('button', { name: action === 'stop'
+      ? '이어하기 기록을 남기고 분석 중지' : '진행 중 기록을 끝내고 분석 취소' }).click();
+    await cancelRequested;
+    if (terminalFirst) {
+      releaseAnalyze();
+      await terminalSent;
+      assert.equal(deletes, 0, 'terminal must not release cleanup ownership before ACK');
+      releaseAck();
+    } else {
+      await page.waitForFunction(({ jobId, existing }) => {
+        const drafts = JSON.parse(localStorage.getItem('analysisResumeDrafts') || '[]');
+        const pending = JSON.parse(localStorage.getItem('pendingCancelledAnalysisCleanups') || '[]');
+        return !pending.includes(jobId) && (existing ? drafts.some(d => d.jobId === jobId && d.status === 'stopped' && d.lastProgress === 42) : drafts.length === 0);
+      }, { jobId: analyzeJobId, existing });
+      assert.equal(deletes, 0);
+      assert.deepEqual(await readMeetings(), beforeMeetings, 'ACK must preserve the previous meeting before terminal');
+      releaseAnalyze();
+    }
+    if (missingTerminal) {
+      await page.getByRole('heading', { name: '분석을 마치지 못했습니다', exact: true }).waitFor();
+      await page.getByRole('button', { name: '입력 확인', exact: true }).click();
+    } else {
+      await page.getByRole('status').getByText(action === 'stop'
+        ? '분석을 중지했습니다. 같은 파일을 선택하면 이어서 진행할 수 있습니다.' : '분석을 취소했습니다.', { exact: true }).waitFor();
+    }
+    await page.locator('.writer-start-button').waitFor({ state: 'visible' });
+    assert.deepEqual(await readLocalStorageJson(page, 'analysisResumeDrafts') ?? [], beforeDrafts);
+    assert.deepEqual(await readMeetings(), beforeMeetings);
+    for (const key of ['pendingAnalysisDraftCleanups', 'pendingCancelledAnalysisCleanups', 'suppressedResumeCandidateKeys']) {
+      assert.deepEqual(await readLocalStorageJson(page, key) ?? [], [], `${key} must not retain admission cancellation`);
+    }
+    assert.equal(deletes, 0);
+    assert.deepEqual(errors, []);
+    console.log(`ok - admission ${action} preserves ${existing ? 'existing data' : 'empty initial state'} (${missingTerminal ? 'ACK then EOF' : terminalFirst ? 'terminal first' : 'ACK first'}, mocked API)`);
+  } finally {
+    releaseAnalyze();
+    releaseAck();
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const fixture = await createFixtureFile();
 const browser = await chromium.launch();
 try {
-  if (process.argv.includes('pending-cancellation-transition')) {
+  if (process.argv.includes('admission-preservation')) {
+    await runAdmissionScenario(browser, fixture, 'stop');
+    await runAdmissionScenario(browser, fixture, 'cancel');
+    await runAdmissionScenario(browser, fixture, 'cancel', { terminalFirst: true });
+    await runAdmissionScenario(browser, fixture, 'cancel', { existing: false });
+    await runAdmissionScenario(browser, fixture, 'cancel', { missingTerminal: true });
+    await runScenario(browser, fixture, 'stop');
+    await runScenario(browser, fixture, 'cancel', { delayPartialDuringCancel: true });
+  } else if (process.argv.includes('pending-cancellation-transition')) {
     await runScenario(browser, fixture, 'cancel', {
       delayPartialDuringCancel: true,
       keepPendingCancellation: true,

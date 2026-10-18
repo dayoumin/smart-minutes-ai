@@ -6,6 +6,7 @@ import sys
 import types
 import tempfile
 import unittest
+import wave
 import zipfile
 from io import BytesIO
 from pathlib import Path
@@ -25,11 +26,22 @@ from job_checkpoints import atomic_write_json, build_job_checkpoint_paths, load_
 from main import app, make_analysis_heartbeat, normalize_stt_config, process_audio_pipeline, stream_real_analysis
 from model_manager import MODEL_MARKER_MIN_BYTES, get_model_status, list_ollama_models, normalize_windows_path, resolve_backend_path
 from pipeline.audio_preprocess import resolve_preprocessing_plan
+from pipeline.chunk_audio import ChunkTimestampError
 import pipeline.transcribe as transcribe_module
 from pipeline.transcribe import transcribe_audio_fallback_whisper
 
 BACKEND_DIR = os.path.dirname(__file__)
 TEST_AUDIO_PATH = os.path.join(BACKEND_DIR, "test_audio.wav")
+
+
+def _pcm_wav_fixture() -> bytes:
+    buffer = BytesIO()
+    with wave.open(buffer, "wb") as output:
+        output.setnchannels(1)
+        output.setsampwidth(2)
+        output.setframerate(2)
+        output.writeframes(b"\0\0" * 2)
+    return buffer.getvalue()
 
 
 class AnalyzeApiTest(unittest.TestCase):
@@ -482,7 +494,7 @@ class AnalyzeApiTest(unittest.TestCase):
             known_root = Path(tmpdir) / "samples"
             known_root.mkdir()
             source_path = known_root / "unit sample source.mp4"
-            source_path.write_bytes(b"video")
+            source_path.write_bytes(_pcm_wav_fixture())
             with patch.object(main, "_known_source_roots", return_value=[str(known_root)]):
                 job_id = "unit_restore_known_source"
                 config = {
@@ -497,7 +509,7 @@ class AnalyzeApiTest(unittest.TestCase):
                     self.assertEqual(ffmpeg_path, os.path.join(BACKEND_DIR, "ffmpeg.exe"))
                     self.assertTrue(preprocessing["enabled"])
                     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                    Path(output_path).write_bytes(b"wav")
+                    Path(output_path).write_bytes(_pcm_wav_fixture())
                     return {"preprocessing": {"enabled": True}}
 
                 recoverable_source = main._resolve_recoverable_source_path(
@@ -516,7 +528,7 @@ class AnalyzeApiTest(unittest.TestCase):
                     )
 
                 self.assertEqual(restored_path, paths.source_wav_path)
-                self.assertEqual(Path(restored_path).read_bytes(), b"wav")
+                self.assertEqual(Path(restored_path).read_bytes(), _pcm_wav_fixture())
                 state = load_json_checkpoint(paths.state_path)
                 self.assertTrue(state["source_wav_restored"])
                 self.assertEqual(state["source_filename"], source_path.name)
@@ -524,7 +536,7 @@ class AnalyzeApiTest(unittest.TestCase):
     def test_diarization_restore_uses_original_preprocessing_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             source_path = Path(tmpdir) / "meeting.mp4"
-            source_path.write_bytes(b"video")
+            source_path.write_bytes(_pcm_wav_fixture())
             job_id = "unit_restore_original_preprocessing"
             config = {
                 "paths": {"temp_dir": tmpdir, "ffmpeg": "ffmpeg.exe"},
@@ -539,7 +551,7 @@ class AnalyzeApiTest(unittest.TestCase):
             def fake_convert(_input_path, output_path, _ffmpeg_path, preprocessing):
                 self.assertEqual(preprocessing, {"enabled": False, "normalize_audio": False})
                 Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                Path(output_path).write_bytes(b"wav")
+                Path(output_path).write_bytes(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing}
 
             with patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert):
@@ -602,7 +614,7 @@ class AnalyzeApiTest(unittest.TestCase):
             }
             paths = build_job_checkpoint_paths(temp_dir, job_id)
             Path(paths.upload_dir).mkdir(parents=True, exist_ok=True)
-            (Path(paths.upload_dir) / "source.mp4").write_bytes(b"video")
+            (Path(paths.upload_dir) / "source.mp4").write_bytes(_pcm_wav_fixture())
             result_path = Path(output_dir) / f"{job_id}_result.json"
             result_path.write_text(json.dumps({
                 "job_id": job_id,
@@ -615,7 +627,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             def fake_convert(_input_path, output_path, _ffmpeg_path, preprocessing=None):
                 Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                Path(output_path).write_bytes(b"wav")
+                Path(output_path).write_bytes(_pcm_wav_fixture())
                 return {"preprocessing": {}}
 
             with (
@@ -2860,9 +2872,10 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertIsNone(state["last_progress"]["eta_seconds"])
 
     def test_real_analysis_stream_sends_heartbeat_during_long_worker_gap(self) -> None:
+        work_dir = self.enterContext(tempfile.TemporaryDirectory(prefix="analysis-heartbeat-"))
         fake_config = {
             "paths": {
-                "temp_dir": "./temp",
+                "temp_dir": os.path.join(work_dir, "temp"),
                 "stt_model": "../models/faster-whisper-large-v3",
                 "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
             },
@@ -2917,9 +2930,10 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("event: done", body)
 
     def test_real_analysis_stream_sends_transcript_ready_marker(self) -> None:
+        work_dir = self.enterContext(tempfile.TemporaryDirectory(prefix="analysis-transcript-ready-"))
         fake_config = {
             "paths": {
-                "temp_dir": "./temp",
+                "temp_dir": os.path.join(work_dir, "temp"),
                 "stt_model": "../models/faster-whisper-large-v3",
                 "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
             },
@@ -2972,9 +2986,10 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("event: done", body)
 
     def test_analyze_meeting_saves_upload_before_streaming(self) -> None:
+        work_dir = self.enterContext(tempfile.TemporaryDirectory(prefix="analysis-upload-"))
         fake_config = {
             "paths": {
-                "temp_dir": "./temp",
+                "temp_dir": os.path.join(work_dir, "temp"),
                 "stt_model": "../models/faster-whisper-large-v3",
                 "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
             },
@@ -3029,6 +3044,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
         with (
             patch("main.load_config", return_value=fake_config),
+            patch("main.validate_media_duration", return_value=1),
             patch("main.model_exists", return_value=True),
             patch("main.resolve_model_path", return_value="mock-model-path"),
             patch("main.process_audio_pipeline", side_effect=fake_process_audio_pipeline),
@@ -3042,9 +3058,10 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("test_audio.wav", body)
 
     def test_real_analysis_stream_errors_after_stall_timeout(self) -> None:
+        work_dir = self.enterContext(tempfile.TemporaryDirectory(prefix="analysis-stall-"))
         fake_config = {
             "paths": {
-                "temp_dir": "./temp",
+                "temp_dir": os.path.join(work_dir, "temp"),
                 "stt_model": "../models/faster-whisper-large-v3",
                 "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
             },
@@ -3122,9 +3139,10 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertFalse(cancel_event.is_set())
 
     def test_real_analysis_stream_emits_cancelled_even_when_cleanup_fails(self) -> None:
+        work_dir = self.enterContext(tempfile.TemporaryDirectory(prefix="analysis-cancel-cleanup-"))
         fake_config = {
             "paths": {
-                "temp_dir": "./temp",
+                "temp_dir": os.path.join(work_dir, "temp"),
                 "stt_model": "../models/faster-whisper-large-v3",
                 "qwen_aligner_model": "../models/Qwen3-ForcedAligner-0.6B",
             },
@@ -3621,7 +3639,7 @@ class AnalyzeApiTest(unittest.TestCase):
             os.makedirs(checkpoint_paths.upload_dir, exist_ok=True)
             upload_path = os.path.join(checkpoint_paths.upload_dir, "source.wav")
             with open(upload_path, "wb") as handle:
-                handle.write(b"new upload")
+                handle.write(_pcm_wav_fixture())
             atomic_write_json(checkpoint_paths.state_path, {
                 "job_id": job_id,
                 "input_fingerprint": "old-fingerprint",
@@ -3637,7 +3655,7 @@ class AnalyzeApiTest(unittest.TestCase):
             def fake_convert_to_wav(input_file, output_path, _ffmpeg_path, preprocessing):
                 seen["input_exists_at_convert"] = os.path.exists(input_file)
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             with (
@@ -3645,15 +3663,18 @@ class AnalyzeApiTest(unittest.TestCase):
                 patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
                     {"path": upload_path, "offset": 0.0, "duration": 1.0, "index": 0},
                 ]),
-                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
+                patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 2.0, "text": "hello"}]),
                 patch("pipeline.export_txt.export_txt"),
             ):
-                process_audio_pipeline(upload_path, job_id, config)
+                result = process_audio_pipeline(upload_path, job_id, config)
 
             state = load_json_checkpoint(checkpoint_paths.state_path)
             self.assertTrue(seen["input_exists_at_convert"])
             self.assertEqual(state["source_filename"], "meeting.mp4")
             self.assertEqual(state["source_size"], 1234)
+            self.assertEqual(result["result_data"]["raw_stt_segments"][0]["end"], 1.0)
+            self.assertTrue(result["result_data"]["raw_stt_segments"][0]["timing_approximate"])
+            self.assertEqual(result["result_data"]["raw_stt_segments"][0]["text"], "hello")
 
     def test_pipeline_returns_resume_reuse_metadata_when_chunk_checkpoint_exists(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:
@@ -3702,19 +3723,21 @@ class AnalyzeApiTest(unittest.TestCase):
                 "chunk_index": 0,
                 "input_fingerprint": input_fingerprint,
                 "config_fingerprint": config_fingerprint,
-                "source_wav_size": 3,
-                "source_wav_duration": 0.0,
+                "source_wav_size": len(_pcm_wav_fixture()),
+                "source_wav_duration": 1.0,
                 "chunk_path": chunk_path,
                 "chunk_size_bytes": chunk_size,
                 "offset": 0.0,
                 "duration": 1.0,
                 "stt_execution_fingerprint": execution_fingerprint,
-                "segments": [{"start": 0.0, "end": 1.0, "text": "hello"}],
+                "segments": [{"start": 0.0, "end": 2.0, "text": "hello"}],
             })
+            checkpoint_path = Path(checkpoint_paths.stt_dir) / "chunk_001.json"
+            checkpoint_before = checkpoint_path.read_bytes()
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             with (
@@ -3729,6 +3752,31 @@ class AnalyzeApiTest(unittest.TestCase):
 
             self.assertEqual(result["resume"]["mode"], "reused_stt")
             self.assertEqual(result["resume"]["reused_chunk_count"], 1)
+            self.assertEqual(checkpoint_path.read_bytes(), checkpoint_before)
+            self.assertEqual(result["result_data"]["raw_stt_segments"][0]["end"], 1.0)
+            self.assertTrue(result["result_data"]["raw_stt_segments"][0]["timing_approximate"])
+            self.assertEqual(result["result_data"]["display_segments"][0]["text"], "hello")
+            saved = load_json_checkpoint(result["json_file"])
+            self.assertEqual(saved["raw_stt_segments"], result["result_data"]["raw_stt_segments"])
+
+            # A corrupt cached timestamp is not a failed model invocation. Even
+            # when a fallback model is available, preserve the original cache.
+            invalid_cache = load_json_checkpoint(str(checkpoint_path))
+            invalid_cache["segments"][0]["end"] = float("nan")
+            atomic_write_json(str(checkpoint_path), invalid_cache)
+            invalid_before = checkpoint_path.read_bytes()
+            with (
+                patch("main.model_exists", return_value=True),
+                patch("main.resolve_model_path", return_value="different-fallback-model"),
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=fake_convert_to_wav),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
+                    {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
+                ]),
+                patch("pipeline.transcribe.transcribe_audio", side_effect=AssertionError("cached timestamp error must not rerun STT")),
+                self.assertRaises(ChunkTimestampError),
+            ):
+                process_audio_pipeline(TEST_AUDIO_PATH, job_id, config)
+            self.assertEqual(checkpoint_path.read_bytes(), invalid_before)
 
     def test_pipeline_preserves_reused_chunk_progress_when_resume_is_cancelled(self) -> None:
         with tempfile.TemporaryDirectory() as work_dir:
@@ -3777,8 +3825,8 @@ class AnalyzeApiTest(unittest.TestCase):
                 "chunk_index": 0,
                 "input_fingerprint": input_fingerprint,
                 "config_fingerprint": config_fingerprint,
-                "source_wav_size": 3,
-                "source_wav_duration": 0.0,
+                "source_wav_size": len(_pcm_wav_fixture()),
+                "source_wav_duration": 1.0,
                 "chunk_path": chunk_path,
                 "chunk_size_bytes": chunk_size,
                 "offset": 0.0,
@@ -3789,7 +3837,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             with (
@@ -3860,8 +3908,8 @@ class AnalyzeApiTest(unittest.TestCase):
                 "chunk_index": 0,
                 "input_fingerprint": input_fingerprint,
                 "config_fingerprint": config_fingerprint,
-                "source_wav_size": 3,
-                "source_wav_duration": 0.0,
+                "source_wav_size": len(_pcm_wav_fixture()),
+                "source_wav_duration": 1.0,
                 "chunk_path": chunk_path,
                 "chunk_size_bytes": chunk_size,
                 "offset": 0.0,
@@ -3890,7 +3938,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             with (
@@ -3946,7 +3994,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             with (
@@ -4012,7 +4060,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             transcribe_calls: list[str] = []
@@ -4875,7 +4923,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             def fake_convert_to_wav(_input_file, output_path, _ffmpeg_path, preprocessing):
                 with open(output_path, "wb") as handle:
-                    handle.write(b"wav")
+                    handle.write(_pcm_wav_fixture())
                 return {"preprocessing": preprocessing or {}}
 
             with (
@@ -4901,13 +4949,15 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(merged_payload["segments"][0]["text"], "hello")
 
     def test_pipeline_does_not_retry_same_model_as_fallback(self) -> None:
+        work_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(work_dir.cleanup)
         config = {
             "paths": {
                 "ffmpeg": "ffmpeg",
                 "stt_model": "same-model-path",
                 "diarization_model": "",
-                "output_dir": "./outputs",
-                "temp_dir": "./temp",
+                "output_dir": os.path.join(work_dir.name, "outputs"),
+                "temp_dir": os.path.join(work_dir.name, "temp"),
                 "llm_model": "",
             },
             "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},

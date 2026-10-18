@@ -10,6 +10,20 @@ from process_utils import hidden_subprocess_kwargs
 MIN_TRAILING_CHUNK_SECONDS = 1.0
 
 
+class ChunkTimestampError(ValueError):
+    """Invalid time metadata must not trigger a model retry that clears caches."""
+
+
+def _finite_seconds(value: object) -> float:
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ChunkTimestampError("대화록 시간 정보를 처리하지 못했습니다. 진행분은 보존되었습니다.") from exc
+    if not math.isfinite(seconds):
+        raise ChunkTimestampError("대화록 시간 정보를 처리하지 못했습니다. 진행분은 보존되었습니다.")
+    return seconds
+
+
 def get_wav_duration_seconds(wav_path: str) -> float:
     with wave.open(wav_path, "rb") as wav_file:
         frames = wav_file.getnframes()
@@ -65,11 +79,35 @@ def split_wav_by_duration(
     return chunks
 
 
-def apply_time_offset(segments: List[Dict], offset_seconds: float) -> List[Dict]:
+def apply_time_offset(
+    segments: List[Dict],
+    offset_seconds: float,
+    *,
+    duration_seconds: float | None = None,
+) -> List[Dict]:
+    """Bound local model timestamps before applying the chunk's global offset.
+
+    Cached model output stays unchanged, so old checkpoints remain reusable.
+    Keep every text segment, including one wholly outside the chunk, and mark
+    corrected timestamps as approximate instead of assigning speech to the next
+    chunk or inventing a positive duration.
+    """
+    offset = _finite_seconds(offset_seconds)
+    duration = None if duration_seconds is None else _finite_seconds(duration_seconds)
+    if duration is not None and duration <= 0:
+        raise ChunkTimestampError("대화록 시간 정보를 처리하지 못했습니다. 진행분은 보존되었습니다.")
     adjusted = []
     for segment in segments:
         item = dict(segment)
-        item["start"] = float(item.get("start", 0.0)) + offset_seconds
-        item["end"] = float(item.get("end", item["start"])) + offset_seconds
+        start = _finite_seconds(item.get("start", 0.0))
+        end = _finite_seconds(item.get("end", start))
+        if duration is not None:
+            bounded_start = min(max(start, 0.0), duration)
+            bounded_end = max(bounded_start, min(max(end, 0.0), duration))
+            if bounded_start != start or bounded_end != end:
+                item["timing_approximate"] = True
+            start, end = bounded_start, bounded_end
+        item["start"] = start + offset
+        item["end"] = end + offset
         adjusted.append(item)
     return adjusted

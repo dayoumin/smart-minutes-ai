@@ -1,0 +1,9 @@
+{
+  "version": "0.1.5-beta-20261018",
+  "origin": "https://barorok.ecomarin.workers.dev",
+  "downloadPath": "/downloads/Barorok-Local-Engine-Setup-0.1.5-beta-20261018.exe",
+  "bytes": 442772108,
+  "sha256": "dcf08c15467ac7cf9accdbd600d6821c86e1020eaf545ce68a33fa1855e23aec",
+  "signed": false,
+  "testRelease": true
+}

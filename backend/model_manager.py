@@ -1,4 +1,6 @@
+import json
 import os
+import urllib.request
 from dataclasses import dataclass, field
 from typing import Dict, Optional
 
@@ -10,8 +12,7 @@ from config_normalization import (
     is_local_summary_model_path,
     normalize_summary_model_name,
 )
-from ollama_utils import ensure_ollama_server_running, find_ollama_executable, ollama_executable_available, ollama_subprocess_env, probe_ollama_server
-from process_utils import run_hidden
+from ollama_utils import ensure_ollama_server_running, get_ollama_base_url, ollama_executable_available, probe_ollama_server
 
 
 def normalize_windows_path(path: str) -> str:
@@ -168,27 +169,27 @@ def ollama_model_exists(model_name: str, *, start_server: bool = True) -> bool:
 def list_ollama_models(*, start_server: bool = True) -> list[str]:
     try:
         if start_server:
-            ensure_ollama_server_running(timeout_seconds=10)
+            if not ensure_ollama_server_running(timeout_seconds=10):
+                return []
         elif not probe_ollama_server(timeout_seconds=2):
             return []
-        result = run_hidden(
-            [find_ollama_executable(), "list"],
-            check=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            env=ollama_subprocess_env(),
-            timeout=5,
-        )
+        # Starting the CLI can exceed the lookup timeout on a busy Windows PC,
+        # even while the same runtime's HTTP API is already responsive.
+        with urllib.request.urlopen(f"{get_ollama_base_url()}/api/tags", timeout=5) as response:
+            payload = json.load(response)
+        rows = payload.get("models", []) if isinstance(payload, dict) else []
+        if not isinstance(rows, list):
+            return []
     except Exception:
         return []
 
     models: list[str] = []
-    for line in result.stdout.splitlines()[1:]:
-        parts = line.split(maxsplit=1)
-        if parts and parts[0] not in models:
-            models.append(parts[0])
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = row.get("name")
+        if isinstance(name, str) and name.strip() and name.strip() not in models:
+            models.append(name.strip())
     return models
 
 

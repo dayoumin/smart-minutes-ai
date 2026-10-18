@@ -1,0 +1,17 @@
+{
+  "name": "barorok-cloudflare-deploy",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "scripts": {
+    "prepare:web": "powershell -NoProfile -ExecutionPolicy Bypass -File ../../scripts/prepare_cloudflare_web.ps1",
+    "whoami": "node wrangler.mjs whoami",
+    "login": "node wrangler.mjs login --use-keyring",
+    "check": "node wrangler.mjs deploy --dry-run",
+    "test": "node --experimental-strip-types test-download.mjs",
+    "deploy": "node wrangler.mjs deploy"
+  },
+  "devDependencies": {
+    "wrangler": "4.151.1"
+  }
+}

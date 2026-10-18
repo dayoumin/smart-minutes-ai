@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Button, IconButton, Input } from './components/common';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
+import { getDistributionUrl } from './localEngineDistribution';
 import {
     getLocalEngineConnectionView,
     LocalEngineConnectionAction,
@@ -32,8 +33,8 @@ const SceneIcon: React.FC<{ scene: string; busy: boolean }> = ({ scene, busy }) 
 };
 
 export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurfaceProps> = ({
-    installerUrl,
-    updateUrl,
+    installerUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_INSTALLER_URL),
+    updateUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_UPDATE_URL),
 }) => {
     const {
         snapshot,
@@ -199,6 +200,11 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
         : view.primaryAction === 'download' || view.primaryAction === 'update'
             ? <Download size={15} aria-hidden="true" />
             : <Link2 size={15} aria-hidden="true" />;
+    const testInstallerNotice = import.meta.env.VITE_LOCAL_ENGINE_TEST_RELEASE === 'true'
+        && installerUrl && (view.primaryAction === 'download' || view.secondaryAction === 'download')
+        ? '서명되지 않은 테스트 설치 파일입니다. Windows 보안 경고가 표시될 수 있습니다.'
+        : undefined;
+    const statusMessage = [view.message, testInstallerNotice].filter(Boolean).join(' ');
 
     return (
         <div className={`local-engine-connection local-engine-connection-${view.tone}`} data-scene={view.scene}>
@@ -231,7 +237,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
                             </span>
                         )}
                     </span>
-                    {view.message && <span>{view.message}</span>}
+                    {statusMessage && <span>{statusMessage}</span>}
                 </span>
             </div>
 

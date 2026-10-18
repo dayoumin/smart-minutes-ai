@@ -1323,14 +1323,14 @@ class AnalyzeApiTest(unittest.TestCase):
         with (
             patch("model_manager.probe_ollama_server", return_value=False) as probe_server,
             patch("model_manager.ensure_ollama_server_running") as ensure_server,
-            patch("model_manager.run_hidden") as run_hidden_mock,
+            patch("model_manager.urllib.request.urlopen") as urlopen_mock,
         ):
             models = list_ollama_models(start_server=False)
 
         self.assertEqual(models, [])
         probe_server.assert_called_once_with(timeout_seconds=2)
         ensure_server.assert_not_called()
-        run_hidden_mock.assert_not_called()
+        urlopen_mock.assert_not_called()
 
     def test_models_status_uses_passive_ollama_checks(self) -> None:
         config = main.normalize_app_config({})

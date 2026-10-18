@@ -194,13 +194,27 @@ def _meeting_context_block(meeting_context: dict | None, *, include_report_templ
     )
 
 
-def _build_prompt(transcript_text: str, partial: bool = False, meeting_context: dict | None = None) -> str:
-    scope = "partial transcript" if partial else "transcript"
+def _build_prompt(
+    transcript_text: str,
+    partial: bool = False,
+    meeting_context: dict | None = None,
+    *,
+    merging_partials: bool = False,
+) -> str:
+    scope = "partial summaries" if merging_partials else "partial transcript" if partial else "transcript"
     context_block = _meeting_context_block(meeting_context)
+    source_label = "Partial summaries" if merging_partials else "Transcript"
     return f"""You are a Korean meeting-minutes assistant.
 Summarize the {scope} into strict JSON only. Do not wrap it in Markdown.
 Write all JSON values in Korean unless a source term must remain in English.
 Do not invent facts. If the transcript is too short or unclear, put that in needs_check.
+
+Attribution rules for every field, including title and topics:
+- Speaker labels identify who spoke, not who a remark describes.
+- Attribute an opinion, trait, action or intention to a named person only when the source clearly identifies that person as its subject. A nearby name, adjacent remark or shared speaker is not enough.
+- When the subject is unclear, keep the remark separate using neutral wording without assigning a name, and explain the unresolved subject in needs_check.
+- Preserve explicitly named or otherwise unambiguous subjects. Do not remove supported names or turn uncertain statements into confirmed facts.
+- When combining partial summaries, preserve their needs_check uncertainties; an omitted subject must not be inferred or resolved by merging.
 
 Required JSON schema:
 {{
@@ -213,7 +227,7 @@ Required JSON schema:
 }}
 
 {context_block}
-Transcript:
+{source_label}:
 {transcript_text}
 """
 
@@ -956,15 +970,32 @@ def summarize_meeting(
     if not os.path.exists(model_name_or_path) and not is_local_summary_model_path(model_name_or_path):
         try:
             print(f"[LLM] Generating summary with Ollama model: {model_name_or_path} ...")
+            partial_uncertainties: list[str] = []
             if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:
                 partial_summaries = []
                 for index, chunk in enumerate(_split_text_for_summary(transcript_text), start=1):
                     partial = _generate_summary_once(model_name_or_path, _build_prompt(chunk, partial=True, meeting_context=meeting_context))
+                    partial_uncertainties.extend(
+                        item.strip() for item in partial.get("needs_check", [])
+                        if isinstance(item, str) and item.strip()
+                    )
                     partial_summaries.append(f"부분 {index}: {json.dumps(partial, ensure_ascii=False)}")
-                summary = _generate_summary_once(model_name_or_path, _build_prompt("\n".join(partial_summaries), meeting_context=meeting_context))
+                summary = _generate_summary_once(model_name_or_path, _build_prompt(
+                    "\n".join(partial_summaries),
+                    meeting_context=meeting_context,
+                    merging_partials=True,
+                ))
             else:
                 summary = _generate_summary_once(model_name_or_path, prompt)
-            return summary if _summary_has_content(summary) else _fallback_extract_summary(transcript_text)
+            result = summary if _summary_has_content(summary) else _fallback_extract_summary(transcript_text)
+            # A merge may omit a caveat even when instructed to retain it. Keep
+            # unresolved source concerns visible without rewriting named subjects.
+            if partial_uncertainties:
+                result["needs_check"] = list(result["needs_check"])
+            for concern in partial_uncertainties:
+                if concern not in result["needs_check"]:
+                    result["needs_check"].append(concern)
+            return result
         except Exception as exc:
             return _generation_failure_summary(exc)
 

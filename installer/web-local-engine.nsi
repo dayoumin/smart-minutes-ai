@@ -1,6 +1,5 @@
 Unicode True
 RequestExecutionLevel user
-SetShellVarContext current
 SetCompressor zlib
 
 !include "MUI2.nsh"

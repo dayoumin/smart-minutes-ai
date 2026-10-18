@@ -1,3 +1,4 @@
+import copy
 import sys
 import unittest
 from pathlib import Path
@@ -11,6 +12,40 @@ from pipeline.transcript_display import build_display_segments, get_transcript_s
 
 
 class TranscriptDisplayTest(unittest.TestCase):
+    def test_merging_preserves_later_review_flags_and_does_not_mutate_source(self) -> None:
+        flag_pairs = {
+            "speaker_needs_review": "speakerNeedsReview",
+            "speaker_split_coverage_gap": "speakerSplitCoverageGap",
+            "speaker_split_coverage_overlap": "speakerSplitCoverageOverlap",
+            "short_speaker_overlap": "shortSpeakerOverlap",
+            "mixed_speaker_split": "mixedSpeakerSplit",
+        }
+        for snake, camel in flag_pairs.items():
+            for input_key in (snake, camel):
+                with self.subTest(flag=input_key):
+                    segments = [
+                        {"start": 0, "end": 2, "speaker": "SPEAKER_00", "text": "첫 발언", snake: False},
+                        {"start": 2, "end": 4, "speaker": "SPEAKER_00", "text": "검토할 발언", input_key: True},
+                        {"start": 4, "end": 6, "speaker": "SPEAKER_00", "text": "다음 발언", snake: False},
+                    ]
+                    original = copy.deepcopy(segments)
+                    display = build_display_segments(segments)
+                    self.assertEqual(len(display), 1)
+                    self.assertTrue(display[0].get(snake))
+                    self.assertEqual(display[0]["text"], "첫 발언 검토할 발언 다음 발언")
+                    self.assertEqual((display[0]["start"], display[0]["end"]), (0, 6))
+                    self.assertEqual(display[0]["source_segment_count"], 3)
+                    self.assertEqual(segments, original)
+
+    def test_review_flags_do_not_leak_to_another_speaker(self) -> None:
+        display = build_display_segments([
+            {"start": 0, "end": 2, "speaker": "SPEAKER_00", "text": "검토 발언", "speaker_needs_review": True},
+            {"start": 2, "end": 4, "speaker": "SPEAKER_01", "text": "명확한 다른 발언"},
+        ])
+        self.assertEqual(len(display), 2)
+        self.assertTrue(display[0]["speaker_needs_review"])
+        self.assertFalse(display[1].get("speaker_needs_review", False))
+
     def test_merges_same_speaker_incomplete_tail(self) -> None:
         segments = [
             {"start": 0.0, "end": 5.0, "speaker": "화자000", "speaker_name": "화자000", "text": "전 세계 어디에도 원하지 않는 그런 내용들을"},

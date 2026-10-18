@@ -488,6 +488,7 @@ const runScenario = async (
     assert.ok(progressLayout.stopButtonBottom <= progressLayout.viewportHeight, 'stop action should remain visible at 1280x720');
     await stopMenuButton.click();
     await page.getByText('분석을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
+    await page.locator('.analysis-stop-panel').getByText('취소하면 이번 분석의 임시 대화록은 삭제합니다. 완료·중지·실패한 회의록, 본문을 수정·확정한 대화록과 정리 결과는 남깁니다.', { exact: false }).waitFor({ timeout: 10000 });
 
     if (action === 'stop') {
       await page.locator('.analysis-stop-panel').getByRole('button', { name: '이어하기 기록을 남기고 분석 중지' }).click();

@@ -98,6 +98,105 @@ const startServer = async () => {
   }
 };
 
+const verifySummaryReadinessAfterPairing = async browser => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const sessionToken = 'summary-readiness-ui-test-session-token';
+  const record = {
+    id: 'summary-readiness-after-pairing',
+    jobId: 'summary-readiness-after-pairing',
+    title: '연결 후 요약 준비 상태',
+    date: '2026-10-18 09:00',
+    meetingPurpose: '연결 성공 뒤 저장한 대화록 정리',
+    summary: '요약 프로그램이 중지되어 정리를 건너뛰었습니다.',
+    generationStatus: { summary: 'skipped' },
+    segments: [{ start: '00:00', end: '00:05', speaker: 'SPEAKER_00', text: '연결한 뒤 이 대화록을 정리합니다.' }],
+    diarizationApplied: true,
+    analysisStatus: 'completed',
+  };
+  let rejectedModelRequests = 0;
+  let authenticatedModelRequests = 0;
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (payload, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) });
+    if (path === '/api/models/status') {
+      if (route.request().headers().authorization !== `Bearer ${sessionToken}`) {
+        rejectedModelRequests += 1;
+        return json({ detail: 'local engine authorization required' }, 401);
+      }
+      authenticatedModelRequests += 1;
+      return json({
+        ready: true, models: [], errors: [], summary_ready: false,
+        summary_message: '요약 프로그램이 중지되어 모델 상태를 확인하지 못했습니다.',
+        ollama_connection: { status: 'managed_stopped', can_auto_start: true, managed_runtime_available: true },
+      });
+    }
+    if (path === '/api/probe') return json({
+      product_id: 'barorok-local-engine', engine_version: '0.1.0-test', api_contract_version: 1,
+      capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
+      auth_state: 'pairing-required', pairing_available: true, update_required: false,
+    });
+    if (path === '/api/pair/start') return json({ pairing_id: 'summary-readiness-pairing', expires_in_seconds: 120 });
+    if (path === '/api/pair/complete') {
+      assert.deepEqual(route.request().postDataJSON(), { pairing_id: 'summary-readiness-pairing', code: '123456' });
+      return json({ session_token: sessionToken, expires_at: Math.floor(Date.now() / 1000) + 300,
+        capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] });
+    }
+    if (path === '/api/settings') return json({});
+    if (path === '/api/health') return json({ ok: true });
+    if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+    return json({ detail: 'not used by readiness regression' }, 404);
+  });
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    const firstStatusDeadline = Date.now() + 10000;
+    while (rejectedModelRequests === 0 && Date.now() < firstStatusDeadline) await sleep(100);
+    assert.ok(rejectedModelRequests > 0, 'the mounted history must first encounter an unauthenticated model-status response');
+    await page.evaluate(async record => {
+      const { addMeeting } = await import('/src/meetingRepository.ts');
+      await addMeeting(record);
+      window.dispatchEvent(new Event('meetings:updated'));
+      window.__readinessInteractions = { focus: 0, settings: 0 };
+      window.addEventListener('focus', () => { window.__readinessInteractions.focus += 1; });
+      window.addEventListener('analysis:settings-updated', () => { window.__readinessInteractions.settings += 1; });
+    }, record);
+    const row = page.locator('.sidebar-record-row').filter({ hasText: record.title });
+    await row.locator('button[title]').filter({ hasText: record.title }).click();
+    const detail = page.locator('.meeting-detail-shell');
+    await detail.getByRole('heading', { name: record.title, exact: true }).waitFor();
+    await detail.getByRole('tab', { name: '기록 정리', exact: true }).click();
+    const summaryButton = detail.getByRole('button', { name: '전체 요약 정리', exact: true });
+    assert.equal(await summaryButton.isDisabled(), true, 'a skipped summary cannot start while the model status is unauthenticated');
+    await page.getByRole('button', { name: '새 회의록', exact: true }).click();
+    const rail = page.locator('.local-engine-connection');
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '이 브라우저 연결', exact: true });
+    await dialog.getByRole('textbox', { name: '연결 코드', exact: true }).fill('123456');
+    await dialog.getByRole('button', { name: '연결', exact: true }).click();
+    await rail.getByText('분석 준비 완료', { exact: true }).waitFor();
+    await row.locator('button[title]').filter({ hasText: record.title }).click();
+    await detail.getByRole('tab', { name: '기록 정리', exact: true }).click();
+    await page.waitForFunction(() => {
+      const button = document.querySelector('[aria-label="전체 요약 정리"]');
+      return button && !button.disabled;
+    }, null, { timeout: 10000 });
+    assert.ok(authenticatedModelRequests > 0, 'successful pairing must refresh model readiness with the new session');
+    assert.equal(await summaryButton.isEnabled(), true, 'an automatically startable managed runtime must unlock the skipped summary');
+    assert.deepEqual(await page.evaluate(() => window.__readinessInteractions), { focus: 0, settings: 0 },
+      'readiness recovery must not require focus or settings changes');
+    assert.equal(await page.getByRole('dialog', { name: '설정', exact: true }).count(), 0);
+    assert.deepEqual(errors, []);
+    console.log('ok - pairing refreshes skipped-summary readiness without settings or focus');
+  } catch (error) {
+    console.error('summary readiness body:', (await page.locator('body').innerText()).slice(0, 2000));
+    throw error;
+  } finally {
+    await page.close();
+  }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -111,6 +210,10 @@ const run = async () => {
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'summary-readiness') {
+      await verifySummaryReadinessAfterPairing(browser);
+      return;
+    }
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
 
     await page.route('**/api/probe', route => {
@@ -305,6 +408,7 @@ const run = async () => {
     assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '연결 상태 보존 회의');
     assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '연결 전 입력 보존 확인');
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
+    await verifySummaryReadinessAfterPairing(browser);
     console.log('ok - local engine connection UI and auth recovery simulation');
   } catch (error) {
     console.error(error);

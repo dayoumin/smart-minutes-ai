@@ -1,7 +1,9 @@
 import json
 import os
+import sys
 import tempfile
 import threading
+import types
 import unittest
 from argparse import Namespace
 from pathlib import Path
@@ -326,6 +328,72 @@ class WebLocalEngineRuntimeTest(unittest.TestCase):
                             frozen=True,
                             default_install_root=default_install_root,
                         )
+
+    def test_server_uses_post_creation_layout_for_runtime_and_helpers(self) -> None:
+        from web_local_engine_server import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            initial = self._layout(root / "logical")
+            resolved = resolve_web_local_engine_layout(
+                local_app_data=root / "physical",
+                install_root=initial.install_root,
+            )
+            prepared = False
+
+            def resolve_after_creation(*_args, **_kwargs):
+                return resolved if prepared else initial
+
+            def prepare_data(layout, **_kwargs):
+                nonlocal prepared
+                self.assertEqual(layout, initial)
+                prepared = True
+
+            backend = types.ModuleType("main")
+            backend.LOCAL_ENGINE_PAIRING = types.SimpleNamespace()
+            backend.app = object()
+            with (
+                patch("web_local_engine_server._resolve_startup_layout", side_effect=resolve_after_creation) as resolve,
+                patch("web_local_engine_server._resolve_startup_settings", return_value=("https://minutes.example", "1.2.3")),
+                patch("web_local_engine_server.prepare_web_local_engine_data", side_effect=prepare_data) as prepare,
+                patch("web_local_engine_server.apply_web_local_engine_environment") as apply_environment,
+                patch("web_local_engine_server._configure_logging") as configure_logging,
+                patch("web_local_engine_server.WindowsNamedMutex") as mutex,
+                patch("web_local_engine_server.WindowsNamedEvent") as stop_event,
+                patch("web_local_engine_server.make_pairing_code_presenter") as presenter,
+                patch("web_local_engine_server.pairing_helper_is_armed", return_value=True) as helper_armed,
+                patch("web_local_engine_server.threading.Thread"),
+                patch("web_local_engine_server.stop_embedded_ollama_server") as stop_runtime,
+                patch("web_local_engine_server.uvicorn.Config") as server_config,
+                patch("web_local_engine_server.uvicorn.Server") as server,
+                patch.dict(sys.modules, {"main": backend}),
+            ):
+                mutex.return_value.acquire.return_value = True
+                stop_event.return_value.wait.return_value = False
+                cleanup_order = []
+                server.return_value.run.side_effect = lambda: cleanup_order.append("server")
+                stop_runtime.side_effect = lambda: cleanup_order.append("ollama")
+                stop_event.return_value.close.side_effect = lambda: cleanup_order.append("event")
+                mutex.return_value.release.side_effect = lambda: cleanup_order.append("mutex")
+                self.assertEqual(main([]), 0)
+                self.assertTrue(backend.LOCAL_ENGINE_PAIRING.availability_check())
+
+            self.assertEqual(resolve.call_count, 2)
+            prepare.assert_called_once_with(initial, default_config_path=str(initial.defaults_dir / "config.json"))
+            environment = apply_environment.call_args.args[0]
+            self.assertEqual(environment["MEETING_AI_BACKEND_DIR"], str(resolved.config_dir))
+            self.assertEqual(environment["LMO_LOCAL_OLLAMA_RUNTIME_DIR"], str(resolved.runtime_dir / "ollama"))
+            configure_logging.assert_called_once_with(resolved.logs_dir / "engine.log")
+            mutex.assert_called_once_with(pairing_mutex_name(resolved))
+            stop_event.assert_called_once_with(engine_stop_event_name(resolved))
+            presenter.assert_called_once_with(resolved, origin="https://minutes.example")
+            helper_armed.assert_called_once_with(resolved, origin="https://minutes.example")
+            self.assertEqual(server_config.call_args.kwargs.get("timeout_graceful_shutdown"), 5)
+            server.return_value.run.assert_called_once_with()
+            stop_runtime.assert_called_once_with()
+            stop_event.return_value.close.assert_called_once_with()
+            mutex.return_value.release.assert_called_once_with()
+            self.assertEqual(cleanup_order, ["server", "ollama", "event", "mutex"])
 
     @unittest.skipUnless(os.name == "nt", "Windows named mutex contract")
     def test_named_mutex_allows_only_one_server_instance_per_user_data_root(self) -> None:

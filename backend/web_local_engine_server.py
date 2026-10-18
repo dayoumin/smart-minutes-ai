@@ -20,6 +20,7 @@ from local_engine_preflight import (
     write_preflight_json,
 )
 from local_engine_security import PRODUCT_ID
+from ollama_utils import stop_embedded_ollama_server
 from web_local_engine_runtime import (
     PAIRING_ARM_TTL_SECONDS,
     WindowsNamedEvent,
@@ -42,6 +43,19 @@ from web_local_engine_runtime import (
 
 
 LOCAL_ENGINE_PORT = 17863
+LOCAL_ENGINE_GRACEFUL_SHUTDOWN_SECONDS = 5
+
+
+def _create_server(app) -> uvicorn.Server:
+    return uvicorn.Server(uvicorn.Config(
+        app=app,
+        host="127.0.0.1",
+        port=LOCAL_ENGINE_PORT,
+        reload=False,
+        log_level="info",
+        log_config=None,
+        timeout_graceful_shutdown=LOCAL_ENGINE_GRACEFUL_SHUTDOWN_SECONDS,
+    ))
 
 
 def _default_install_root() -> Path:
@@ -159,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     layout = _resolve_startup_layout(args, frozen=frozen)
     if args.stop:
+        # Signal acknowledgement only; installers also probe the mutex and port.
         return 0 if signal_engine_stop(layout) else 3
     origin, engine_version = _resolve_startup_settings(
         layout,
@@ -187,6 +202,9 @@ def main(argv: list[str] | None = None) -> int:
 
     default_config = args.default_config or str(layout.defaults_dir / "config.json")
     prepare_web_local_engine_data(layout, default_config_path=default_config)
+    # Windows app virtualization can resolve a newly created data root differently.
+    # Derive runtime paths and helper identities from the now-existing directory.
+    layout = _resolve_startup_layout(args, frozen=frozen)
     runtime_environment = build_web_local_engine_environment(
         layout,
         origin=origin,
@@ -216,17 +234,11 @@ def main(argv: list[str] | None = None) -> int:
             layout,
             origin=origin,
         )
-        server = uvicorn.Server(uvicorn.Config(
-            app=app,
-            host="127.0.0.1",
-            port=LOCAL_ENGINE_PORT,
-            reload=False,
-            log_level="info",
-            log_config=None,
-        ))
+        server = _create_server(app)
 
         def wait_for_stop() -> None:
             if stop_event.wait():
+                logging.info("Local-engine stop requested; waiting for server shutdown")
                 server.should_exit = True
 
         stop_watcher = threading.Thread(
@@ -237,13 +249,19 @@ def main(argv: list[str] | None = None) -> int:
         stop_watcher.start()
         logging.info("Starting Barorok local engine on loopback port %s", LOCAL_ENGINE_PORT)
         server.run()
+        logging.info("Local-engine server shutdown completed")
         return 0
     finally:
-        stop_event.signal()
-        if stop_watcher is not None:
-            stop_watcher.join(timeout=2)
-        stop_event.close()
-        mutex.release()
+        try:
+            stop_event.signal()
+            if stop_watcher is not None:
+                stop_watcher.join(timeout=2)
+        finally:
+            try:
+                stop_embedded_ollama_server()
+            finally:
+                stop_event.close()
+                mutex.release()
 
 
 if __name__ == "__main__":

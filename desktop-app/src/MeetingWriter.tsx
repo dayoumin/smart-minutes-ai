@@ -2288,7 +2288,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const showInputForm = !showAnalysisPanel && !completionNotice;
 
     return (
-        <div className="writer-shell">
+        <div className="writer-shell" data-settings-focus-scope>
             {operationToast && (
                 <AppToast
                     message={operationToast.message}
@@ -2371,6 +2371,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             aria-describedby={hasAttemptedStart && !file ? 'writer-form-error' : undefined}
                             aria-disabled={isAnalyzing || isExtractingAudio}
                             aria-label="필수: 영상 또는 음성 파일 선택"
+                            data-settings-focus-fallback
                             className={`file-drop-zone ${isFileDragActive ? 'file-drop-zone-active' : ''}`}
                             onClick={() => {
                                 if (!isAnalyzing && !isExtractingAudio) fileInputRef.current?.click();
@@ -2591,7 +2592,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             </Button>
                         )}
                         <div className="writer-primary-actions">
-                            <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined}>
+                            <Button className={`writer-start-button ${localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-start-button-connection-pending' : ''}`} onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined} data-settings-focus-fallback>
                                 {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
                                 {isAnalyzing ? '분석 중' : buttonLabel}
                             </Button>
@@ -2701,7 +2702,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <div className="min-w-0 flex-1">
                                 <div className="text-sm font-semibold text-foreground">분석을 어떻게 처리할까요?</div>
                                 <div className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                                    중지하면 나중에 같은 파일로 이어서 분석할 수 있습니다. 취소하면 이번 분석을 끝내고, 지금까지 만든 대화록과 정리 결과는 남깁니다.
+                                    중지하면 같은 파일로 이어서 분석할 수 있습니다. 취소하면 이번 분석의 임시 대화록은 삭제합니다. 완료·중지·실패한 회의록, 본문을 수정·확정한 대화록과 정리 결과는 남깁니다.
                                 </div>
                             </div>
                             <div className="analysis-stop-actions">

@@ -10,8 +10,10 @@ import urllib.request
 from pathlib import Path
 
 from process_utils import hidden_subprocess_kwargs
+from windows_process_job import WindowsProcessJob, start_owned_process
 
 _EMBEDDED_OLLAMA_PROCESS: subprocess.Popen | None = None
+_EMBEDDED_OLLAMA_JOB: WindowsProcessJob | None = None
 _EMBEDDED_OLLAMA_LOCK = threading.RLock()
 _EMBEDDED_OLLAMA_BASE_PORT = 11435
 _EMBEDDED_OLLAMA_PORT_RANGE = 2000
@@ -192,7 +194,7 @@ def probe_ollama_server(timeout_seconds: int = 2) -> bool:
 
 
 def ensure_ollama_server_running(timeout_seconds: int = 15) -> bool:
-    global _EMBEDDED_OLLAMA_PROCESS
+    global _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB
 
     if not using_embedded_ollama():
         return _ollama_api_ready()
@@ -202,7 +204,8 @@ def ensure_ollama_server_running(timeout_seconds: int = 15) -> bool:
             return True
 
         if _EMBEDDED_OLLAMA_PROCESS is None or _EMBEDDED_OLLAMA_PROCESS.poll() is not None:
-            _EMBEDDED_OLLAMA_PROCESS = subprocess.Popen(
+            stop_embedded_ollama_server()
+            _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB = start_owned_process(
                 [find_ollama_executable(), "serve"],
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
@@ -220,23 +223,29 @@ def ensure_ollama_server_running(timeout_seconds: int = 15) -> bool:
 
 
 def stop_embedded_ollama_server(timeout_seconds: int = 5) -> None:
-    global _EMBEDDED_OLLAMA_PROCESS
+    global _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB
 
     with _EMBEDDED_OLLAMA_LOCK:
         process = _EMBEDDED_OLLAMA_PROCESS
+        job = _EMBEDDED_OLLAMA_JOB
         _EMBEDDED_OLLAMA_PROCESS = None
-
-    if process is None or process.poll() is not None:
-        return
-
-    try:
-        process.terminate()
-        process.wait(timeout=max(timeout_seconds, 1))
-    except Exception:
+        _EMBEDDED_OLLAMA_JOB = None
         try:
-            process.kill()
-        except Exception:
-            pass
+            if process is not None and process.poll() is None:
+                try:
+                    process.terminate()
+                    process.wait(timeout=max(timeout_seconds, 1))
+                except Exception:
+                    try:
+                        process.kill()
+                    except Exception:
+                        pass
+        finally:
+            if job is not None:
+                try:
+                    job.terminate_and_wait(timeout_seconds=max(timeout_seconds, 1))
+                finally:
+                    job.close()
 
 
 atexit.register(stop_embedded_ollama_server)

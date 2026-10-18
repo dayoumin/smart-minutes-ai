@@ -131,6 +131,7 @@ const startServer = async () => {
 };
 
 const installRoutes = async (page) => {
+  const state = { ready: false };
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -141,13 +142,13 @@ const installRoutes = async (page) => {
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({
-      ready: false,
+      ready: state.ready,
       models: [
         {
           key: 'stt_faster_whisper',
           label: 'Faster Whisper Large v3',
           required: true,
-          installed: false,
+          installed: state.ready,
           downloadable: true,
           manual_note: '설정에서 음성 인식 모델을 받을 수 있습니다.',
         },
@@ -167,6 +168,7 @@ const installRoutes = async (page) => {
     contentType: 'application/json',
     body: JSON.stringify({ detail: 'benchmark fixtures disabled for this simulation' }),
   }));
+  return state;
 };
 
 const run = async () => {
@@ -178,7 +180,7 @@ const run = async () => {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
-    await installRoutes(page);
+    const state = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
 
     const infoBanner = page.locator('.status-banner-info').filter({ hasText: '음성 인식 기본 모델 준비 필요' });
@@ -207,6 +209,34 @@ const run = async () => {
     await modelsTab.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsTab.getAttribute('aria-selected'), 'true', 'model guidance should open the models tab');
     await page.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+
+    await page.keyboard.press('Escape');
+    await page.getByRole('dialog').waitFor({ state: 'detached' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '모델 준비');
+
+    const prepareModel = async () => {
+      await page.getByRole('button', { name: '모델 준비', exact: true }).click();
+      const dialog = page.getByRole('dialog');
+      await dialog.getByRole('tab', { name: '모델', exact: true }).waitFor();
+      state.ready = true;
+      await dialog.getByRole('button', { name: '모델 준비 상태 다시 확인', exact: true }).click();
+      await page.waitForFunction(() => document.querySelector('.writer-start-button')?.textContent?.trim() === '분석 시작');
+      await page.keyboard.press('Escape');
+      await dialog.waitFor({ state: 'detached' });
+    };
+    await prepareModel();
+    await page.waitForFunction(() => document.activeElement?.classList.contains('writer-start-button'));
+    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '준비 상태 확인');
+    assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '모델 미준비 상태에서 시작 차단 확인');
+    assert.equal(await page.locator('#meeting-file-input').evaluate(input => input.files?.[0]?.name), '준비 상태 확인.mp3');
+    assert.equal(await actionBar.getByRole('button', { name: '분석 시작', exact: true }).isEnabled(), true);
+
+    await page.getByRole('button', { name: '준비 상태 확인.mp3 제거', exact: true }).click();
+    state.ready = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await page.getByRole('button', { name: '준비 필요', exact: true }).waitFor();
+    await prepareModel();
+    await page.waitForFunction(() => document.activeElement?.classList.contains('file-drop-zone'));
 
     console.log('ok - writer model readiness simulation');
   } catch (error) {

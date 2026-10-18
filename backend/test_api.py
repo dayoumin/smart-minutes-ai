@@ -178,7 +178,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 with (
                     patch.dict(os.environ, {"MEETING_AI_BACKEND_DIR": str(backend_dir)}, clear=False),
                     patch.object(ollama_utils, "_ollama_api_ready", side_effect=fake_ready),
-                    patch.object(ollama_utils.subprocess, "Popen", return_value=fake_process) as popen_mock,
+                    patch.object(ollama_utils, "start_owned_process", return_value=(fake_process, None)) as popen_mock,
                 ):
                     os.environ.pop("OLLAMA_EXE", None)
                     os.environ.pop("OLLAMA_HOST", None)

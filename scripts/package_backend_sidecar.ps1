@@ -143,8 +143,16 @@ Assert-PythonRuntime $PythonCommand
 Assert-PythonBuildRequirements $PythonCommand
 
 New-Item -ItemType Directory -Force -Path $PackageDestinationDir | Out-Null
-if (Test-Path $BuildDistDir) {
-    Remove-Item -LiteralPath $BuildDistDir -Recurse -Force
+if (Test-Path -LiteralPath $BuildOutputDir) {
+    $buildOutputFullPath = [System.IO.Path]::GetFullPath($BuildOutputDir)
+    $buildDistFullPath = [System.IO.Path]::GetFullPath($BuildDistDir)
+    if (-not [System.IO.Path]::GetDirectoryName($buildOutputFullPath).Equals($buildDistFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove a build output outside its dedicated directory: $buildOutputFullPath"
+    }
+    if ((Get-Item -LiteralPath $buildOutputFullPath -Force).Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+        throw "Refusing to remove a reparse-point build output: $buildOutputFullPath"
+    }
+    Remove-Item -LiteralPath $buildOutputFullPath -Recurse -Force
 }
 if (Test-Path (Join-Path $PackageDestinationDir "_internal")) {
     $internalDir = Resolve-Path -LiteralPath (Join-Path $PackageDestinationDir "_internal")

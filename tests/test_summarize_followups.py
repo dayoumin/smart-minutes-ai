@@ -1,8 +1,10 @@
+import json
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 BACKEND_DIR = PROJECT_ROOT / "backend"
@@ -10,11 +12,136 @@ sys.path.insert(0, str(BACKEND_DIR))
 
 from pipeline.summarize import (  # noqa: E402
     _generate_json_once,
+    _split_text_for_summary,
     generate_meeting_report,
     generate_speaker_context_summaries,
     generate_topic_sections,
+    summarize_meeting,
 )
 from generation_gateway import GenerationFailure  # noqa: E402
+
+
+class SummaryAttributionTest(unittest.TestCase):
+    def assert_attribution_rules(self, prompt: str) -> None:
+        self.assertIn("Speaker labels identify who spoke, not who a remark describes", prompt)
+        self.assertIn("A nearby name, adjacent remark or shared speaker is not enough", prompt)
+        self.assertIn("keep the remark separate using neutral wording without assigning a name", prompt)
+        self.assertIn("explain the unresolved subject in needs_check", prompt)
+        self.assertIn("Preserve explicitly named or otherwise unambiguous subjects", prompt)
+
+    def test_ollama_receives_uncertainty_rules_and_keeps_separate_subjects(self):
+        segments = [
+            {"speaker": "SPEAKER_00", "text": "서연의 발표는 구성이 명확했어요."},
+            {"speaker": "SPEAKER_01", "text": "옆 부서에 그런 사람이 있는데 태도가 불친절해요."},
+        ]
+        generated = {
+            "title": "발표와 태도에 대한 의견",
+            "overview": "발표 구성에 대한 칭찬과 대상이 불명확한 태도 평가가 나왔다.",
+            "topics": ["서연의 발표 구성", "대상이 불명확한 태도 평가"],
+            "decisions": [],
+            "actions": [],
+            "needs_check": ["태도 평가의 대상이 대화에서 명확하지 않음."],
+        }
+        with patch("pipeline.summarize.generate_ollama_text", return_value=json.dumps(generated, ensure_ascii=False)) as generate:
+            result = summarize_meeting(segments, "gemma-test")
+
+        self.assertEqual(generate.call_count, 1, "A short summary must not add another inference request")
+        model, prompt = generate.call_args.args
+        self.assertEqual(model, "gemma-test")
+        self.assert_attribution_rules(prompt)
+        for segment in segments:
+            self.assertIn(segment["text"], prompt)
+        self.assertEqual(result["topics"], generated["topics"])
+        self.assertEqual(result["needs_check"], generated["needs_check"])
+        self.assertEqual(result["decisions"], [])
+        self.assertEqual(result["actions"], [])
+
+    def test_explicit_named_subject_is_preserved_without_blanket_name_removal(self):
+        generated = {
+            "overview": "윤재가 일정 변경을 승인했다.",
+            "topics": ["윤재의 일정 변경 승인"],
+            "decisions": ["일정 변경 승인"],
+            "needs_check": [],
+        }
+        with patch("pipeline.summarize.generate_ollama_text", return_value=json.dumps(generated, ensure_ascii=False)) as generate:
+            result = summarize_meeting(
+                [{"speaker": "SPEAKER_00", "text": "윤재가 일정 변경을 승인했다고 명확하게 말했습니다."}],
+                "gemma-test",
+            )
+
+        self.assert_attribution_rules(generate.call_args.args[1])
+        self.assertEqual(result["overview"], generated["overview"])
+        self.assertEqual(result["topics"], generated["topics"])
+        self.assertEqual(result["decisions"], generated["decisions"])
+        self.assertEqual(result["needs_check"], [])
+
+    def test_partial_summary_uncertainties_survive_merge_and_empty_result_fallback(self):
+        uncertainty = "태도 평가가 어느 사람에 관한 것인지 확인 필요"
+        other_uncertainty = "인용한 의견의 발언자 확인 필요"
+        segments = [
+            {"speaker": "SPEAKER_00", "text": "검토자 가의 발표 자료가 명확했다는 평가가 나왔습니다."},
+            {"speaker": "SPEAKER_01", "text": "다른 부서의 누군가가 불친절하다는 의견이 있었습니다."},
+        ]
+        partials = [
+            {"overview": "발표 자료에 대한 평가", "needs_check": [uncertainty, uncertainty]},
+            {"overview": "대상이 불명확한 의견", "needs_check": [other_uncertainty]},
+        ]
+        for final in (
+            {"overview": "발표 평가와 대상이 불명확한 의견을 분리해 정리함.", "needs_check": [other_uncertainty]},
+            {"overview": "발표 평가와 별도 의견을 정리했지만 확인 사항은 누락됨."},
+            {},
+        ):
+            with self.subTest(empty_merge=not final), patch("pipeline.summarize.MAX_DIRECT_SUMMARY_CHARS", 40), \
+                    patch("pipeline.summarize._split_text_for_summary", side_effect=lambda text: _split_text_for_summary(text, max_chars=60)), \
+                    patch("pipeline.summarize.generate_ollama_text", side_effect=[
+                        json.dumps(value, ensure_ascii=False) for value in [*partials, final]
+                    ]) as generate:
+                result = summarize_meeting(segments, "gemma-test")
+
+            self.assertEqual(generate.call_count, 3, "Use the existing two partial calls and one merge only")
+            for call in generate.call_args_list:
+                self.assert_attribution_rules(call.args[1])
+            self.assertIn("Summarize the partial transcript", generate.call_args_list[0].args[1])
+            merge_prompt = generate.call_args_list[-1].args[1]
+            self.assertIn("Summarize the partial summaries", merge_prompt)
+            self.assertIn("Partial summaries:", merge_prompt)
+            self.assertIn(uncertainty, merge_prompt)
+            self.assertIn(other_uncertainty, merge_prompt)
+            self.assertEqual(result["needs_check"].count(uncertainty), 1)
+            self.assertEqual(result["needs_check"].count(other_uncertainty), 1)
+            if not final:
+                self.assertTrue(any("임시 개요" in item for item in result["needs_check"]))
+
+        with patch("pipeline.summarize.generate_ollama_text", return_value='{"overview":"새 회의 요약"}'):
+            next_meeting = summarize_meeting(
+                [{"speaker": "SPEAKER_00", "text": "다른 회의에서 일정만 논의했습니다."}],
+                "gemma-test",
+            )
+        self.assertEqual(next_meeting["needs_check"], [], "Partial uncertainties must not leak to another meeting")
+
+    def test_local_model_receives_the_same_attribution_contract(self):
+        generated = {
+            "overview": "대상이 확인되지 않은 평가를 분리해 정리함.",
+            "topics": ["대상 미확인 평가"],
+            "needs_check": ["평가 대상 확인 필요"],
+        }
+        llama = Mock(return_value={"choices": [{"text": json.dumps(generated, ensure_ascii=False)}]})
+        factory = Mock(return_value=llama)
+        module = types.ModuleType("llama_cpp")
+        module.Llama = factory
+        with tempfile.TemporaryDirectory() as tmp, patch.dict(sys.modules, {"llama_cpp": module}):
+            model_path = Path(tmp) / "summary.gguf"
+            model_path.write_bytes(b"test fixture; no inference")
+            result = summarize_meeting(
+                [{"speaker": "SPEAKER_00", "text": "누군가에 대한 평가인데 그 대상은 확인되지 않았습니다."}],
+                str(model_path),
+            )
+
+        factory.assert_called_once()
+        llama.assert_called_once()
+        self.assert_attribution_rules(llama.call_args.args[0])
+        self.assertEqual(result["overview"], generated["overview"])
+        self.assertEqual(result["needs_check"], generated["needs_check"])
 
 
 class SummarizeFollowupTest(unittest.TestCase):

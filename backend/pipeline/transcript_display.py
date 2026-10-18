@@ -10,6 +10,22 @@ INCOMPLETE_END_RE = re.compile(
     r"(?:은|는|이|가|을|를|에|에서|에게|께|으로|로|와|과|하고|랑|이나|거나|까지|부터|보다|처럼|만|도|의|좀|그런|어떤|왜냐면|때문에|위해서|하면서|하면|보니까|하는지를|하는지|가지고|들고)$"
 )
 PUNCTUATED_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?。！？…])\s+")
+SPEAKER_REVIEW_FLAG_ALIASES = {
+    "speaker_needs_review": "speakerNeedsReview",
+    "speaker_split_coverage_gap": "speakerSplitCoverageGap",
+    "speaker_split_coverage_overlap": "speakerSplitCoverageOverlap",
+    "short_speaker_overlap": "shortSpeakerOverlap",
+    "mixed_speaker_split": "mixedSpeakerSplit",
+}
+
+
+def speaker_review_flags(segment: dict) -> dict[str, bool]:
+    """Keep review metadata in backend form while accepting saved UI records."""
+    return {
+        snake: bool(segment.get(snake) or segment.get(camel))
+        for snake, camel in SPEAKER_REVIEW_FLAG_ALIASES.items()
+        if snake in segment or camel in segment
+    }
 
 
 def _to_seconds(value: Any) -> float:
@@ -52,6 +68,9 @@ def looks_incomplete_sentence_end(text: str) -> bool:
 
 def _copy_segment(segment: dict) -> dict:
     copied = copy.deepcopy(segment)
+    copied.update(speaker_review_flags(copied))
+    for alias in SPEAKER_REVIEW_FLAG_ALIASES.values():
+        copied.pop(alias, None)
     speaker = _segment_speaker(copied)
     if speaker:
         copied.setdefault("speaker", speaker)
@@ -133,6 +152,8 @@ def build_display_segments(
             previous["display_only"] = True
             previous["source_segment_count"] = int(previous.get("source_segment_count", 1)) + int(segment.get("source_segment_count", 1))
             previous["timing_approximate"] = bool(previous.get("timing_approximate")) or bool(segment.get("timing_approximate"))
+            for flag, value in speaker_review_flags(segment).items():
+                previous[flag] = bool(previous.get(flag)) or value
             continue
 
         display_segments.append(segment)

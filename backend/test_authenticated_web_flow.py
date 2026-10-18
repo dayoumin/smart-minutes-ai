@@ -148,6 +148,50 @@ class AuthenticatedWebFlowTest(unittest.TestCase):
         self.assertFalse(main.ANALYSIS_JOBS.has("denied-upload"))
         self.download_target.assert_not_called()
 
+    def test_speaker_review_flags_survive_ui_sync_and_recovery(self) -> None:
+        from pipeline.transcript_display import build_display_segments
+
+        flag_pairs = {
+            "speaker_needs_review": "speakerNeedsReview",
+            "speaker_split_coverage_gap": "speakerSplitCoverageGap",
+            "speaker_split_coverage_overlap": "speakerSplitCoverageOverlap",
+            "short_speaker_overlap": "shortSpeakerOverlap",
+            "mixed_speaker_split": "mixedSpeakerSplit",
+        }
+        result = self._seed()
+        raw_stt = copy.deepcopy(result["segments"])
+        result["raw_stt_segments"] = raw_stt
+        result["segments"] = [
+            {"start": 0, "end": 0.5, "speaker": "화자000", "text": "앞 발언"},
+            {"start": 0.5, "end": 1, "speaker": "화자000", "text": "겹친 발언", **dict.fromkeys(flag_pairs, True)},
+        ]
+        result["display_segments"] = build_display_segments(result["segments"])
+        main._save_job_result(JOB_ID, result)
+        headers = self._headers(self._pair())
+        recovered = self.client.get(f"/api/analyze/{JOB_ID}/recoverable-result", headers=headers)
+        self.assertEqual(recovered.status_code, 200)
+        data = recovered.json()
+        for camel in flag_pairs.values():
+            self.assertTrue(data["segments"][1].get(camel))
+            self.assertTrue(data["display_segments"][0].get(camel))
+        record = {**self._record(), "segments": data["segments"], "displaySegments": data["display_segments"]}
+        for edited in (False, True):
+            with self.subTest(edited=edited):
+                if edited:
+                    record["editedDisplaySegments"] = copy.deepcopy(record["displaySegments"])
+                synced = self.client.post(f"/api/outputs/{JOB_ID}/sync-record", headers=headers, json=record)
+                self.assertEqual(synced.status_code, 200)
+                self.assertIsNone(synced.json()["export_error"])
+                saved = self.client.get(f"/api/outputs/{JOB_ID}/json", headers=headers).json()
+                self.assertEqual(saved["raw_stt_segments"], raw_stt)
+                self.assertEqual(saved["settings"], result["settings"])
+                self.assertEqual(saved["display_segments"][0]["text"], "앞 발언 겹친 발언")
+                for snake in flag_pairs:
+                    self.assertTrue(saved["display_segments"][0].get(snake))
+                reopened = self.client.get(f"/api/analyze/{JOB_ID}/recoverable-result", headers=headers).json()
+                for camel in flag_pairs.values():
+                    self.assertTrue(reopened["display_segments"][0].get(camel))
+
     def test_pair_analyze_sync_download_and_delete_with_enforced_auth(self) -> None:
         probe = self.client.get("/api/probe")
         self.assertEqual(probe.status_code, 200)

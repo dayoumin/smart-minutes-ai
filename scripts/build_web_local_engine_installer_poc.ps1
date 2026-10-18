@@ -114,6 +114,7 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $HelperPath -PathType L
 $InstallerPath = Join-Path $ResolvedOutputDir "Barorok-Local-Engine-Setup-$EngineVersion.exe"
 & $ResolvedMakensis `
     "/V3" `
+    "/INPUTCHARSET" "UTF8" `
     "/DARTIFACT_DIR=$ResolvedArtifactDir" `
     "/DHELPER_PATH=$HelperPath" `
     "/DOUTPUT_FILE=$InstallerPath" `

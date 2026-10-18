@@ -164,6 +164,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
             ROOT / "scripts" / "build_web_local_engine_installer_helper.ps1"
         ).read_text(encoding="utf-8")
         self.assertIn('Get-Command $Makensis', builder)
+        self.assertIn('"/INPUTCHARSET" "UTF8"', builder)
         self.assertIn('before the home-PC build gate', builder)
         self.assertIn('build_web_local_engine_installer_helper.ps1', builder)
         self.assertIn('installScope = "current-user"', builder)
@@ -185,6 +186,10 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
     def test_web_nsis_installer_preserves_data_and_uses_preflight_rollback(self) -> None:
         installer = (ROOT / "installer" / "web-local-engine.nsi").read_text(encoding="utf-8")
         self.assertIn('RequestExecutionLevel user', installer)
+        self.assertNotIn('SetShellVarContext', installer.split('Function ', 1)[0])
+        for callback in ('.onInit', 'un.onInit'):
+            initialization = installer.split(f'Function {callback}\n', 1)[1].split('FunctionEnd', 1)[0]
+            self.assertIn('SetShellVarContext current', initialization)
         self.assertIn('InstallDir "$LOCALAPPDATA\\Programs\\Barorok\\LocalEngine"', installer)
         self.assertNotIn('MUI_PAGE_DIRECTORY', installer)
         self.assertIn('barorok-installer-preflight.exe', installer)

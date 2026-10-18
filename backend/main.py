@@ -83,6 +83,7 @@ from ollama_utils import (
     using_embedded_ollama,
 )
 from pipeline.transcribe import get_stt_device_status
+from pipeline.transcript_display import SPEAKER_REVIEW_FLAG_ALIASES, speaker_review_flags
 from process_utils import hidden_subprocess_kwargs
 from storage_preflight import build_analysis_storage_preflight
 
@@ -5245,6 +5246,7 @@ def _normalize_payload_segments(
             "text": segment.get("text", ""),
             "timing_approximate": bool(segment.get("timingApproximate") or segment.get("timing_approximate")),
             "display_only": bool(segment.get("displayOnly") or segment.get("display_only")),
+            **speaker_review_flags(segment),
         })
     return segments
 
@@ -6351,6 +6353,7 @@ def segments_for_ui(segments: list[dict]) -> list[dict]:
             "text": segment.get("text", ""),
             "timingApproximate": bool(segment.get("timing_approximate", False)),
             "displayOnly": bool(segment.get("display_only", False)),
+            **{SPEAKER_REVIEW_FLAG_ALIASES[key]: value for key, value in speaker_review_flags(segment).items()},
         }
         for segment in segments or []
     ]

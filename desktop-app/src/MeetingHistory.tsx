@@ -4,6 +4,7 @@ import { Button, IconButton, Input, StatusBanner, ProgressBar, AppToast, AppToas
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
 import { isTauriRuntime, openSavedFileLocation } from './apiBase';
 import { localEngineClient } from './localEngineClient';
+import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { useMeetingAudioPlayback } from './useMeetingAudioPlayback';
 import { readApiErrorInfo as getGenerationErrorInfo, readApiErrorMessage as getGenerationErrorMessage } from './apiError';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
@@ -921,6 +922,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     onRegisterLeaveGuard,
     onOpenSettings,
 }) => {
+    const localEngineAuthorization = useLocalEngineConnection().snapshot.authorization;
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
@@ -1219,7 +1221,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             window.removeEventListener('focus', syncSummaryModelStatus);
             window.removeEventListener('analysis:settings-updated', syncSummaryModelStatus);
         };
-    }, []);
+    }, [localEngineAuthorization]);
 
     useEffect(() => {
         selectedMeetingRef.current = selectedMeeting;

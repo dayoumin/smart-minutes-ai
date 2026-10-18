@@ -488,12 +488,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     useEffect(() => {
         const previouslyFocusedElement = previouslyFocusedElementRef.current;
+        const returnFocusScope = previouslyFocusedElement?.closest<HTMLElement>('[data-settings-focus-scope]');
         const focusFrame = window.requestAnimationFrame(() => closeButtonRef.current?.focus());
         return () => {
             window.cancelAnimationFrame(focusFrame);
-            if (previouslyFocusedElement?.isConnected) {
+            const canRestoreFocus = (element: HTMLElement) => (
+                element.isConnected
+                && !element.matches(':disabled, [aria-disabled="true"]')
+                && element.getClientRects().length > 0
+                && window.getComputedStyle(element).visibility === 'visible'
+            );
+            if (previouslyFocusedElement && canRestoreFocus(previouslyFocusedElement)) {
                 previouslyFocusedElement.focus();
+                return;
             }
+            // Model readiness can remove the opener. Stay within its original
+            // work surface so a hidden writer never receives another screen's focus.
+            const fallback = returnFocusScope?.querySelectorAll<HTMLElement>('[data-settings-focus-fallback]');
+            Array.from(fallback ?? []).find(canRestoreFocus)?.focus();
         };
     }, []);
 

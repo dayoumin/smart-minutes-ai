@@ -554,6 +554,12 @@ const runCancelledRecoveryImportRaceScenario = async (browser, fixtureUpload) =>
       };
     }));
     assert.equal(meetings.length, 0, 'a delayed recovery response must not recreate a cancelled meeting');
+    // The same sync must not write the removed draft back, or the next sync imports it after this check.
+    assert.equal(
+      await page.evaluate(() => window.localStorage.getItem('analysisResumeDrafts')),
+      '[]',
+      'a recovery sync must not resurrect a draft removed while it awaited the engine',
+    );
     console.log('ok - cancelled recovery import race scenario');
   } finally {
     await context.close();

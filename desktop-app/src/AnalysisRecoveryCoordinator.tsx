@@ -42,9 +42,20 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
     const syncInFlightRef = useRef(false);
     const syncQueuedRef = useRef(false);
     const mountedRef = useRef(true);
+    const ownDraftWriteDepthRef = useRef(0);
 
     useEffect(() => {
         mountedRef.current = true;
+        // A sync's own draft writes dispatch the same update event as outside changes. Re-syncing on
+        // them would retry a failed import at once instead of on the next interval.
+        const writeOwnDrafts = <T,>(write: () => T): T => {
+            ownDraftWriteDepthRef.current += 1;
+            try {
+                return write();
+            } finally {
+                ownDraftWriteDepthRef.current -= 1;
+            }
+        };
         const syncRecovery = async (): Promise<void> => {
             if (syncInFlightRef.current) {
                 syncQueuedRef.current = true;
@@ -55,7 +66,9 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
             setAnalysisResumeSyncState('syncing', { error: null });
 
             try {
-                flushPendingAnalysisResumeDraftPersistence();
+                // While storage still refuses the last draft write, the in-memory list already lacks a
+                // removed draft, so its cleanup would look finished and be dropped while storage keeps it.
+                const draftsPersisted = writeOwnDrafts(flushPendingAnalysisResumeDraftPersistence);
                 let localDrafts = listAnalysisResumeDrafts();
                 if (ANALYSIS_MODE !== 'real') {
                     setAnalysisResumeSyncState('ready', {
@@ -81,7 +94,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                     return;
                 }
 
-                for (const jobId of unclaimedPendingJobIds) {
+                for (const jobId of draftsPersisted ? unclaimedPendingJobIds : []) {
                     try {
                         await queueAnalysisJobMutation(jobId, async () => {
                             if (isAnalysisJobClaimed(jobId)) return;
@@ -92,11 +105,11 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
 
                             if (pendingCancelledJobIds.has(jobId)) {
                                 await deleteMeetingRecordForJob(jobId);
-                                if (!removeAnalysisResumeDraft(jobId)) return;
+                                if (!writeOwnDrafts(() => removeAnalysisResumeDraft(jobId))) return;
                                 dispatchMeetingsUpdated(jobId);
                             }
-                            if (!removePendingAnalysisDraftCleanup(jobId)) return;
-                            removePendingCancelledAnalysisCleanup(jobId);
+                            if (!writeOwnDrafts(() => removePendingAnalysisDraftCleanup(jobId))) return;
+                            writeOwnDrafts(() => removePendingCancelledAnalysisCleanup(jobId));
                         });
                     } catch (error) {
                         await writeFrontendLog(`pending analysis cleanup error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
@@ -128,10 +141,10 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
 
                         const remote = remoteDrafts.find(item => item.job_id === draft.jobId);
                         if (!remote || remote.status === 'missing') {
-                            markAnalysisResumeDraftUnavailable(draft.jobId, 'no-checkpoint', {
+                            writeOwnDrafts(() => markAnalysisResumeDraftUnavailable(draft.jobId, 'no-checkpoint', {
                                 errorMessage: '재사용 가능한 체크포인트를 찾지 못했습니다.',
                                 updatedAt: now,
-                            });
+                            }));
                             continue;
                         }
 
@@ -191,13 +204,15 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                             } catch (error) {
                                 await writeFrontendLog(`analysis recovery import error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
                                 if (remote.status === 'completed') {
-                                    const recoveryStateSaved = upsertAnalysisResumeDraft({
+                                    // Removed elsewhere while this sync awaited the engine: do not write it back.
+                                    if (!getAnalysisResumeDraft(draft.jobId)) continue;
+                                    const recoveryStateSaved = writeOwnDrafts(() => upsertAnalysisResumeDraft({
                                         ...currentDraft,
                                         stage: 'recovering-result',
                                         lastMessage: '완료된 분석 결과를 다시 가져오고 있습니다.',
                                         errorMessage: '완료된 결과를 아직 가져오지 못했습니다. 잠시 후 다시 확인합니다.',
                                         resumeEligible: false,
-                                    });
+                                    }));
                                     if (!recoveryStateSaved) {
                                         await writeFrontendLog('analysis recovery state persistence deferred until storage is available');
                                     }
@@ -235,11 +250,11 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                                 ));
                             let completedStateSaved = true;
                             completedCandidates.forEach(candidate => {
-                                completedStateSaved = markAnalysisResumeDraftUnavailable(candidate.jobId, 'completed', {
+                                completedStateSaved = writeOwnDrafts(() => markAnalysisResumeDraftUnavailable(candidate.jobId, 'completed', {
                                     status: 'completed',
                                     errorMessage: '분석이 완료되어 이어할 필요가 없습니다. 결과는 회의 기록에서 확인하세요.',
                                     updatedAt: now,
-                                }) && completedStateSaved;
+                                })) && completedStateSaved;
                             });
                             if (!completedStateSaved) {
                                 await writeFrontendLog('completed analysis recovery state persistence deferred until storage is available');
@@ -281,6 +296,10 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                             resumeUnavailableReason: resumeEligible ? undefined : currentDraft.resumeUnavailableReason,
                             completedChunkCount: Number(remote.completed_chunk_count || 0),
                         };
+                        // The draft may have been removed (cancelled or deleted in another window) while this
+                        // sync awaited the engine. Writing the stale copy back would resurrect it, and the next
+                        // sync would import its result as a meeting again.
+                        if (!getAnalysisResumeDraft(draft.jobId)) continue;
                         if (
                             nextDraft.status !== currentDraft.status
                             || nextDraft.updatedAt !== currentDraft.updatedAt
@@ -293,7 +312,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                             || nextDraft.resumeEligible !== currentDraft.resumeEligible
                             || nextDraft.completedChunkCount !== currentDraft.completedChunkCount
                         ) {
-                            upsertAnalysisResumeDraft(nextDraft);
+                            writeOwnDrafts(() => upsertAnalysisResumeDraft(nextDraft));
                         }
                     }
                 }
@@ -320,6 +339,9 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
         };
         void syncRecovery();
         const handleSync = () => void syncRecovery();
+        const handleDraftsUpdated = () => {
+            if (ownDraftWriteDepthRef.current === 0) void syncRecovery();
+        };
         const intervalId = window.setInterval(() => {
             if (
                 listAnalysisResumeDrafts().some(draft => draft.status === 'active')
@@ -332,14 +354,14 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
             }
         }, ACTIVE_SYNC_INTERVAL_MS);
         window.addEventListener('focus', handleSync);
-        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleSync);
+        window.addEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleDraftsUpdated);
         window.addEventListener(ANALYSIS_RECOVERY_SYNC_REQUESTED_EVENT, handleSync);
         window.addEventListener(ANALYSIS_JOB_CLAIMS_UPDATED_EVENT, handleSync);
         return () => {
             mountedRef.current = false;
             window.clearInterval(intervalId);
             window.removeEventListener('focus', handleSync);
-            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleSync);
+            window.removeEventListener(ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT, handleDraftsUpdated);
             window.removeEventListener(ANALYSIS_RECOVERY_SYNC_REQUESTED_EVENT, handleSync);
             window.removeEventListener(ANALYSIS_JOB_CLAIMS_UPDATED_EVENT, handleSync);
         };

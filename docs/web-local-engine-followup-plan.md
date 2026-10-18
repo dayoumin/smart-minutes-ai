@@ -222,3 +222,65 @@ pairing/session 최소 PoC를 먼저 통과한다.
 - ONNX Runtime Web: https://onnxruntime.ai/docs/tutorials/web/
 - Transformers.js WebGPU and Whisper: https://huggingface.co/docs/transformers.js/en/guides/webgpu
 - whisper.cpp WASM: https://github.com/ggml-org/whisper.cpp
+
+## 11. Cloudflare 배포 준비 — 2026-10-18
+
+사용자는 Cloudflare를 배포 대상으로 선택했다. 목표는 **HTTPS 웹 접속 → 로컬 엔진 받기 → 설치 → 웹 연결 → 모델 준비 → 분석·저장·내보내기**다. GitHub push, Vite 화면 열기, 로컬 검사 설치 파일 생성은 이 배포 완료를 뜻하지 않는다.
+
+### 준비한 구성과 명령
+
+- 웹: `deploy/cloudflare/wrangler.jsonc`의 Workers Static Assets. 사용자 요청으로 Worker 이름에서 `-web`을 제거했다. `barorok` 이름의 기존 배포가 없는 것을 확인한 뒤 같은 계정·웹 자산으로 배포했다. 현재 검사 사이트는 `https://barorok.ecomarin.workers.dev`다.
+- 웹 빌드: `corepack pnpm --dir deploy/cloudflare prepare:web`. 기존 디자인 작업의 `desktop-app/dist` 대신 `.tmp/cloudflare-web/dist`에 생성한다. 이 명령은 업로드하지 않는다.
+- 연결 화면은 켜고, API는 사용자 PC의 `http://127.0.0.1:17863`으로 고정한다. 다운로드 주소를 생략하면 기존 `.env` 값도 덮어써 검사본 링크가 노출되지 않게 한다.
+- 배포용 설치 파일 검증이 끝나면 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/prepare_cloudflare_web.ps1 -InstallerUrl <검증된-HTTPS-설치파일-주소>`로 다시 빌드한다. 업데이트 주소는 검증된 경로가 있을 때만 `-UpdateUrl`로 별도 지정한다. 이 인자는 서명 검증을 대신하지 않는다.
+- 설치 파일은 웹 자산 폴더에 넣지 않는다. 비공개 R2에 버전별 파일명으로 보관하고 같은 웹 Worker의 `/downloads/`에서 지정한 파일만 전달한다. 사용자용 HTTPS 다운로드 주소, 파일 크기, SHA-256을 release manifest와 맞추며 `r2.dev` 공개나 별도 custom domain은 사용하지 않는다.
+- 현재 약 443MB인 검사 설치 파일은 Wrangler 단일 업로드 한도(315MB)를 넘는다. 이번에는 별도 S3 키 없이 인증·만료·고정 key·크기 제한을 적용한 임시 Worker로 분할 업로드(multipart upload)하고 전체를 다시 읽어 해시를 확인한다. 확인 후 임시 Worker는 삭제한다. [공식 업로드 기준](https://developers.cloudflare.com/r2/objects/upload-objects/)
+- 계정 확인: `corepack pnpm --dir deploy/cloudflare whoami`.
+- 계정 로그인: `corepack pnpm --dir deploy/cloudflare login`. 사용자가 브라우저에서 계정 인증을 완료한다. 토큰을 채팅이나 소스에 붙여 넣지 않는다.
+- 로컬 배포 검사: `corepack pnpm --dir deploy/cloudflare check` (`wrangler deploy --dry-run`). 실제 배포: `corepack pnpm --dir deploy/cloudflare run deploy` (`deploy`는 pnpm 내장 명령과 구분해 반드시 `run`을 붙인다).
+
+Wrangler `4.151.1`은 별도 의존성으로 고정했다. 설치는 저장소 루트에서 `corepack pnpm --dir deploy/cloudflare install --store-dir .cache/pnpm-cloudflare`로 한다. Windows 인증 저장소 모듈이 없으면 `.cache/cloudflare-auth/.wrangler/native/keyring` 폴더를 만든 뒤 `corepack pnpm --dir .cache/cloudflare-auth/.wrangler/native/keyring add @napi-rs/keyring@1.3.0 --store-dir .cache/pnpm-cloudflare`로 준비한다. 전역 설치나 인증 저장소 비활성화로 우회하지 않는다.
+
+`wrangler.mjs`는 `XDG_CONFIG_HOME=<저장소>/.cache/cloudflare-auth`, `XDG_CACHE_HOME=<저장소>/.cache/cloudflare-auth/cache`, `WRANGLER_LOG_PATH=<저장소>/.tmp/cloudflare-web/wrangler.log`, `WRANGLER_SEND_METRICS=false`, `CLOUDFLARE_AUTH_USE_KEYRING=true`를 적용한다. 인증 파일·로그·캐시는 Git에 포함하지 않는다. 사용자의 기존 `~/.wrangler`가 있으면 Wrangler의 legacy 우선순위가 적용될 수 있으므로 계정 확인 결과를 확인한다.
+
+### 일반 사용자 배포까지의 상태와 남은 일
+
+1. Cloudflare 로그인·계정 확인과 웹 최초 배포는 완료했다. 배포 version은 `905f8ae3-c3d6-43b8-a637-be8810f399e5`이며 실제 HTTPS에서 웹 자산 6개를 다시 받아 SHA-256 일치를 확인했다(`.tmp/cloudflare-web/deployment-verification.json`). 타입 검사·변경 ESLint·URL 경계 8개·HTTP URL 빌드 전 거부·Vite 웹 빌드·Wrangler dry run·독립 agent 검토도 통과했다. 실제 분석 모드를 명시적으로 고정한다. 웹 공개 자체가 설치·분석 전체 흐름 통과를 뜻하지 않는다.
+   - 2026-10-18 주소 변경: `https://barorok.ecomarin.workers.dev`, version `7cf3a964-c2ac-4f1d-bf0a-cf1a3e806a74`. 새 이름의 dry run·독립 agent 검토와 실제 HTTPS 자산 6개 SHA-256 일치를 확인했다(`.tmp/cloudflare-web/barorok-deployment-verification.json`). 기존 `barorok-web` 사이트는 삭제하거나 리디렉션하지 않았다. 두 주소의 브라우저 저장 영역은 다르므로 기존 IndexedDB 기록이 새 주소로 자동 이전됐다고 안내하지 않는다.
+   - 다운로드 저장소 `barorok-releases`는 비공개로 유지한다. 별도 S3 키 없이 인증된 임시 Worker로 0.1.4-beta 설치 파일을 고정 key에 전송하고 전체 442,772,630 bytes의 read-back SHA 일치를 확인했다. `complete()` 응답에 custom metadata가 빠져 첫 완료 단언이 409였지만 후속 실제 객체와 전체 내용은 정상이다. 임시 Worker `barorok-upload-qa-20261018`은 즉시 삭제했다. 일반 웹 Worker는 지정 EXE와 공개 beta metadata의 GET·HEAD·Range만 허용한다. 다른 프로젝트 버킷은 변경하지 않았다.
+   - 사용자가 서명 설명 후 새 주소용 엔진 제작·다운로드·설치·연결 검증을 요청해 2026-10-18 미서명 테스트 배포를 진행한다. 웹의 기존 연결 안내 자리에 테스트 파일·Windows 경고 가능성을 표시하고 `signed=false`, `testRelease=true`를 유지한다. 일반 사용자 출시의 서명 기준은 폐기하지 않는다. 인증서 구매나 서명 검증 실패 우회는 하지 않는다.
+2. 정확히 `https://barorok.ecomarin.workers.dev`를 허용하는 `0.1.4-beta-20261018` 설치 파일 제작과 전체 manifest 전후 검증·frozen Stage3B 기본 검사가 통과했다. 442,772,630 bytes, SHA-256 `ba1c858251468cbfb6bc80d4a0fd83933033b0db104a61c32acc666ef7a4f177`이다. r3 실행 파일·helper를 재사용하고 외부 설정 한 파일만 바꿨으며 4,955개 payload는 동일하다. 최신 `models_status` 실패 안내 문구 한 줄만 재사용 바이너리에 미포함이고 기능·보안 로직의 기록된 source hash는 일치한다. 원본 두 JSON·기존 설치 파일과 manifest는 보존했다. 새 설치 파일 manifest는 `installer-0.1.4-beta-20261018-manifest.json`이고 기존 `installer-poc-manifest.json`은 0.1.3 이력이다. `distributionReady=false`를 정식 출시 완료로 바꾸지 않는다. 근거는 `.tmp/public-engine-audit-20261018/{source-reuse-provenance.json,repackage-result.json}`이다.
+3. 최초 전송·전체 read-back SHA 검증 후 사이트의 다운로드 주소를 연결했다. 당시 배포 version은 `dd072cdb-817d-49a7-934e-23314c3687d6`이며 실제 공개 주소의 metadata·HEAD·206 Range·416·알 수 없는 파일 404·쓰기 405 검사가 통과했다. 다운로드 Worker 타입·HTTP/Range 검사와 미서명 안내의 독립 agent 검토도 통과했다. 당시 공개 파일은 `Barorok-Local-Engine-Setup-0.1.4-beta-20261018.exe`였고 현재 다운로드는 아래 5항의 0.1.5다. 근거는 `.tmp/public-engine-audit-20261018/{public-deployment.json,public-download-http.json,remote-uploader/upload-result.json}`이다. 일반 사용자용으로 서명됐다고 안내하지 않는다.
+4. 실제 stable Chrome의 새 프로필에서 사이트의 미서명 안내·받기 링크·정확한 HTTPS GET·실제 다운로드 완료와 SHA/크기 일치를 확인했고 독립 agent도 증거 일치를 확인했다. 받은 파일을 실제 GUI로 설치했고 NSIS의 native OS exit code `0`, 등록·설정 버전 `0.1.4-beta-20261018`, 새 origin과 설치/제거 미완료 표시 없음이 확인됐다. 설치 뒤 기존 기록/설정 9개 SHA·모델 73개 크기 불변, 새 origin의 probe 200·무인증 health 401·이전/다른 origin pairing 403도 통과했다. 근거는 `.tmp/public-engine-audit-20261018/installation-interactive.json`, `user-data-after-install.json`, `installed-boundary.json`과 `evidence/download-2026-10-18T03-24-37-172Z-48000/{manifest.json,network.json}`이다.
+   - 초기 실행 대기 진단: `/S`·숨김 실행 요청이 반환되지 않았고, 사용자가 창이 없다고 확인한 뒤 일반 GUI 실행을 요청했다. runtime agent가 검사 프로세스 `39824`의 `MainWindowTitle='파일 열기 - 보안 경고'`, 창 핸들·UserRequest 대기를 확인했다. 파일은 `ZoneId=3`, `NotSigned`이며 일반 Computer Use 목록에는 이 Shell 경고 창이 없었다. 이후 실제 NSIS `47788`가 시작됐고 보안 대기 해제 원인·사람의 승인 동작은 직접 관측하지 못했다. Computer Use 앱 제어 승인 후 일반 설치의 계속·마침을 진행했다. Windows 보안 창 입력·차단 해제·보안 설정 변경은 하지 않았다. 초기 대기 이력 `windows-launch-pending.json`, `Windows-launch-followup.json`은 설치 완료 증거와 구분해 보존한다.
+   - 공개 HTTPS·실제 설치 엔진 검사 진행: 같은 30초 WAV는 STT·참석자 구분·요약·저장·reload·TXT/MD/DOCX/HWPX 4개 내보내기를 통과했다. 최초 요약 503 뒤 재시도로 성공했으며 초기 모델 적재 중 CPU·읽기·상주 메모리 이동을 관측했다. 화자 검토 표시 3개와 저장 전후 기록·backend 계약 일치도 agent가 확인했다. 모호한 인물 평가를 특정 사람에게 붙이지 않았지만 평가 누락/확인 항목 비어 있음의 기존 P2는 유지한다. 15초 MP4는 STT·참석자 구분 뒤 요약이 HTTP 409 `model_missing`으로 실패했고 실패 상태는 저장됐다. 직전 상태 조회는 `summary_ready=true`여서 전체 흐름은 완료 판정하지 않는다. 최신 근거는 `evidence/resume-2026-10-18T05-19-56-958Z-46344`다.
+   - 모델 목록 오판 경로를 재현했다. 같은 자체 Ollama에서 `/api/tags`는 약 0.05초에 두 모델을 반환했지만 `ollama list`는 12.876초가 걸렸고 기존 `model_manager.list_ollama_models`는 5초에 중단해 빈 목록을 반환한다. 목록을 같은 runtime의 HTTP API로 조회하도록 수정 중이며 소스 집중 7개 검사·실제 API 조회(0.07초)를 통과했다. 영상 409가 이 경로였는지는 provider 404 가능성과 구분되지 않으므로 새 frozen 설치본 재검증 전 확정하지 않는다. 새 PC 최초 모델 준비, 사람의 LNA 승인/거부, 실모델 후 전체 소유 프로세스 종료·재시작은 별도 관문이다. 브라우저 검사는 통제된 테스트 권한 승인을 사용했다.
+5. 모델 목록을 별도 CLI 대신 같은 runtime의 `/api/tags`로 조회하도록 수정했다. 활성/수동 조회·중복/잘못된 응답·타임아웃 집중 4개와 기존 API 3개 검사, 실제 두 모델 0.07초 확인, 독립 backend agent 검토를 통과했다. 수정 소스를 포함한 `0.1.5-beta-20261018`을 새로 frozen 빌드해 42개 입력의 source drift 0·closed manifest·전체 격리 Stage3B·NSIS를 통과했다. 이전 설치본의 DLL/PYD 473개·822,272,735 bytes 및 FFmpeg는 새 manifest와 동일하며 기존 설치 파일 8개를 보존했다. 새 설치 파일은 442,772,108 bytes, SHA-256 `dcf08c15467ac7cf9accdbd600d6821c86e1020eaf545ce68a33fa1855e23aec`다.
+   - 비공개 R2 전송·전체 read-back SHA 일치 후 임시 `barorok-upload-qa-015-20261018`을 삭제했고, 새 배포 version `bdc8bba6-c837-4650-9578-86561135e2ff`를 적용했다. 현재 공개 주소는 `https://barorok.ecomarin.workers.dev/downloads/Barorok-Local-Engine-Setup-0.1.5-beta-20261018.exe`다. metadata/HEAD/206/416/404/405 및 실제 Chrome 받기 버튼의 전체 파일 크기/SHA·미서명 안내 검사가 통과했다. 근거는 `.tmp/public-engine-audit-20261018/{build-015/build-result.json,build-015/native-dependency-comparison.json,remote-uploader-015/upload-result.json,public-015-deployment.json,public-015-boundary.json,evidence/download-2026-10-18T06-02-34-891Z-38428/manifest.json}`이다.
+   - 사용자가 Windows 보안 경고의 실행을 승인한 뒤, 재개 시점에는 설치 프로그램이 이미 사라지고 실제 0.1.5가 실행 중이었다. 등록/설정 버전·origin·설치 EXE SHA의 frozen manifest 일치·pending 둘 다 false·실제 loopback/auth 경계를 확인했다. launcher의 `$process.Path.Equals`는 경로가 null인 상태에서 실패해 **설치 프로그램 exit 코드는 미관측**이며 0으로 보정하지 않는다. 설치 전 기존 기록/설정9개 SHA·모델73개 크기·추가 실제 기록2개 SHA는 모두 유지됐다. `installed-015-runtime-state.json`, `installed-015-boundary.json`, `user-data-after-015-install.json`, `after-015-extra-records.json`을 따른다.
+   - 실제 공개 HTTPS에서 영상 기존 기록의 요약 재시도가 성공했고 저장/reload·TXT/MD/DOCX/HWPX 4개를 통과했다. 음성은 이미 완료된 0.1.4 요약을 새로 만들지 않고 원본 보존·검토 배지3개·reload·4개 파일을 확인했다. 독립 데이터 agent가 두 기록의 backend/frontend/내보내기 본문·화자·시간·표시와 파일8개의 SHA/ZIP/XML을 확인했고 신규 차단 없음이다. **0.1.5에서 STT/화자 구분을 새로 수행한 검사는 아니다.** 기존 두 실처리 결과와 동일한 관련 소스·native473개/FFmpeg 증거를 재사용했다. 영상 성공은 `evidence/resume-2026-10-18T07-20-15-118Z-28068`, 음성 보존은 `evidence/resume-2026-10-18T07-29-56-644Z-45364`다.
+   - 실제 적재된 `gemma4:e2b`를 확인한 직후 일반 stop으로 본체 실제 exit0·약6.37초·소유 본체/Ollama/runner/conhost 5개 모두 소멸·포트/mutex 해제·foreign Ollama36096 보존을 통과했다. 강제 정리 없이 같은 설치본/환경/17863을 PID48712로 복원하고 두 기록을 읽기 전용으로 다시 열었다. 재열기 전후 전체 기록·화면 해시·검토 배지가 동일하며 생성/추론/export 요청은0건이다. 독립 runtime agent도 확인해 이 PC의 이전 하위 프로세스 잔류 P2를 닫았다. `loaded-015-before-stop.json`, `shutdown-015-after-summary.json`, `restart-015-ready.json`, `evidence/reopen-2026-10-18T07-33-08-233Z-42872`와 최종 `user-data-after-015-restart.json`을 따른다.
+   - 남은 실제 문제는 **첫 준비 지연과 첫 요청503**이다. 0.1.5 자체 Ollama 시작07:15:36Z 뒤 첫 영상 요청은07:16:23Z에 `server_unreachable` 503·retryable=true로 실패했고 실패 상태도 저장됐다. API200/두 모델 확인은07:19:43Z로 관측돼 약4분이 걸렸다. 그 뒤 재시도에서도 native health가 `Loading model` 503인 기간을 거쳐 실제 요약 완료까지 추가 약8분이 걸렸다. 완료 뒤 재시도/파일/종료는 통과했지만 이 초기 지연은 해소한 것으로 보고하지 않는다. 원인은 미확정이며 `todo.md`의 별도 P2에서 초기 상태·준비 중 요청·재시도/취소·대표 PC 시간 측정으로 추적한다. 기존 전체 검사를 처음부터 반복하지 않고 이 경로를 다음 범위로 고정한다. 실패 근거 `evidence/resume-2026-10-18T07-15-21-116Z-36364/summary-http-failure.json`와 startup/live-runner 관측 JSON을 보존한다. `signed=false`, `distributionReady=false`와 다른 PC/최초 모델 다운로드/사람 LNA 승인·거부/Word·한컴 실제 렌더링 관문은 유지한다.
+6. 일반 사용자 MVP 전 SQLite 기준 저장소 전환과 다른 PC 검증을 끝낸다. 기존 출시 위험표의 서명·원격 origin/LNA·최초 모델 다운로드·편집기 호환 관문을 유지한다.
+
+공식 설정 근거: [Workers 정적 자산](https://developers.cloudflare.com/workers/static-assets/), [단일 페이지 앱 라우팅](https://developers.cloudflare.com/workers/static-assets/routing/single-page-application/), [R2 공개 버킷](https://developers.cloudflare.com/r2/buckets/public-buckets/).
+
+### R2·웹 사용 한도와 100명 기준 비용 — 2026-10-18
+
+공식 가격표와 현재 배포 경계를 대조했다. R2 버킷 `barorok-releases`의 기본 저장 등급은 실제 `wrangler r2 bucket info` 조회에서도 `Standard`다. 공개 설치 파일 HEAD는 HTTP 200, 442,772,630 bytes와 release SHA ETag가 일치했다. 같은 버킷의 집계 응답은 `object_count=0`, `bucket_size=16.8 MB`로 실제 객체 HEAD와 달랐으므로 이 집계를 현재 전체 보관량이나 청구량의 확정값으로 사용하지 않는다. 계정 전체 누적 사용량·Workers 구독 플랜·실제 청구서는 이번 조회에 포함하지 않았다.
+
+| 항목 | 무료 포함량 또는 요금 | 이 프로젝트의 100명·각 1회 다운로드 가정 |
+| --- | --- | --- |
+| R2 Standard 저장 | 월 10 GB-month; 초과 $0.015/GB-month | 설치 파일 한 개 약 0.443 GB를 보관. 다운로드 수만큼 서버 사본이 늘지 않음 |
+| R2 쓰기·업로드(Class A) | 월 100만 회; 초과 $4.50/100만 회 | 버전 업로드 시에 발생. 사용자의 설치·분석마다 R2 쓰기가 발생하지 않음 |
+| R2 읽기(Class B) | 월 1,000만 회; 초과 $0.36/100만 회 | GET 100회가 기본이며 HEAD·분할·재시도는 추가 요청 |
+| R2 인터넷 전송 | 전송량 요금 없음, Workers binding 경유도 동일 | 약 44.277 GB 전송이지만 R2 전송량 요금 $0 |
+| HTML·JS·CSS 등 정적 웹 자산 | Static Assets 요청 무료·무제한 | 현재 설정은 `/downloads/*`만 Worker를 먼저 실행 |
+| 다운로드 Worker | Free는 계정 합산 하루 10만 요청; Paid는 기본 월 $5와 포함량/초과 요금 별도 | 파일 GET·HEAD·metadata마다 Worker 호출. 일반적인 100회 다운로드는 무료 요청 한도보다 매우 적음 |
+| 음성·영상 분석·요약·기록 저장 | 사용자 PC의 로컬 엔진·브라우저 저장소 | Cloudflare AI 추론·R2 녹음 저장을 사용하지 않음 |
+
+이것은 해당 프로젝트의 추가 사용량 계산이며 계정 전체 청구액 $0 보장은 아니다. 무료량은 같은 계정의 다른 사용량과 함께 확인해야 한다. R2는 포함량을 넘으면 종량 요금이 발생하고, Workers Free의 요청 한도 초과는 자동 유료 전환과 구분한다. 현재 `run_worker_first`의 다운로드 경로는 Free 요청 한도 초과 시 429를 받을 수 있다. R2 저장/요청의 과금 단위 올림도 적용된다. Infrequent Access는 무료량과 별도 읽기 처리 비용이 달라 이번 파일 배포 기준으로 사용하지 않는다.
+
+향후 모델·옛 설치 버전을 R2에 추가하거나 공개 반복 요청이 증가하면 재계산한다. 공개 운영 전 계정의 Billable Usage와 구독 플랜을 확인하고 예산 알림을 결정한다. 예산 알림은 통지 기능이며 사용량·요금을 자동 차단하는 상한이 아니다. 이번 확인에서는 플랜·결제·알림 설정을 변경하지 않았다.
+
+근거: [R2 가격·무료량·전송·단위 올림](https://developers.cloudflare.com/r2/pricing/), [Workers 가격](https://developers.cloudflare.com/workers/platform/pricing/), [정적 자산 과금·Free 초과 동작](https://developers.cloudflare.com/workers/static-assets/billing-and-limitations/), [예산 알림](https://developers.cloudflare.com/billing/manage/budget-alerts/).

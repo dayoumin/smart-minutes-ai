@@ -922,7 +922,7 @@ async def models_status() -> dict:
             "ready": False,
             "models": [],
             "errors": [
-                "모델 상태를 확인하지 못했습니다. 앱을 다시 실행하거나 models 폴더 구성을 확인해 주세요.",
+                "모델 상태를 확인하지 못했습니다. 앱을 다시 실행해 주세요. 계속되면 바로록을 다시 설치해 주세요.",
                 str(exc),
             ],
         }

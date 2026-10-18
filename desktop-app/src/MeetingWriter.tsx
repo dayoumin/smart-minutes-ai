@@ -268,6 +268,15 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
 
+// One sentence for missing required models. Point at 모델 받기 only when Settings can actually download one of them.
+const describeMissingModels = (models: ModelStatus[] = []): string => {
+    const missing = models.filter(model => model.required && !model.installed);
+    const list = missing.map(model => getUserModelLabel(model)).join(', ') || '필수 모델';
+    return missing.some(model => model.downloadable)
+        ? `분석을 시작하려면 ${list} 준비가 필요합니다. 모델 받기를 누르면 설정에서 바로 받을 수 있습니다.`
+        : `분석을 시작하려면 ${list} 준비가 필요합니다. 이 모델은 설정에서 받을 수 없으니 바로록을 다시 설치해 주세요.`;
+};
+
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '음성 인식 기본 모델';
     if (model.key === 'diarization') return '참석자 구분';
@@ -751,11 +760,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 return { state: 'ready', message: '', models: payload };
             }
 
-            const missing = payload.models
-                .filter(model => model.required && !model.installed)
-                .map(model => getUserModelLabel(model))
-                .join(', ');
-            const message = payload.errors?.[0] || `분석을 시작하려면 ${missing || '필수 모델'} 준비가 필요합니다. 모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.`;
+            // errors[0] carries the real cause when nothing is missing (e.g. GPU not usable).
+            const message = payload.errors?.[0] || describeMissingModels(payload.models);
             setReadinessState('missing-models');
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
@@ -898,7 +904,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const formErrorInline = hasAttemptedStart && missingFields.length > 0 && !localEngineConnectionRequired && !isAnalyzing;
     const showReadinessHint = (hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing && !localEngineConnectionRequired;
     // ready=false can also mean an unusable device or a status error; only offer 모델 받기 when a required model is really missing.
-    const modelsMissing = readinessState === 'missing-models' && missingRequiredModels.length > 0;
+    const requiredModelsAbsent = readinessState === 'missing-models' && missingRequiredModels.length > 0;
+    const modelsMissing = requiredModelsAbsent && missingRequiredModels.some(model => model.downloadable);
     // Where the hint's button leads: missing models -> Settings > 모델; otherwise 문제 해결 (desktop) / 다시 확인 (web).
     const readinessAction: 'models' | 'troubleshoot' | 'recheck' | null = !showReadinessHint
         ? null
@@ -912,8 +919,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-local-engine-requirement' : '',
     ].filter(Boolean).join(' ') || undefined;
 
-    const readinessBannerTone = readinessState === 'missing-models' ? 'info' : 'error';
-    const readinessBannerTitle = readinessState === 'missing-models' ? '필수 파일이 필요합니다' : '분석을 시작할 수 없습니다';
+    // Title and tone follow the actual cause: a GPU or status problem is not a missing model.
+    const readinessBannerTone = modelsMissing ? 'info' : 'error';
+    const readinessBannerTitle = modelsMissing ? '준비할 모델' : '분석을 시작할 수 없습니다';
 
 
     const waitForBackendReady = async (): Promise<ReadinessCheck> => {
@@ -953,12 +961,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         if (check.state === 'ready') return true;
 
         if (check.state === 'missing-models') {
-            const missingModels = (check.models?.models || []).filter(model => model.required && !model.installed);
-            const missingList = missingModels.map(model => getUserModelLabel(model)).join(', ');
+            // Keep refreshReadiness' sentence: it already prefers the engine's own reason over the generic one.
             setReadinessState('missing-models');
-            setReadinessMessage(
-                `분석을 시작하려면 ${missingList || '필수 모델'} 준비가 필요합니다. 모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.`,
-            );
+            setReadinessMessage(check.message);
             setErrorMessage('');
             setAnalysisPhase('idle');
             return false;
@@ -993,7 +998,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             return;
         }
 
-        setErrorMessage(check.state === 'server-waiting' ? '' : check.message);
+        // The readiness banner already shows check.message; a second error banner would repeat it.
         setStatusMessage('');
     };
 
@@ -2802,41 +2807,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 <div className="mt-1">{readinessMessage}</div>
                             </div>
                         </div>
-                        <div className="flex shrink-0 gap-2">
-                            <Button variant="outline" className="status-action-button" onClick={() => void handleRefreshReadiness()} disabled={isAnalyzing}>
-                                <RefreshCw size={15} />
-                                새로고침
-                            </Button>
-                            {onOpenSettings && (
-                                <Button variant="outline" className="status-action-button" onClick={onOpenSettings} disabled={isAnalyzing}>
-                                    <Settings size={15} />
-                                    설정
+                        {/* The way forward (모델 받기 / 문제 해결 / 다시 확인) sits beside 분석 시작; only add a recheck here when it is not already there. */}
+                        {readinessAction !== 'recheck' && (
+                            <div className="flex shrink-0 gap-2">
+                                <Button variant="outline" className="status-action-button" onClick={() => void handleRefreshReadiness()} disabled={isAnalyzing}>
+                                    <RefreshCw size={15} aria-hidden="true" />
+                                    다시 확인
                                 </Button>
-                            )}
-                        </div>
+                            </div>
+                        )}
                     </div>
-
-                    {missingRequiredModels.length > 0 && (
-                        <div className="mt-3 space-y-2">
-                            {missingRequiredModels.map(model => (
-                                <div key={model.key} className="status-detail-card">
-                                    <div className="font-semibold">{getUserModelLabel(model)} 준비 필요</div>
-                                    <div className="mt-1 text-muted-foreground">모델 탭에서 받거나, 준비된 파일을 models 폴더에 넣은 뒤 상태를 새로고침하세요.</div>
-                                    {onOpenSettings && (
-                                        <div className="mt-2 flex flex-wrap gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={onOpenSettings}
-                                                className="status-action-button h-7 px-2"
-                                            >
-                                                모델 준비
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            ))}
-                        </div>
-                    )}
                 </StatusBanner>
             )}
 

@@ -131,7 +131,7 @@ const startServer = async () => {
 };
 
 const installRoutes = async (page) => {
-  const state = { ready: false };
+  const state = { ready: false, downloadable: true };
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -149,7 +149,7 @@ const installRoutes = async (page) => {
           label: 'Faster Whisper Large v3',
           required: true,
           installed: state.ready,
-          downloadable: true,
+          downloadable: state.downloadable,
           manual_note: '설정에서 음성 인식 모델을 받을 수 있습니다.',
         },
       ],
@@ -183,9 +183,22 @@ const run = async () => {
     const state = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    const infoBanner = page.locator('.status-banner-info').filter({ hasText: '음성 인식 기본 모델 준비 필요' });
+    const infoBanner = page.locator('.status-banner-info').filter({ hasText: '준비할 모델' });
     await infoBanner.waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByText('모델 탭에서 받을 수 있는 항목은 바로 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    await infoBanner.getByText('음성 인식 기본 모델', { exact: false }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.getByText('모델 받기를 누르면 설정에서 바로 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
+    // One way forward: 모델 받기 beside 분석 시작. The banner only adds 다시 확인, no 설정/모델 준비 duplicates.
+    assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 1);
+    assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: '모델 받기', exact: true }).count(), 1, '모델 받기 sits beside 분석 시작');
+    assert.equal(await infoBanner.getByRole('button', { name: '설정', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: '모델 준비', exact: true }).count(), 0);
+    assert.equal(await infoBanner.getByRole('button', { name: '다시 확인', exact: true }).count(), 1);
+    assert.equal(await page.getByText('models 폴더', { exact: false }).count(), 0, 'the writer should not mention the models folder');
+    // 다시 확인 in the banner must not add a second (error) banner repeating the same sentence.
+    await infoBanner.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await page.waitForTimeout(500);
+    assert.equal(await page.getByText('모델 받기를 누르면 설정에서 바로 받을 수 있습니다.').count(), 1, 'the readiness sentence appears once');
+    assert.equal(await page.locator('.status-banner-error').count(), 0, 'rechecking should not raise an error banner');
     assert.equal(
       await page.locator('.status-banner-error').filter({ hasText: '음성 인식 모델' }).count(),
       0,
@@ -204,7 +217,7 @@ const run = async () => {
     await blockedStartButton.waitFor({ timeout: 10000 });
     assert.equal(await blockedStartButton.isDisabled(), true, 'missing required models should disable analysis start');
 
-    await page.getByRole('button', { name: '모델 준비' }).click();
+    await page.getByRole('button', { name: '모델 받기', exact: true }).click();
     const modelsTab = page.getByRole('tab', { name: '모델' });
     await modelsTab.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsTab.getAttribute('aria-selected'), 'true', 'model guidance should open the models tab');
@@ -212,10 +225,10 @@ const run = async () => {
 
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'detached' });
-    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '모델 준비');
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '모델 받기');
 
     const prepareModel = async () => {
-      await page.getByRole('button', { name: '모델 준비', exact: true }).click();
+      await page.getByRole('button', { name: '모델 받기', exact: true }).click();
       const dialog = page.getByRole('dialog');
       await dialog.getByRole('tab', { name: '모델', exact: true }).waitFor();
       state.ready = true;
@@ -237,6 +250,15 @@ const run = async () => {
     await page.getByRole('button', { name: '준비 필요', exact: true }).waitFor();
     await prepareModel();
     await page.waitForFunction(() => document.activeElement?.classList.contains('file-drop-zone'));
+
+    // A missing model that Settings cannot download must not point at 모델 받기.
+    state.ready = false;
+    state.downloadable = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    const errorBanner = page.locator('.status-banner-error').filter({ hasText: '분석을 시작할 수 없습니다' });
+    await errorBanner.getByText('이 모델은 설정에서 받을 수 없으니 바로록을 다시 설치해 주세요.', { exact: false }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0, 'no 모델 받기 for a model Settings cannot download');
+    assert.equal(await page.getByText('모델 받기를 누르면', { exact: false }).count(), 0);
 
     console.log('ok - writer model readiness simulation');
   } catch (error) {

@@ -624,13 +624,6 @@
     background-color: var(--status-action-hover-bg);
   }
 
-  .status-detail-card {
-    @apply rounded-[var(--radius-card)] border p-3 text-xs;
-    background-color: var(--status-action-bg);
-    border-color: var(--status-current-border);
-    color: var(--status-current-fg);
-  }
-
   .inline-status-badge {
     @apply mt-1 w-fit rounded-sm px-1.5 py-0.5 text-[11px];
     background-color: var(--status-current-bg);

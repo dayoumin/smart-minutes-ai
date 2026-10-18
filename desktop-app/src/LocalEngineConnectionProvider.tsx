@@ -10,7 +10,7 @@ import {
     updateLocalEngineTransport,
 } from './localEngineConnection';
 import { getRuntimeEnvironment } from './runtimeEnvironment';
-import { localEngineClient, localEngineSessionCredentials, registerLocalEngineAuthorizationRecovery } from './localEngineClient';
+import { localEngineClient, localEngineSessionCredentials, registerLocalEngineAuthorizationRecovery, registerLocalEngineProtectedActivity } from './localEngineClient';
 import {
     LocalEngineConnectionCoordinator,
     LocalEnginePairingState,
@@ -91,8 +91,12 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         const unregister = registerLocalEngineAuthorizationRecovery(
             authorization => coordinator.captureAuthorizationRecovery(authorization),
         );
+        const unregisterActivity = registerLocalEngineProtectedActivity(
+            (authorization, signal) => coordinator.beginProtectedActivity(authorization, signal),
+        );
         return () => {
             unregister();
+            unregisterActivity();
             coordinator.dispose();
         };
     }, [coordinator, environment.kind]);

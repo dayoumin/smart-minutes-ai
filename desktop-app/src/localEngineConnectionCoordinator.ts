@@ -43,6 +43,12 @@ export interface LocalEngineConnectionCoordinatorParsers {
     sessionCredential: (value: unknown) => LocalEngineSessionCredential | null;
 }
 
+interface ProtectedActivityClock {
+    now: () => number;
+    setTimeout: (callback: () => void, milliseconds: number) => ReturnType<typeof globalThis.setTimeout>;
+    clearTimeout: (timer: ReturnType<typeof globalThis.setTimeout>) => void;
+}
+
 export class LocalEngineConnectionRequestError extends Error {
     readonly code: 'unreachable' | 'invalid-response' | 'pairing-rejected' | 'rate-limited' | 'session-expired';
 
@@ -84,17 +90,26 @@ export class LocalEngineConnectionCoordinator {
     private completePairingInFlight: Promise<boolean> | null = null;
     private renewSessionInFlight: Promise<boolean> | null = null;
     private currentChallenge: LocalEnginePairingStart | null = null;
+    private readonly protectedActivities = new Set<() => void>();
+    private protectedActivityTimer: ReturnType<typeof globalThis.setTimeout> | null = null;
+    private readonly activityClock: ProtectedActivityClock;
 
     constructor(
         client: LocalEngineClient,
         credentials: LocalEngineSessionCredentialStore,
         callbacks: LocalEngineConnectionCoordinatorCallbacks,
         parsers: LocalEngineConnectionCoordinatorParsers,
+        activityClock: ProtectedActivityClock = {
+            now: () => Date.now() / 1000,
+            setTimeout: (callback, milliseconds) => globalThis.setTimeout(callback, milliseconds),
+            clearTimeout: timer => globalThis.clearTimeout(timer),
+        },
     ) {
         this.client = client;
         this.credentials = credentials;
         this.callbacks = callbacks;
         this.parsers = parsers;
+        this.activityClock = activityClock;
     }
 
     private beginTransportOperation(): number {
@@ -108,6 +123,7 @@ export class LocalEngineConnectionCoordinator {
     }
 
     private beginUserAuthorizationOperation(pending = true): number {
+        this.clearProtectedActivities();
         this.authorizationIntentId += 1;
         this.authorizationIntentPending = pending;
         return this.beginAuthorizationOperation();
@@ -257,6 +273,62 @@ export class LocalEngineConnectionCoordinator {
         } finally {
             if (this.renewSessionInFlight === operation) this.renewSessionInFlight = null;
         }
+    }
+
+    beginProtectedActivity(authorization: string, signal?: AbortSignal): () => void {
+        if (signal?.aborted || this.authorizationIntentPending
+            || this.credentials.requestHeaders().Authorization !== authorization) return () => {};
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            signal?.removeEventListener('abort', finish);
+            this.protectedActivities.delete(finish);
+            if (this.protectedActivities.size === 0 && this.protectedActivityTimer !== null) {
+                this.activityClock.clearTimeout(this.protectedActivityTimer);
+                this.protectedActivityTimer = null;
+            }
+        };
+        this.protectedActivities.add(finish);
+        signal?.addEventListener('abort', finish, { once: true });
+        this.scheduleProtectedActivityRenewal();
+        return finish;
+    }
+
+    private clearProtectedActivities(): void {
+        for (const finish of this.protectedActivities) finish();
+    }
+
+    private scheduleProtectedActivityRenewal(): void {
+        if (this.protectedActivityTimer !== null || this.protectedActivities.size === 0) return;
+        const credential = this.credentials.current();
+        if (!credential || this.authorizationIntentPending) { this.clearProtectedActivities(); return; }
+        const intentId = this.authorizationIntentId;
+        const remainingSeconds = credential.expires_at - this.activityClock.now();
+        if (remainingSeconds <= 0) { this.clearProtectedActivities(); return; }
+        this.protectedActivityTimer = this.activityClock.setTimeout(() => {
+            this.protectedActivityTimer = null;
+            if (this.authorizationIntentId !== intentId || this.authorizationIntentPending || this.protectedActivities.size === 0) return;
+            const authorization = this.credentials.requestHeaders().Authorization;
+            const previousExpiry = this.credentials.current()?.expires_at;
+            const recover = authorization ? this.captureAuthorizationRecovery(authorization) : null;
+            if (!recover) { this.clearProtectedActivities(); return; }
+            // Reuse the same intent/current-credential/singleflight guards as 401 recovery.
+            void recover().then(recovery => {
+                if (this.authorizationIntentId !== intentId) return;
+                const refreshed = this.credentials.current();
+                if (!recovery || !refreshed || previousExpiry === undefined
+                    || refreshed.expires_at <= previousExpiry
+                    || refreshed.expires_at - this.activityClock.now() <= 60) {
+                    // A malformed/non-extending renewal must not create an immediate retry loop.
+                    this.clearProtectedActivities();
+                    return;
+                }
+                this.scheduleProtectedActivityRenewal();
+            }).catch(() => {
+                if (this.authorizationIntentId === intentId) this.clearProtectedActivities();
+            });
+        }, Math.max(0, (remainingSeconds - 60) * 1000));
     }
 
     captureAuthorizationRecovery(authorization: string): (() => Promise<LocalEngineAuthorizationRecovery | null>) | null {

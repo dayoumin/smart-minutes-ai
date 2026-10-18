@@ -3,6 +3,7 @@ export interface LocalEngineClientDependencies {
     resolveRequestHeaders: (signal?: AbortSignal) => Promise<Record<string, string>>;
     fetch: typeof fetch;
     captureAuthorizationRecovery?: (authorization: string) => (() => Promise<LocalEngineAuthorizationRecovery | null>) | null;
+    beginProtectedActivity?: (authorization: string, signal?: AbortSignal) => () => void;
 }
 
 export interface LocalEngineAuthorizationRecovery {
@@ -82,6 +83,40 @@ const isAuthorizationRejection = (response: Response): boolean => (
     response.status === 401 && response.headers.get('WWW-Authenticate')?.trim().toLowerCase() === 'bearer'
 );
 
+const isProtectedWork = (path: string, method: string): boolean => method.toUpperCase() === 'POST' && (
+    path === '/api/analyze'
+    || /^\/api\/outputs\/[^/]+\/generate-(?:summary|diarization|topic-sections|topic-section|speaker-context|report)$/.test(path)
+);
+
+const ownResponseActivity = (response: Response, source: ReadableStream<Uint8Array>, finish: () => void): Response => {
+    const reader = source.getReader();
+    let settled = false;
+    const settle = () => { if (!settled) { settled = true; finish(); } };
+    const body = new ReadableStream<Uint8Array>({
+        async pull(controller) {
+            try {
+                const part = await reader.read();
+                if (settled) return;
+                if (part.done) { controller.close(); settle(); reader.releaseLock(); }
+                else controller.enqueue(part.value);
+            } catch (error) {
+                if (!settled) controller.error(error);
+                settle();
+                reader.releaseLock();
+            }
+        },
+        async cancel(reason) {
+            settle();
+            try { await reader.cancel(reason); } finally { reader.releaseLock(); }
+        },
+    }, { highWaterMark: 0 });
+    const wrapped = new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
+    Object.defineProperties(wrapped, {
+        url: { value: response.url }, redirected: { value: response.redirected }, type: { value: response.type },
+    });
+    return wrapped;
+};
+
 export const createLocalEngineClient = (
     dependencies: LocalEngineClientDependencies,
 ): LocalEngineClient => {
@@ -97,6 +132,14 @@ export const createLocalEngineClient = (
         const timeout = timeoutMs
             ? globalThis.setTimeout(() => controller.abort(), timeoutMs)
             : null;
+        let finishActivity: (() => void) | undefined;
+        let responseOwnsActivity = false;
+        const finishResponse = (response: Response): Response => {
+            if (!finishActivity || !response.ok || !response.body) return response;
+            const wrapped = ownResponseActivity(response, response.body, finishActivity);
+            responseOwnsActivity = true;
+            return wrapped;
+        };
 
         if (callerSignal) {
             if (callerSignal.aborted) controller.abort();
@@ -124,6 +167,12 @@ export const createLocalEngineClient = (
                 && !outgoingHeaders.has('X-LMO-Desktop-Action-Token')
                 ? dependencies.captureAuthorizationRecovery?.(runtimeAuthorization)
                 : null;
+            if (includeRuntimeHeaders && runtimeAuthorization?.startsWith('Bearer ')
+                && !outgoingHeaders.has('X-LMO-Desktop-Action-Token')
+                && isProtectedWork(target.pathname, requestInit.method ?? 'GET')) {
+                // Observe caller abort for the activity without changing fetch's existing abort lifetime.
+                finishActivity = dependencies.beginProtectedActivity?.(runtimeAuthorization, callerSignal ?? controller.signal);
+            }
             const fetchRequest = (requestHeaders: Headers) => awaitWithAbort(dependencies.fetch(target, {
                 ...requestInit,
                 body: snapshot.body,
@@ -133,7 +182,7 @@ export const createLocalEngineClient = (
             const response = await fetchRequest(outgoingHeaders);
             if (
                 !recoverAuthorization || !isAuthorizationRejection(response)
-            ) return response;
+            ) return finishResponse(response);
 
             let recovery: LocalEngineAuthorizationRecovery | null;
             try {
@@ -156,8 +205,9 @@ export const createLocalEngineClient = (
             void response.body?.cancel().catch(() => {});
             const retried = await fetchRequest(mergeHeaders(currentHeaders, outgoingHeaders));
             if (isAuthorizationRejection(retried)) recovery.expire();
-            return retried;
+            return finishResponse(retried);
         } finally {
+            if (!responseOwnsActivity) finishActivity?.();
             if (timeout !== null) globalThis.clearTimeout(timeout);
             callerSignal?.removeEventListener('abort', handleCallerAbort);
         }

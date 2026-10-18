@@ -7,6 +7,13 @@ export const localEngineSessionCredentials = new LocalEngineSessionCredentialSto
 
 type AuthorizationRecoveryHandler = (authorization: string) => (() => Promise<LocalEngineAuthorizationRecovery | null>) | null;
 let authorizationRecoveryHandler: AuthorizationRecoveryHandler | null = null;
+type ProtectedActivityHandler = (authorization: string, signal?: AbortSignal) => () => void;
+let protectedActivityHandler: ProtectedActivityHandler | null = null;
+
+export const registerLocalEngineProtectedActivity = (handler: ProtectedActivityHandler): (() => void) => {
+    protectedActivityHandler = handler;
+    return () => { if (protectedActivityHandler === handler) protectedActivityHandler = null; };
+};
 
 export const registerLocalEngineAuthorizationRecovery = (handler: AuthorizationRecoveryHandler): (() => void) => {
     authorizationRecoveryHandler = handler;
@@ -30,4 +37,5 @@ export const localEngineClient = createLocalEngineClient({
     },
     fetch: (input, init) => fetch(input, init),
     captureAuthorizationRecovery: authorization => authorizationRecoveryHandler?.(authorization) ?? null,
+    beginProtectedActivity: (authorization, signal) => protectedActivityHandler?.(authorization, signal) ?? (() => {}),
 });

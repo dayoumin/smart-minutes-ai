@@ -389,9 +389,11 @@ const run = async () => {
     assert.match(await reportButton.innerText(), /생성/);
 
     await reportButton.click();
-    await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    // One sentence in the report line, not a second copy in a banner above the meeting (DT-8).
+    assert.equal(await page.locator('.meeting-detail-shell > .status-banner').count(), 0, 'generation failures stay in the report line');
     assert.equal(
-      await page.locator('.status-banner-error').getByRole('button', { name: '모델 준비', exact: true }).count(),
+      await page.locator('.detail-report-status').getByRole('button', { name: '모델 준비', exact: true }).count(),
       0,
       'a generic failure should not point at model setup',
     );
@@ -418,7 +420,7 @@ const run = async () => {
     assert.equal(record.generationStatus.meetingReport, 'completed');
     assert.equal(record.meetingReport.templateId, 'standard-minutes');
     assert.equal(record.meetingReport.templateName, '기본 보고서');
-    assert.equal(await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.', { exact: true }).count(), 0);
     await assertNoHorizontalOverflow(page);
 
     const reportSelect = page.getByLabel('보고 양식 선택', { exact: true });
@@ -445,7 +447,8 @@ const run = async () => {
     assert.match(await reportButton.innerText(), /다시 생성/);
 
     await reportButton.click();
-    await page.getByText('보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('.detail-report-status').getByText('사용할 요약 모델을 찾지 못했습니다.', { exact: false }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.', { exact: true }).count(), 0, 'the specific cause replaces the generic failure line');
     assert.equal(
       await page.getByText(
         '보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.',
@@ -453,7 +456,8 @@ const run = async () => {
       ).count(),
       0,
     );
-    const modelSetupError = page.locator('.status-banner-error').filter({ hasText: '사용할 요약 모델을 찾지 못했습니다.' });
+    // The model-setup failure keeps its own sentence and 모델 준비 in the report line (DT-8).
+    const modelSetupError = page.locator('.detail-report-status').filter({ hasText: '사용할 요약 모델을 찾지 못했습니다.' });
     await modelSetupError.getByRole('button', { name: '모델 준비', exact: true }).waitFor({ timeout: 10000 });
     record = await readMeeting(page);
     assert.equal(record.generationStatus.meetingReport, 'failed');

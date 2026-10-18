@@ -76,6 +76,7 @@ from model_manager import (
     resolve_model_path,
 )
 from media_limits import MediaDurationError, enforce_media_duration, validate_media_duration
+from analysis_errors import classify_analysis_failure
 from ollama_utils import (
     ensure_ollama_server_running,
     find_embedded_ollama_executable,
@@ -6453,13 +6454,16 @@ async def stream_real_analysis(
                 await queue.put("[DONE]")
                 return
             duration_detail = exc.as_detail() if isinstance(exc, MediaDurationError) else {}
+            # A cause code (memory, storage, undecodable file) lets the UI offer the matching next step.
+            failure_code = duration_detail.get("code") or classify_analysis_failure(exc)
             _write_job_state(checkpoint_paths, {
                 "stage": "failed",
                 "failed": True,
                 "resume_supported": True,
                 "last_heartbeat_at": datetime.now().isoformat(),
                 "last_error": str(exc),
-                **({"last_error_code": exc.code} if isinstance(exc, MediaDurationError) else {}),
+                # Always written: job state merges, so an older code must not outlive a later unclassified failure.
+                "last_error_code": failure_code,
                 "last_progress": {
                     "message": str(exc),
                     "progress": 100,
@@ -6475,6 +6479,7 @@ async def stream_real_analysis(
                 "message": str(exc),
                 "eta_seconds": None,
                 **duration_detail,
+                **({"code": failure_code} if failure_code else {}),
             })
             await queue.put("[DONE]")
         finally:

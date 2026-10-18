@@ -171,6 +171,38 @@ const installRoutes = async (page) => {
   return state;
 };
 
+// The web app has no 재시작: a failed settings load points at 바로록 연결 and offers 다시 확인 (SB-2).
+const verifyWebSettingsRecovery = async (browser) => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  let settingsUp = false;
+  try {
+    await page.route('**/api/health', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+    await page.route('**/api/models/status', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ready: true, models: [], errors: [] }),
+    }));
+    await page.route('**/api/settings', route => (settingsUp
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({}) })
+      : route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'settings unavailable' }) })));
+    await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+
+    await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
+    const dialog = page.getByRole('dialog', { name: '설정' });
+    await dialog.getByText('설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. 계속 실패하면 바로록 연결이 실행 중인지 확인해 주세요.', { exact: true })
+      .waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await dialog.getByText('재시작', { exact: false }).count(), 0, 'the web app must not point at the desktop-only 재시작');
+    settingsUp = true;
+    await dialog.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await dialog.getByText('설정을 불러오지 못했습니다.', { exact: false }).waitFor({ state: 'hidden', timeout: 10000 });
+    assert.equal(await dialog.getByText('불러오지 못함', { exact: true }).count(), 0, 'settings load after 다시 확인');
+    console.log('ok - web settings failure points at 바로록 연결 and rechecks');
+  } finally {
+    await page.close();
+  }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -221,7 +253,7 @@ const run = async () => {
     const modelsTab = page.getByRole('tab', { name: '모델' });
     await modelsTab.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsTab.getAttribute('aria-selected'), 'true', 'model guidance should open the models tab');
-    // The panel heading and loaded model row share this label.
+    // The card title and the model row both read 음성 인식 모델 once the status has loaded.
     await page.locator('#settings-models-panel').getByText('음성 인식 모델', { exact: true }).first().waitFor({ state: 'visible', timeout: 10000 });
 
     await page.keyboard.press('Escape');
@@ -257,10 +289,15 @@ const run = async () => {
     state.downloadable = false;
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
     const errorBanner = page.locator('.status-banner-error').filter({ hasText: '분석을 시작할 수 없습니다' });
-    await errorBanner.getByText('이 모델은 설정에서 받을 수 없으니 바로록을 다시 설치해 주세요.', { exact: false }).waitFor({ timeout: 10000 });
+    // The web app's engine is the downloaded 바로록 연결, so that is what gets reinstalled (WR-9).
+    await errorBanner.getByText('이 모델은 설정에서 받을 수 없으니 바로록 연결을 다시 설치해 주세요.', { exact: false }).waitFor({ timeout: 10000 });
+    // The action row states the cause in one sentence and offers no button that cannot fix it.
+    await page.locator('#writer-readiness-hint').getByText('필요한 모델이 없어 분석을 시작할 수 없습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 're-checking cannot install a model Settings cannot download');
     assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0, 'no 모델 받기 for a model Settings cannot download');
     assert.equal(await page.getByText('모델 받기를 누르면', { exact: false }).count(), 0);
 
+    await verifyWebSettingsRecovery(browser);
     console.log('ok - writer model readiness simulation');
   } catch (error) {
     console.error(error);

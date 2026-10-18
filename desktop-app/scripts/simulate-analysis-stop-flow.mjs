@@ -868,6 +868,250 @@ const runAdmissionScenario = async (browser, fixture, action, { terminalFirst = 
   }
 };
 
+const sseBody = events => [
+  ...events.flatMap(({ event, data }) => [`event: ${event}`, `data: ${JSON.stringify(data)}`, '']),
+  'event: done',
+  'data: [DONE]',
+  '',
+  '',
+].join('\n');
+
+const errorEvent = (message, code) => ({
+  event: 'error',
+  data: { type: 'error', progress: 34, status: 'error', message, ...(code ? { code } : {}) },
+});
+
+const MEMORY_MESSAGE = '이 PC의 메모리가 부족합니다. 다른 프로그램을 닫은 뒤 다시 시도해 주세요.';
+
+// Each cause leads with its own next step, and raw engine text never reaches the card (WR-5, WR-3).
+const FAILURE_CAUSES = [
+  {
+    name: 'memory',
+    events: [errorEvent('CUDA failed with error out of memory', 'insufficient_memory')],
+    message: MEMORY_MESSAGE,
+    primary: '다시 시도',
+  },
+  {
+    name: 'disk-space',
+    events: [errorEvent('[Errno 28] No space left on device', 'insufficient_storage')],
+    message: '저장 공간이 부족합니다. 파일을 정리해 공간을 확보한 뒤 다시 시도해 주세요.',
+    primary: '다시 시도',
+  },
+  {
+    name: 'unsupported-file',
+    events: [errorEvent('ffmpeg conversion failed: Invalid data found when processing input', 'unsupported_media')],
+    message: '이 파일은 읽을 수 없습니다. 재생되는 음성·영상 파일을 선택해 주세요.',
+    primary: '다른 파일 선택',
+  },
+  {
+    name: 'older-engine-without-code',
+    events: [errorEvent('RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB')],
+    message: MEMORY_MESSAGE,
+    primary: '다시 시도',
+  },
+  {
+    name: 'engine-disconnected',
+    abortAnalyze: true,
+    message: '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
+    primary: '다시 확인',
+  },
+  {
+    name: 'transcript-saved',
+    events: [
+      { event: 'progress', data: { type: 'progress', progress: 70, status: 'diarizing', message: '참석자 구분 중', transcript_ready: true } },
+      errorEvent('CUDA failed with error out of memory', 'insufficient_memory'),
+    ],
+    message: '대화록은 저장했습니다. 메모리가 부족해 참석자 구분을 마치지 못했습니다.',
+    primary: '결과 보기',
+  },
+];
+
+const runFailureCauseScenarios = async (browser, fixture) => {
+  for (const scenario of FAILURE_CAUSES) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    try {
+      await installBaseRoutes(page);
+      await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ drafts: [] }),
+      }));
+      let analyzeJobId = null;
+      await page.route('**/partial-result', route => route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          job_id: analyzeJobId,
+          source_file: fixture.name,
+          partial: true,
+          segments: [{ start: '00:00', end: '00:02', speaker: '', text: '실패 전 저장된 대화록' }],
+          display_segments: [{ start: '00:00', end: '00:02', speaker: '', text: '실패 전 저장된 대화록' }],
+          diarization_requested: true,
+        }),
+      }));
+      await page.route('**/api/analyze', async route => {
+        if (scenario.abortAnalyze) return route.abort('connectionrefused');
+        analyzeJobId = multipartField((await route.request().postDataBuffer()).toString('utf-8'), 'job_id');
+        return route.fulfill({ status: 200, contentType: 'text/event-stream', body: sseBody(scenario.events) });
+      });
+
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+      await assertProjectPage(page);
+      await page.getByLabel('회의 목적 *').fill(`원인별 실패 확인: ${scenario.name}`);
+      await page.setInputFiles('#meeting-file-input', fixture.path);
+      const meetingTitle = await page.getByLabel('회의 제목 *').inputValue();
+      await page.getByRole('button', { name: '분석 시작' }).click();
+
+      await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+      const failurePanel = page.locator('.writer-analysis-panel-error');
+      await failurePanel.getByText(scenario.message, { exact: true }).waitFor({ timeout: 10000 });
+      const panelText = await failurePanel.innerText();
+      assert.doesNotMatch(panelText, /CUDA|Errno|ffmpeg|Failed to fetch|RuntimeError/, `${scenario.name}: raw engine text must not reach the card`);
+      const firstAction = failurePanel.locator('.writer-analysis-result-actions button').first();
+      assert.equal((await firstAction.innerText()).trim(), scenario.primary, `${scenario.name}: primary action follows the cause`);
+      assert.match(await firstAction.getAttribute('class'), /btn-primary/, `${scenario.name}: the cause's action is the primary button`);
+      assert.equal(await failurePanel.locator('.writer-analysis-result-actions .btn-primary').count(), 1, `${scenario.name}: one primary action`);
+
+      if (scenario.name === 'memory') {
+        // A readiness pass (window focus) must not dismiss the card the user still has to act on.
+        await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+        await page.waitForTimeout(1500);
+        assert.equal(await failurePanel.getByText(scenario.message, { exact: true }).isVisible(), true, 'focus keeps the failure card');
+      }
+      if (scenario.name === 'transcript-saved') {
+        assert.equal(await failurePanel.getByRole('button', { name: '다시 시도' }).count(), 0, 'with the transcript saved, rerunning the analysis is not offered');
+        await firstAction.click();
+        await page.locator('.meeting-detail-title').getByText(meetingTitle, { exact: true }).waitFor({ timeout: 10000 });
+        await page.getByText('실패 전 저장된 대화록', { exact: true }).waitFor({ timeout: 10000 });
+      } else if (scenario.name === 'unsupported-file') {
+        const [chooser] = await Promise.all([page.waitForEvent('filechooser', { timeout: 5000 }), firstAction.click()]);
+        assert.ok(chooser, 'another file can be chosen right away');
+        await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
+        assert.equal(await page.locator('.selected-file-card').count(), 0, 'the unreadable file is no longer selected');
+        assert.equal(await page.getByLabel('회의 제목 *').inputValue(), meetingTitle, 'the other inputs are kept');
+      } else if (scenario.name === 'engine-disconnected') {
+        await firstAction.click();
+        await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
+        assert.equal(await page.getByRole('button', { name: '분석 시작' }).isEnabled(), true, 'once the engine answers, 분석 시작 is ready again');
+      }
+      console.log(`ok - analysis failure cause: ${scenario.name}`);
+    } catch (error) {
+      console.error(`failed - analysis failure cause: ${scenario.name}`);
+      console.error(error);
+      process.exitCode = 1;
+    } finally {
+      await context.close();
+    }
+  }
+};
+
+// 중지 works before the analysis stream starts and returns at once, even if the engine stopped answering (WR-6).
+const runPreparationStopScenario = async (browser, fixture) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  let releasePreflight = () => {};
+  try {
+    await installBaseRoutes(page);
+    await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ drafts: [] }),
+    }));
+    let markPreflightRequested = () => {};
+    const preflightRequested = new Promise(resolve => { markPreflightRequested = resolve; });
+    const preflightHeld = new Promise(resolve => { releasePreflight = resolve; });
+    await page.route('**/api/analyze/preflight', async route => {
+      markPreflightRequested();
+      await preflightHeld;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, level: 'ok' }) }).catch(() => {});
+    });
+    let analyzeRequests = 0;
+    await page.route('**/api/analyze', route => {
+      analyzeRequests += 1;
+      return route.abort('failed');
+    });
+
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await assertProjectPage(page);
+    await page.getByLabel('회의 목적 *').fill('준비 단계 중지 확인');
+    await page.setInputFiles('#meeting-file-input', fixture.path);
+    const meetingTitle = await page.getByLabel('회의 제목 *').inputValue();
+    await page.getByRole('button', { name: '분석 시작' }).click();
+    await preflightRequested;
+
+    const panel = page.locator('.writer-analysis-panel');
+    const stopButton = panel.getByRole('button', { name: '중지', exact: true });
+    await stopButton.waitFor({ timeout: 10000 });
+    assert.equal(await panel.getByRole('button', { name: '중지/취소' }).count(), 0, 'no stop-or-cancel choice before a job exists');
+    const stoppedAt = Date.now();
+    await stopButton.click();
+    await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 3000 });
+    assert.ok(Date.now() - stoppedAt < 3000, 'stopping the preparation returns to the form at once');
+    await page.getByText('분석을 중지했습니다.', { exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), meetingTitle, 'the inputs are kept');
+    assert.equal(analyzeRequests, 0, 'a stopped preparation never starts the analysis');
+    const drafts = await readLocalStorageJson(page, 'analysisResumeDrafts');
+    assert.equal(Array.isArray(drafts) ? drafts.length : 0, 0, 'nothing to resume after stopping before the stream');
+    console.log('ok - analysis preparation stop simulation');
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  } finally {
+    releasePreflight();
+    await context.close();
+  }
+};
+
+// Until the engine answers, a quiet line says why 분석 시작 is off, long before the 45s notice (WR-7).
+const runEngineCheckingScenario = async (browser, fixture) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  try {
+    await installBaseRoutes(page);
+    let engineUp = false;
+    await page.route('**/api/health', route => (engineUp
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) })
+      : route.abort('connectionrefused')));
+
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await assertProjectPage(page);
+    await page.getByLabel('회의 목적 *').fill('연결 확인 중 줄 확인');
+    await page.setInputFiles('#meeting-file-input', fixture.path);
+    const checkingLine = page.locator('#writer-engine-checking');
+    await checkingLine.getByText('바로록 연결 확인 중', { exact: true }).waitFor({ timeout: 5000 });
+    const startButton = page.getByRole('button', { name: '분석 시작' });
+    assert.equal(await startButton.isDisabled(), true, '분석 시작 waits for the engine');
+    assert.match(await startButton.getAttribute('aria-describedby') ?? '', /writer-engine-checking/, 'the disabled button says why');
+    assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 'no recovery button before the 45s notice');
+
+    engineUp = true;
+    await checkingLine.waitFor({ state: 'detached', timeout: 5000 });
+    const startEnabled = () => page.waitForFunction(() => {
+      const button = [...document.querySelectorAll('button')].find(element => element.textContent?.trim() === '분석 시작');
+      return Boolean(button && !button.disabled);
+    }, null, { timeout: 5000 });
+    await startEnabled();
+
+    // The engine goes away after it was ready: once a start is stopped, the checking line must have a running check
+    // behind it, so 분석 시작 comes back by itself when the engine answers again.
+    engineUp = false;
+    await startButton.click();
+    await page.locator('.writer-analysis-panel').getByRole('button', { name: '중지', exact: true }).click();
+    await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 5000 });
+    await checkingLine.getByText('바로록 연결 확인 중', { exact: true }).waitFor({ timeout: 5000 });
+    engineUp = true;
+    await checkingLine.waitFor({ state: 'detached', timeout: 5000 });
+    await startEnabled();
+    console.log('ok - engine checking line simulation');
+  } catch (error) {
+    console.error(error);
+    process.exitCode = 1;
+  } finally {
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const fixture = await createFixtureFile();
 const browser = await chromium.launch();
@@ -887,6 +1131,11 @@ try {
     });
   } else if (process.argv.includes('failure-recovery')) {
     await runFailureScenario(browser, fixture);
+  } else if (process.argv.includes('failure-causes')) {
+    await runFailureCauseScenarios(browser, fixture);
+  } else if (process.argv.includes('preparation')) {
+    await runPreparationStopScenario(browser, fixture);
+    await runEngineCheckingScenario(browser, fixture);
   } else {
     await runScenario(browser, fixture, 'stop', { cancelAccepted: false });
     await runScenario(browser, fixture, 'stop', {
@@ -905,6 +1154,9 @@ try {
       keepPendingCancellation: true,
     });
     await runFailureScenario(browser, fixture);
+    await runFailureCauseScenarios(browser, fixture);
+    await runPreparationStopScenario(browser, fixture);
+    await runEngineCheckingScenario(browser, fixture);
   }
 } finally {
   await browser.close();

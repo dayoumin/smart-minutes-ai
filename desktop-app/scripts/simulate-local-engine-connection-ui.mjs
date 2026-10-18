@@ -322,6 +322,66 @@ const verifySummaryReadinessAfterPairing = async browser => {
   }
 };
 
+// Connected but a required model is missing: the rail must not claim 분석 준비 완료, and 모델 받기 must be there (WR-2).
+const verifyMissingModelsAfterPairing = async browser => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const sessionToken = 'missing-models-ui-test-session-token';
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (payload, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(payload) });
+    const authorized = route.request().headers().authorization === `Bearer ${sessionToken}`;
+    if (path === '/api/models/status') {
+      if (!authorized) return json({ detail: 'local engine authorization required' }, 401);
+      return json({
+        ready: false,
+        errors: [],
+        models: [{ key: 'stt_faster_whisper', label: 'faster-whisper', installed: false, required: true, downloadable: true }],
+        summary_ready: false,
+      });
+    }
+    if (path === '/api/probe') return json({
+      product_id: 'barorok-local-engine', engine_version: '0.1.0-test', api_contract_version: 1,
+      capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
+      auth_state: 'pairing-required', pairing_available: true, update_required: false,
+    });
+    if (path === '/api/pair/start') return json({ pairing_id: 'missing-models-pairing', expires_in_seconds: 120 });
+    if (path === '/api/pair/complete') {
+      return json({ session_token: sessionToken, expires_at: Math.floor(Date.now() / 1000) + 300,
+        capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] });
+    }
+    if (path === '/api/settings') return json({});
+    if (path === '/api/health') return json({ ok: true });
+    if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+    return json({ detail: 'not used by missing-model regression' }, 404);
+  });
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    const rail = page.locator('.local-engine-connection');
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '이 브라우저 연결', exact: true });
+    await dialog.getByRole('textbox', { name: '연결 코드', exact: true }).fill('123456');
+    await dialog.getByRole('button', { name: '연결', exact: true }).click();
+    await rail.getByText('연결됨', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await rail.getByText('분석 준비 완료', { exact: true }).count(), 0, 'connected is not ready while a required model is missing');
+    const actionBar = page.locator('.writer-action-bar');
+    await actionBar.getByText('분석에 필요한 모델이 아직 없습니다. 모델을 받으면 바로 시작할 수 있습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await actionBar.getByRole('button', { name: '모델 받기', exact: true }).click();
+    const settingsDialog = page.getByRole('dialog', { name: '설정', exact: true });
+    await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await page.getByRole('tab', { name: '모델' }).getAttribute('aria-selected'), 'true', '모델 받기 opens Settings > 모델');
+    assert.deepEqual(errors, []);
+    console.log('ok - connected web app shows 모델 받기 instead of claiming readiness');
+  } catch (error) {
+    console.error('missing models body:', (await page.locator('body').innerText()).slice(0, 2000));
+    throw error;
+  } finally {
+    await page.close();
+  }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -341,6 +401,10 @@ const run = async () => {
     }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'summary-readiness') {
       await verifySummaryReadinessAfterPairing(browser);
+      return;
+    }
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'missing-models') {
+      await verifyMissingModelsAfterPairing(browser);
       return;
     }
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -538,6 +602,7 @@ const run = async () => {
     assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '연결 전 입력 보존 확인');
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
     await verifySummaryReadinessAfterPairing(browser);
+    await verifyMissingModelsAfterPairing(browser);
     console.log('ok - local engine connection UI and auth recovery simulation');
   } catch (error) {
     console.error(error);

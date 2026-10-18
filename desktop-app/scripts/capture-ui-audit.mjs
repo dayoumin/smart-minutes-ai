@@ -437,7 +437,16 @@ const seedAndReload = async (page, meetings = ALL_MEETINGS, folders = FOLDERS) =
 };
 
 const openMeeting = async (page, title) => {
-  await page.locator('.barorok-navigation').getByText(title, { exact: true }).first().click();
+  const navigation = page.locator('.barorok-navigation');
+  const row = navigation.getByText(title, { exact: true }).first();
+  // A meeting in a folder is listed only while its folder is open (sidebar folders expand in place).
+  if (!(await row.waitFor({ state: 'visible', timeout: 1500 }).then(() => true, () => false))) {
+    const collapsedFolders = navigation.locator('.sidebar-folder-button[aria-expanded="false"]');
+    while (await collapsedFolders.count() && !(await row.isVisible())) {
+      await collapsedFolders.first().click();
+    }
+  }
+  await row.click();
   await page.locator('.meeting-detail-shell').getByRole('heading', { name: title }).waitFor({ timeout: 10000 });
   await page.waitForTimeout(300);
 };
@@ -546,7 +555,40 @@ const captures = [
     },
     steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); const started = Date.now(); await page.getByRole('button', { name: '결과 보기' }).first().waitFor({ timeout: 30000 }); await page.waitForTimeout(400); return { completedAfterMs: Date.now() - started }; },
   },
+  // Stage 3 states (audit 4.4): engine check before the 45s notice, failure after the transcript was saved, preparation phase.
+  {
+    id: 'W9', note: '바로록 연결 확인 중 (45초 전)', routes: { engineDown: true },
+    steps: async page => { await ready(page); const started = Date.now(); await page.locator('#writer-engine-checking').waitFor({ timeout: 10000 }); await page.waitForTimeout(300); return { checkingLineAfterMs: Date.now() - started }; },
+  },
+  {
+    id: 'A4', note: '대화록 저장 뒤 실패 (메모리 부족)',
+    routes: {
+      analyze: route => route.fulfill(sse([
+        ['progress', { type: 'progress', progress: 70, status: 'diarizing', message: '참석자 구분 중', transcript_ready: true }],
+        ['error', { type: 'error', progress: 70, status: 'error', code: 'insufficient_memory', message: 'CUDA failed with error out of memory' }],
+        ['done', '[DONE]'],
+      ])),
+      generation: { 'partial-result': route => route.fulfill(json({ job_id: 'audit-partial-job', source_file: '2026-10-18_자원조사_보고회의.mp4', partial: true, segments: mainSegments, display_segments: mainSegments, diarization_requested: true })) },
+    },
+    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 }); await page.waitForTimeout(400); },
+  },
+  {
+    id: 'A5', note: '분석 준비 단계 (저장 공간 확인 응답 대기)', routes: { generation: { 'api/analyze/preflight': () => hangForever() } },
+    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.locator('.writer-analysis-panel').getByRole('button', { name: '중지', exact: true }).waitFor({ timeout: 10000 }); await page.waitForTimeout(400); },
+  },
   { id: 'D1', note: '상세 대화록 기본', steps: async page => { await seedAndReload(page); await openMeeting(page, completeMeeting.title); } },
+  {
+    id: 'D9', note: '대화록 저장 뒤 엔진 꺼짐 (동기화 경고)', routes: { generation: { 'sync-record': route => route.abort('connectionrefused') } },
+    steps: async page => {
+      await seedAndReload(page);
+      await openMeeting(page, completeMeeting.title);
+      await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+      await page.locator('.script-edit-textarea').first().fill('3분기 연근해 자원조사 결과를 다시 공유하겠습니다.');
+      await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '저장', exact: true }).click();
+      await page.locator('#meeting-detail-panel-script .detail-report-status').waitFor({ timeout: 10000 });
+      await page.waitForTimeout(400);
+    },
+  },
   { id: 'D1@800', viewport: NARROW, note: '상세 대화록, 좁은 창', steps: async page => { await seedAndReload(page); await openMeeting(page, completeMeeting.title); } },
   { id: 'D2', note: '참석자 구분 없음·화자 하나', steps: async page => { await seedAndReload(page); await openMeeting(page, singleSpeakerMeeting.title); } },
   {

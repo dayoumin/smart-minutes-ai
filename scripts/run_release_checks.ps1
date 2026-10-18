@@ -14,6 +14,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 
 $BackendQuickModules = @(
+    "backend.test_analysis_errors",
     "backend.test_job_checkpoints",
     "backend.test_storage_preflight",
     "backend.test_web_local_engine_runtime",

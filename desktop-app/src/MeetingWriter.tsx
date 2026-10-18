@@ -31,7 +31,14 @@ import {
 import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone } from './components/common';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
-import { readApiErrorInfo, readApiErrorMessage as readResponseError } from './apiError';
+import {
+    describeAnalysisError,
+    EngineError,
+    readApiErrorInfo,
+    readApiErrorMessage as readResponseError,
+    toUserFacingError,
+    type UserErrorCause,
+} from './apiError';
 import { getAnalysisDurationLimitError } from './analysisMediaLimit';
 import { formatAnalysisDuration, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import {
@@ -47,7 +54,6 @@ import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
 import type { LocalEngineProbePayload } from './localEngineConnection';
 import { LocalEngineConnectionSurface } from './LocalEngineConnectionSurface';
-import { toUserFacingAnalysisError } from './apiError';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
 const BACKEND_READY_TIMEOUT_MS = 45_000;
@@ -55,6 +61,15 @@ const BACKEND_READY_INTERVAL_MS = 1_000;
 // After the first 45s the writer keeps checking slowly so the not-connected hint clears once the engine starts.
 const READINESS_SLOW_POLL_MS = 10_000;
 const DESKTOP_ENGINE_NOT_READY_MESSAGE = '분석 기능이 아직 준비되지 않았습니다. 첫 실행은 몇 분 걸릴 수 있으며, 계속되면 앱을 다시 실행해 주세요.';
+// Why the step after a saved transcript did not finish ("메모리가 부족해 참석자 구분을 마치지 못했습니다").
+const TRANSCRIPT_KEPT_CAUSE_CLAUSES: Partial<Record<UserErrorCause, string>> = {
+    memory: '메모리가 부족해 ',
+    'disk-space': '저장 공간이 부족해 ',
+    timeout: '응답이 너무 오래 걸려 ',
+    'engine-disconnected': '분석 기능 연결이 끊겨 ',
+};
+// Each request before the analysis stream (settings, readiness, resume check, storage check) gives up after this.
+const PREPARATION_REQUEST_TIMEOUT_MS = 15_000;
 const ANALYSIS_STALL_WARNING_MS = 120_000;
 const LONG_MEDIA_NOTICE_SECONDS = 30 * 60;
 const VERY_LONG_MEDIA_NOTICE_SECONDS = 90 * 60;
@@ -210,6 +225,8 @@ interface ReadinessCheck {
 
 interface ReadinessOptions {
     soft?: boolean;
+    /** A stopped analysis preparation aborts its check; an aborted check changes no readiness state. */
+    signal?: AbortSignal;
 }
 
 const getFallbackAnalysisMessage = (phase: AnalysisPhase, progressPercent: number): string => {
@@ -269,15 +286,55 @@ const getFileKind = (selectedFile: File): 'audio' | 'video' | 'unknown' => {
     return 'unknown';
 };
 
-const sleep = (ms: number): Promise<void> => new Promise(resolve => window.setTimeout(resolve, ms));
+/** Waits `ms`, or less when `signal` aborts first (a stopped preparation should not linger). */
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise(resolve => {
+    if (signal?.aborted) {
+        resolve();
+        return;
+    }
+    const timerId = window.setTimeout(resolve, ms);
+    signal?.addEventListener('abort', () => {
+        window.clearTimeout(timerId);
+        resolve();
+    }, { once: true });
+});
+
+/** A preparation request that a stop can abort and that fails with a TimeoutError if the engine stops answering. */
+const requestWithinPreparationTimeout = async (
+    path: string,
+    init: RequestInit = {},
+): Promise<Response> => {
+    const controller = new AbortController();
+    let timedOut = false;
+    const timerId = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+    }, PREPARATION_REQUEST_TIMEOUT_MS);
+    const callerSignal = init.signal;
+    const abortFromCaller = () => controller.abort();
+    if (callerSignal?.aborted) controller.abort();
+    else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    try {
+        return await localEngineClient.request(path, { ...init, signal: controller.signal });
+    } catch (error) {
+        if (timedOut) throw new DOMException('The local engine did not answer in time.', 'TimeoutError');
+        throw error;
+    } finally {
+        window.clearTimeout(timerId);
+        callerSignal?.removeEventListener('abort', abortFromCaller);
+    }
+};
 
 // One sentence for missing required models. Point at 모델 받기 only when Settings can actually download one of them.
 const describeMissingModels = (models: ModelStatus[] = []): string => {
     const missing = models.filter(model => model.required && !model.installed);
     const list = missing.map(model => getUserModelLabel(model)).join(', ') || '필수 모델';
-    return missing.some(model => model.downloadable)
-        ? `분석을 시작하려면 ${list} 준비가 필요합니다. 모델 받기를 누르면 설정에서 바로 받을 수 있습니다.`
-        : `분석을 시작하려면 ${list} 준비가 필요합니다. 이 모델은 설정에서 받을 수 없으니 바로록을 다시 설치해 주세요.`;
+    if (missing.some(model => model.downloadable)) {
+        return `분석을 시작하려면 ${list} 준비가 필요합니다. 모델 받기를 누르면 설정에서 바로 받을 수 있습니다.`;
+    }
+    // The web app's engine is the downloaded 바로록 연결; only the desktop app is reinstalled as 바로록 itself.
+    const reinstallTarget = isTauriRuntime() ? '바로록' : '바로록 연결';
+    return `분석을 시작하려면 ${list} 준비가 필요합니다. 이 모델은 설정에서 받을 수 없으니 ${reinstallTarget}을 다시 설치해 주세요.`;
 };
 
 const getUserModelLabel = (model: ModelStatus): string => {
@@ -451,7 +508,7 @@ const requestAnalysisStoragePreflight = async (
     durationSeconds: number | null,
     signal?: AbortSignal,
 ): Promise<AnalysisStoragePreflightPayload> => {
-    const response = await localEngineClient.request('/api/analyze/preflight', {
+    const response = await requestWithinPreparationTimeout('/api/analyze/preflight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -511,6 +568,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [analysisStartedAt, setAnalysisStartedAt] = useState<number | null>(null);
     const [analysisNow, setAnalysisNow] = useState(() => Date.now());
     const [analysisPhase, setAnalysisPhase] = useState<AnalysisPhase>('idle');
+    const analysisPhaseRef = useRef<AnalysisPhase>('idle');
+    useEffect(() => {
+        analysisPhaseRef.current = analysisPhase;
+    }, [analysisPhase]);
     const [isAnalysisStopConfirmOpen, setIsAnalysisStopConfirmOpen] = useState(false);
     const [isRequestingAnalysisStop, setIsRequestingAnalysisStop] = useState(false);
     const [analysisStopRequestedAction, setAnalysisStopRequestedAction] = useState<AnalysisStopAction | null>(null);
@@ -524,6 +585,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const transcriptReadyRef = useRef(false);
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [storedErrorMessage, setErrorMessage] = useState('');
+    // Why the analysis failed and, when the transcript was already saved, which meeting holds it.
+    const [analysisFailure, setAnalysisFailure] = useState<{ cause: UserErrorCause; savedMeetingId: string | null } | null>(null);
     const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
     const fileDurationLimitError = getAnalysisDurationLimitError(fileDurationSeconds);
@@ -536,6 +599,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [readinessTimedOut, setReadinessTimedOut] = useState(false);
     const readinessLoopRef = useRef(0);
     const [isRecheckingEngine, setIsRecheckingEngine] = useState(false);
+    // Bumped when an analysis run ends: the background readiness loop stops at `ready`, and a run that found the
+    // engine gone leaves `server-waiting`, which disables 분석 시작 until a running check clears it.
+    const [readinessLoopKey, setReadinessLoopKey] = useState(0);
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
     const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
     const [audioExtractFile, setAudioExtractFile] = useState<File | null>(null);
@@ -584,6 +650,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const analysisStopDecisionPromiseRef = useRef<Promise<AnalysisStopAction | null> | null>(null);
     const analysisFinalMeetingSavePromiseRef = useRef<Promise<string> | null>(null);
     const transcriptMeetingSavePromiseRef = useRef<Promise<void> | null>(null);
+    const transcriptSavedMeetingIdRef = useRef<string | null>(null);
+    // Set by 중지 before the analysis stream starts; the run then unwinds without leaving a resume record.
+    const analysisPreparationStoppedRef = useRef(false);
     const selectedResumeDraftIdRef = useRef<string | null>(null);
     const queueMeetingMutation = queueAnalysisJobMutation;
     const invalidateFileMetadata = React.useCallback(() => {
@@ -737,7 +806,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         try {
             const apiBase = await getApiBase();
             await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
-            const healthResponse = await localEngineClient.request('/api/health');
+            const healthResponse = await requestWithinPreparationTimeout('/api/health', { signal: options.signal });
             await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
             if (superseded()) return { state: 'checking', message: '' };
             healthReachable = true;
@@ -756,7 +825,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
             await healthResponse.json().catch(() => null);
 
-            const modelsResponse = await localEngineClient.request('/api/models/status');
+            const modelsResponse = await requestWithinPreparationTimeout('/api/models/status', { signal: options.signal });
             await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
             if (superseded()) return { state: 'checking', message: '' };
             if (modelsResponse.status === 401 || modelsResponse.status === 403) {
@@ -772,7 +841,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 if (superseded()) return { state: 'checking', message: '' };
                 const message = options.soft
                     ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
-                    : '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
+                    : isTauriRuntime()
+                        ? '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.'
+                        : '모델 상태를 확인하지 못했습니다. 바로록 연결을 다시 실행한 뒤 다시 확인해 주세요.';
                 setReadinessState(options.soft ? 'server-waiting' : 'error');
                 setReadinessMessage(message);
                 return { state: options.soft ? 'server-waiting' : 'error', message };
@@ -796,14 +867,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
         } catch (error) {
-            if (superseded()) return { state: 'checking', message: '' };
+            // A stop, not an answer from the engine: keep the last known readiness and transport.
+            if (superseded() || options.signal?.aborted) return { state: 'server-waiting', message: '', reachable: healthReachable };
             if (transportCheckId !== null) {
                 reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
             }
             await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             if (superseded()) return { state: 'checking', message: '' };
-            const message = error instanceof Error && !options.soft
-                ? toUserFacingAnalysisError(error.message, { desktopApp: isTauriRuntime() })
+            const message = !options.soft
+                ? describeAnalysisError(error, { desktopApp: isTauriRuntime() }).message
                 : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
             setReadinessState('server-waiting');
             setReadinessMessage(message);
@@ -835,9 +907,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 if (superseded()) return;
 
                 if (check.state === 'ready') {
-                    setErrorMessage('');
-                    setStatusMessage('');
-                    setAnalysisPhase('idle');
+                    // A failure card stays until the user acts on it, and a running analysis keeps its phase.
+                    if (!analysisInFlightRef.current && analysisPhaseRef.current !== 'error') {
+                        setErrorMessage('');
+                        setStatusMessage('');
+                        setAnalysisPhase('idle');
+                    }
                     return;
                 }
 
@@ -864,7 +939,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             window.removeEventListener('focus', syncReadiness);
             window.removeEventListener('analysis:settings-updated', handleSettingsUpdated);
         };
-    }, [localEngineAuthorizedForReadiness, localEngineConnectionRequired, refreshReadiness]);
+    }, [localEngineAuthorizedForReadiness, localEngineConnectionRequired, readinessLoopKey, refreshReadiness]);
 
     const missingRequiredModels = useMemo(
         () => (modelsPayload?.models || []).filter(model => model.required && !model.installed),
@@ -923,6 +998,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
     const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
+    // Not connected (yet): the engine has not answered, or answered but is still starting up.
     const engineNotConnected = readinessState === 'server-waiting' && !localEngineConnectionRequired;
     const startButtonOperationallyDisabled = isAnalyzing
         || isExtractingAudio
@@ -943,6 +1019,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     // The required-field error is shown in the action row (beside 분석 시작) instead of a banner below the fold.
     // Live list of what is still missing after a start attempt; it disappears as soon as the fields are filled.
     const formErrorInline = hasAttemptedStart && missingFields.length > 0 && !localEngineConnectionRequired && !isAnalyzing;
+    // In connection mode the connection surface owns connecting; once connected, model readiness speaks here too.
     const showReadinessHint = !isAnalyzing && (localEngineConnectionRequired
         ? localEngineAnalysisReady && hasBlockingReadinessIssue
         : hasBlockingReadinessIssue || engineUnreachable);
@@ -958,7 +1035,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             ? 'connect'
         : modelsMissing && onOpenSettings
             ? 'models'
-            : isTauriRuntime() && onOpenTroubleshooting ? 'troubleshoot' : 'recheck';
+            : isTauriRuntime() && onOpenTroubleshooting && !localEngineConnectionRequired ? 'troubleshoot' : 'recheck';
     const startButtonDescription = [
         analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
         formErrorInline ? 'writer-form-error' : '',
@@ -996,18 +1073,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
     };
 
-    const waitForBackendReady = async (): Promise<ReadinessCheck> => {
+    const waitForBackendReady = async (signal?: AbortSignal): Promise<ReadinessCheck> => {
         const deadline = getNowMs() + BACKEND_READY_TIMEOUT_MS;
         setAnalysisPhase('checking-server');
 
         while (getNowMs() < deadline && !analysisCancelledRef.current) {
-            const check = await refreshReadiness();
+            const check = await refreshReadiness({ signal });
+            if (analysisCancelledRef.current) break;
             if (check.state === 'ready') return check;
             if (check.state === 'missing-models' || check.state === 'error') return check;
 
             const remainingSeconds = Math.max(0, Math.ceil((deadline - getNowMs()) / 1000));
             setStatusMessage(`분석 기능을 준비하고 있습니다. 잠시 기다려 주세요. (${remainingSeconds}초)`);
-            await sleep(BACKEND_READY_INTERVAL_MS);
+            await sleep(BACKEND_READY_INTERVAL_MS, signal);
         }
 
         if (analysisCancelledRef.current) {
@@ -1018,6 +1096,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             ? DESKTOP_ENGINE_NOT_READY_MESSAGE
             : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.';
         setAnalysisPhase('error');
+        setAnalysisFailure({ cause: 'engine-disconnected', savedMeetingId: null });
         setErrorMessage(message);
         setStatusMessage('');
         return { state: 'error', message };
@@ -1028,7 +1107,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
         setAnalysisPhase('checking-models');
         setStatusMessage('분석 환경을 확인하고 있습니다.');
-        const check = await waitForBackendReady();
+        const check = await waitForBackendReady(analysisAbortControllerRef.current?.signal);
         if (analysisCancelledRef.current) return false;
         if (check.state === 'ready') return true;
 
@@ -1241,7 +1320,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 ? '이전 분석 기록을 목록에서 삭제했습니다. 임시 파일은 분석 기능이 준비된 뒤 다시 정리할 수 있습니다.'
                 : '이전 분석 기록을 삭제했습니다.';
         } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '분석 기록을 삭제하지 못했습니다.');
+            setErrorMessage(toUserFacingError(error, '분석 기록을 삭제하지 못했습니다.', { desktopApp: isTauriRuntime() }));
         } finally {
             setDeletingResumeDraftIds(current => {
                 const next = new Set(current);
@@ -1490,7 +1569,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
         analysisInFlightRef.current = true;
         analysisCancelledRef.current = false;
+        analysisPreparationStoppedRef.current = false;
         transcriptMeetingSavePromiseRef.current = null;
+        transcriptSavedMeetingIdRef.current = null;
+        setAnalysisFailure(null);
         analysisAbortControllerRef.current = new AbortController();
         const startedAt = getNowMs();
         setAnalysisStartedAt(startedAt);
@@ -1521,7 +1603,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         try {
             const startSettingsRequestId = analysisSettingsRequestRef.current + 1;
             analysisSettingsRequestRef.current = startSettingsRequestId;
-            const settingsResponse = await localEngineClient.request('/api/settings', {
+            const settingsResponse = await requestWithinPreparationTimeout('/api/settings', {
                 signal: analysisAbortControllerRef.current?.signal,
             });
             if (!settingsResponse.ok) throw new Error('분석 설정을 확인하지 못했습니다. 잠시 후 다시 시도해 주세요.');
@@ -1546,7 +1628,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const suppressedResumeKeys = new Set(listSuppressedResumeCandidateKeys());
             if (ANALYSIS_MODE === 'real' && file) {
                 try {
-                    const resumeResponse = await localEngineClient.request('/api/analyze/resume-candidates', {
+                    const resumeResponse = await requestWithinPreparationTimeout('/api/analyze/resume-candidates', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({
@@ -1554,6 +1636,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             source_size: file.size,
                             source_last_modified: file.lastModified,
                         }),
+                        signal: analysisAbortControllerRef.current?.signal,
                     });
                     if (resumeResponse.ok) {
                         resumePayload = await resumeResponse.json() as ResumeCandidatesPayload;
@@ -1561,6 +1644,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 } catch {
                     resumePayload = null;
                 }
+                // The resume check swallows its own failures, so a 중지 during it is noticed here.
+                if (analysisCancelledRef.current) return;
             }
 
             if (selectedResumeDraft) {
@@ -1653,6 +1738,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     analysisAbortControllerRef.current?.signal,
                 );
                 if (storagePreflight.ok === false) {
+                    // The engine's own sentence says how much space is needed or which folder is unusable; keep it.
                     throw new Error(storagePreflight.message || '저장 공간이 부족합니다. 임시 파일을 정리한 뒤 다시 시도해 주세요.');
                 }
                 if (storagePreflight.level === 'warning' && storagePreflight.message) {
@@ -1660,6 +1746,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 }
                 setStatusMessage(resumeRequested ? '이전 음성 인식 진행분 재사용을 시도합니다.' : '');
             }
+            if (analysisCancelledRef.current) return;
             analysisJobIdRef.current = analysisJobId;
             analysisResumeDraftIdRef.current = analysisJobId;
             if (!claimAnalysisJob(analysisJobId)) {
@@ -1714,7 +1801,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 mediaAdmissionRejected = errorInfo.code === 'duration_limit_exceeded'
                     || errorInfo.code === 'media_duration_unavailable';
                 // Keep legacy string details while also accepting structured backend error codes.
-                throw new Error(errorInfo.detail || errorInfo.message);
+                throw new EngineError(errorInfo.detail || errorInfo.message, errorInfo.code);
             }
 
             const reader = response.body?.getReader();
@@ -1796,6 +1883,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         detail: { id: savedMeetingId, openHistory: false },
                     }));
                     transcriptMeetingSaved = true;
+                    transcriptSavedMeetingIdRef.current = savedMeetingId;
                 })();
                 transcriptMeetingSavePromiseRef.current = savePromise;
                 try {
@@ -1821,9 +1909,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 for (const dataStr of parseSseChunk(completeChunk)) {
                     if (dataStr === '[DONE]') continue;
 
-                    let parsed: AnalyzeResult & { message?: string; preserve_existing?: boolean };
+                    let parsed: AnalyzeResult & { message?: string; preserve_existing?: boolean; code?: string };
                     try {
-                        parsed = JSON.parse(dataStr) as AnalyzeResult & { message?: string; preserve_existing?: boolean };
+                        parsed = JSON.parse(dataStr) as AnalyzeResult & { message?: string; preserve_existing?: boolean; code?: string };
                     } catch {
                         console.warn('Ignoring malformed SSE event:', dataStr);
                         continue;
@@ -1869,7 +1957,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         setLastRealProgressAt(getNowMs());
                     }
                     if (parsed.status === 'error') {
-                        throw new Error(parsed.message || '분석 중 오류가 발생했습니다.');
+                        // `code` (memory, storage, undecodable file, stage timeout) picks the next step on the failure card.
+                        throw new EngineError(parsed.message || '분석 중 오류가 발생했습니다.', parsed.code);
                     }
                     if (parsed.status === 'cancelled' || parsed.status === 'stopped') {
                         if (!analysisStopActionRef.current && (parsed.action === 'cancel' || parsed.action === 'stop')) {
@@ -2029,6 +2118,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const pendingStopDecision = analysisStopDecisionPromiseRef.current;
             if (pendingStopDecision) await pendingStopDecision;
             if (analysisCancelledRef.current || (error instanceof DOMException && error.name === 'AbortError')) {
+                // Stopped before the stream started: nothing to resume; `finally` returns to the input.
+                if (analysisPreparationStoppedRef.current) return;
                 const requestedStopAction = analysisStopActionRef.current;
                 const existingDraft = analysisResumeDraftIdRef.current
                     ? getAnalysisResumeDraft(analysisResumeDraftIdRef.current)
@@ -2076,7 +2167,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 setErrorMessage('');
                 return;
             }
-            const message = toUserFacingAnalysisError(error instanceof Error ? error.message : '', { desktopApp: isTauriRuntime() });
+            const failure = describeAnalysisError(error, { desktopApp: isTauriRuntime() });
+            const message = failure.message;
             await writeFrontendLog(`analysis failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const failedJobId = analysisResumeDraftIdRef.current;
             if (mediaAdmissionRejected || analysisPreserveExistingRef.current) {
@@ -2091,7 +2183,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     errorMessage: message,
                 });
             }
-            if (!mediaAdmissionRejected && !analysisPreserveExistingRef.current && failedJobId && transcriptReadyRef.current) {
+            const transcriptKept = !mediaAdmissionRejected && !analysisPreserveExistingRef.current && failedJobId && transcriptReadyRef.current;
+            if (transcriptKept) {
                 try {
                     await queueMeetingMutation(
                         failedJobId,
@@ -2101,8 +2194,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     await writeFrontendLog(`failed meeting status error ${statusError instanceof Error ? `${statusError.name}: ${statusError.message}` : String(statusError)}`);
                 }
             }
+            // The meeting already holds the transcript: say so first and lead to it (WR-3).
+            const savedMeetingId = transcriptKept ? transcriptSavedMeetingIdRef.current : null;
             setAnalysisPhase('error');
-            setErrorMessage(message);
+            setAnalysisFailure({ cause: failure.cause, savedMeetingId });
+            // With the transcript saved, what is left is finished from the meeting itself, so the sentence names that
+            // step (with its cause) instead of telling the user to rerun the whole analysis.
+            const unfinishedStep = diarizationDuringAnalysis ? '참석자 구분' : '남은 분석';
+            const causeClause = TRANSCRIPT_KEPT_CAUSE_CLAUSES[failure.cause] ?? '';
+            setErrorMessage(savedMeetingId ? `대화록은 저장했습니다. ${causeClause}${unfinishedStep}을 마치지 못했습니다.` : message);
             setRawStatusMessage('');
             updateAnalysisEtaSeconds(null);
             setStatusMessage('');
@@ -2125,7 +2225,31 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setIsRequestingAnalysisStop(false);
             setAnalysisStartedAt(null);
             setAnalysisPhase(current => (current === 'error' ? 'error' : 'idle'));
+            setReadinessLoopKey(key => key + 1);
+            if (analysisPreparationStoppedRef.current) {
+                analysisPreparationStoppedRef.current = false;
+                setAnalysisPhase('idle');
+                setAnalysisFailure(null);
+                setErrorMessage('');
+                setStatusMessage('');
+                setProgress(0);
+                showOperationToast('분석을 중지했습니다.', 'warning');
+            }
         }
+    };
+
+    // Before the analysis stream starts there is no job to keep or cancel: abort the preparation and let the run unwind.
+    const handleStopPreparation = () => {
+        if (!isAnalyzing || analysisPreparationStoppedRef.current) return;
+        if (analysisJobIdRef.current) {
+            setIsAnalysisStopConfirmOpen(true);
+            return;
+        }
+        analysisPreparationStoppedRef.current = true;
+        analysisCancelledRef.current = true;
+        setIsAnalysisStopConfirmOpen(false);
+        setAnalysisStopRequestedAction('stop');
+        analysisAbortControllerRef.current?.abort();
     };
 
     const handleOpenAnalysisStopConfirm = () => {
@@ -2147,21 +2271,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setStatusMessage(pendingMessage);
 
         if (!jobId) {
-            analysisCancelledRef.current = true;
-            analysisAbortControllerRef.current?.abort();
-            analysisInFlightRef.current = false;
-            setIsAnalyzing(false);
-            setAnalysisPhase('idle');
-            setProgress(0);
-            setErrorMessage('');
-            setRawStatusMessage('');
-            updateAnalysisEtaSeconds(null);
-            setIsAnalysisStopConfirmOpen(false);
-            setAnalysisStopRequestedAction(null);
-            setIsRequestingAnalysisStop(false);
-            analysisStopActionRef.current = null;
-            setStatusMessage('');
-            showOperationToast(action === 'cancel' ? '분석을 취소했습니다.' : '분석을 중지했습니다.', 'warning');
+            // No job yet: the run unwinds itself instead of resetting state under a request that is still in flight.
+            handleStopPreparation();
             return;
         }
 
@@ -2305,6 +2416,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
     const handleReturnToAnalysisInput = () => {
         setAnalysisPhase('idle');
+        setAnalysisFailure(null);
         setErrorMessage('');
         setStatusMessage('');
         setRawStatusMessage('');
@@ -2315,12 +2427,69 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         });
     };
 
+    // The file could not be read: back to the form with the file cleared and the picker open; the rest is kept.
+    const handleChooseAnotherFile = () => {
+        handleReturnToAnalysisInput();
+        clearSelectedFileState();
+        window.requestAnimationFrame(() => fileInputRef.current?.click());
+    };
+
+    // The transcript was saved before the failure; open that meeting like 결과 보기 after a completed analysis.
+    const handleOpenFailedMeeting = () => {
+        const meetingId = analysisFailure?.savedMeetingId;
+        if (!meetingId) return;
+        // The form's content now lives in that meeting, so clear it as a completed analysis does;
+        // otherwise leaving the writer would ask about unsaved input.
+        autoDerivedTitleRef.current = null;
+        setTitle('');
+        setMeetingPurpose('');
+        setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
+        const nextInitialDate = toLocalDateTimeInputValue();
+        setInitialDateValue(nextInitialDate);
+        setDate(nextInitialDate);
+        clearResumeDraftSelection();
+        clearSelectedFileState();
+        setAnalysisPhase('idle');
+        setAnalysisFailure(null);
+        setErrorMessage('');
+        setStatusMessage('');
+        // Open after the cleared form is committed, so the writer's leave guard sees no input.
+        window.requestAnimationFrame(() => {
+            window.dispatchEvent(new CustomEvent('meetings:updated', {
+                detail: { id: meetingId, openHistory: true, detailTab: 'script' },
+            }));
+        });
+    };
+
+    // Engine unreachable (web): check again; once it answers, return to the form where 분석 시작 is ready.
+    const handleRecheckAfterFailure = async () => {
+        setIsRecheckingEngine(true);
+        try {
+            const check = await refreshReadiness();
+            if (check.state === 'server-waiting') {
+                showOperationToast('아직 바로록 연결에 닿지 않습니다. 바로록 연결이 실행 중인지 확인해 주세요.', 'warning');
+                return;
+            }
+            handleReturnToAnalysisInput();
+        } finally {
+            setIsRecheckingEngine(false);
+        }
+    };
+
     const showProgressBar = isAnalyzing;
     const fileKind = file ? getFileKind(file) : null;
     const hasAudioExtractFile = Boolean(audioExtractFile);
     const audioExtractSaved = audioExtractNotice?.tone === 'success';
     const audioExtractFailed = audioExtractNotice?.tone === 'error';
     const showAnalysisFailure = !isAnalyzing && analysisPhase === 'error' && Boolean(errorMessage);
+    const failureCause = analysisFailure?.cause ?? 'other';
+    const failureAction: 'open-result' | 'troubleshoot' | 'recheck' | 'choose-file' | 'retry' = analysisFailure?.savedMeetingId
+        ? 'open-result'
+        : failureCause === 'engine-disconnected'
+            ? (isTauriRuntime() && onOpenTroubleshooting ? 'troubleshoot' : 'recheck')
+            : failureCause === 'unsupported-file'
+                ? 'choose-file'
+                : 'retry';
     const showAnalysisPanel = isAnalyzing || showAnalysisFailure;
     const progressPercent = Math.min(100, Math.max(0, progress));
     const elapsedMs = analysisStartedAt ? analysisNow - analysisStartedAt : 0;
@@ -2755,14 +2924,48 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             </div>
                             <div className="min-w-0 flex-1">
                                 <div className="writer-analysis-result-message break-words">{errorMessage}</div>
+                                {/* The primary action follows the cause: saved transcript, connection, unreadable file, or a retry. */}
                                 <div className="writer-analysis-result-actions">
-                                    <Button variant="primary" onClick={handleStartAnalysis} disabled={analysisStartBlocked} aria-describedby={analysisStartBlocked ? 'writer-analysis-start-blocked' : undefined}>
-                                        <RefreshCw size={14} aria-hidden="true" />
-                                        다시 시도
-                                    </Button>
-                                    <Button variant="outline" onClick={handleReturnToAnalysisInput}>
-                                        입력 확인
-                                    </Button>
+                                    {failureAction === 'open-result' && (
+                                        <Button variant="primary" onClick={handleOpenFailedMeeting}>
+                                            결과 보기
+                                        </Button>
+                                    )}
+                                    {failureAction === 'troubleshoot' && (
+                                        <Button variant="primary" onClick={onOpenTroubleshooting}>
+                                            <Settings size={14} aria-hidden="true" />
+                                            문제 해결
+                                        </Button>
+                                    )}
+                                    {failureAction === 'recheck' && (
+                                        <Button variant="primary" onClick={() => void handleRecheckAfterFailure()} disabled={isRecheckingEngine}>
+                                            <RefreshCw size={14} className={isRecheckingEngine ? 'animate-spin' : ''} aria-hidden="true" />
+                                            {isRecheckingEngine ? '확인 중' : '다시 확인'}
+                                        </Button>
+                                    )}
+                                    {failureAction === 'choose-file' && (
+                                        <Button variant="primary" onClick={handleChooseAnotherFile}>
+                                            <UploadCloud size={14} aria-hidden="true" />
+                                            다른 파일 선택
+                                        </Button>
+                                    )}
+                                    {/* After a saved transcript the rest is finished from the meeting, so 결과 보기 stands alone. */}
+                                    {failureAction !== 'recheck' && failureAction !== 'choose-file' && failureAction !== 'open-result' && (
+                                        <Button
+                                            variant={failureAction === 'retry' ? 'primary' : 'outline'}
+                                            onClick={handleStartAnalysis}
+                                            disabled={analysisStartBlocked}
+                                            aria-describedby={analysisStartBlocked ? 'writer-analysis-start-blocked' : undefined}
+                                        >
+                                            <RefreshCw size={14} aria-hidden="true" />
+                                            다시 시도
+                                        </Button>
+                                    )}
+                                    {failureAction !== 'open-result' && (
+                                        <Button variant="outline" onClick={handleReturnToAnalysisInput}>
+                                            입력 확인
+                                        </Button>
+                                    )}
                                 </div>
                             </div>
                         </div>
@@ -2807,6 +3010,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                     <div className="writer-analysis-elapsed">{elapsedLabel}</div>
                                 </div>
                             </div>
+                            {/* Before the stream starts there is nothing to keep or cancel, so 중지 acts at once. */}
+                            {analysisPhase !== 'analyzing' && !analysisStopRequestedAction && (
+                                <Button
+                                    variant="outline"
+                                    className="h-8 px-3 text-xs sm:self-end"
+                                    onClick={handleStopPreparation}
+                                >
+                                    <Square size={13} aria-hidden="true" />
+                                    중지
+                                </Button>
+                            )}
                             {analysisPhase === 'analyzing' && !isAnalysisStopConfirmOpen && !analysisStopRequestedAction && (
                                 <Button
                                     variant="outline"

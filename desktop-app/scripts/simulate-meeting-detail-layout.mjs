@@ -281,6 +281,91 @@ const runAudioRowScenario = async browser => {
   }
 };
 
+// Detail failures stay beside the work that failed; the shell banner is only for a failed load (DT-2, DT-6, DT-8).
+const runErrorPlacementScenario = async browser => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  await page.route('**/api/models/status', route => route.fulfill(json({ ready: true, models: [], summary_ready: true })));
+  // The engine went away after the meeting was opened: syncing a saved edit cannot reach it.
+  await page.route('**/api/outputs/*/sync-record', route => route.abort('connectionrefused'));
+  let releaseSummary = () => undefined;
+  let summaryGate = new Promise(resolve => { releaseSummary = resolve; });
+  await page.route('**/api/outputs/*/generate-summary', async route => {
+    await summaryGate;
+    return route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'Ollama request failed: 500 Internal Server Error' }) });
+  });
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
+    const job = 'layout-error-job';
+    await putMeetings(page, [{
+      ...baseMeeting,
+      id: 'layout-error-meeting',
+      title: '오류 위치 확인',
+      jobId: job,
+      summary: '',
+      generationStatus: {},
+      diarizationApplied: true,
+      outputFiles: { job_id: job, json: `/api/outputs/${job}/json`, txt: `/api/outputs/${job}/txt` },
+    }]);
+    await openMeeting(page, '오류 위치 확인');
+    const tabListTop = () => page.getByRole('tablist', { name: '회의록 상세' }).evaluate(element => Math.round(element.getBoundingClientRect().top));
+    const shellBanners = page.locator('.meeting-detail-shell > .status-banner');
+    const topBefore = await tabListTop();
+
+    // Saved locally, but the engine is off: a warning in the 대화록 tab, never `Failed to fetch` or a banner on top.
+    await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+    await page.locator('.script-edit-textarea').first().fill('3분기 자원조사 결과를 다시 정리하겠습니다.');
+    await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '저장', exact: true }).click();
+    const scriptStatus = page.locator('#meeting-detail-panel-script .detail-report-status');
+    await scriptStatus.getByText('저장 내용은 반영됐지만 분석 원본과 동기화하지 못했습니다. 바로록 연결이 실행 중인지 확인해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await shellBanners.count(), 0, 'a save failure must not use the shell banner');
+    assert.equal(await page.getByText('Failed to fetch', { exact: false }).count(), 0, 'raw fetch errors must not reach the screen');
+    assert.equal(await tabListTop(), topBefore, 'the save warning must not push the tabs');
+
+    // 기록 정리: the reserved line shows the work in progress, then the failure, while the controls stay put.
+    await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
+    const organizeStatus = page.locator('#meeting-detail-panel-summary .detail-report-status');
+    await organizeStatus.waitFor({ timeout: 10000 });
+    const statusTop = () => organizeStatus.evaluate(element => Math.round(element.getBoundingClientRect().top));
+    const selectLeft = () => page.getByLabel('이번 정리 기준 선택').evaluate(element => Math.round(element.getBoundingClientRect().left));
+    const organizeTabTop = await tabListTop();
+    const statusTopBefore = await statusTop();
+    const selectLeftBefore = await selectLeft();
+    assert.equal((await organizeStatus.innerText()).trim(), '', 'nothing to report before 정리 starts');
+
+    await page.getByRole('button', { name: '전체 요약 정리', exact: true }).click();
+    await organizeStatus.getByText('전체 요약을 정리하는 중입니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('#organize-mode-panel-summary').getByText('전체 요약이 아직 없습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('정리를 실행해 주세요.', { exact: false }).count(), 0, 'no instruction to run 정리 while it runs');
+    assert.equal(await selectLeft(), selectLeftBefore, '정리 → 정리 중 must not push the select beside it');
+
+    releaseSummary();
+    await organizeStatus.getByText('전체 요약을 만들지 못했습니다. 잠시 뒤 다시 정리해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.match(await organizeStatus.getAttribute('class'), /detail-report-status-error/);
+    assert.equal(await shellBanners.count(), 0, 'a generation failure must not use the shell banner');
+    assert.equal(await page.getByText('Ollama request failed', { exact: false }).count(), 0, 'raw engine text must not reach the screen');
+    assert.equal(await tabListTop(), organizeTabTop, 'the failure must not push the tabs');
+    assert.equal(await statusTop(), statusTopBefore, 'the reserved line keeps the body in place');
+    assert.equal(await selectLeft(), selectLeftBefore, 'the select stays in place after the run');
+
+    // A run that fails while another tab is open says so once in a toast; its line keeps the failure.
+    summaryGate = new Promise(resolve => { releaseSummary = resolve; });
+    await page.getByRole('button', { name: '전체 요약 정리', exact: true }).click();
+    await organizeStatus.getByText('전체 요약을 정리하는 중입니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '대화록', exact: true }).click();
+    releaseSummary();
+    await page.locator('.meeting-history-toast-stack').getByText('전체 요약을 만들지 못했습니다. 잠시 뒤 다시 정리해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
+    await organizeStatus.getByText('전체 요약을 만들지 못했습니다. 잠시 뒤 다시 정리해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    console.log('ok - detail errors stay in their tab line and nothing above them moves');
+  } finally {
+    releaseSummary();
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const browser = await chromium.launch({ headless: true });
 try {
@@ -288,6 +373,7 @@ try {
   await runNarrowMetaScenario(browser);
   await runTranscriptRowScenario(browser);
   await runAudioRowScenario(browser);
+  await runErrorPlacementScenario(browser);
 } finally {
   await browser.close();
   await stopServer(server);

@@ -9,6 +9,8 @@ import {
     getDownloadFormatPreference,
 } from './downloadPreferences';
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
+import { isTauriRuntime } from './apiBase';
+import { toUserFacingError } from './apiError';
 
 const extensionByKind: Record<DownloadFormat, string> = {
     hwpx: 'hwpx',
@@ -470,28 +472,28 @@ export const MeetingDownloadControl: React.FC<MeetingDownloadControlProps> = ({
                 return;
             }
 
-            const detail = await response.text().catch(() => '');
+            // The response body is engine detail (often JSON); the sentence below already says what happened.
+            void response.body?.cancel().catch(() => {});
             const outputUrl = meeting.outputFiles?.[downloadKind]
                 || (meeting.jobId ? `/api/outputs/${encodeURIComponent(meeting.jobId)}/${downloadKind}` : null);
             if (canUseStoredOutputFallback && outputUrl && await tryDownloadFromUrl(outputUrl, fallbackName)) {
-                onError?.(`${downloadKind.toUpperCase()} 파일을 현재 화면 기준으로 새로 만들지 못해 저장된 파일로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
+                onError?.(`${downloadKind.toUpperCase()} 파일을 현재 화면 기준으로 새로 만들지 못해 저장된 파일로 다운로드했습니다.`);
                 return;
             }
 
             downloadLocalText();
-            onError?.(`${downloadKind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.${detail ? ` (${detail})` : ''}`);
+            onError?.(`${downloadKind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.`);
         } catch (error) {
             const outputUrl = meeting.outputFiles?.[downloadKind]
                 || (meeting.jobId ? `/api/outputs/${encodeURIComponent(meeting.jobId)}/${downloadKind}` : null);
+            const errorOptions = { desktopApp: isTauriRuntime() };
             if (canUseStoredOutputFallback && outputUrl && await tryDownloadFromUrl(outputUrl, fallbackName)) {
-                const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
-                onError?.(`${message} 저장된 파일로 다운로드했습니다.`);
+                onError?.(toUserFacingError(error, `${downloadKind.toUpperCase()} 파일을 새로 만들지 못해 저장된 파일로 다운로드했습니다.`, errorOptions));
                 return;
             }
 
             downloadLocalText();
-            const message = error instanceof Error ? error.message : '파일 다운로드 중 오류가 발생했습니다.';
-            onError?.(`${message} TXT로 다운로드했습니다.`);
+            onError?.(toUserFacingError(error, `${downloadKind.toUpperCase()} 파일을 만들지 못해 TXT로 다운로드했습니다.`, errorOptions));
         } finally {
             finishDownloading();
         }

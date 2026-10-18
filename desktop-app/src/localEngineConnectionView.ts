@@ -44,6 +44,7 @@ export interface GetLocalEngineConnectionViewInput {
     connectionStarted: boolean;
     installerAvailable?: boolean;
     updateAvailable?: boolean;
+    /** Connected, but analysis still needs something on this PC (e.g. a model); the writer says what. */
     analysisPrerequisitesMissing?: boolean;
 }
 

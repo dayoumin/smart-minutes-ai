@@ -387,12 +387,18 @@ const getOllamaPullProgressText = (status?: OllamaPullStatus): string => {
     return parts.length > 0 ? parts.join(' · ') : '계산 중';
 };
 
+// The banner adds the automatic-recheck sentence and the runtime's next step once (SB-2).
 const getModelStatusFailureMessage = (error: unknown): string => {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return isTimeout
-        ? '모델 상태 확인이 지연되고 있습니다. 잠시 후 자동으로 다시 확인합니다.'
-        : '모델 상태를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다.';
+        ? '모델 상태 확인이 지연되고 있습니다.'
+        : '모델 상태를 확인하지 못했습니다.';
 };
+
+// 재시작 exists only in the desktop app (설정 > 일반 > 문제 해결); the web app's engine is the separate 바로록 연결.
+const getEngineRecoveryStep = (): string => (
+    isTauriRuntime() ? '계속 실패하면 재시작을 눌러 주세요.' : '계속 실패하면 바로록 연결이 실행 중인지 확인해 주세요.'
+);
 
 const isModelStatusCheckFailure = (message: string): boolean => (
     message.includes('모델 상태') || message.includes('확인하지 못했습니다') || message.includes('지연')
@@ -402,7 +408,7 @@ const getSettingsFailureMessage = (error: unknown): string => {
     const isTimeout = error instanceof Error && error.name === 'AbortError';
     return isTimeout
         ? '설정을 불러오는 중입니다. 잠시 후 자동으로 다시 확인합니다.'
-        : '설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. 계속 안 되면 재시작을 눌러 주세요.';
+        : `설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. ${getEngineRecoveryStep()}`;
 };
 
 const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Response> => {
@@ -653,7 +659,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setApiBase(base);
             await loadModelsStatus(base, { surfaceErrors: false, showChecking: true });
         } catch {
-            setModelStatusErrorMessage('모델 상태를 확인하지 못했습니다. 잠시 후 자동으로 다시 확인합니다.');
+            setModelStatusErrorMessage('모델 상태를 확인하지 못했습니다.');
         }
     }, [apiBase, loadModelsStatus]);
 
@@ -1731,6 +1737,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaInstallNoticeTone: 'info' | 'warning' = ollamaInstallNotice.includes('열지 못했습니다') ? 'warning' : 'info';
     const errorHeading = errorMessage.includes('Ollama') ? '요약 프로그램 설치 필요' : '설정 확인 실패';
     const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
+    const showSettingsRecheck = !isTauriRuntime() && !settings && errorMessage.includes('설정을 불러오');
     // Engine-backed switches show no guessed default before the engine answers, and cannot be changed then.
     // Settings arrive before the slower model status, so only the settings payload gates them.
     // A restart reloads them, so changes made meanwhile would be overwritten.
@@ -1851,7 +1858,23 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             <StatusBanner
                                 tone="error"
                                 heading={errorHeading}
-                                action={renderDismissButton('설정 오류 알림 닫기', () => setErrorMessage(''))}
+                                action={(
+                                    <div className="flex items-center gap-2">
+                                        {/* The web app has no 재시작; its way forward from a failed load is checking again. */}
+                                        {showSettingsRecheck && (
+                                            <Button
+                                                variant="outline"
+                                                className="h-8 shrink-0 px-3 text-xs"
+                                                onClick={() => void loadSettings()}
+                                                disabled={isLoading}
+                                            >
+                                                <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} aria-hidden="true" />
+                                                {isLoading ? '확인 중' : '다시 확인'}
+                                            </Button>
+                                        )}
+                                        {renderDismissButton('설정 오류 알림 닫기', () => setErrorMessage(''))}
+                                    </div>
+                                )}
                             >
                                 {errorMessage}
                             </StatusBanner>
@@ -2077,7 +2100,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         {modelStatusErrorMessage}
                                         {' '}
                                         {modelStatusCanAutoRetry
-                                            ? '자동으로 다시 확인합니다. 계속 실패하면 재시작을 눌러 주세요.'
+                                            ? `자동으로 다시 확인합니다. ${getEngineRecoveryStep()}`
                                             : '필요한 설정을 조정한 뒤 다시 확인해 주세요.'}
                                     </StatusBanner>
                                 )}

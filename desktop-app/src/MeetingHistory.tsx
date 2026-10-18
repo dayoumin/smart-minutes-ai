@@ -6,7 +6,12 @@ import { isTauriRuntime, openSavedFileLocation } from './apiBase';
 import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { useMeetingAudioPlayback } from './useMeetingAudioPlayback';
-import { readApiErrorInfo as getGenerationErrorInfo, readApiErrorMessage as getGenerationErrorMessage } from './apiError';
+import {
+    parseApiErrorBody,
+    readApiErrorInfo as getGenerationErrorInfo,
+    readApiErrorMessage as getGenerationErrorMessage,
+    toUserFacingError,
+} from './apiError';
 import { MeetingDownloadControl } from './MeetingDownloadControl';
 import { formatAnalysisDuration } from './analysisTimeEstimate';
 import {
@@ -73,6 +78,9 @@ type TemplateDeleteTarget = {
 } | null;
 
 const getCurrentTimeMs = (): number => Date.now();
+// After a refused generation request whose reason we cannot name. A known model or summary-program cause has its
+// own sentence and 모델 준비, so this one does not guess at models.
+const ORGANIZE_RETRY_STEP = '잠시 뒤 다시 정리해 주세요.';
 
 interface SpeakerContributionStats {
     turnCount: number;
@@ -470,7 +478,8 @@ const OrganizeRunButton = ({
 }: OrganizeRunButtonProps) => (
     <Button
         variant={variant}
-        className={`detail-action-button ${variant === 'primary' ? 'detail-action-button-primary' : ''} ${className}`}
+        // Fixed minimum width: 정리 → 정리 중 → 다시 정리 must not push the controls beside it.
+        className={`detail-action-button min-w-[6.5rem] ${variant === 'primary' ? 'detail-action-button-primary' : ''} ${className}`}
         aria-label={ariaLabel}
         disabled={disabled}
         onClick={() => { void onClick(); }}
@@ -480,6 +489,56 @@ const OrganizeRunButton = ({
         {label}
     </Button>
 );
+
+/** Where a failed action is reported: beside the work that failed, never as a banner that pushes the page. */
+type DetailErrorPlace = 'meeting' | 'script' | 'summary' | 'report';
+
+interface DetailError {
+    place: DetailErrorPlace;
+    message: string;
+    /** warning: the main work was saved and only a follow-up step (sync, file refresh, file format) did not happen. */
+    tone: 'error' | 'warning';
+}
+
+interface DetailStatus {
+    tone: 'neutral' | 'warning' | 'error';
+    text: string;
+    /** Start time of the work in progress; the elapsed time is shown but not announced. */
+    startedAt?: number | null;
+}
+
+/** Counts up on its own, so a running generation does not re-render the whole meeting detail every second. */
+const ElapsedSince = ({ startedAt }: { startedAt: number }) => {
+    const [now, setNow] = useState(getCurrentTimeMs);
+    useEffect(() => {
+        const timerId = window.setInterval(() => setNow(getCurrentTimeMs()), 1000);
+        return () => window.clearInterval(timerId);
+    }, []);
+    return <span aria-hidden="true">{` · ${formatAnalysisDuration(Math.max(0, now - startedAt))}`}</span>;
+};
+
+/** One status line in a tab. With `reserve`, it keeps its height while empty so starting or finishing work never moves the body. */
+const DetailStatusLine = ({ status, action, reserve = true }: { status: DetailStatus | null; action?: React.ReactNode; reserve?: boolean }) => {
+    if (!status && !reserve) return null;
+    // A reserved line is mounted before its text arrives, so a polite live region is announced. A line that appears
+    // with its text needs a role that is announced on insertion.
+    const insertedRole = status?.tone === 'error' ? 'alert' : 'status';
+    return (
+        <div
+            className={`detail-report-status detail-report-status-${status?.tone ?? 'neutral'}`}
+            role={reserve ? undefined : insertedRole}
+            aria-live={reserve ? 'polite' : undefined}
+        >
+            {status && (
+                <>
+                    <span>{status.text}</span>
+                    {status.startedAt ? <ElapsedSince startedAt={status.startedAt} /> : null}
+                    {action}
+                </>
+            )}
+        </div>
+    );
+};
 
 interface SpeakerLabelPanelProps {
     panelRef: React.RefObject<HTMLDivElement | null>;
@@ -926,7 +985,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const localEngineAuthorization = useLocalEngineConnection().snapshot.authorization;
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [isLoading, setIsLoading] = useState(true);
-    const [errorMessage, setErrorMessage] = useState('');
+    const [detailError, setDetailError] = useState<DetailError | null>(null);
     const [loadErrorMessage, setLoadErrorMessage] = useState('');
     const [noticeMessage, setNoticeMessage] = useState('');
     const [noticeToast, setNoticeToast] = useState<AppToastMessage | null>(null);
@@ -950,6 +1009,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         retry: retryAudioPlayback, markMissing: markAudioMissing, reportPlaybackError,
     } = useMeetingAudioPlayback(selectedMeeting?.id, selectedMeeting?.jobId, selectedMeeting?.outputFiles?.audio);
     const [generatingKind, setGeneratingKind] = useState<GenerationKind | null>(null);
+    const [generationStartedAt, setGenerationStartedAt] = useState<{ meetingId: string; kind: GenerationKind; at: number } | null>(null);
     const [topicGenerationIntent, setTopicGenerationIntent] = useState<TopicGenerationRequestIntent | null>(null);
     const [diarizationStartedAt, setDiarizationStartedAt] = useState<number | null>(null);
     const [diarizationNow, setDiarizationNow] = useState(getCurrentTimeMs);
@@ -1066,6 +1126,26 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         });
     }, []);
 
+    const detailTabRef = useRef<MeetingDetailTab>('script');
+    useEffect(() => {
+        detailTabRef.current = detailTab;
+    }, [detailTab]);
+    const showDetailError = React.useCallback((place: DetailErrorPlace, message: string, tone: DetailError['tone'] = 'error') => {
+        setDetailError(message ? { place, message, tone } : null);
+        // A long generation can finish while another tab is open; its line is out of sight, so say it once in a toast.
+        if (message && place !== 'meeting' && detailTabRef.current !== place) {
+            showOperationToast(message, tone === 'error' ? 'error' : 'warning');
+        }
+    }, [showOperationToast]);
+    const clearDetailError = React.useCallback(() => setDetailError(null), []);
+    // "…하지 못했습니다." plus the cause's next step; raw fetch errors, English and JSON never reach the screen.
+    const describeFailure = (error: unknown, failed: string): string => (
+        toUserFacingError(error, failed, { desktopApp: isTauriRuntime() })
+    );
+    const startGenerationClock = (meetingId: string, kind: GenerationKind) => {
+        setGenerationStartedAt({ meetingId, kind, at: getCurrentTimeMs() });
+    };
+
     const showNoticeToast = React.useCallback((message: string) => {
         setNoticeToast({
             id: getCurrentTimeMs(),
@@ -1086,7 +1166,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             await openSavedFileLocation(savedFileToast.path);
             setSavedFileToast(null);
         } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '저장 폴더를 열지 못했습니다.');
+            // The 저장됨 notice is a toast, so its follow-up failure is one too.
+            showOperationToast(describeFailure(error, '저장 폴더를 열지 못했습니다.'), 'error');
         }
     };
 
@@ -1114,7 +1195,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 missingMeetingNoticeRef.current = false;
                 setLoadErrorMessage('');
             }
-            if (changesSelectedMeeting) setErrorMessage('');
+            if (changesSelectedMeeting) clearDetailError();
             const data = await getAllMeetings();
             if (requestId !== loadRecordsRequestIdRef.current) return;
             const sorted = data.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
@@ -1150,7 +1231,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         } finally {
             if (requestId === loadRecordsRequestIdRef.current && shouldShowBlockingLoadingState) setIsLoading(false);
         }
-    }, [onSelectMeetingId, selectedMeetingId]);
+    }, [clearDetailError, onSelectMeetingId, selectedMeetingId]);
 
     useEffect(() => {
         void loadRecords();
@@ -1323,9 +1404,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     const failureKey = `${jobId}:${payload.updated_at ?? payload.message ?? 'failed'}`;
                     if (diarizationFailureToastKeyRef.current !== failureKey) {
                         diarizationFailureToastKeyRef.current = failureKey;
-                        const message = payload.message || '참석자 구분 중 오류가 발생했습니다. 다시 실행해 주세요.';
-                        showOperationToast(message, 'error');
-                        setErrorMessage(message);
+                        // Short toast for someone scrolled away; the cause stays beside 처리 상태.
+                        showOperationToast('참석자 구분을 마치지 못했습니다.', 'error');
+                        if (selectedMeetingRef.current?.jobId === jobId) {
+                            showDetailError('meeting', toUserFacingError(
+                                payload.message,
+                                '참석자 구분을 마치지 못했습니다.',
+                                { desktopApp: isTauriRuntime() },
+                            ));
+                        }
                     }
                 }
             } catch {
@@ -1343,7 +1430,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             cancelled = true;
             window.clearInterval(timerId);
         };
-    }, [diarizationProgress?.active, diarizationProgressJobId, generatingKind, showOperationToast]);
+    }, [diarizationProgress?.active, diarizationProgressJobId, generatingKind, showDetailError, showOperationToast]);
 
     useEffect(() => {
         if (!noticeToast) return undefined;
@@ -1648,7 +1735,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         if (!templateUndoToast) return;
         const target = templateUndoToast;
         setTemplateUndoToast(null);
-        setErrorMessage('');
+        clearDetailError();
 
         try {
             if (target.kind === 'context') {
@@ -1877,7 +1964,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
             return syncResponse?.export_error ?? null;
         } catch (error) {
-            return error instanceof Error ? error.message : '저장 내용은 반영됐지만 분석 원본과 동기화하지 못했습니다.';
+            const failed = '저장 내용은 반영됐지만 분석 원본과 동기화하지 못했습니다.';
+            const message = describeFailure(error, failed);
+            // The edit itself is saved; an engine sentence (e.g. a missing analysis source) alone would read like data loss.
+            return message.startsWith(failed) ? message : failed;
         }
     };
 
@@ -1886,7 +1976,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
         try {
             setIsDownloading(true);
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(selectedMeeting.jobId)}/audio/save-copy`, {
                 method: 'POST',
@@ -1899,12 +1989,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 if (response.status === 404) {
                     throw new Error('저장된 음성 파일을 찾지 못했습니다.');
                 }
-                throw new Error(detail || '음성 파일을 저장하지 못했습니다.');
+                throw new Error(parseApiErrorBody(detail, '음성 파일을 저장하지 못했습니다.').message);
             }
             const data = await response.json().catch(() => null) as { saved_path?: string | null } | null;
             showSavedFileToast(data?.saved_path ?? null);
         } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '음성 파일을 저장하지 못했습니다.');
+            showDetailError('meeting', describeFailure(error, '음성 파일을 저장하지 못했습니다.'));
         } finally {
             setIsDownloading(false);
         }
@@ -1931,12 +2021,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             || date !== (selectedMeeting.date || '').trim()
             || meetingPurpose !== (selectedMeeting.meetingPurpose || '').trim();
         if (!title || !date) {
-            setErrorMessage('회의 제목과 일시는 비워둘 수 없습니다.');
+            showDetailError('meeting', '회의 제목과 일시는 비워둘 수 없습니다.');
             return;
         }
 
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             await updateSelectedMeeting(currentMeeting => ({
                 title,
@@ -1951,11 +2041,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setNoticeMessage('회의 정보를 저장했습니다.');
             const syncMessage = await syncMeetingOutputRecordSafely(targetMeetingId, targetJobId);
             if (syncMessage && currentSelectedMeetingIdRef.current === targetMeetingId) {
-                setErrorMessage(syncMessage);
+                showDetailError('meeting', syncMessage, 'warning');
             }
         } catch (error) {
             setNoticeMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '회의록 정보를 저장하지 못했습니다.');
+            showDetailError('meeting', describeFailure(error, '회의 정보를 저장하지 못했습니다.'));
         }
     };
 
@@ -1969,16 +2059,16 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 .filter(([, label]) => Boolean(label)),
         );
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             await updateSelectedMeeting({ speakerLabels: cleanedLabels });
             const syncMessage = await syncMeetingOutputRecordSafely(targetMeetingId, targetJobId);
             if (syncMessage && currentSelectedMeetingIdRef.current === targetMeetingId) {
-                setErrorMessage(syncMessage);
+                showDetailError('script', syncMessage, 'warning');
             }
         } catch (error) {
             setNoticeMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '참석자 이름을 저장하지 못했습니다.');
+            showDetailError('script', describeFailure(error, '참석자 이름을 저장하지 못했습니다.'));
         }
     };
 
@@ -1996,10 +2086,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const handleGenerateDiarization = async () => {
         if (generatingKind !== null) return;
-        if (!ensureNoUnsavedDraftChanges('참석자 구분 실행')) return;
+        if (!ensureNoUnsavedDraftChanges('참석자 구분 실행', 'meeting')) return;
         if (!canGenerateDiarization || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(hasTranscriptData ? '분석 원본이 있어야 참석자 구분을 실행할 수 있습니다.' : '대화록이 있어야 참석자 구분을 실행할 수 있습니다.');
+            showDetailError('meeting', hasTranscriptData ? '분석 원본이 있어야 참석자 구분을 실행할 수 있습니다.' : '대화록이 있어야 참석자 구분을 실행할 수 있습니다.');
             return;
         }
 
@@ -2007,7 +2097,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const targetJobId = selectedMeeting.jobId;
         const abortController = new AbortController();
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             setOperationToast(null);
             setIsDiarizationStopConfirmOpen(false);
@@ -2080,7 +2170,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (isAbortError && diarizationStopActionRef.current) {
                 return;
             }
-                const message = error instanceof Error ? error.message : '참석자 구분 실행 중 오류가 발생했습니다.';
+                const message = describeFailure(error, '참석자 구분을 실행하지 못했습니다.');
                 const detail = error instanceof Error ? (error as GenerationRequestError).detail : undefined;
             if (diarizationProgressJobIdRef.current === targetJobId) {
                 setDiarizationNow(getCurrentTimeMs());
@@ -2093,7 +2183,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     message,
                     status: 'failed',
                 }));
-                showOperationToast(message, 'error');
+                showOperationToast('참석자 구분을 마치지 못했습니다.', 'error');
             }
             const skipReasonByDetail: Record<string, string> = {
                 audio_required_for_diarization: 'source_not_preserved',
@@ -2115,7 +2205,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '참석자 구분을 실행하지 못했습니다.');
+                // A known reason is saved as the meeting's 참석자 구분 note under 처리 상태; do not say it twice.
+                if (skipReason) clearDetailError();
+                else showDetailError('meeting', message);
             }
         } finally {
             if (diarizationAbortControllerRef.current === abortController) {
@@ -2129,7 +2221,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const handleOpenDiarizationStopConfirm = () => {
         setIsDiarizationStopConfirmOpen(true);
         setNoticeMessage('');
-        setErrorMessage('');
+        clearDetailError();
     };
 
     const handleStopDiarization = async (action: DiarizationStopAction) => {
@@ -2144,7 +2236,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         try {
             setIsStoppingDiarization(true);
             setStoppingDiarizationAction(action);
-            setErrorMessage('');
+            clearDetailError();
             diarizationStopActionRef.current = action;
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generation-stop/diarization`, {
                 method: 'POST',
@@ -2201,9 +2293,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             diarizationStopActionRef.current = null;
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                const message = error instanceof Error ? error.message : '참석자 구분을 중지하지 못했습니다.';
-                setErrorMessage(message);
-                showOperationToast(message, 'error');
+                showDetailError('meeting', describeFailure(error, '참석자 구분을 중지하지 못했습니다.'));
             }
         } finally {
             setIsStoppingDiarization(false);
@@ -2214,10 +2304,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const handleGenerateSummary = async () => {
         if (generatingKind !== null || summaryGenerationStatus === 'generating') return;
-        if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
+        if (!ensureNoUnsavedDraftChanges('정리 실행', 'summary')) return;
         if (!canRunSummaryGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 전체 요약을 정리할 수 있습니다.' : '대화록이 있어야 전체 요약을 정리할 수 있습니다.');
+            showDetailError('summary', summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 전체 요약을 정리할 수 있습니다.' : '대화록이 있어야 전체 요약을 정리할 수 있습니다.');
             return;
         }
 
@@ -2226,17 +2316,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const inputFingerprint = buildGenerationInputFingerprint(targetMeeting);
         const hadCompletedSummaryBeforeRequest = summaryGenerationStatus === 'completed'
             && Boolean(targetMeeting.summary?.trim());
+        const summaryFailedMessage = hadCompletedSummaryBeforeRequest
+            ? '전체 요약을 다시 만들지 못했습니다.'
+            : '전체 요약을 만들지 못했습니다.';
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             setGeneratingKind('summary');
+            startGenerationClock(targetMeeting.id, 'summary');
             setLocalGenerationStatus(targetMeeting.id, 'summary', 'generating');
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-summary`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '핵심 요약을 다시 만들지 못했습니다.'));
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `${summaryFailedMessage} ${ORGANIZE_RETRY_STEP}`));
 
             const data = await response.json() as GenerateSummaryResponse;
             let inputChangedBeforeSave = false;
@@ -2271,7 +2365,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
-                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 전체 요약은 저장하지 않았습니다. 다시 정리해 주세요.');
+                showDetailError('summary', '회의 정보나 대화록이 바뀌어 이번 전체 요약은 저장하지 않았습니다. 다시 정리해 주세요.');
                 return;
             }
             if (searchQuery.trim()) {
@@ -2290,7 +2384,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     : '전체 요약을 정리했습니다.';
             setNoticeMessage(nextNoticeMessage);
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
-                setErrorMessage(data.export_error);
+                showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
@@ -2301,7 +2395,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '핵심 요약 생성 중 오류가 발생했습니다.');
+                showDetailError('summary', describeFailure(error, summaryFailedMessage));
             }
         } finally {
             setGeneratingKind(null);
@@ -2431,11 +2525,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         ? '대화록이 있어야 기록 정리를 사용할 수 있습니다.'
         : '';
     const organizeModelGuidanceMessage = summaryModelMessage || '요약 모델이 준비되면 전체 요약과 주제별 정리를 실행할 수 있습니다.';
-    // A generation that failed on a missing model or summary program says "설정에서 … 준비"; give it the way there.
-    const errorNeedsModelSetup = Boolean(
-        onOpenSettings && !loadErrorMessage && errorMessage.includes('설정에서') && /모델|요약 프로그램/.test(errorMessage)
-        && !(detailTab === 'summary' && summaryModelUnavailable),
+    // A failure on a missing model or summary program says "설정에서 … 준비"; its status line gets the way there.
+    // The 기록 정리 tab already shows 모델 준비 on its own banner while the summary model is unavailable.
+    const detailErrorNeedsModelSetup = (place: DetailErrorPlace): boolean => Boolean(
+        onOpenSettings && detailError?.place === place
+        && detailError.message.includes('설정에서') && /모델|요약 프로그램/.test(detailError.message)
+        && !(place === 'summary' && summaryModelUnavailable),
     );
+    const placedDetailError = (place: DetailErrorPlace): DetailStatus | null => (
+        detailError?.place === place ? { tone: detailError.tone, text: detailError.message } : null
+    );
+    const renderModelSetupAction = (place: DetailErrorPlace) => (detailErrorNeedsModelSetup(place) ? (
+        <Button variant="ghost" className="ml-2 h-6 px-2 text-xs" onClick={onOpenSettings}>
+            모델 준비
+        </Button>
+    ) : undefined);
     const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
     const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;
     const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;
@@ -2453,10 +2557,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const handleGenerateTopicSections = async () => {
         if (generatingKind !== null || topicGenerationStatus === 'generating') return;
-        if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
+        if (!ensureNoUnsavedDraftChanges('정리 실행', 'summary')) return;
         if (!canRunTopicGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
+            showDetailError('summary', summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
             return;
         }
 
@@ -2466,17 +2570,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const hadCompletedTopicSectionsBeforeRequest = topicGenerationStatus === 'completed'
             && Boolean(targetMeeting.topicSections?.some(section => section.topic?.trim()));
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             setTopicGenerationIntent({ meetingId: targetMeeting.id, intent: 'all' });
             setGeneratingKind('topicSections');
+            startGenerationClock(targetMeeting.id, 'topicSections');
             setLocalGenerationStatus(targetMeeting.id, 'topicSections', 'generating');
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-sections`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '주제별 정리를 만들지 못했습니다.'));
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `주제별 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`));
 
             const data = await response.json() as GenerateTopicSectionsResponse;
             let inputChangedBeforeSave = false;
@@ -2506,7 +2611,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
-                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 주제별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
+                showDetailError('summary', '회의 정보나 대화록이 바뀌어 이번 주제별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
                 return;
             }
             if (searchQuery.trim()) {
@@ -2523,7 +2628,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             });
             setNoticeMessage('주제별 정리를 완료했습니다.');
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
-                setErrorMessage(data.export_error);
+                showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
@@ -2534,7 +2639,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '주제별 정리 생성 중 오류가 발생했습니다.');
+                showDetailError('summary', describeFailure(error, '주제별 정리를 만들지 못했습니다.'));
             }
         } finally {
             setTopicGenerationIntent(null);
@@ -2545,15 +2650,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const handleGenerateCustomTopicSection = async () => {
         const topicTitle = customTopicTitle.trim();
         if (generatingKind !== null || topicGenerationStatus === 'generating') return;
-        if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
+        if (!ensureNoUnsavedDraftChanges('정리 실행', 'summary')) return;
         if (!topicTitle) {
             setNoticeMessage('');
-            setErrorMessage('추가로 정리할 주제 제목을 입력해 주세요.');
+            showDetailError('summary', '추가로 정리할 주제 제목을 입력해 주세요.');
             return;
         }
         if (!canRunTopicGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
+            showDetailError('summary', summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 주제별 정리를 할 수 있습니다.' : '대화록이 있어야 주제별 정리를 할 수 있습니다.');
             return;
         }
 
@@ -2563,10 +2668,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const hadCompletedTopicSectionsBeforeRequest = getTopicGenerationStatus(targetMeeting.generationStatus, targetMeeting.topicSections) === 'completed'
             && (targetMeeting.topicSections?.filter(section => section.topic?.trim()).length ?? 0) >= 1;
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             setTopicGenerationIntent({ meetingId: targetMeeting.id, intent: 'custom' });
             setGeneratingKind('topicSections');
+            startGenerationClock(targetMeeting.id, 'topicSections');
             setLocalGenerationStatus(targetMeeting.id, 'topicSections', 'generating');
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-topic-section`, {
                 method: 'POST',
@@ -2576,7 +2682,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     topicTitle,
                 }),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '추가 주제 정리를 만들지 못했습니다.'));
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `추가 주제 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`));
 
             const data = await response.json() as GenerateTopicSectionsResponse;
             let inputChangedBeforeSave = false;
@@ -2606,7 +2712,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
-                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 추가 주제 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
+                showDetailError('summary', '회의 정보나 대화록이 바뀌어 이번 추가 주제 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
                 return;
             }
             if (searchQuery.trim()) {
@@ -2617,7 +2723,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setOrganizeTab('topics');
             setNoticeMessage(`"${topicTitle}" 주제를 추가로 정리했습니다.`);
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
-                setErrorMessage(data.export_error);
+                showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
@@ -2628,7 +2734,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '추가 주제 정리 생성 중 오류가 발생했습니다.');
+                showDetailError('summary', describeFailure(error, '추가 주제 정리를 만들지 못했습니다.'));
             }
         } finally {
             setTopicGenerationIntent(null);
@@ -2638,15 +2744,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const handleGenerateSpeakerContext = async () => {
         if (generatingKind !== null || speakerGenerationStatus === 'generating') return;
-        if (!ensureNoUnsavedDraftChanges('정리 실행')) return;
+        if (!ensureNoUnsavedDraftChanges('정리 실행', 'summary')) return;
         if (!canRunTopicGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
-            setErrorMessage(summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 참석자별 정리를 할 수 있습니다.' : '대화록이 있어야 참석자별 정리를 할 수 있습니다.');
+            showDetailError('summary', summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 참석자별 정리를 할 수 있습니다.' : '대화록이 있어야 참석자별 정리를 할 수 있습니다.');
             return;
         }
         if (!canCreateSpeakerContext) {
             setNoticeMessage('');
-            setErrorMessage('참석자별 정리 전에 주제별 정리를 먼저 해 주세요.');
+            showDetailError('summary', '참석자별 정리 전에 주제별 정리를 먼저 해 주세요.');
             return;
         }
 
@@ -2656,16 +2762,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const hadCompletedSpeakerContextBeforeRequest = speakerGenerationStatus === 'completed'
             && Boolean(targetMeeting.speakerContextSummaries?.length || targetMeeting.participantSummaries?.length);
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             setGeneratingKind('speakerContextSummaries');
+            startGenerationClock(targetMeeting.id, 'speakerContextSummaries');
             setLocalGenerationStatus(targetMeeting.id, 'speakerContextSummaries', 'generating');
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-speaker-context`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '참석자별 정리를 만들지 못했습니다.'));
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `참석자별 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`));
 
             const data = await response.json() as GenerateSpeakerContextResponse;
             let inputChangedBeforeSave = false;
@@ -2692,7 +2799,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
-                setErrorMessage('회의 정보나 대화록이 바뀌어 이번 참석자별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
+                showDetailError('summary', '회의 정보나 대화록이 바뀌어 이번 참석자별 정리는 저장하지 않았습니다. 다시 정리해 주세요.');
                 return;
             }
             if (searchQuery.trim()) {
@@ -2705,7 +2812,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             });
             setNoticeMessage('참석자별 정리를 완료했습니다.');
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
-                setErrorMessage(data.export_error);
+                showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
@@ -2716,7 +2823,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '참석자별 정리 생성 중 오류가 발생했습니다.');
+                showDetailError('summary', describeFailure(error, '참석자별 정리를 만들지 못했습니다.'));
             }
         } finally {
             setGeneratingKind(null);
@@ -2725,7 +2832,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     const handleGenerateMeetingReport = async () => {
         if (generatingKind !== null || meetingReportGenerationStatus === 'generating') return;
-        if (!ensureNoUnsavedDraftChanges('보고서 생성')) return;
+        if (!ensureNoUnsavedDraftChanges('보고서 생성', 'report')) return;
         if (!canRunMeetingReportGeneration || !selectedMeeting?.jobId) {
             setNoticeMessage('');
             const reportGenerationBlockedMessage = summaryModelUnavailable
@@ -2741,7 +2848,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 : speakerContextOutdated
                                     ? '참석자별 정리를 다시 한 뒤 보고서를 생성할 수 있습니다.'
                                     : '보고서를 생성할 수 없습니다. 기록 정리 상태를 확인해 주세요.';
-            setErrorMessage(reportGenerationBlockedMessage);
+            showDetailError('report', reportGenerationBlockedMessage);
             return;
         }
 
@@ -2751,16 +2858,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const hadCompletedMeetingReportBeforeRequest = meetingReportGenerationStatus === 'completed'
             && Boolean(targetMeeting.meetingReport?.content?.trim() || targetMeeting.meetingReport?.sections?.length);
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             setGeneratingKind('meetingReport');
+            startGenerationClock(targetMeeting.id, 'meetingReport');
             setLocalGenerationStatus(targetMeeting.id, 'meetingReport', 'generating');
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(targetJobId)}/generate-report`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '회의록 보고서를 만들지 못했습니다.'));
+            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.'));
 
             const data = await response.json() as GenerateReportResponse;
             let inputChangedBeforeSave = false;
@@ -2781,7 +2889,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             if (currentSelectedMeetingIdRef.current !== targetMeeting.id) return;
             if (inputChangedBeforeSave) {
                 setNoticeMessage('');
-                setErrorMessage('회의 정보나 정리 내용이 바뀌어 이번 보고서는 저장하지 않았습니다. 다시 생성해 주세요.');
+                showDetailError('report', '회의 정보나 정리 내용이 바뀌어 이번 보고서는 저장하지 않았습니다. 다시 생성해 주세요.');
                 return;
             }
             if (searchQuery.trim()) {
@@ -2790,7 +2898,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setDetailTab('report');
             setNoticeMessage('회의록 보고서를 생성했습니다.');
             if (data.export_error && currentSelectedMeetingIdRef.current === targetMeeting.id) {
-                setErrorMessage(data.export_error);
+                showDetailError('report', data.export_error, 'warning');
             }
         } catch (error) {
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
@@ -2801,7 +2909,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                setErrorMessage(error instanceof Error ? error.message : '회의록 보고서 생성 중 오류가 발생했습니다.');
+                showDetailError('report', describeFailure(error, '보고서를 만들지 못했습니다.'));
             }
         } finally {
             setGeneratingKind(null);
@@ -3272,15 +3380,15 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         return () => window.removeEventListener('beforeunload', handleBeforeUnload);
     }, [hasUnsavedDraftChanges]);
 
-    const ensureNoUnsavedDraftChanges = (actionLabel: string): boolean => {
+    const ensureNoUnsavedDraftChanges = (actionLabel: string, place: DetailErrorPlace): boolean => {
         if (!hasUnsavedDraftChanges) return true;
         setNoticeMessage('');
-        setErrorMessage(`저장되지 않은 변경이 있습니다. ${actionLabel} 전에 변경 내용을 저장하거나 취소해 주세요.`);
+        showDetailError(place, `저장되지 않은 변경이 있습니다. ${actionLabel} 전에 변경 내용을 저장하거나 취소해 주세요.`);
         return false;
     };
 
     const handleStartTranscriptEdit = () => {
-        setErrorMessage('');
+        clearDetailError();
         setNoticeMessage('');
         setSearchQuery('');
         setTranscriptSegmentDrafts(displaySegments.map(segment => ({ ...segment })));
@@ -3303,18 +3411,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const transcriptText = formatEditableTranscript(displaySegments);
         if (!transcriptText) {
             setNoticeMessage('');
-            setErrorMessage('복사할 대화록이 없습니다.');
+            showDetailError('script', '복사할 대화록이 없습니다.');
             return;
         }
 
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             await copyTextToClipboard(transcriptText);
             setNoticeMessage('편집용 대화록을 복사했습니다.');
         } catch {
             setNoticeMessage('');
-            setErrorMessage('대화록을 복사하지 못했습니다. 다시 시도해 주세요.');
+            showDetailError('script', '대화록을 복사하지 못했습니다. 다시 시도해 주세요.');
         }
     };
 
@@ -3323,7 +3431,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const targetMeetingId = selectedMeeting.id;
         const targetJobId = selectedMeeting.jobId;
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             await updateSelectedMeeting(currentMeeting => ({
                 editedDisplaySegments: [],
@@ -3334,11 +3442,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setNoticeMessage('원본 대화록으로 되돌렸습니다. 기존 정리 내용은 다시 확인이 필요합니다.');
             const syncMessage = await syncMeetingOutputRecordSafely(targetMeetingId, targetJobId);
             if (syncMessage && currentSelectedMeetingIdRef.current === targetMeetingId) {
-                setErrorMessage(syncMessage);
+                showDetailError('script', syncMessage, 'warning');
             }
         } catch (error) {
             setNoticeMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '대화록 수정본을 되돌리지 못했습니다.');
+            showDetailError('script', describeFailure(error, '원본 대화록으로 되돌리지 못했습니다.'));
         }
     };
 
@@ -3348,14 +3456,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const targetJobId = selectedMeeting.jobId;
         const normalizedDrafts = normalizeTranscriptDrafts(transcriptSegmentDrafts);
         if (!normalizedDrafts.length) {
-            setErrorMessage('대화록 수정본은 비워둘 수 없습니다.');
+            showDetailError('script', '대화록 수정본은 비워둘 수 없습니다.');
             return;
         }
 
         const normalizedOriginal = normalizeTranscriptDrafts(originalDisplaySegments);
         const hasChanges = !transcriptSegmentsEqual(normalizedDrafts, normalizedOriginal);
         try {
-            setErrorMessage('');
+            clearDetailError();
             setNoticeMessage('');
             await updateSelectedMeeting(currentMeeting => (
                 hasChanges
@@ -3373,11 +3481,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             setNoticeMessage(hasChanges ? '대화록 수정본을 저장했습니다.' : '수정 내용이 없어 원본 대화록으로 유지했습니다.');
             const syncMessage = await syncMeetingOutputRecordSafely(targetMeetingId, targetJobId);
             if (syncMessage && currentSelectedMeetingIdRef.current === targetMeetingId) {
-                setErrorMessage(syncMessage);
+                showDetailError('script', syncMessage, 'warning');
             }
         } catch (error) {
             setNoticeMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '대화록 수정본을 저장하지 못했습니다.');
+            showDetailError('script', describeFailure(error, '대화록 수정본을 저장하지 못했습니다.'));
         }
     };
 
@@ -3545,16 +3653,55 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             ? (hasGeneratedMeetingReport || meetingReportGenerationFailed ? '회의록 보고서 다시 생성' : '회의록 보고서 생성')
             : reportActionBlockedMessage || '기록 정리를 먼저 완료해 주세요.';
 
+    const generationClockFor = (kind: GenerationKind): number | null => (
+        generationStartedAt?.meetingId === selectedMeeting?.id && generationStartedAt?.kind === kind
+            ? generationStartedAt.at
+            : null
+    );
+
     // Highest-priority report state for the single status line above the report body.
-    const reportStatus: { tone: 'neutral' | 'warning' | 'error'; text: string } | null = meetingReportIsGenerating
-        ? { tone: 'neutral', text: '회의록 보고서를 생성 중입니다. 기존 보고서가 있으면 완료 전까지 보관용으로 표시됩니다.' }
-        : reportActionBlockedMessage
-            ? { tone: 'warning', text: reportActionBlockedMessage }
-            : meetingReportGenerationFailed
-                ? { tone: 'error', text: '보고서를 만들지 못했습니다. 정리 내용과 모델 준비 상태를 확인한 뒤 다시 생성해 주세요.' }
-                : !hasGeneratedMeetingReport
-                    ? { tone: 'neutral', text: '보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.' }
-                    : null;
+    const reportStatus: DetailStatus | null = meetingReportIsGenerating
+        ? {
+            tone: 'neutral',
+            text: '회의록 보고서를 생성 중입니다. 기존 보고서가 있으면 완료 전까지 보관용으로 표시됩니다.',
+            startedAt: generationClockFor('meetingReport'),
+        }
+        : placedDetailError('report')
+            ?? (reportActionBlockedMessage
+                ? { tone: 'warning', text: reportActionBlockedMessage }
+                : meetingReportGenerationFailed
+                    ? { tone: 'error', text: '보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.' }
+                    : !hasGeneratedMeetingReport
+                        ? { tone: 'neutral', text: '보고서 생성을 누르면 현재 기록 정리와 선택한 보고 양식으로 회의록 보고서를 만듭니다.' }
+                        : null);
+
+    // The 기록 정리 tab's one reserved line: work in progress (with elapsed time) first, then the last failure.
+    const organizeGeneratingKind: GenerationKind | null = summaryGenerationStatus === 'generating'
+        ? 'summary'
+        : topicGenerationStatus === 'generating'
+            ? 'topicSections'
+            : speakerGenerationStatus === 'generating'
+                ? 'speakerContextSummaries'
+                : null;
+    const organizeStatus: DetailStatus | null = organizeGeneratingKind
+        ? {
+            tone: 'neutral',
+            text: organizeGeneratingKind === 'summary'
+                ? '전체 요약을 정리하는 중입니다.'
+                : organizeGeneratingKind === 'topicSections'
+                    ? (isCustomTopicGenerationRunning ? '추가 주제를 정리하는 중입니다.' : '주제별 정리를 하는 중입니다.')
+                    : '참석자별 정리를 하는 중입니다.',
+            startedAt: generationClockFor(organizeGeneratingKind),
+        }
+        : placedDetailError('summary')
+            // After the moment has passed (another action, another meeting), a failed run still says so.
+            ?? (summaryGenerationStatus === 'failed'
+                ? { tone: 'error', text: '전체 요약을 만들지 못했습니다. 잠시 뒤 다시 정리해 주세요.' }
+                : topicGenerationStatus === 'failed'
+                    ? { tone: 'error', text: '주제별 정리를 만들지 못했습니다. 잠시 뒤 다시 정리해 주세요.' }
+                    : speakerGenerationStatus === 'failed'
+                        ? { tone: 'error', text: '참석자별 정리를 만들지 못했습니다. 잠시 뒤 다시 정리해 주세요.' }
+                        : null);
 
     const renderRunIcon = (
         kind: GenerationKind,
@@ -3775,17 +3922,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
     return (
         <div className="meeting-detail-shell">
-            {(loadErrorMessage || errorMessage) && (
-                <StatusBanner
-                    tone="error"
-                    className="mb-4"
-                    action={errorNeedsModelSetup ? (
-                        <Button variant="outline" onClick={onOpenSettings}>
-                            모델 준비
-                        </Button>
-                    ) : undefined}
-                >
-                    {loadErrorMessage || errorMessage}
+            {/* Only a failed load uses the shell banner; every other failure stays beside its own work. */}
+            {loadErrorMessage && (
+                <StatusBanner tone="error" className="mb-4">
+                    {loadErrorMessage}
                 </StatusBanner>
             )}
             {(noticeToast || operationToast || templateUndoToast) && (
@@ -4024,6 +4164,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 {selectedMeeting.diarizationSkipped && (
                                     <div className="status-note meeting-diarization-guidance" role="status">
                                         {toParticipantCopy(selectedMeeting.diarizationSkipMessage || '참석자 구분은 제외하고 대화록을 먼저 저장했습니다.')}
+                                        {selectedMeeting.diarizationSkipReason === 'model_not_ready' && onOpenSettings && (
+                                            <Button variant="ghost" className="ml-2 h-6 px-2 text-xs" onClick={onOpenSettings}>
+                                                모델 준비
+                                            </Button>
+                                        )}
                                     </div>
                                 )}
                                 {diarizationStatusTitle && !selectedMeeting.diarizationSkipped && (
@@ -4034,6 +4179,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 {showDiarizationProgress && diarizationProgressPanel}
                             </>
                         )}
+                        {/* Failures of the header's own actions (회의 정보, 음성 저장, 참석자 구분) stay in the header. */}
+                        <DetailStatusLine status={placedDetailError('meeting')} action={renderModelSetupAction('meeting')} reserve={false} />
                     </div>
 
                     <div className="detail-main-nav">
@@ -4279,10 +4426,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             label="기록 정리 파일 저장"
                                             className="detail-context-button"
                                             onNotice={setNoticeMessage}
-                                            onError={setErrorMessage}
+                                            onError={message => showDetailError('summary', message, 'warning')}
                                             onSaved={showSavedFileToast}
                                             onDownloadingChange={setIsDownloading}
-                                            beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                            beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'summary')}
                                             disabled={isDownloading || !hasGeneratedSummary}
                                         />
                                     </div>
@@ -4292,6 +4439,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         {contextTemplateError}
                                     </div>
                                 )}
+                                {/* Same reserved line as the report tab: starting, finishing or failing never moves the body. */}
+                                <DetailStatusLine status={organizeStatus} action={organizeGeneratingKind ? undefined : renderModelSetupAction('summary')} />
                                 {shouldShowContextPreview && (
                                     <div className="detail-context-preview" aria-label="선택한 정리 기준 설명">
                                         <div className="min-w-0">
@@ -4333,8 +4482,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 <InlineStateNote>검색과 일치하는 전체 요약이 없습니다.</InlineStateNote>
                                             )
                                         ) : summaryModelUnavailable ? null : (
+                                            // Same one-line note while 정리 runs, so the body keeps its height; the status line says what is happening.
                                             <InlineStateNote>
-                                                전체 요약이 없습니다. 정리를 실행해 주세요.
+                                                {summaryGenerationStatus === 'generating' ? '전체 요약이 아직 없습니다.' : '전체 요약이 없습니다. 정리를 실행해 주세요.'}
                                             </InlineStateNote>
                                         )}
                                         {hasResultHighlights && (
@@ -4704,10 +4854,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         label="보고서 파일 저장"
                                         className="detail-context-button"
                                         onNotice={setNoticeMessage}
-                                        onError={setErrorMessage}
+                                        onError={message => showDetailError('report', message, 'warning')}
                                         onSaved={showSavedFileToast}
                                         onDownloadingChange={setIsDownloading}
-                                        beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                        beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'report')}
                                         disabled={isDownloading || !hasGeneratedMeetingReport || meetingReportIsGenerating}
                                     />
                                 </div>
@@ -4718,9 +4868,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 </div>
                             )}
                             {/* One reserved status line: starting or finishing a report never pushes the body. */}
-                            <div className={`detail-report-status detail-report-status-${reportStatus?.tone ?? 'neutral'}`} aria-live="polite">
-                                {reportStatus?.text}
-                            </div>
+                            <DetailStatusLine status={reportStatus} action={meetingReportIsGenerating ? undefined : renderModelSetupAction('report')} />
                             {canShowAnyMeetingReport && selectedMeeting?.meetingReport ? (
                                 <div className="detail-report-result">
                                     {meetingReportTemplateName && (
@@ -4816,10 +4964,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     label="대화록 파일 저장"
                                                     className="detail-secondary-action"
                                                     onNotice={setNoticeMessage}
-                                                    onError={setErrorMessage}
+                                                    onError={message => showDetailError('script', message, 'warning')}
                                                     onSaved={showSavedFileToast}
                                                     onDownloadingChange={setIsDownloading}
-                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장')}
+                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'script')}
                                                     disabled={isDownloading || !displaySegments.length}
                                                 />
                                                 <Button onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
@@ -4830,6 +4978,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         )}
                                     </div>
                                 </div>
+                                {/* Appears only after an action in this tab; the tabs and command bar above stay put. */}
+                                <DetailStatusLine status={placedDetailError('script')} reserve={false} />
                                 {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && (
                                     <InlineStateNote>
                                         현재 화면은 수정본 대화록입니다. 원본은 별도로 보존됩니다.

@@ -27,6 +27,7 @@
     "test:runtime-boundary": "node --experimental-strip-types scripts/test-runtime-boundary.mjs",
     "test:auth-recovery": "node --experimental-strip-types scripts/test-auth-recovery.mjs",
     "test:api-auth-boundary": "node --experimental-strip-types scripts/test-api-auth-boundary.mjs",
+    "test:api-error": "node --experimental-strip-types scripts/test-api-error.mjs",
     "test:export-consistency": "node scripts/test-export-consistency.mjs",
     "test:audio-playback-transport": "node --experimental-strip-types scripts/test-audio-playback-transport.mjs",
     "test:audio-playback": "node scripts/simulate-audio-playback.mjs",

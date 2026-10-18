@@ -57,24 +57,170 @@ const mapApiErrorDetail = (detail: string): string | undefined => {
 const HANGUL_PATTERN = /[\uAC00-\uD7A3]/;
 const BROWSER_FETCH_FAILURE_PATTERN = /^(typeerror: )?(failed to fetch|networkerror when attempting to fetch resource\.?|load failed|network error)$/i;
 
-/** Turns an analysis failure (server detail, HTTP status, network error) into a sentence the user can act on. */
-export const toUserFacingAnalysisError = (raw: string | undefined, options: { desktopApp?: boolean } = {}): string => {
-    const message = (raw || '').trim();
-    if (!message) return '분석 중 문제가 생겼습니다. 다시 시도해 주세요.';
-    const mapped = mapApiErrorDetail(message);
-    if (mapped) return mapped;
-    if (BROWSER_FETCH_FAILURE_PATTERN.test(message)) {
-        return options.desktopApp
-            ? '분석 기능에 연결하지 못했습니다. 앱을 다시 실행한 뒤 다시 시도해 주세요.'
-            : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.';
+/** What went wrong, in terms of what the user can do next. */
+export type UserErrorCause = 'memory' | 'unsupported-file' | 'disk-space' | 'engine-disconnected' | 'timeout' | 'other';
+
+export interface UserFacingError {
+    cause: UserErrorCause;
+    message: string;
+}
+
+/** An error that keeps the engine's stable cause code (structured HTTP detail or the analysis stream's `code`). */
+export class EngineError extends Error {
+    readonly code?: string;
+
+    constructor(message: string, code?: string) {
+        super(message);
+        this.name = 'EngineError';
+        this.code = code || undefined;
     }
-    const status = message.match(/^서버 응답 오류: (\d{3})$/);
+}
+
+const CODE_CAUSES: Record<string, UserErrorCause> = {
+    insufficient_memory: 'memory',
+    insufficient_storage: 'disk-space',
+    unsupported_media: 'unsupported-file',
+    media_duration_unavailable: 'unsupported-file',
+    duration_limit_exceeded: 'unsupported-file',
+    analysis_stage_timeout: 'timeout',
+    request_timeout: 'timeout',
+};
+
+// Raw engine, ffmpeg and runtime wording (and our own Korean sentences) that identify a cause.
+const TEXT_CAUSES: Array<[RegExp, UserErrorCause]> = [
+    [/out of memory|cannot allocate memory|bad_alloc|not enough memory|메모리가 부족/i, 'memory'],
+    [/no space left on device|not enough space on the disk|quota.*exceeded|저장 공간이 부족/i, 'disk-space'],
+    // Final ffmpeg errors only: stderr also carries warnings (e.g. codec parameters) for files that decode fine.
+    [/invalid data found when processing input|does not contain any stream|moov atom not found/i, 'unsupported-file'],
+    [/timed? ?out|timeout/i, 'timeout'],
+];
+
+const STATUS_CAUSES: Record<number, UserErrorCause> = {
+    408: 'timeout',
+    413: 'unsupported-file',
+    415: 'unsupported-file',
+    504: 'timeout',
+    507: 'disk-space',
+};
+
+type ActionableCause = Exclude<UserErrorCause, 'engine-disconnected' | 'other'>;
+
+const ANALYSIS_CAUSE_MESSAGES: Record<ActionableCause, string> = {
+    memory: '이 PC의 메모리가 부족합니다. 다른 프로그램을 닫은 뒤 다시 시도해 주세요.',
+    'disk-space': '저장 공간이 부족합니다. 파일을 정리해 공간을 확보한 뒤 다시 시도해 주세요.',
+    'unsupported-file': '이 파일은 읽을 수 없습니다. 재생되는 음성·영상 파일을 선택해 주세요.',
+    timeout: '응답이 너무 오래 걸려 멈췄습니다. 잠시 뒤 다시 시도해 주세요.',
+};
+
+// Second sentence after "…하지 못했습니다." on screens where the first sentence already says what failed.
+const NEXT_STEP_BY_CAUSE: Record<ActionableCause, string> = {
+    memory: '메모리가 부족하니 다른 프로그램을 닫은 뒤 다시 시도해 주세요.',
+    'disk-space': '저장 공간을 확보한 뒤 다시 시도해 주세요.',
+    'unsupported-file': '재생되는 음성·영상 파일인지 확인해 주세요.',
+    timeout: '응답이 늦어 멈췄습니다. 잠시 뒤 다시 시도해 주세요.',
+};
+
+interface ErrorClassification {
+    cause: UserErrorCause;
+    /** Already a user sentence (a mapped engine code or our own Korean message), shown as is. */
+    ownMessage?: string;
+    status?: number;
+}
+
+// Korean text is not always ours: Windows localizes OS errors ([WinError 2] 지정된 파일을 찾을 수 없습니다) and the
+// engine passes exception text through. Such text keeps its cause but is never shown as is.
+const RAW_TEXT_MARKER_PATTERN = /\[(WinError|Errno) -?\d+\]|Traceback|\b[A-Za-z]+Error:|\bfailed:|\b[A-Za-z]:\x5c|\.py\b/;
+
+const causeFromText = (text: string): UserErrorCause | undefined => (
+    TEXT_CAUSES.find(([pattern]) => pattern.test(text))?.[1]
+);
+
+const classifyError = (error: unknown, codeOverride?: string): ErrorClassification => {
+    let code = codeOverride || (error instanceof EngineError ? error.code : undefined);
+    const name = typeof error === 'object' && error !== null && typeof (error as { name?: unknown }).name === 'string'
+        ? (error as { name: string }).name
+        : '';
+    const rawMessage = typeof error === 'string'
+        ? error
+        : typeof error === 'object' && error !== null && typeof (error as { message?: unknown }).message === 'string'
+            ? (error as { message: string }).message
+            : '';
+    let text = rawMessage.trim();
+    // A raw response body (JSON detail) is never shown; read its code or detail instead.
+    if (text.startsWith('{')) {
+        const info = parseApiErrorBody(text, '');
+        code = code || info.code;
+        text = info.message || (info.code ? '' : info.detail ?? '');
+    }
+
+    const codeCause = code ? CODE_CAUSES[code] : undefined;
+    const mapped = (code ? API_ERROR_MESSAGES[code] : undefined) ?? (text ? mapApiErrorDetail(text) : undefined);
+    if (mapped) return { cause: codeCause ?? CODE_CAUSES[text] ?? causeFromText(mapped) ?? 'other', ownMessage: mapped };
+    // A known code wins over the engine's own (often English) wording.
+    if (codeCause) return { cause: codeCause };
+    if (name === 'TimeoutError') return { cause: 'timeout' };
+    if (name === 'QuotaExceededError') return { cause: 'disk-space' };
+    if (BROWSER_FETCH_FAILURE_PATTERN.test(text)) return { cause: 'engine-disconnected' };
+    const status = text.match(/^서버 응답 오류: (\d{3})$/);
     if (status) {
-        return Number(status[1]) >= 500
-            ? '분석 중 문제가 생겼습니다. 잠시 뒤 다시 시도해 주세요.'
-            : '분석 요청을 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.';
+        const statusCode = Number(status[1]);
+        return { cause: STATUS_CAUSES[statusCode] ?? 'other', status: statusCode };
     }
-    return HANGUL_PATTERN.test(message) ? message : '분석 중 문제가 생겼습니다. 다시 시도해 주세요.';
+    const textCause = causeFromText(text);
+    if (HANGUL_PATTERN.test(text) && !RAW_TEXT_MARKER_PATTERN.test(text)) return { cause: textCause ?? 'other', ownMessage: text };
+    return { cause: textCause ?? 'other' };
+};
+
+/**
+ * Turns an analysis failure (engine code, server detail, HTTP status, network error, timeout) into its cause
+ * and a sentence the user can act on. The failure screen title already says the analysis did not finish.
+ */
+export const describeAnalysisError = (
+    error: unknown,
+    options: { desktopApp?: boolean; code?: string } = {},
+): UserFacingError => {
+    const { cause, ownMessage, status } = classifyError(error, options.code);
+    if (ownMessage) return { cause, message: ownMessage };
+    if (cause === 'engine-disconnected') {
+        return {
+            cause,
+            message: options.desktopApp
+                ? '분석 기능에 연결하지 못했습니다. 앱을 다시 실행한 뒤 다시 시도해 주세요.'
+                : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
+        };
+    }
+    if (cause !== 'other') return { cause, message: ANALYSIS_CAUSE_MESSAGES[cause] };
+    if (status) {
+        return {
+            cause,
+            message: status >= 500
+                ? '분석 중 문제가 생겼습니다. 잠시 뒤 다시 시도해 주세요.'
+                : '분석 요청을 처리하지 못했습니다. 잠시 뒤 다시 시도해 주세요.',
+        };
+    }
+    return { cause, message: '분석 중 문제가 생겼습니다. 다시 시도해 주세요.' };
+};
+
+/** Turns an analysis failure into a sentence the user can act on (see `describeAnalysisError`). */
+export const toUserFacingAnalysisError = (raw: string | undefined, options: { desktopApp?: boolean } = {}): string => (
+    describeAnalysisError(raw ?? '', options).message
+);
+
+/**
+ * The sentence for any other failed action: `failed` says what did not happen ("…하지 못했습니다."), and the
+ * cause adds the next step. Raw `Failed to fetch`, English engine text and JSON bodies never reach the UI.
+ */
+export const toUserFacingError = (
+    error: unknown,
+    failed: string,
+    options: { desktopApp?: boolean } = {},
+): string => {
+    const { cause, ownMessage } = classifyError(error);
+    if (ownMessage) return ownMessage;
+    if (cause === 'engine-disconnected') {
+        return `${failed} ${options.desktopApp ? '앱을 다시 실행한 뒤 다시 시도해 주세요.' : '바로록 연결이 실행 중인지 확인해 주세요.'}`;
+    }
+    return cause === 'other' ? failed : `${failed} ${NEXT_STEP_BY_CAUSE[cause]}`;
 };
 
 export const parseApiErrorBody = (body: string, fallback: string): ApiErrorInfo => {

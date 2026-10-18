@@ -3,6 +3,18 @@
 이 문서는 회의록 앱의 음성 인식 품질과 처리 안정성을 개선할 때 반복해서 참고하기 위한 작업 로그다.  
 목표는 "효과가 있어 보이는 필터를 바로 기본값으로 넣는 것"이 아니라, 샘플과 지표를 남기면서 다음 작업의 시행착오를 줄이는 것이다.
 
+## 2026-10-19 설치형 장시간 처리·재시작 복구 후속
+
+- 최종 관측: QA1.6 엔진/하위 상주합계60분 최대7717.9MiB·시스템 최소여유374.9MiB,120분/idle 최대9685.5MiB·최소여유756.9MiB(전체31861MiB).5초 샘플이며 공유중복가능·브라우저/외부 앱 합계/VRAM 제외·120분은60분 후 캐시 조건이다. 최소 지원 사양이나 peak allocation 보장이 아니다. `.tmp/two-hour-audit-20261018/evidence/resources-installed-2h/final-window-rollup.json`에 구분/요약 단계별 창도 보존했다.
+- 새1.7 격리3분 실처리에서 완료2구간 후 소유 native 프로세스 종료/재시작·같은UUID/입력/설정으로6구간 완료·기존2구간 SHA/mtime·completed 저장1개/37발언 보존을 확인했다. 마지막 QA 자동판정은 SSE 응답/실패 중복 집계 오류였고 원본 실패를 유지한 채 로그 POST2회·완료SSE·checkpoint·읽기 전용 DB를 독립 대조했다. 재시작 엔진 정상exit0/1.14초 뒤 기존1.5 설치exit0·핵심3파일SHA/13원본SHA/73모델크기·운영HTTPS 연결·디자인/외부 Ollama 보존을 확인했다. 실제 전원/OS/디스크 손상 검증으로 확대하지 않는다.
+- 후속 수정3fdbdcd는 빈/비지원 JSON1회 재요청 뒤 기존 실패 계약을 사용하고, 병합 본문6000자·8단계·128실호출의 유한 예산을 둔다. 신규13+기존16+API보존2=31PASS와 독립 검토 후 정확한Git 소스만 QA1.7로 빌드했다. 실제120분 저장 대화록의 요약만 재생성한 run `summary-only-120m-2026-10-18T17-33-26-616Z-21944`에서 부분10+병합1 유효 응답, 개요96자·topics4/actions2/decisions1, 임시 개요 없음·저장/재열기/4종 파일·원본240개 checkpoint 보존을 독립 확인했다. 이번 실제 입력은 압축한 부분 JSON이 하나의6000자 그룹에 들어갔으므로 다단계 병합 분기까지 실모델로 검증했다고 확대하지 않는다.
+- 의미 품질 P2는 남는다. 실제두 원본 연결 표본에서 후반 AI 논문 영역은 개요/주요 주제에서 빠지고 확인 사항에만 남았으며, 결정1개는 논의 사실에 가깝다.5개 시간 구간 대조에서 확인한 범위이며 어느 부분/병합 단계가 원인인지는 raw 부분 응답 미보존으로 확정하지 못했다. 대표 회의의 수작업 기준·중간/후반 주제·합의 분류를 별도 비교하기 전 한 표본으로 모델/전처리 기본값을 바꾸지 않는다. `todo.md`의 P2로 관리하고 기능 흐름 통과를 전체 내용 품질 보장으로 쓰지 않는다.
+- 초기120분 설치형QA1.6 검사는 실제240개 STT 구간·동일 작업 중지/재개·참석자 구분과 저장/재열기/4종 파일 내용 보존까지 확인했으나, 당시 정상 요약은 미통과였다. 부분 요약10회 뒤 최종 병합이 내용 없는 JSON을 반환한 경로에서 앞500자 임시 개요가 `completed`로 저장되는 P1을 확인했다. 마지막 요청은0.657초에 HTTP 성공했으며 원응답을 저장하지 않아 JSON 원형·문맥 초과·메모리 원인은 확정할 수 없다. 60분은 실제 요약이며 이 임시 개요가 아니다. 이후 완료된 STT/구분을 반복하지 않고 위 QA1.7 요약 재생성을 검증했다. 최초 실패 근거: `.tmp/two-hour-audit-20261018/evidence/actual-120m-2026-10-18T15-07-53-765Z-17948/120m-record-after-reload.json`.
+- 입력 상한은7200초로 유지한다. 현재 참석자 구분의 전체16kHz mono float32 배열은2시간439.45MiB,2시간30분549.32MiB이며 후자는 기존512MiB 보호 기준을 넘는다. 모델·중간 계산·다른 앱 메모리는 별도이므로 파형 수치나 보호 기준을 전체 RAM 보장으로 쓰지 않는다. 전처리·모델·분할 기본값을 변경하지 않았다.
+- 설치형QA1.6/공개 QA HTTPS의 실제60분은120개 STT 구간, 웹 stop/same-job resume, 실제 구분·요약200/진행 중 session renew200, 저장175행·검토47배지의 reload/브라우저 재실행 불변, TXT/MD/DOCX/HWPX4개 내용/구조 검사와 독립 검토를 통과했다. 두 QA 도구 오류(구분 탭 이동/연결 helper 준비 관측)는 원래 실패 증거를 보존하고 완료된 추론을 반복하지 않아 분리했다. 상세 근거·범위는 web-local-engine-followup-plan의2시간 검사 항목을 따른다.
+- 정상 stop/resume를 전원 차단 복구로 확대하지 않고 추가 검토했다. 기존 재개 요청의 seed/preprocessing 초기화가 `resume_supported=false`, 완료 index `[]`로 잠시 바꾸며 같은 구간의 재종료 시 파일이 남아도 UI 후보가 사라질 수 있었다. 같은 source metadata/config 호환의 유효한 완료 메타만 보존하도록 수정하고 실제 SHA/config/execution/manifest/chunk 검증과 fresh fallback은 유지했다. 새 config로 기존 cache의 config 지문을 덧칠하지 않는 것도 함께 고정했다.
+- 수정 전 집중6개 중4개 실패, 수정 후 신규8+기존cache/fallback/취소5+atomic/corrupt2=15개 통과(3.327초), 별도 새 Python process의2개 후보/inactive·원본 bytes/mtime 보존, 독립 agent/자체 검토 차단 없음이다. `.tmp/resume-initialization-fix-20261019/{main.before.py,main.before.diff,main.owned.diff,red-result.json,focused-command.json,focused-green.log}`에 근거를 보존했다. 이 초기 검사는 BaseException으로 제어 흐름을 끊은 검사이며 native 강제 종료·물리 전원 차단·파일시스템 손상 검증은 아니다. 당시 진행 중이던120분 frozen1.6에는 이 후속 소스 수정이 포함되지 않았으며, 이후 정확한 수정 소스의 QA1.7 격리 native 강제 종료/재시작을 위 최종 결과처럼 별도 검증했다.
+
 ## 1. 기본 원칙
 
 - 한 샘플에서 좋아 보여도 기본값으로 바꾸지 않는다.
@@ -1028,3 +1040,27 @@ References:
 - 원시 로그의 GGUF6816.54MiB·CUDA model1397.54MiB·CUDA_Host4480MiB와 한 시점 runner 상주 약5.4GB는 `/api/ps` 약1.7GB가 총 RAM을 뜻하지 않음을 보여 준다. 여유 메모리 snapshot 약2.65GB는 최대 사용량 검사가 아니다. 이름의2B만으로 최소 사양을 결정하지 않는다.
 - 실제 검사는 source 준비 helper/gateway/요약 pipeline이며 main API 경로는 별도 단위/API 회귀 근거다. 설치본/공개 HTTPS 전체 흐름 또는 장시간 입력 통과로 확대하지 않는다. 준비 전 실패 복구와 native 적재 최적화는 구분하며 후자는 별도 비교 범위로 유지한다.
 - QA 소유 프로세스 정리 후 기존 설치 엔진·외부 Ollama를 유지했다. 기존 기록/설정9개 SHA·모델73개 크기와 영상 증거 불변을 확인했다. 상세 근거와 집중 검사/한계는 `docs/web-local-engine-followup-plan.md`11절 및 `.tmp/cold-start-20261018`을 따른다.
+
+## 2026-10-18 30분 다화자 영상 실검사: STT·재개 통과, 참석자 구분 자동 취소
+
+- 고정 표본 `long_audit_debate_30m_20261018`을 manifest에 먼저 등록했다. 기존 TV 대담의 앞30분을 stream copy한84,034,103바이트 MP4이며 SHA256은 `9f6a3e745722432d0e75c243e3402bfeb6b8f26825d0dad126c228290b1154b4`다. WAV1800.010875초/30초 청크60개. 사람 정답이 없으므로 실행·보존 검사이며 인식 정확도 검사가 아니다.
+- 현재 main 소스·기존 `.venv-desktop`·기존 설치 모델을 별도 API17963/Vite5174·격리 데이터 폴더에서 사용했다. 기본 CPU STT/auto 전처리/참석자 구분 설정과 패키지는 변경하지 않았다. 설치1.5/공개 HTTPS 검사가 아니며 디자인 AI 변경은 보존했다.
+- 실제 STT2개 완료 뒤 `stop`을 요청하고 같은 job·파일로 재개했다. 완료2개 SHA와 입력 SHA가 그대로이고 `resume_mode=reused_stt`다. 재개 이후 새58개를 처리해539발언·60/60을 저장했다. 모든5분 구간에 본문이 있고 마지막 시각1800.0초다. 처음 실행385.828초는 변환·첫 모델 준비·2개 처리·중지를 포함한다. 재개 요청→STT완료861.750초이며 순수 STT 속도 비교로 쓰지 않는다.
+- **P1:** 참석자 구분 시작862.000초→1043.672초에 SSE error/DONE이 발생했다. `get_analysis_stall_timeout_seconds`는 이 단계에 일반180초를 적용하고, 동기 `diarize_audio` 호출 중 새 진행률이 없으면 heartbeat가 있어도 취소한다. 당시 CPU는 계속 증가했다. native hang이나 RAM 부족으로 확정하지 않는다. cancel_event 뒤에도 native 호출은 즉시 끝나지 않아 checkpoint는 `diarization`이었다. QA 프로세스 종료 전 부분 결과/복구 API는 둘 다200·`partial=true`, 청크60개와 대화록 JSON/TXT는 보존됐다.
+- **P2:** raw 시각12개가 청크 끝을0.09~29.95초 넘었다. 특히 chunk016의479.74→509.72초와 chunk022의659.97→689.95초는 다음 청크의 각각6개·9개 발언과 겹친다. 모델 반환값이 경계 검증 없이 저장·전역화된 경로를 독립 agent가 확인했다. offset 중복이나 최종 화자 왜곡을 확정하지 않는다. 수정·경계 보정·품질 옵션 변경은 이번 검사에서 하지 않았다.
+- 관측 자원: 재개 중 backend 상주 최대4398.7MiB(5초 표본), 시스템 최소 여유1766.6MiB/총31861MiB. 동시 실행 앱이 있어 최소 지원 사양이 아니다. 실패 후 temp199,455,982바이트·outputs305,575바이트·검사 MP484,034,103바이트이며 디스크 최대치 측정은 아니다. 모델 junction은 용량 합계에서 제외했다. 초기 모델 준비가 첫 처리율에 섞여 ETA15309초→따뜻한 재개748초로 바뀐 현상도 기록했다.
+- 전단계 실패로 긴 입력의 전체 요약·브라우저 저장/재열기·4종 UI 다운로드는 **미실행**이다. 준비한 UI/파일 검증 하네스를 통과 증거로 쓰지 않는다. 짧은 표본의 기존 통과도 확대하지 않는다. 다음은180초 오판과 청크 시각 경계를 수정한 뒤 같은 checkpoint/표본으로 필요한 단계부터 재검증하는 것이다. 60분·2시간·다른 PC 검사는 아직 열려 있다.
+- 원본 근거: `.tmp/long-video-audit-20261018/evidence/{analysis-v2,after-watchdog,resources,cleanup.json}`. 검사 API39240/17963·Vite42576/5174만 종료했고 기존 미리보기27960/5173·설치 엔진48712/17863·외부 Ollama는 유지했다. 복원 명령/작업 폴더는 cleanup.json에 있다. QA 모델 상대 경로 준비와 STT미완료 시 정상404에 대한 하네스 수정은 검사 환경 교정이며 제품 결함에 포함하지 않는다.
+
+## 2026-10-18 장시간 자동 취소·청크 시각 보정과 같은30분 재개
+
+- 기능 backend만 수정했다. 전처리/STT 모델·분할 길이·pyannote/요약 모델·패키지·GPU 설정과 디자인 AI 파일은 보존했다. 프로젝트 반복 개발/engineering-reviewer 절차에서 시각/보존과 async 작업 수명을 나눠 독립 검토했다.
+- 참석자 구분은 실제 길이 기반 초기 ETA의2배를 단계 진입 시 고정 예산으로 사용한다(최소600초·최대7200초, 이번30분은5400초). heartbeat와 같은 단계의 반복 진행 알림으로 기한이 늘지 않으며 다른 단계 한도는 유지한다. 초과는 `analysis_stage_timeout`/failed로 즉시 남기고, native 반환 뒤 stop으로 덮지 않는다. async 대기가 취소돼도 실제 executor future가 끝날 때까지 job 잠금/업로드 소유권을 유지하며 context도 전달한다. 이는 실패 판정 기한이고 native 호출 즉시 종료나 완료 시간 보장은 아니다.
+- 신규·기존 STT checkpoint는 모두 병합 전 청크 길이 안으로 시각을 보정한다. 본문/원본 chunk JSON은 그대로 두고 보정에는 `timing_approximate`를 남긴다. 비정상 NaN/Inf/숫자 아님은 `ChunkTimestampError`로 구분해 모델 fallback의 전체 캐시 삭제를 피한다. 누락 end에 offset을 중복 적용하던 경로도 같은 helper에서 바로잡았다.
+- 같은60개 실제 checkpoint 재생에서539개 본문/순서·원본 SHA를 보존하고17개 끝 시각을 보정했다. 앞 검사12개는0.05초 초과 기준이며 나머지5개는0.02~0.04초다. 주요 두 건은509.72→480.00초,689.95→660.00초다. 사람 정답 기반 시각/화자 정확도 개선 수치로 쓰지 않는다.
+- 실제 소스 API17963에서 같은 작업/원본 MP4를 재개했다. STT60개를 재사용해10.109초에 구분 진입, 구분 시작→최종 완료429.766초, 재개 전체439.953초였다. final checkpoint completed·구분 완료·SSE result/completed·full recoverable(partial=false, applied=true)를 확인했다. raw539개 본문/청크 경계·원본60개 SHA 불변도 재검증했다. 준비된 모델을 읽었지만 네이티브 구분은 실제 새로 실행했다.
+- 검사 하네스의 내부 resume dict를 SSE에서 기대한 마지막 assertion은 공개 계약과 달라 실패했다. 모델을 반복하지 않고 별도 `verify_fixed_analysis.py`에서 실제 SSE/최종 state/전체 복구 API/60개 SHA/539개 경계를 다시 검증해 통과했다. 원래 run.json 실패 이력과 correction을 보존했으며 제품 오류로 세지 않는다. 근거: `.tmp/long-video-audit-20261018/evidence/{timestamp-replay.json,analysis-fixed-v1/verification.json}`.
+- 실제 웹 전체 요약 요청252.785초, 요약→파일/브라우저 재열기 전체267.514초로 완료했다. production 복구 매핑으로 QA IndexedDB를 만들고 실제 화면 버튼으로 요약/4종 다운로드를 실행했다. UI 업로드/중지/재개를 처음부터 수행한 브라우저 검사는 아니며 해당 경로는 실제 API 하네스 근거다. 요약 전후 대화록/이름 불변, reload 및 별도 브라우저 재실행 뒤108행·참석자 확인45배지/flags 보존, 페이지 JS오류0·기존17863요청0을 확인했다.
+- TXT는 전체 표시108구간이 순서대로 있고 끝1800초까지 보존됐다. MD/DOCX/HWPX는 기록 정리 범위의13개 요약 항목과 일치한다(전체 대화록 내보내기 검사가 아님). DOCX XML13개·HWPX XML6개와 ZIP CRC, HWPX 미리보기 요약도 통과했다. Word/Hancom 실제 열기/인식 정확도/실화자 수/전 쟁점 의미 보존은 미검증이다. QA meetingPurpose가 요약 첫 문장에 포함돼 순수 방송 내용 정확성 통과로 확대하지 않는다. 근거 `evidence/ui/{manifest.json,content-validation.json,record-after-browser-reopen.json,downloads.json}`.
+- 검사 backend와 하위 native 프로세스 상주 합계는 최대8167.9MiB(공유 페이지 중복 가능), 시스템 최소 여유571.8MiB/31861MiB로 관측됐고 뒤에 회복했다. 모델 적재 중 일시 압박은 있었으나 요청 실패는 없었다. 이는 STT 캐시를 재사용한 이번 재개/요약 경로이며 새 STT 모델까지 동시에 적재한 전체 최고치나 최소 지원 RAM이 아니다. 검사 도중 API를 재시작해 모델을 회수하지 않았다. native 모델 unload200 후 QA6개 PID가 모두 종료됐고 기존5173/17863/외부 Ollama는 유지됐다. `resources-fixed-v1/latest.json`, `cleanup-fixed-v1.json`에 원시 근거/복원 명령을 남겼다.
+- 집중 검사: watchdog 신규6+기존stream/stop/cancel8, 시각 helper5+cache/fresh pipeline2, 재사용취소/동일fallback2, 정렬1/표시7 통과. 오래된 unit 임시 폴더 PermissionError는 실제 native 실행 전 fixture 환경 문제로 분리하고 해당6개 기존 테스트만 개별 TemporaryDirectory로 격리했다. 독립 검토에서 invalid cache가 모델 fallback으로 전체 진행분을 삭제할 수 있다는 지적을 반영하고 재검토 차단 없음으로 종료했다. 제품 frontend/디자인/모델/패키지를 변경하지 않았다. 설치본/공개 HTTPS·60분 이상·사람 정답/편집기 관문은 별도다.

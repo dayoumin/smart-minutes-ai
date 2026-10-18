@@ -1,6 +1,12 @@
-import { getRuntimeEnvironment, getTauriInvoke } from './runtimeEnvironment';
+import { getRuntimeEnvironment, getTauriInvoke, type RuntimeKind } from './runtimeEnvironment';
 
-let cachedApiBase: Promise<string> | null = null;
+interface ResolvedApiBase {
+    base: string;
+    // False only for the desktop fallback guess made before native code or discovery answered.
+    final: boolean;
+}
+
+let cachedApiBase: { runtime: RuntimeKind; value: Promise<ResolvedApiBase> } | null = null;
 let cachedDesktopActionToken: Promise<string> | null = null;
 
 const fallbackApiBase = (): string => {
@@ -125,38 +131,37 @@ const waitForHealthyApiBase = async (baseUrl: string, attempts = 30): Promise<bo
     return false;
 };
 
+const resolveDesktopApiBase = async (nativeAttempts: number): Promise<ResolvedApiBase> => {
+    const nativeBase = await getTauriApiBase(nativeAttempts);
+    if (nativeBase) return { base: nativeBase, final: true };
+    const discovered = await discoverLocalApiBase();
+    return discovered ? { base: discovered, final: true } : { base: fallbackApiBase(), final: false };
+};
+
+// Every engine request resolves its base here, so an answered base is cached as final.
+// The web build has no native bridge to wait for; only an unanswered desktop guess is retried.
 export const getApiBase = async (): Promise<string> => {
-    const runningInTauri = isTauriRuntime();
+    const runtime = getRuntimeEnvironment().kind;
 
-    if (!cachedApiBase) {
-        cachedApiBase = getTauriApiBase(runningInTauri ? 80 : 5).then(value => {
-            if (value) return value;
-            if (!runningInTauri && import.meta.env.VITE_API_BASE_URL) {
-                return import.meta.env.VITE_API_BASE_URL;
-            }
-            if (runningInTauri) return discoverLocalApiBase().then(discovered => discovered ?? fallbackApiBase());
-            return fallbackApiBase();
-        });
+    // A base resolved before a late native bridge appeared belongs to the other runtime.
+    if (cachedApiBase?.runtime !== runtime) {
+        cachedApiBase = {
+            runtime,
+            value: runtime === 'tauri-desktop'
+                ? resolveDesktopApiBase(80)
+                : Promise.resolve({ base: import.meta.env.VITE_API_BASE_URL || fallbackApiBase(), final: true }),
+        };
     }
 
-    const apiBase = await cachedApiBase;
-    if (apiBase !== fallbackApiBase()) return apiBase;
+    const cached = cachedApiBase;
+    const resolved = await cached.value;
+    if (resolved.final) return resolved.base;
 
-    const retryApiBase = await getTauriApiBase(runningInTauri ? 20 : 5);
-    if (retryApiBase) {
-        cachedApiBase = Promise.resolve(retryApiBase);
-        return retryApiBase;
+    const retried = await resolveDesktopApiBase(20);
+    if (retried.final && cachedApiBase === cached) {
+        cachedApiBase = { runtime, value: Promise.resolve(retried) };
     }
-
-    if (runningInTauri) {
-        const discoveredApiBase = await discoverLocalApiBase();
-        if (discoveredApiBase) {
-            cachedApiBase = Promise.resolve(discoveredApiBase);
-            return discoveredApiBase;
-        }
-    }
-
-    return apiBase;
+    return retried.base;
 };
 
 export const restartDesktopBackend = async (): Promise<string> => {
@@ -167,7 +172,7 @@ export const restartDesktopBackend = async (): Promise<string> => {
     if (!await waitForHealthyApiBase(baseUrl)) {
         throw new Error('분석 서버를 다시 시작했지만 아직 응답하지 않습니다. 잠시 후 상태 새로고침을 눌러 주세요.');
     }
-    cachedApiBase = Promise.resolve(baseUrl);
+    cachedApiBase = { runtime: 'tauri-desktop', value: Promise.resolve({ base: baseUrl, final: true }) };
     await writeFrontendLog(`apiBase restarted=${baseUrl}`);
     return baseUrl;
 };

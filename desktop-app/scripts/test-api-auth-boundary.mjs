@@ -45,16 +45,17 @@ const compile = source => ts.transpileModule(source, {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText;
 const apiBaseSource = readFileSync(new URL('../src/apiBase.ts', import.meta.url), 'utf8');
-const createApiBase = ({ tauri = true, invoke, fetch }) => {
+// isTauri/getInvoke let a test attach the native bridge late; onTimeout counts every sleep.
+const createApiBase = ({ tauri = true, invoke, fetch, env = {}, isTauri = () => tauri, getInvoke = () => invoke, onTimeout = () => {} }) => {
   const exports = {};
-  runInNewContext(compile(apiBaseSource.replaceAll('import.meta.env', '({})')), {
+  runInNewContext(compile(apiBaseSource.replaceAll('import.meta.env', `(${JSON.stringify(env)})`)), {
     exports, URL, AbortController,
-    window: { setTimeout: callback => setTimeout(callback, 1), clearTimeout },
+    window: { setTimeout: callback => { onTimeout(); return setTimeout(callback, 1); }, clearTimeout },
     require: path => {
       assert.equal(path, './runtimeEnvironment');
       return {
-        getRuntimeEnvironment: () => ({ kind: tauri ? 'tauri-desktop' : 'web-local-engine' }),
-        getTauriInvoke: () => invoke,
+        getRuntimeEnvironment: () => ({ kind: isTauri() ? 'tauri-desktop' : 'web-local-engine' }),
+        getTauriInvoke: getInvoke,
       };
     },
     fetch,
@@ -109,6 +110,9 @@ await test('legacy port discovery never requests or forwards desktop credentials
     assert.equal(url, 'http://127.0.0.1:17863/api/health');
     assert.equal([...headers].length, 0);
   }
+  const discoveryRequests = calls.length;
+  assert.equal(await api.getApiBase(), 'http://127.0.0.1:17863');
+  assert.equal(calls.length, discoveryRequests, 'a discovered base is final, so discovery must not repeat');
 });
 
 await test('missing native credentials cannot turn an authenticated restart failure into ready', async () => {
@@ -133,6 +137,74 @@ await test('ordinary web base resolution neither scans ports nor invokes native 
   const api = createApiBase({ tauri: false, fetch: async () => assert.fail('Web bootstrap must not scan ports') });
   assert.equal(await api.getApiBase(), 'http://127.0.0.1:17863');
   await assert.rejects(api.restartDesktopBackend(), /데스크탑 앱에서만/);
+});
+
+await test('web base resolution never waits for a native bridge, even when configured to the default address', async () => {
+  for (const env of [{}, { VITE_API_BASE_URL: 'http://127.0.0.1:17863' }, { VITE_API_BASE_URL: 'http://127.0.0.1:18100' }]) {
+    let sleeps = 0;
+    let bridgeLookups = 0;
+    const api = createApiBase({
+      tauri: false,
+      env,
+      getInvoke: () => { bridgeLookups++; return undefined; },
+      onTimeout: () => { sleeps++; },
+      fetch: async () => assert.fail('Web bootstrap must not scan ports'),
+    });
+    const expected = env.VITE_API_BASE_URL ?? 'http://127.0.0.1:17863';
+    assert.equal(await api.getApiBase(), expected);
+    assert.deepEqual(await Promise.all([api.getApiBase(), api.getApiBase(), api.getApiBase()]), [expected, expected, expected]);
+    assert.equal(await api.getApiBase(), expected);
+    assert.equal(sleeps, 0, `no request may wait (${JSON.stringify(env)})`);
+    assert.equal(bridgeLookups, 0, `the web build must not poll the native bridge (${JSON.stringify(env)})`);
+  }
+});
+
+await test('a desktop base answered by native code is asked and logged once, even on the default port', async () => {
+  const commands = [];
+  const api = createApiBase({
+    invoke: async command => {
+      commands.push(command);
+      if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
+      if (command === 'write_frontend_log') return;
+      assert.fail(`Unexpected native command: ${command}`);
+    },
+    fetch: async () => assert.fail('A native answer must not trigger port discovery'),
+  });
+  const base = 'http://127.0.0.1:17863';
+  assert.deepEqual(await Promise.all([api.getApiBase(), api.getApiBase(), api.getApiBase()]), [base, base, base]);
+  for (let call = 0; call < 5; call++) assert.equal(await api.getApiBase(), base);
+  assert.deepEqual(commands, ['get_backend_base_url', 'write_frontend_log']);
+});
+
+await test('an unanswered desktop guess keeps asking until native code answers, then stops', async () => {
+  let bridge;
+  const asked = [];
+  const api = createApiBase({
+    getInvoke: () => bridge,
+    fetch: async () => { throw new TypeError('connection refused'); },
+  });
+  assert.equal(await api.getApiBase(), 'http://127.0.0.1:17863');
+  bridge = async command => {
+    asked.push(command);
+    if (command === 'get_backend_base_url') return 'http://127.0.0.1:18200';
+    if (command === 'write_frontend_log') return;
+    assert.fail(`Unexpected native command: ${command}`);
+  };
+  assert.equal(await api.getApiBase(), 'http://127.0.0.1:18200');
+  assert.equal(await api.getApiBase(), 'http://127.0.0.1:18200');
+  assert.deepEqual(asked, ['get_backend_base_url', 'write_frontend_log']);
+});
+
+await test('a base resolved as web is replaced once the native bridge appears', async () => {
+  let tauri = false;
+  const api = createApiBase({
+    isTauri: () => tauri,
+    getInvoke: () => (tauri ? async command => (command === 'get_backend_base_url' ? 'http://127.0.0.1:18300' : undefined) : undefined),
+    fetch: async () => assert.fail('Neither runtime should scan ports here'),
+  });
+  assert.equal(await api.getApiBase(), 'http://127.0.0.1:17863');
+  tauri = true;
+  assert.equal(await api.getApiBase(), 'http://127.0.0.1:18300');
 });
 
 await test('the real development seed helper uses authenticated requests and preserves encoded IDs', async () => {

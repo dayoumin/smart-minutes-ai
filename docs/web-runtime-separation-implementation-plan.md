@@ -1,7 +1,7 @@
 # 웹 런타임 분리 구현 계획
 
 - 작성일: 2026-08-13
-- 상태: 2단계 완료, 3단계 3C-0B host·installer target preflight 실물 검증 완료·installer 소비 소스 완료·실제 installer build/smoke 대기
+- 상태: 2026-10-18 점검 — 웹 인증·격리 API 회귀, 설치 r1·frozen smoke 및 loopback TLS 실모델 UI 2건·다운로드 8개 확인; 요약 준비 상태·실모델 후 종료 잔류 P2와 공개 HTTPS/LNA·서명·다른 PC·SQLite 관문 열림
 - 상위 결정: `docs/web-local-engine-followup-plan.md`
 - 목표 제품: HTTPS 웹 UI + 사용자 PC의 Windows 로컬 엔진
 - 후속 제품: Tauri 데스크톱 앱은 웹 MVP 이후 별도 범위
@@ -254,9 +254,9 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 | 2. probe·pairing·세션 PoC | 완료 | probe·exact origin·격리 default deny·capability·일회성 code·pairing/session lifecycle·프런트 coordinator·mock 상태 전이 통과; 실제 helper는 3단계에서 닫음 |
 | 3. 로컬 엔진 설치·업데이트 PoC | 부분 완료 | 3A host 경계와 3B frozen exe·실제 helper·쓰기 잠금·relocation 보존·정상 종료 통과; 3C current-user installer·실제 재설치/update·서명·rollback 필요 |
 | 4. 웹 연결·복구 UX | preview 구현 진행 | 실제 Vite 화면·Mobbin 비교 기반 계약과 preview 연결 작업 레일·pairing dialog·상태 view model 구현; mock 흐름 통과, 실제 다운로드와 Chrome/Edge 권한 smoke 필요 |
-| 5. 전체 API 클라이언트 전환 | 부분 구현·검증 대기 | 2026-10-14 읽기 점검: 분석·복구·상세·설정·내보내기·삭제의 공통 클라이언트 전환 소스가 있으나 미커밋 변경 포함. 음성 재생·401 갱신·전체 인증 회귀·실환경 증거는 미완료; 출시 관문은 열림 |
+| 5. 전체 API 클라이언트 전환 | 웹 코드·격리 회귀 통과, 실환경 대기 | 공통 클라이언트·401 갱신·웹 음성 중계·실제 API 인증 회귀를 2026-10-18 재확인. 실제 HTTPS·설치 엔진 통합은 미완료; Tauri native 재생은 별도 호환 관문 |
 | 6. SQLite 기준 저장소 | 미착수 | 백업·가져오기·충돌·FTS·재실행 안전성 필요 |
-| 7. 브라우저 파일 동작 | 미착수 | 실제 다운로드·한글 파일명·세션 만료 검증 필요 |
+| 7. 브라우저 파일 동작 | 부분 구현·실환경 대기 | 인증 다운로드·범위별 실제 API 파일·로컬 TXT 일관성 검사 구현 및 통과. 실제 HTTPS 다운로드·한글 파일명·취소·세션 만료와 Word/한컴 열기 증거 필요 |
 | 8. 웹 MVP 통합 검증 | 미착수 | 실제 HTTPS·Chrome/Edge·신규/기존 PC 증거 필요 |
 
 `부분 완료`를 다음 단계 진행과 동일하게 보지 않는다. 의존하지 않는 작은 PoC는
@@ -538,6 +538,317 @@ enforcement는 5단계 전환까지 끈다. 다음 단계는 실제 Windows help
 - 환경: `D:\Projects\audio`에서 `corepack pnpm --dir desktop-app dev --host 127.0.0.1 --port 5196 --strictPort`, 프로젝트 Playwright cache와 별도 browser context로 검사했다. 실제 앱 제목 `바로록` 및 UI 경로로 대상을 확인한다. 검사 후 이 세션 Vite만 정리하며 기존 디자인 서버와 사용자 데이터는 건드리지 않는다.
 - 한계·다음: 현재 대표 화면/키보드 묶음은 완료했지만 A4 전체 완료나 접근성 인증은 아니다. 실제 NVDA/Narrator 읽기·native 200% 확대·강제 색상/낮은 높이 조합은 출시 위험 표에 열어 두고, 다음 A4 실제 짧은 WAV/video·모델 미준비·생성 근거/출처 품질을 별도 수행한다. 실제 HTTPS·설치 엔진과 A5/A6 관문도 유지한다. 전체 suite·빌드·커밋·push는 실행하지 않았다.
 
+### 6.6 2026-10-17 기능 점검 재개 계획 — 디자인 작업 병행
+
+이번 목표는 현재 노출된 기능이 사용자 목적대로 작동하는지 에이전트로 점검할 실행 계획을 확정하는 것이다. 6.5의 A1~A6와 기존 증거를 이어받는다. 계획 수립 당시에는 읽기 조사와 문서 수정만 수행했다. 이후 실제 실행 증거는 이 절 마지막의 날짜별 결과에 기록한다.
+
+#### 범위와 기준
+
+- 조사 기준은 `HEAD eea2ab6`이다. 사용자 변경 `.claude/launch.json`은 제외한다. 실행 때마다 HEAD·미커밋 변경·대상 파일을 다시 기록하고, 검사 도중 다른 AI가 관련 파일을 바꾸면 영향을 받은 결과만 재검증한다.
+- 대상은 HTTPS 웹 + Windows 로컬 엔진의 기능이다. 디자인 AI가 소유한 색상·배치·스타일은 제외하되 버튼 실행, 필수 입력, 비활성 조건, 키보드 접근, 입력 보존과 오류 복구는 기능으로 본다. 기능 결함을 고칠 때 공유 UI 파일 편집은 디자인 작업과 조율한다.
+- 현재 기본 진입은 새 기록 + 최근 회의록이다. 이어하기 후보가 있으면 복구 카드가 우선한다. 숨겨진 `기록 찾기`는 개발 경로 `?view=archive`의 보조 회귀로만 다룬다. 음성만 추출하는 도구는 `SHOW_AUDIO_EXTRACT_TOOL=false`이므로 현재 노출 기능의 필수 목록에서 제외한다.
+- 10/15 A1~A4 통과는 당시 증거다. `3f61250..eea2ab6`에서 화면 진입·상세·사이드바·생성/다운로드 코드뿐 아니라 backend의 `summary_display.py`와 MD/DOCX/HWPX export도 바뀌었다. main route가 그대로여도 이 의존성을 쓰는 다운로드 증거는 갱신해야 한다.
+- 전체 Playwright, 실제 장시간 처리, 모델 비교 실험, 새 저장소 구현, portable/Tauri 빌드, 배포·커밋·push는 이번 기본 점검 범위에서 제외한다. 출시 전 필요한 실환경 항목은 기존 위험 표에 유지한다.
+
+#### 에이전트 분담과 판정
+
+| 담당 | 독립 점검 범위 | 반환할 증거 |
+| --- | --- | --- |
+| 사용자 흐름 에이전트 | 새 기록·파일 입력·최근/기존 기록·폴더·설정 이동·중지/취소/이어하기·조작 가능 여부 | 시작 상태 → 행동 → 기대 결과, 실제 관찰, 관련 UI 검사 |
+| 데이터 에이전트 | 편집/저장/재열기·생성 실패·다른 회의 응답 격리·참석자명 삭제·내보내기 내용 | 화면·IndexedDB·엔진 JSON·다운로드의 비교, 실제 파일 또는 집중 API 검사 |
+| 연결·복구 에이전트 | 엔진/모델 준비·코드 연결(pairing)·세션 만료·권한·재연결·실제 엔진 실행 조건 | 정상/거부/복구 결과, 실행 환경과 mock 여부, 미확인 경계 |
+| 주 에이전트 | 기준 고정·실행 순서·중복 제거·심각도와 완료 판정 | 통합 결과 및 다음 최소 작업 묶음 |
+
+읽기 분석만 병렬로 한다. 브라우저·테스트·추론·서버·겹치는 편집은 순차 실행한다. 각 기능은 `통과 / 재현된 결함 / 환경 차단 / 미검증 / 현재 범위 밖`으로 판정한다. 코드에 존재하거나 mock 검사만 통과한 기능을 실제 엔진 통과로 표시하지 않는다. 실패는 제품 결함, 바뀐 요구와 맞지 않는 테스트, 도구/서버 환경 문제로 먼저 분류한다.
+
+#### 우선 시나리오
+
+| ID | 준비 상태와 행동 | 합격 기준 | 재사용할 증거·남은 확인 |
+| --- | --- | --- | --- |
+| FN-01 | 빈 기록/6개 이상 기록/중지 초안/취소 정리 대기에서 새 기록·최근 기록 열기 | 최근 5개와 복구 우선순위가 맞고, 분석 잠금 중에도 기존 기록 열기 가능 | `test:new-record-home-flow`; 최신 기본 진입부터 확인 |
+| FN-02 | 엔진 없음·모델 미준비 → 설정/연결 → 준비 후 작성 복귀 | 준비 전 시작 차단, 제목·목적·파일 보존, 준비 후 시작 가능; 요약/참석자 모델 부재가 가능한 작업까지 막지 않음 | `test:writer-model-readiness`, 필요 시 연결 UI·모델별 backend 검사. 기존 readiness는 미준비→모델 탭까지만 확인하므로 복귀·실사용은 별도 |
+| FN-03 | 실제 모델로 짧은 WAV 1개와 영상 1개 분석·저장·재열기·재생 | mock 대화록이 아닌 실제 발언 저장, 작업 완료/파일/진행 상태 일치, 재열기 보존 | A4 실제 추론 증거 필요. 기존 manifest에서 파일 존재·길이 확인 후 선택 |
+| FN-04 | 분석 중 중지/취소·실패 후 재시도·같은 파일 이어하기 | 중지 결과 재사용, 취소 후 새 실행, 중복 분석 없음, 취소 대기 잠금과 유효 기록 보존 | analysis-stop의 `failure-recovery`·`pending-cancellation-transition`, resume 및 필요한 resume-draft 필터 |
+| FN-05 | 대화록 저장 후 원본/모델 있음·없음에서 참석자 구분 시작·중지·재실행 | 가능한 동작만 제공, 실패해도 대화록 보존, 준비 후 복구 가능 | `test:meeting-detail-flow` 및 실제 다화자 짧은 표본 |
+| FN-06 | A 회의 정리/보고서 생성 중 B 이동, 재생성 실패, 편집→저장→재열기 | A 결과는 A에만 저장, B 내용·모드 불변, 실패 시 정상 결과 보존, 화면·저장값 일치 | meeting-detail·edit-guard·report-tab-edge; 기존 A3 교차 회의 증거는 주제 생성 대표 경로임 |
+| FN-07 | 발언/이름 편집과 이름 비우기 후 대화록·정리·보고서·전체 다운로드 | 최신 내용과 범위가 맞고 지운 이름이 부활하지 않음, 주제 제목 규칙이 화면/파일에 일치 | export-consistency·download-scope와 아래 실제 API 파일 검사. Word/한컴 실열기는 별도 |
+| FN-08 | 폴더 생성·이름/고정/순서 변경·기록 이동·폴더 삭제 후 재열기, 설정 저장 후 재진입 | 선택한 기록/설정이 유지되고 폴더 삭제가 회의록을 삭제하지 않음; 모델 작업 실패 후 다시 조작 가능 | meeting-detail의 폴더/고정 시나리오와 settings-model-management; 실제 설정 지속성은 별도 비교 |
+| FN-09 | 긴 파일 메타데이터 경계·저장공간 부족·사전점검 실패 주입 | 안내/차단과 복구가 일관되고 파일/입력 보존 | `backend.test_storage_preflight`; 30/90/140분 UI 경계 단언은 추가 확인 대상. 실제 긴 파일 완주는 후속 |
+
+#### 실행 순서와 최소 명령
+
+1. **변경 영향 고정**: HEAD/diff와 현재 노출 기능을 대조한다. 기존 통과 증거의 대상 코드·의존성이 유지됐는지 확인한다. 코드 변경이 있는 후속 묶음에는 typecheck·변경 파일 lint를 포함한다.
+2. **백엔드 변경 회귀**: 디자인 화면의 완료를 기다리지 않고, 최근 주요 주제 표시 변경에 해당하는 아래 7개 테스트부터 순차 실행한다. 공통 인증/route가 그대로라면 보안 전체 모듈은 반복하지 않는다.
+
+   ```powershell
+   # D:\Projects\audio
+   & .\backend\.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest backend.test_summary_display backend.test_authenticated_web_flow.AuthenticatedWebFlowTest.test_actual_export_files_preserve_current_content_and_scope
+   corepack pnpm --dir desktop-app test:export-consistency
+   ```
+
+3. **현재 UI 기능 회귀**: FN-01 → FN-02 → FN-04를 첫 UI 묶음으로 실행한다. 이후 상세·폴더·생성·다운로드를 FN-05~08로 나눠 해당 검사만 실행한다. 기존 디자인 서버는 재사용·중지하지 않고, 확인한 빈 포트에 검사 전용 Vite를 시작해 명령·포트·작업 폴더를 기록한다.
+
+   ```powershell
+   # 실행 시 빈 포트인지 먼저 확인. 5197은 예시이며 이번에 시작하지 않았다.
+   corepack pnpm --dir desktop-app dev --host 127.0.0.1 --port 5197 --strictPort
+   $env:PLAYWRIGHT_BROWSERS_PATH='D:\Projects\audio\.cache\ms-playwright'
+   $env:APP_URL='http://127.0.0.1:5197/'
+   corepack pnpm --dir desktop-app test:new-record-home-flow
+   $env:APP_URL='http://127.0.0.1:5197/?view=minutes'
+   corepack pnpm --dir desktop-app test:writer-model-readiness
+   corepack pnpm --dir desktop-app test:analysis-stop-flow failure-recovery
+   corepack pnpm --dir desktop-app test:analysis-stop-flow pending-cancellation-transition
+   ```
+
+   상세·설정 검사는 각 스크립트의 진입 URL에 맞춰 `APP_URL`을 다시 지정한다. 연결 preview 검사는 `?view=minutes&localEngineConnection=1`을 유지한다. 자동으로 다른 서버를 재사용하지 않도록 `APP_URL`을 명시하고 앱 제목·진입 화면으로 대상을 확인한다. 검사 후 이 세션이 시작한 서버/브라우저만 정리한다.
+
+4. **실제 처리·복구와 결과 품질**: FN-03/05를 개발 엔진과 설치 엔진으로 구분해 실행한다. 실행 파일/명령·`/api/health`의 backend 경로·실제 분석 모드·모델·출력 폴더를 기록하고 격리한 테스트 기록만 사용한다. 기존 사용자 모델을 지워 미준비를 만들지 않는다. `docs/audio-testset-manifest.csv`의 현재 행은 기준 대화록이 없으므로, 품질 판정 전에 선택 구간을 사람이 청취해 핵심 발언·참석자·결정/할 일의 비교 기준을 만든다. 발언 누락/반복·화자 혼동·근거 없는 정리 내용을 확인하고 표본 통과를 전체 품질 보장으로 확대하지 않는다. 전처리/모델 기본값은 바꾸지 않는다.
+5. **실환경 관문**: A5/A6의 확정 HTTPS 주소·설치 후보·지원 Chrome/Edge·필요한 다른 PC가 준비되면 권한 승인/거부/재승인→연결→실제 분석→인증 재생/탐색→저장/다운로드를 확인한다. 준비되지 않은 관문은 미검증으로 유지한다. 실제 문서 열기, 장시간 재생, 설치/업데이트, 캐시 독립 보존은 기존 출시 위험 표와 6단계 상태를 갱신하며 중복 위험 행을 만들지 않는다.
+
+#### 기록과 종료 조건
+
+- 결과에는 `시나리오 ID / 소스 기준 / 환경·mock 여부 / 정확한 명령·입력 / 기대·실제 결과 / 판정 / 재현 근거 / 다음 조치`를 남긴다. 테스트 개수만으로 완료하지 않는다.
+- 첫 묶음은 backend 변경 회귀와 FN-01/02/04의 증거 확보까지다. 재현된 결함은 현재 사용자 흐름·저장·인증을 막는지 분류해 수정 묶음을 정한다. 이번 계획 수립과 실제 기능 점검 통과를 구분한다.
+- P0/P1과 현재 흐름·데이터·인증·검증 신뢰를 막는 P2가 남으면 해당 기능은 완료 처리하지 않는다. 나머지 유효한 후속은 기존 `todo.md`/출시 위험 표에 기록한다. 같은 범위의 검사·의존성이 유지되면 반복하지 않는다.
+- 이번 계획의 근거는 독립 에이전트 3개의 읽기 조사와 주 에이전트의 현재 diff 대조다. 제품 코드·테스트·서버·모델·배포 설정은 변경하지 않았다.
+
+#### 최근 변경 재검증 실행 결과 — 2026-10-17
+
+- 범위: `3f61250..eea2ab6`의 주요 주제 표시·내보내기 변경(도입 커밋 `6ae28f2`). backend helper와 MD/DOCX/HWPX·전체 TXT, frontend의 동일 목록/로컬 TXT builder와 기존 이름·편집·범위 계약만 확인했다. 주 에이전트가 검사를 순차 실행하고 독립 에이전트 2개가 backend 데이터 계약과 frontend/검증 공백을 나눠 읽기 리뷰했다.
+- 기준 보존: `HEAD eea2ab6c0762a3c7a7e4dc357025d1f1653ee497`. 대상 helper/exporter/검사/main/repository 등 11개 파일의 `git hash-object` 결과가 실행 전후 같았다. 실행 중 다른 AI의 App·작성·최근 기록·사이드바·스타일 및 UI 시뮬레이션 변경이 생겼지만 이 점검에서 편집하거나 검사 결과로 보증하지 않았다. 기존 `.claude/launch.json`과 계획 문서 변경도 보존했다.
+- 환경: Windows PowerShell, 작업 폴더 `D:\Projects\audio`, 기존 `backend\.venv-desktop`와 `desktop-app/node_modules` 사용. API 테스트는 임시 config/세션/출력/다운로드를 격리하고 실제 serializer·route·파일 응답을 실행한다. 브라우저·실제 모델·TCP/TLS·사용자 설치 엔진을 실행한 증거는 아니다. 서버·모델 설치·빌드·제품 코드/테스트 편집·커밋·push는 수행하지 않았다.
+
+| 검사 | 결과 | 확인 범위 |
+| --- | --- | --- |
+| backend 주요 주제·실제 다운로드 집중 검사 | 7개 통과 | 제목 우선/공백 중복 제거/fallback/일부 잘못된 값, MD/DOCX/HWPX 주제 목록, 실제 인증 API의 범위×형식 11조합 |
+| `test:export-consistency` | 9개 통과 | 편집 대화록 우선순위, 지운/부분/legacy 이름, 현재 참석자 요약, backend 출력 없는 payload/대체 텍스트, 주요 주제 제목 우선·fallback |
+| 실제 helper 경계 비교 | 한국어·ASCII 중복·빈 제목 fallback 일치, Unicode 1건 불일치 재현 | 아래 P2. MD·전체 TXT 실제 파일에서도 확인, 본문과 입력 객체 보존 |
+
+실행 명령:
+
+```powershell
+# D:\Projects\audio, 순차 실행
+& .\backend\.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest -v backend.test_summary_display backend.test_authenticated_web_flow.AuthenticatedWebFlowTest.test_actual_export_files_preserve_current_content_and_scope
+corepack pnpm --dir desktop-app test:export-consistency
+```
+
+API 하위 조건은 대화록 TXT, 기록 정리 MD/DOCX/HWPX, 보고서 MD/DOCX/HWPX, 전체 TXT/MD/DOCX/HWPX다. 실제 response bytes의 최신 내용·포함/제외 범위·지운 이름·생성 당시 보고 양식·MIME/첨부 파일명·ZIP CRC/XML과 원본 JSON 비변경을 확인했다. DOCX/HWPX 편집기 렌더링은 확인하지 않았다. backend 실행 시 기존 Starlette/httpx 폐기 예정 경고가 있었으며 테스트 오류와 구분했다.
+
+**재현된 P2 — Unicode 주제 목록 불일치, 후속 수정 대기.** 유효한 문자열 제목 `Maße`, `Masse`를 가진 두 section을 넣으면 실제 frontend `getDisplayTopics`는 두 항목, backend `get_display_topics`는 첫 항목만 반환한다. frontend `meetingGeneration.ts`는 `toLocaleLowerCase()`, backend `pipeline/summary_display.py`는 `casefold()`를 사용하기 때문이다. backend MD와 `plain_text=True` 전체 TXT 파일의 주요 주제에도 첫 항목만 남는 것을 재현했다. 두 section 본문(`dimensions`, `mass`)과 원래 입력 객체는 보존됐다. DOCX/HWPX도 같은 helper를 사용하지만 이 Unicode 입력으로 두 형식의 파일을 별도 재현하지는 않았다.
+
+재현 입력은 `topics=[]`, `topicSections=[{topic:'Maße',summary:'dimensions'},{topic:'Masse',summary:'mass'}]`이고 backend에는 `topic_sections` 키로 전달했다. PowerShell 표준 입력으로 `desktop-app`에서 `node --input-type=module`을 실행해 실제 TS helper를 기존 검사와 같은 AST/VM 방식으로 읽었다. 이어서 루트에서 `backend\.venv-desktop\Scripts\python.exe -B -X utf8 -`로 실제 Python helper·`export_markdown`을 임시 폴더에서 실행했다. 한국어 공백 중복, ASCII `Budget/BUDGET`, 빈 section 제목 뒤 `topics` fallback은 양쪽 결과가 같았다.
+
+- 판정: 기본 회귀 16개는 통과했지만 화면/파일의 모든 문자열 일관성을 완료 처리하지 않는다. 재현된 P2는 `todo.md`에 승격했다. 일반 한국어 대표 입력에서 차단은 없으며 다음 UI 점검 묶음 진행은 가능하다. 점검 요청 범위를 유지해 수정은 하지 않았다.
+- 확인 공백: 비문자 section 제목은 frontend가 버리고 backend는 문자열로 바꾼다. 정상 생성은 이미 제목을 문자열로 정규화하므로 기존 사용자 기록 발생 근거 없이 결함으로 단정하지 않는다. 동일 fixture를 양쪽에 넣는 검사는 향후 규칙 통일 시 보강한다.
+- 남은 관문: FN-01/02/04 최신 UI, 실제 WAV/video·모델 준비·참석자 구분, Word/한컴 실열기·실제 HTTPS·설치 PC는 이번에 실행하지 않았다. 실제 문서/HTTPS 검증은 기존 출시 위험 표의 동일 행을 유지한다.
+
+#### 새 기록·모델 미준비·실패/취소 복구 점검 — 2026-10-17
+
+- 범위: FN-01/02/04. 독립 에이전트 3개가 새 기록/이동, 모델 준비, 실패/취소 보존을 나눠 읽기 검토하고 주 에이전트가 브라우저 검사를 순차 실행했다. 시각 디자인·제품/기존 테스트 수정·모델 설치·실제 추론은 제외했다.
+- 기준: 시작 `eea2ab6` + 다른 AI의 미커밋 UI 변경. 종료 시 다른 AI의 커밋으로 HEAD는 `8754c59`가 됐지만 App/Writer/최근 기록/설정/저장/연결 및 대상 검사 등 18개 파일의 해시가 시작과 같았다. 다른 AI의 스테이징과 `.tmp-index-check` 파일은 보존했다. 이 점검의 변경은 결과 문서와 Git 제외 경로 `.tmp/functional-audit-2026-10-17/flow-probes.mjs`뿐이다.
+- 환경: `D:\Projects\audio`에서 `corepack pnpm --dir desktop-app dev --host 127.0.0.1 --port 5197 --strictPort`. HTTP 제목 `바로록`·실제 `/src/main.jsx`·브라우저 DOM으로 대상을 확인했다. 프로젝트 Playwright cache와 각 검사 전용 browser context를 사용해 API를 mock하고 IndexedDB/localStorage를 격리했다. 네트워크/브라우저 권한·실제 엔진·실제 파일 코덱 검증은 아니다. 검사 후 이번 서버(PID 23376)를 Ctrl+C로 종료했고 5197 LISTENING이 사라진 것을 확인했다.
+
+| 검사 | 결과 | 확인 범위 |
+| --- | --- | --- |
+| 표준 `test:new-record-home-flow` | 환경 차단으로 기록, 통과 처리 안 함 | 첫 실행은 초기 `page.goto` 30초, 두 번째는 첫 heading 10초 대기 초과. 이후 진단 브라우저에서 실제 앱 렌더링 확인 |
+| 별도 기능 전용 home probe | 4장면 통과 | 빈 새 기록, 최근 5개/그룹/열기, 복구 카드/선택, 취소 대기 중 분석 차단과 기존 기록 열기 |
+| `test:writer-model-readiness` | 통과 | 필수 모델 미준비 안내·시작 차단·모델 탭 이동 |
+| `test:analysis-stop-flow failure-recovery` | 통과 | 모의 오류 후 제목/파일 보존·입력 확인·초점·재시도, 정확한 재요청 횟수 |
+| `test:analysis-stop-flow pending-cancellation-transition` | 통과 | 지연 partial/정리 409에서 새 분석 잠금과 중복 요청 차단, 파일 교체/지연 metadata 보호 |
+| 준비 완료·설정 왕복·최근 기록 이동 probe | 입력 보존 통과, 초점 결함 재현 | 제목·목적·File 이름 유지, 시작 활성화; 최근 기록 이동 거부/승인→상세→로고 복귀 입력 유지; Escape 닫기 뒤 초점 BODY |
+| 취소 보존 계약 probe | 안내/동작 불일치 재현 | 격리 DB에 진행 중 대화록 1건 준비→실제 취소 UI 실행→기존 취소 검사에서 기록 0건 확인 |
+
+실행 명령은 아래와 같다. 표준 home 검사는 실패 이력이며 별도 기능 probe 통과로 덮어쓰지 않는다.
+
+```powershell
+$env:PLAYWRIGHT_BROWSERS_PATH='D:\Projects\audio\.cache\ms-playwright'
+$env:APP_URL='http://127.0.0.1:5197/'
+corepack pnpm --dir desktop-app test:new-record-home-flow
+node .tmp/functional-audit-2026-10-17/flow-probes.mjs home
+$env:APP_URL='http://127.0.0.1:5197/?view=minutes'
+corepack pnpm --dir desktop-app test:writer-model-readiness
+corepack pnpm --dir desktop-app test:analysis-stop-flow failure-recovery
+corepack pnpm --dir desktop-app test:analysis-stop-flow pending-cancellation-transition
+node .tmp/functional-audit-2026-10-17/flow-probes.mjs readiness
+node .tmp/functional-audit-2026-10-17/flow-probes.mjs cancel-contract
+```
+
+home probe는 현재 시뮬레이션 함수를 메모리에서 읽어 실행하며 첫 장면의 순수 배치 측정을 제외하고 10초 명시 대기를 30초로 늘렸다. 기존 테스트 파일은 그대로다. 나머지 최근 목록/복구/취소 대기 장면의 기능 단언은 유지했다. 표준 검사 초기 진입 실패는 제품 기능 실패로 단정하지 않는다. 후기 서버 로그에는 다른 AI의 `.tmp-index-check` 하위 HTML/tsconfig 변경에 따른 full reload·cache clear와 CSS HMR도 있었다. 공유 작업 트리의 외부 reload는 남은 검사 환경 한계이며 기능/입력 보존 통과를 전체 디자인 회귀 통과로 확대하지 않는다.
+
+**P2 — 취소 안내가 보존 범위를 과장한다.** `MeetingWriter.tsx:2636`은 취소 시 지금까지 만든 대화록·정리 결과를 남긴다고 말하지만 `deleteMeetingRecordForJob`은 편집/정리 결과 없는 `diarization_in_progress` 기록을 삭제한다. 완료·중지·실패 기록이나 사용자 결과가 있는 기록의 보호와는 별개다. 별도 probe에서 실제 취소 패널 문구와 취소 전 `segments=1`의 진행 중 기록을 확인했고, 취소 후 기존 검사 단언 `meetings.length===0`이 통과했다. 전체 SSE를 취소까지 보류하는 기존 fixture 특성 때문에 중간 기록은 실제 partial 저장 형태로 DB에 준비했다. 실제 STT가 중간 결과를 생성한 증거는 아니다. 초기 probe의 partial 저장 대기는 이 fixture 특성으로 실패했고 DB 준비 방식으로 바꿔 재검증했다. 데이터 처리 정책에 맞게 안내하거나 정책을 명시하는 후속을 TODO에 기록했다.
+
+**P2 — 모델 준비 완료 후 설정을 닫으면 키보드 초점이 빠진다.** 미준비 화면의 `모델 준비`로 설정 진입→mock 모델 준비 완료→실제 설정 새로고침→Escape 닫기에서 제목·목적·선택 파일과 시작 가능 상태는 유지됐으나 `document.activeElement`가 BODY였다. 준비 완료로 기존 trigger가 제거되면 `Settings.tsx:465`의 isConnected 조건에서 초점 복귀가 생략되고 대체 대상이 없다. 다음 유효 조작으로 초점을 복귀시키는 후속을 TODO에 기록했다.
+
+- 재현하지 못한 후보: 이전 missing 응답을 보류하고 새 ready 응답을 먼저 완료한 뒤 이전 응답 완료까지 기다렸으나 최종 버튼은 `분석 시작`, enabled였다. 두 번의 probe에서 준비 차단 회귀는 관찰되지 않았다. 코드상 요청 세대 보호 공백만으로 결함 수에 넣지 않는다. 위 외부 reload 한계도 있어 요청 경합의 안전성을 전부 입증한 것으로 처리하지 않는다.
+- 남은 공백: 실제 모델 받기/추론, 요약·참석자 모델별 실제 제한, 완료 전에 설정을 닫은 뒤의 다운로드 반영, 정리 성공 후 자동 잠금 해제/실제 재시작, 새로고침/브라우저 프로필 손실 복구는 이번 증거에 포함하지 않는다. 연결 preview의 준비 문구 후보도 실제 장면 검증 전에는 확정하지 않는다.
+- 판정: 기본 조작·입력 보존·실패 재시도·취소 대기 잠금의 좁은 증거를 확보했다. 현재 흐름의 P2 두 건과 표준 home 검사 환경 차단을 남겼으므로 FN-01/02/04 전체 완료나 출시 가능으로 표시하지 않는다. 다음 수정 묶음은 취소 보존 안내·준비 후 초점 복귀이며 다른 AI 소유 UI 파일의 편집은 조율한 뒤 진행한다.
+
+#### 취소 안내·설정 초점 수정과 격리 재검증 — 2026-10-17
+
+- 수정 범위: `MeetingWriter.tsx`의 취소 설명과 초점 복귀 표식, `Settings.tsx`의 복귀 처리, 관련 시뮬레이션 2개만 변경했다. 보존/삭제 정책·API·CSS·레이아웃·다른 AI의 회의 상세 작업은 변경하지 않았다. 시작 HEAD는 `8754c59`, 검증 중 다른 AI가 `12e4883`/`3ab5b87`을 커밋했으며 해당 변경은 보존했다.
+- 취소 안내: 이번 분석의 임시 대화록 삭제와 완료·중지·실패한 회의록, 본문 수정·확정 대화록 및 정리 결과의 보존을 구분한다. 독립 agent가 일반적인 제목/목적/이름 편집까지 보존한다고 읽힐 수 있다고 지적해, 최종 문구는 **본문 수정·확정**으로 좁혔다. 실제 보존 로직은 그대로다.
+- 초점 복귀: 원래 열었던 요소가 표시·활성 상태면 우선 복귀한다. 모델 준비로 그 요소가 사라졌다면 열기 당시의 작성 영역 안에서만 표시·활성 대상을 찾는다. 파일이 있으면 분석 시작, 없으면 파일 선택 영역이다. 다른 화면의 숨긴 Writer나 숨겨진 파일 input으로 이동하지 않으며 클릭·파일 선택창·분석을 자동 실행하지 않는다.
+- 격리 환경: 활성 `desktop-app` 밖의 `.tmp\functional-fix-20261017\desktop-app`에 src/public/scripts·실행 설정을 복사하고 기존 node_modules는 junction으로 재사용했다. 복사본 `vite.config.js`의 `cacheDir`는 `fileURLToPath(new URL('./.vite-audit-cache', import.meta.url))`로 분리했다. 원본 Vite 설정과 다른 AI의 서버·파일을 변경하지 않았다. 원본 앱과 검사본의 수정 4개 파일 및 기존 home 검사, App/최근 기록/CSS 해시가 일치했다.
+- 작업 폴더는 위 격리 앱 폴더다. 서버 명령은 `corepack pnpm dev --host 127.0.0.1 --port 5198 --strictPort`. 실제 제목 `바로록`과 새 기록 heading으로 진입을 확인한 뒤 **원본 home 시뮬레이션의 대기 시간·단언을 바꾸지 않고** 실행했다. 이전 공유 환경의 시간 초과는 이 격리 실행에서 재현되지 않았다. 이 결과를 모든 PC의 콜드 스타트 성능 보장으로 확대하지 않는다.
+
+| 검사 | 결과 |
+| --- | --- |
+| `corepack pnpm test:new-record-home-flow` | 원본 4장면 전체 통과; 별도 우회 probe가 아님 |
+| `corepack pnpm test:writer-model-readiness` | 미준비 차단·모델 탭, 기존 opener 복귀, 준비 완료 후 분석 시작/파일 선택 초점, 제목·목적·File 보존 통과 |
+| `corepack pnpm test:analysis-stop-flow pending-cancellation-transition` | 수정한 취소 설명 노출·취소 대기 잠금·중복 실행 차단 통과 |
+| `corepack pnpm test:resume-draft-flow stopped-meeting-keeps-generated-sections failed-meeting-keeps-generated-sections resume-cancel-keeps-user-result` | 중지·실패 기록의 생성 결과 및 이어하기 취소 후 사용자 결과 보존 3장면 통과 |
+| `corepack pnpm typecheck` | 격리 앱 최종 소스 통과; 원본 작업 폴더 타입 검사도 통과 |
+| 원본 작업 폴더의 변경 파일 lint·diff 검사 | 통과 |
+
+Playwright 실행 시 `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`, home은 `APP_URL=http://127.0.0.1:5198/`, 나머지는 `APP_URL=http://127.0.0.1:5198/?view=minutes`를 명시했다. 원본 변경 파일 lint 명령은 `corepack pnpm --dir desktop-app exec eslint src/Settings.tsx src/MeetingWriter.tsx scripts/simulate-writer-model-readiness.mjs scripts/simulate-analysis-stop-flow.mjs`다. 초기 lint가 렌더 중 ref 읽기를 지적해 작성 영역 기억을 effect 설정으로 옮겼으며 최종 검사에서는 오류가 없다.
+
+- 독립 검토: agent 2개가 각각 취소 정책·문구와 초점/StrictMode/숨긴 영역/검증 범위를 검토했다. 문구 finding을 수정한 뒤 해당 finding 재검토에서 해소됐고, 최종 P0/P1·현재 목표 P2 차단은 없다. 두 기존 P2는 TODO에서 완료로 바꿨다. Unicode 주제 목록의 별도 P2는 계속 열어 둔다.
+- 정리: 검사 전용 서버 PID 33604를 Ctrl+C로 종료했고 5198 LISTENING이 사라진 것을 확인했다. 이번 세션은 Git index·커밋·push를 조작하지 않았다. 격리 소스·캐시는 Git 제외 경로에만 남긴다.
+- 한계·다음: API와 모델 상태는 mock이다. 이번 수정·기능 회귀와 home 환경 차단은 해소했지만 실제 모델 받기/추론·HTTPS·설치 엔진·다른 PC·보조기술 출시 관문을 완료한 것은 아니다. 다음은 기존 A4 실제 짧은 WAV/video와 생성 결과 근거 확인이다.
+
+#### 실제 모델 처리 시도·환경 차단 — 2026-10-17
+
+- 판정: **실제 분석 결과 0건, A4 실모델 관문 미완료**. mock 응답은 사용하지 않았으나 실제 STT 완료에 도달하지 못했다. 참석자 구분·요약·브라우저 저장/재열기·동기화·실제 결과 내보내기는 미실행이다. 이전 mock/API fixture 통과로 대체하지 않는다.
+- 격리: `.tmp\native-model-audit-20261017`에 config·표본·outputs·temp·logs와 별도 Vite 소스를 두고 기존 모델은 junction으로 읽었다. 기본 `backend/config.json`, 사용자 outputs, 제품/디자인 코드는 수정하지 않았다. 시작 HEAD `3ab5b87`; 다른 AI의 진행 중 변경은 보존했다. 선택은 faster-whisper-large-v3 CPU, speaker-diarization-community-1, gemma4:e2b다. 검사 config에서만 구분/요약 자동 생성을 끄고 후속 endpoint로 나누었다.
+- 표본: `video/test (4).mp4` 앞 30초를 bundled ffmpeg로 mono 16kHz WAV로 추출했고 기존 `video/portable_video_15s.mp4`를 복사했다. 두 표본을 manifest에 등록했다. 사람 정답 대화록·검증된 화자 수가 없어 정확도/참석자 구분 품질은 판정할 수 없다.
+- 실행 경계: 기본 LocalAppData 설치/데이터 엔진 폴더는 없었다. 이번 시도는 **현재 소스의 Windows Python 로컬 API**이며 설치 엔진·frozen payload·Tauri·실제 HTTPS 검증이 아니다. 기존 system Ollama PID 17392/11434는 유지했다. 앱 전용 Ollama 모델 tag와 manifest layer 파일은 있었지만 요약 추론은 실행하지 않았다.
+
+| 단계 | 실제 증거 | 판정 |
+| --- | --- | --- |
+| 최초 `.venv-desktop` 엔진 | 인증 강제, QA backend_dir·Python health 일치, 공간 preflight HTTP 200 | 좁은 API 진입 확인 |
+| 30초 WAV real 요청 | `mode=real`, `native_audio_20261017`, 실제 SSE 업로드→모델 경로 확인→WAV 변환→chunk 준비→STT 30%; 완료 chunk 0, 최종 result 없음 | STT 완료 미검증 |
+| 최초 지연 | 514초 이상 heartbeat 관찰 후 검사자가 종료; 모델 경로 선택은 있으나 가중치 로딩 성공 로그 없음 | 추론 실패·무한 대기·제품 UI 결함으로 원인 확정 금지 |
+| `.venv` 순차 준비 | torch 2.11.0+cpu import 247.89초, 이후 faster-whisper→ctranslate2 converter→transformers/sympy 파일 읽기 stack; 서버 준비 전 11분 이상 대기 후 종료 | 라이브러리 초기화 지연으로 환경 차단 |
+| 영상·생성·저장·내보내기 | fixture·실제 API 기반 검사 도구 준비; outputs 파일 0개 | 미실행 |
+| Vite 브라우저 | 바로록 새 회의록 화면 표시. 최초 launch 시간 초과, 후속은 예전 heading selector 불일치; 현재 heading으로 검사 도구 수정 | 제품 실패 증거 아님; 실엔진 UI 흐름 미검증 |
+
+- 환경: `.venv-desktop` torch 2.12.0+cpu/torchaudio 2.11.0+cpu, `.venv`는 둘 다 2.11.0+cpu였다. 로컬 torchaudio METADATA에는 Requires-Dist가 없어 요구 버전 위반을 확정하지 않는다. 버전 차이는 호환성 확인 대상이며 지연 원인으로 입증되지 않았다. 별도 메모리 관측은 69~73% 사용·8.29~9.61GB 여유였고 RAM 부족을 확정할 증거는 없다.
+- 진단 한계: 90초 간격 `Timeout`은 launcher의 faulthandler stack 출력이며 API timeout/프로세스 종료가 아니다. `runtime.json`은 후속 `.venv`, health JSON은 최초 `.venv-desktop` 증거다. 경로 확인 문구와 STT 30%는 실제 가중치 로딩·추론 성공 증거가 아니다.
+- agent는 표본/정답, 격리/endpoint, 저장/export 계약을 분담했다. 데이터 agent가 최종 로그·SSE·빈 outputs를 다시 읽고 결과 0건·후속 미검증 판정에 동의했다. 환경 agent가 버전 차이와 metadata의 한계를 확인했다.
+- 증거: QA의 `evidence/engine-first-attempt.log`, `evidence/native_audio_20261017_sse.jsonl`, `evidence/api_health_get.json`, `evidence/source-sha256.json`, `engine.log`, `runtime.json`. launcher·request/UI·export 도구는 Git 제외 경로에 있다. `validate_exports.py`는 AST 구문 확인만 했으며 실제 export 통과가 아니다. 토큰 파일은 공유/출력하지 않는다.
+- 재실행: 초기화 원인을 좁힌 뒤 같은 sample/model로 health→models status 완료→real analyze→generate-diarization→generate-summary→sync/export를 직렬 실행한다. launcher 명령은 `backend\.venv\Scripts\python.exe -X utf8 .tmp\native-model-audit-20261017\launch_engine.py`, 요청은 `.venv-desktop`의 같은 옵션으로 `run_audit.py analyze test4_30s.wav <새 job_id>`. Vite는 QA `ui`에서 `corepack pnpm dev --host 127.0.0.1 --port 5174 --strictPort`; `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`, TEMP/TMP는 QA temp다. API/UI 요청은 준비 완료 뒤 실행한다.
+- 정리: 최초 PID 29560·후속 PID 31848과 검사 Vite/브라우저/비교 진단을 종료했다. 5174/17864/11475 LISTENING 없음, 기존 11434/PID 17392 유지를 확인했다. HF offline 변수를 사용했고 model download/pull·재설치·release build·commit/push는 실행하지 않았다. 후속과 종료 조건은 `todo.md`의 A4 큐다.
+
+#### 웹 + 설치형 로컬 엔진 배포 준비 재점검 — 2026-10-18
+
+- 범위: 웹 UI → Windows 로컬 엔진 설치·연결 → 모델·분석 → 기록 보존·내보내기 → 업데이트의 배포 준비 상태를 점검했다. 기준 HEAD는 `03702e5`와 기존 미커밋 변경이다. 제품 코드·기존 서버·실행 중 검사·모델은 변경하지 않았고 빌드·외부 배포도 실행하지 않았다.
+- 문서보다 최신인 실모델 증거: `.tmp/native-model-audit-20261017`의 2026-10-18 산출물과 `engine-recovery-20261018.log`를 읽어 `test4_30s.wav`의 실제 STT 15개 구간, `portable_video_15s.mp4`의 2개 구간 및 두 작업의 참석자 구분 완료를 확인했다. WAV SSE는 `mode=real`, `status=completed`, 진행률 100이고, 두 참석자 구분 API 기록은 HTTP 200이다. 따라서 위 2026-10-17의 결과 0건은 당시 시도에 한정한다. 이번 점검이 새 추론을 실행한 것은 아니다.
+- 증거의 한계: 확인 시 WAV 요약 상태는 `generating`, 영상은 `skipped`였다. TXT/MD/DOCX/HWPX 파일은 있지만 파일 존재만으로 요약 성공·최신 내용·브라우저 재열기·편집기 호환을 완료 처리하지 않는다. 사람 정답 대화록과 화자 정답이 없어 정확도도 미판정이다. 소스 Python 엔진의 결과이며 실제 설치/frozen/HTTPS 증거가 아니다.
+- 연결·배포 경계: `MeetingWriter.tsx`의 설치·pairing 화면은 `VITE_LOCAL_ENGINE_CONNECTION_UI=true` 또는 개발 query gate 뒤에 있고, 현재 `<LocalEngineConnectionSurface />`에 `installerUrl`·`updateUrl`이 전달되지 않는다. 일반 웹 빌드만 올려서는 최초 사용자 설치 흐름이 연결되지 않는다. 실제 HTTPS origin, 서명된 설치 파일과 업데이트 manifest 배포 경로·버전 정책을 확정한 뒤 연결해야 한다.
+- 설치 산출물: current-user NSIS 소스·preflight·staging/rollback·데이터 보존 테스트는 있다. builder는 `signed=false`, `distributionReady=false`의 PoC만 생성한다. 현재 PC에서는 기본 경로의 NSIS compiler 및 `releases/web-local-engine-poc/poc-manifest.json`, `releases/web-local-engine-installer-poc/installer-poc-manifest.json`이 없었다. 과거 frozen 검증을 현재 PC의 서명된 배포 후보나 install/update/uninstall 실물 성공으로 간주하지 않는다.
+- 기록 보존: `meetingRepository.ts`의 회의·폴더 CRUD는 여전히 `MeetingHistoryDB` IndexedDB v2다. 브라우저 사이트 데이터 삭제·다른 브라우저에서도 같은 기록을 다시 읽는 엔진 SQLite 전환, revision·백업·가져오기 검증은 6단계 미완료다. backend 결과 JSON이 있어도 회의·폴더 전체의 복원 계약을 대신하지 않는다.
+- 이번 집중 재검증: `corepack pnpm --dir desktop-app`의 `test:runtime-boundary`, `test:auth-recovery` 22개, `test:api-auth-boundary` 6개, `test:audio-playback-transport` 9개, `test:export-consistency` 9개와 `typecheck` 통과. `backend\.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest backend.test_local_engine_security backend.test_authenticated_web_flow` 43개, 같은 interpreter의 `tests.test_web_local_engine_packaging tests.test_web_local_engine_verifier backend.test_web_local_engine_runtime backend.test_web_local_engine_installer_preflight` 47개 통과. API 검사는 추론 대역·임시 파일을 사용하며 설치 테스트는 실제 NSIS 설치가 아니다. Starlette/httpx 폐기 예정 경고는 남았다.
+- 배포 판정: 일반 사용자 공개 준비는 미완료다. 다음은 A4 요약·저장/재열기·실제 파일 내용까지 닫기, 6단계 SQLite 기록 보존, 3C 서명된 설치/업데이트·다른 PC 데이터 보존, 실제 URL과 최초 연결 화면 연결, 8단계 HTTPS Chrome/Edge 설치부터 다운로드까지 통합 검증이다. 지원 사양·장시간 파일·조직 정책·비민감 진단은 기존 아래 release QA 위험 표를 유지한다.
+
+#### 실행 환경 확인·실제 모델 전체 흐름 재검증 — 2026-10-18
+
+- 결과: **같은 30초 WAV·15초 MP4의 실제 음성 인식(STT)→참석자 구분→요약→저장/재열기→현재 내용 내보내기를 확인했다.** 실행 경로는 복구됐으며 A4의 원음 정확도·요약 품질·설치/HTTPS 관문은 별도다. 이 점검은 현재 소스 Windows 엔진과 최신 UI 복사본을 사용했고 API mock은 없다.
+- 변경 범위: 기존 정상 `backend\.venv-desktop`를 재사용하고 QA launcher·요청/브라우저/파일 검사 도구만 보강했다. 패키지 재설치·다운그레이드·전역 Python·기본 config·모델·제품/디자인 코드는 변경하지 않았다. 시작 HEAD `03702e5`; 실행 후 backend 6개 파일은 전날 SHA256과 같았고 주요 UI 6개 파일도 격리 snapshot과 현재 소스가 일치했다. 다른 AI의 배포 준비 기록은 유지한다.
+- 초기화 조사: `.venv`의 faster-whisper→ctranslate2 converter→선택 의존성 Transformers 4.57.6이 `models` 하위 소스 전체를 직접 읽는 경로를 확인했다. `.venv-desktop`에는 이 선택 패키지가 없어 해당 순회를 피한다. 전날 torch 247.89초 지연은 오늘 재현되지 않았으며 그 근본 원인을 확정하지 않는다. bytecode 삭제나 전체 설치를 복구로 사용하지 않았다.
+- 호환성 정정: [공식 TorchAudio 설치 문서](https://github.com/pytorch/audio/blob/main/docs/source/installation.rst)는 2.11의 stable ABI가 PyTorch 2.11 이후를 지원한다고 명시한다. `torch 2.12.0+cpu`/`torchaudio 2.11.0+cpu` 차이는 충돌이 아니다. torchaudio/torchcodec METADATA 4개는 RECORD 해시와 일치했고 조사한 중요 파일 누락은 없었다. 실제 단일 프로세스 import는 torch 7.469초, torchaudio 0.891초, faster-whisper 1.718초, pyannote 20.813초로 모두 완료됐다. 후속 엔진의 torch+faster-whisper 준비는 1.08초였다. 서로 다른 캐시/환경의 관측값이므로 성능 배수 비교로 사용하지 않는다.
+
+| 실제 단계 | 30초 WAV | 15초 MP4 |
+| --- | --- | --- |
+| STT | `native_audio_20261018`, 15개 발언, SSE 완료 약 36.8초 | `b84c04bf-1f39-41b2-9b05-6f2b6e1a6e40`, 실제 UI 업로드·완료, 2개 발언 |
+| 참석자 구분 | HTTP 200, applied true, 3개 모델 화자 ID, 13.703초 | HTTP 200, applied true, 1개 모델 화자 ID, 2.078초 |
+| 요약 | gemma4:e2b 실제 응답·completed, 첫 로딩 포함 177.203초 | 같은 모델 실제 응답·completed, 후속 5.797초 |
+| 저장/재열기 | 실제 recoverable 변환·upsert 후 같은 상세 열기→reload→같은 id/jobId/본문/요약/생성·구분 상태 보존 | 실제 UI 분석 저장/재열기 1차, 생성 후 같은 복구·보존 검사 2차 |
+| 현재 내용 내보내기 | 재열기한 동일 record로 sync→전체 TXT/MD/DOCX/HWPX 4개 | 같은 경로 4개 |
+
+- 결과 계약: 원본 STT 15개/2개 발언은 유지됐다. 표시 행은 같은 화자 병합으로 4개/1개다. 두 요약에 임시 transcript 추출 fallback은 없고 결정/할 일은 빈 배열이다. 실제 모델 근거는 `[LLM] ... gemma4:e2b` 로그와 전용 Ollama `/api/ps`의 tag/digest다. JSON의 legacy `settings.llm_model` 경로를 실제 모델 증거로 사용하지 않는다.
+- 파일 검사: 두 실제 브라우저 기록을 읽어 제목/이름을 QA 값으로 덮지 않고 그대로 payload로 사용했다. sync 뒤 현재 제목·요약·대화록, 원본 `raw_stt_segments`·추론 설정 보존, export 때 저장 JSON bytes 불변을 확인했다. TXT/MD는 UTF-8, DOCX/HWPX는 CRC·필수 항목·XML, HWPX는 preview 일치를 검사했다. 8개 모두 현재 제목·요약·기대 발언을 포함한다. 이는 전체 텍스트 완전 동일성/추가 내용 부재 단언이나 UI 다운로드 버튼 검사가 아니다. 기본 GET TXT는 원래 대화록 전용이며 전체 TXT는 명시적 full payload로 검사했다.
+- 검사 도구 보정: 최초 WAV 도구는 완료 result 뒤 `[DONE]`를 JSON으로 읽어 종료했지만 실제 STT는 이미 저장됐다. 종료 신호 처리를 고치고 기존 실제 결과로 후속을 진행했다. 파일 도구의 기본 GET TXT 제목 기대도 실제 `export_txt`의 대화록 전용 계약에 맞췄으며 full TXT 제목/요약 검사는 유지했다. 최종 파일 검사와 두 browser 모드는 통과했다.
+- 메모리/재시작: 두 STT/구분 뒤 남은 RAM 7.25GB/31.11GB(76% 사용)에서, 모델 파일 약 7.2GB의 첫 요약을 앞두고 **검사 엔진만** PID 19236→36896으로 같은 폴더/명령/17864 포트에서 재시작했다. 여유 RAM 11.15GB(64%)를 확보했고 두 저장 작업이 유지됐다. 요약 중 관측은 4.15GB 여유(86%)였다. 따라서 중간 재시작을 포함한 실제 흐름이며 단일 프로세스의 모든 모델 최대 동시 상주/긴 파일 성능을 입증하지 않는다.
+- 발견 P2: (1) 뒤 발언의 `speaker_needs_review`/`short_speaker_overlap`가 표시 병합에서 빠지고 `segments_for_ui`에서도 전달되지 않는다. 실제 WAV 마지막 겹침 구간에서 확인했다. (2) WAV 주제 `민준의 외모와 성격` 중 성격 평가는 불명확한 다른 대상을 가리킬 수 있어 인물 귀속 근거가 부족하다. 생성 제목에는 QA 입력의 목적이 반영됐다. 실행 환경 복구 범위를 지켜 제품 소스는 수정하지 않았고 두 후속을 TODO에 남겼다. 사용자 제목 보존 자체를 결함으로 분류하지 않는다.
+- 한계: 사람 정답/확정 화자 수가 없어 음성·화자 정확도를 통과시키지 않는다. TorchCodec 내장 파일 디코더/DLL 경고는 남았지만 현재 pyannote의 메모리 waveform 입력은 성공했다. 모든 native 경로가 정상이라는 뜻은 아니다. 일반 Chromium의 native bootstrap adapter는 재생 metadata GET 401을 발생시켰다(HEAD는 인증 client로 200). 재생·실제 Tauri·HTTPS pairing 판정에는 사용하지 않는다. 사용자 이름 변경/해제, Word/한컴에서 실제 열기, 설치 엔진/frozen 검증도 이번 통과 범위 밖이다.
+- agent 재검토: 환경/패키지·실제 결과/요약·브라우저 경로를 분담했다. 파일 agent는 실제 8개와 동일 record의 저장/복원 계약을 재검토해 추가 차단 없음으로 판정했다. 요약 귀속과 불확실성 표시 P2는 별도로 유지했다.
+- 증거는 `.tmp/native-model-audit-20261017/evidence/recovery-20261018/`의 `desktop-imports.log`, `ui-source-provenance.json`, `runtime-stt-phase.json`, `runtime-summary-phase.json`, `ollama-actual-model.json`, 메모리 snapshot과 `upload-video-2026-10-17T15-21-01-427Z-26612/manifest.json`, `recover-jobs-2026-10-17T15-27-12-386Z-19880/manifest.json`, `browser-records-20261017T152825Z/report.json`이다. 이름의 `2026-10-17T15...Z`는 UTC이며 한국 실행 날짜는 18일이다. 실제 8개 파일은 QA `downloads/browser-records-20261017T152825Z/`, 실제 모델 로그는 `engine-recovery-20261018.log`에 보존했다. 토큰은 출력/공유하지 않는다.
+- 재실행: repo root에서 `backend\.venv-desktop\Scripts\python.exe -X utf8 .tmp\native-model-audit-20261017\launch_engine.py`; 준비 후 같은 interpreter로 `run_audit.py analyze test4_30s.wav <새 job_id>`, `diarization <job_id>`, `summary <job_id>`. UI는 QA `ui-recovery-20261018`에서 `corepack pnpm dev --host 127.0.0.1 --port 5174 --strictPort`, `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`와 QA temp의 TEMP/TMP를 지정해 `corepack pnpm exec node audit-recovery.mjs upload-video` 또는 `recover-jobs <job_id...>`를 실행한다. 생성된 manifest를 `export_browser_records.py`에 전달한다. 모두 실제 API를 사용한다.
+- 정리: 검사 엔진 PID 36896·전용 Ollama PID 39596/runner 42140·Vite PID 26288과 브라우저를 종료했다. 5174/17864/11475 LISTENING 없음, 원래 system Ollama 11434/PID 17392 유지를 확인했다. 종료 후 여유 RAM은 13.86GB(55% 사용)였다. 빌드·모델 받기·commit/push는 실행하지 않았다.
+
+### 2026-10-18 화자 검토 표시·요약 인물 귀속 수정과 동일 표본 재검증
+
+- 범위: 앞서 발견한 P2 두 건의 backend 수정과 집중 회귀다. 제품 frontend·CSS·레이아웃은 수정하지 않았다. 다른 AI의 변경을 보존하고 현재 UI 복사본 `ui-speaker-summary-fixes-20261018`에서 별도 Vite cache와 5174 포트를 사용했다. 소스 엔진은 기존 `.venv-desktop`, 격리 config/output, 17864 API·11475 app-managed Ollama를 재사용했다. 패키지·모델·전처리 설정은 바꾸지 않았다.
+- 표시 수정: `transcript_display.py`는 5종 검토 flag의 camel/snake 입력을 정규화하고 같은 화자의 발언 병합에서 OR로 보존한다. `main.py`는 화면 응답과 저장 요청 양쪽으로 전달한다. 원본을 변경하거나 다른 화자에게 표시를 퍼뜨리지 않는다. 화면에는 기존 `참석자 확인 필요` badge를 그대로 사용한다.
+- 요약 수정: 발언자와 평가 대상을 구분하고, 근처 이름·앞뒤 발언만으로 대상이 확정되지 않으면 특정인에게 연결하지 않도록 제목/주제/본문 공통 지시를 보강했다. 명시적인 이름은 유지한다. 장문 부분 요약의 `needs_check`는 최종 병합에서 누락되어도 중복 없이 보존한다. 특정 이름 하드코딩·추가 추론 호출은 없다.
+- 집중 검증: `backend\.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest tests.test_transcript_display backend.test_authenticated_web_flow` 21개, 같은 interpreter의 `-m unittest discover -s tests -p test_summarize_followups.py` 16개 통과. 초기 분할 테스트는 기본 인수에 고정된 chunk 크기 때문에 기대 3회 대신 2회가 되어 fixture를 실제 분할 함수의 명시적 크기 호출로 수정했다. 부분 병합의 정상/빈 결과/확인 사항 누락·중복·다른 회의로의 누출, 명시 이름·GGUF 경로도 검사했다. mock 결과는 모델 의미 정확도의 증거와 구분한다. 구현 후 독립 agent 검토에서 현재 범위의 차단 사항은 없었다.
+
+| 같은 실제 입력 | 대화록·구분 결과 | 수정 후 표시·요약 |
+|---|---|---|
+| `test4_30s.wav` 30초 | STT 15개/표시 4행, 원본 검토 3곳 | 표시 검토 2→3행, 화면 최초/reload/sync 후 복원 모두 badge 3개. 요약은 `혜원의 그림 실력`, `민준의 외모`; 불명확한 성격 평가는 채택하지 않음 |
+| `portable_video_15s.mp4` 15초 | STT 2개/표시 1행 | 검토 badge 0개 유지. 업체 6곳과 제공 기간을 STT 원문에 맞춰 요약 |
+
+- 실제 새 job은 WAV `native_audio_fix_20261018`, 영상 `4610f322-9fd3-4a39-912c-f68e6a3ac3ed`다. 영상은 실제 UI 파일 업로드·분석·저장·재열기를 거쳤다. 독립 agent가 동기화 전 보존한 이전 JSON과 비교해 두 입력 fingerprint, raw STT/정렬/표시 본문·순서·시각·화자 매핑이 같음을 확인했다. WAV 마지막 21.98~29.40초 표시 행의 `speaker_needs_review`·`short_speaker_overlap`이 복구됐다. 기존 outputs는 이전 sync로 표현 시각과 표시 정보가 달라져 있어 원본 비교 기준으로 쓰지 않았다.
+- 실제 모델은 `/api/ps`의 `gemma4:e2b`와 digest `7fbdbf8f5e45a75bb122155ed546e765b4d9c53a1285f62fd9f506baa1c5a47e`로 확인했다. WAV 요약 129.313초(첫 로딩 포함), 영상 1.656초에 completed다. 두 결과의 `actions`·`decisions`는 비어 있다. WAV는 불명확한 평가 자체를 요약에 넣지 않아 `needs_check`도 비어 있다. 모든 발언을 요약에 강제로 포함하는 요구가 아니며, 이 표본에서는 기존의 잘못된 귀속이 재현되지 않았다. 독립 agent가 원문과 대조했다.
+- 저장/화면: 저장 JSON→recoverable API→실제 repository의 IndexedDB record에서 segment별 5종 flag 배열을 비교했다. 상세 열기/reload의 badge 수와 전체 record 내용·생성 상태가 유지됐다. 이후 실제 record payload를 sync한 뒤 다시 API 복원→저장→상세/reload를 반복해 3개/0개 표시와 요약 보존을 확인했다.
+- 내보내기: 같은 실제 브라우저 record로 full TXT/MD/DOCX/HWPX 8개를 생성했다. 최신 제목/요약/발언과 UTF-8·ZIP/XML·HWPX preview, 저장 flag/원본 STT/설정/요약 확인 사항 보존, export 전후 JSON 불변을 확인했다. 파일은 QA `downloads/fixed-browser-records-20261017T155020Z/`에 있다.
+- 증거: QA `evidence/speaker-summary-fixes-20261018/` 아래 `upload-video-2026-10-17T15-45-11-526Z-20196/manifest.json`, `recover-jobs-2026-10-17T15-49-45-860Z-46004/manifest.json`, sync 후 `recover-jobs-2026-10-17T15-50-32-887Z-27472/manifest.json`, `fixed-browser-records-20261017T155020Z/report.json`, `ollama-loaded-model.json`. 기록 이름은 UTC이며 한국 실행일은 18일이다. native 로그는 `engine-speaker-summary-fixes-20261018.log`다.
+- 재실행: repo root에서 같은 interpreter로 `.tmp\native-model-audit-20261017\launch_fixes.py`, `run_audit.py analyze test4_30s.wav <새 job_id>`와 `diarization/summary <job_id>`를 실행한다. snapshot에서 `corepack pnpm dev --host 127.0.0.1 --port 5174 --strictPort`; `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`, TEMP/TMP=QA temp로 `corepack pnpm exec node audit-fixes.mjs upload-video` 및 `recover-jobs <job_id...>`. 통과 manifest를 `export_fixed_records.py`에 전달한다. 원본 결과/과거 증거는 덮어쓰지 않는다.
+- 한계: 사람 정답 기반 STT/화자 품질이나 모든 입력의 인물 귀속 정확도를 보장하지 않는다. 장문 병합은 집중 mock 검사이며 실제 장문 성능 검증은 아니다. Vite+소스 Windows 엔진 증거로, 실제 설치/frozen/HTTPS·Tauri·Word/한컴 렌더링 관문은 기존 QA 표에 열린 상태로 유지한다. TorchCodec 내장 디코더 경고와 native bootstrap adapter의 audio GET 401은 앞선 한계와 같다. 요약 전 검사 엔진 PID 11156만 종료해 모델 캐시를 회수하고 같은 명령/폴더/포트로 PID 31612를 복구했다. 단일 프로세스 최대 모델 동시 상주 검증은 아니다.
+- 정리: 검사 Vite PID 7120·엔진 PID 31612·전용 Ollama PID 28928/runner 12036을 종료했다. loopback 연결 검사에서 5174/17864/11475 닫힘, 기존 system Ollama 11434/PID 17392 유지 확인. 브라우저는 각 helper의 finally에서 닫았다. 종료 후 여유 RAM 8.97GB(71% 사용)는 다른 작업을 포함한 관측값이다. 빌드·commit·push는 실행하지 않았다.
+
+### 2026-10-18 설치형 로컬 엔진·HTTPS 실환경 진입 점검 — 준비 차단
+
+- 요청: 같은 30초 WAV·15초 MP4로 실제 설치 엔진과 HTTPS 웹에서 분석→참석자 구분→요약→저장/재열기→실제 다운로드를 agent로 점검한다. 이전 Vite+소스 Python 통과와 구분한다. 디자인·제품 소스 변경, 다른 작업 서버 종료, 외부 배포는 하지 않았다.
+- 사용자에게 배포 URL/설치 경로를 확인했으나 사용자는 별도 주소를 알지 못하며 이 프로젝트를 대상으로 지시한 것임을 확인했다. 저장소·기본 설치 경로·등록 정보·연결된 브라우저 목록을 조사했지만 실제 대상을 확보하지 못했다. 따라서 URL을 사용자가 이미 알고 있어야 한다고 가정하지 않고, 프로젝트의 실환경 준비 작업으로 분류한다.
+
+| 실물 진입 조건 | 직접 확인한 상태 | 검사 재개에 필요한 증거 |
+|---|---|---|
+| Windows 설치 엔진 | `%LOCALAPPDATA%\Programs\Barorok\LocalEngine` 및 data 경로 없음, HKCU uninstall native/32bit 등록 없음, 기본 `127.0.0.1:17863` 연결 불가 | 설치 실행 파일·버전·payload hash, 실제 backend/data/output 경로, probe/health 응답 |
+| 설치용 산출물·도구 | `releases/web-local-engine-poc`·manifest·installer-poc 폴더 없음. `makensis.exe`는 PATH·표준 NSIS 위치에 없음 | 신뢰할 Windows NSIS와 현재 변경을 포함하는 frozen/installer 검사본; 설치 payload hash와 빌드 당시 소스 hash 연결 |
+| 실제 HTTPS 웹·연결 설정 | 저장소의 `https://minutes.example`는 예시이며 운영 origin·배포/설치 URL은 미정. production 연결 UI는 `VITE_LOCAL_ENGINE_CONNECTION_UI=true`가 필요하고 호출부는 installerUrl/updateUrl을 전달하지 않음 | 실제 HTTPS 검사 주소, 그 주소와 정확히 일치하는 엔진 허용 origin, 연결 UI가 켜진 배포 빌드와 검사본 설치 경로 |
+
+- 직접 실행: `backend\.venv-desktop\Scripts\python.exe -B -X utf8 scripts\verify_web_local_engine_poc.py releases\web-local-engine-poc --manifest-only`는 exit 1, `Frozen engine executable not found`다. 이 검사는 설치/엔진 실행 전 파일 확인에서 종료됐다. 새 QA `.tmp/installed-https-audit-20261018/preflight.py`가 같은 명령·설치 경로/registry/compiler/포트 관측·현재 backend 소스 SHA256을 `preflight.json`에 저장했다. 보고 스크립트 자체 exit 0은 준비 통과라는 뜻이 아니며 상태는 `blocked_prerequisites`다.
+- 실행 결과: **이번 설치형/HTTPS 표본 분석은 0건**이다. 저장·재열기·실제 UI 다운로드도 미실행이며 앞선 소스 검사 통과를 이 관문에 재사용하지 않았다. 남은 `releases/lmo_audio`는 별도 Tauri 포터블 형태이고 manifest는 과거 `7cb39ac...`를 가리켜 이번 설치형 대상 또는 최신 수정 증거로 쓰지 않았다. 제품 기능 실패로 판정할 실행 결과도 아직 없다.
+- agent 검토: 실행 환경 agent는 설치/registry/산출물/NSIS 부재, 웹 agent는 운영 URL·연결 UI 설정/CTA, 데이터 agent는 pairing과 기록/다운로드 증거 계약을 독립 확인했다. 기존 QA helper의 `__TAURI__` adapter·desktop action token·Vite `/src` import·API 직접 export는 실환경 인증/다운로드 검사에 그대로 사용할 수 없다. 파일 bytes의 UTF-8·본문·ZIP/XML 검사 함수만 재사용한다.
+- 후속 순서: (1) HTTPS 검사 호스팅/origin과 Windows 내부 QA 버전을 정한다. (2) Windows NSIS 도구를 준비하고 `build_web_local_engine_poc.ps1 -Origin <실제HTTPSorigin> -EngineVersion <검사버전>` → manifest/frozen verifier → `build_web_local_engine_installer_poc.ps1`로 검사본을 만든다. installer 스크립트가 helper도 빌드하므로 중복 빌드하지 않는다. unsigned PoC는 내부 검사 범위이며 외부 사용자 배포 완료와 구분한다. (3) 실제 current-user 설치와 모델/runtime 경로를 준비한다. (4) HTTPS 웹의 실제 Chrome/Edge에서 로컬 네트워크 접근과 helper 코드로 pairing한다. (5) 같은 두 입력의 새 job으로 전체 흐름을 직렬 실행한다.
+- 종료 조건: 실행 파일 경로·버전/hash·허용 origin과 `/api/health.backend_dir`/`output_dir`, 브라우저가 실제 보내는 Origin·Bearer 인증, SSE/outputs/`MeetingRecord.jobId` 일치를 연결해 기록한다. 동일 HTTPS origin에서 저장/reload/재열기 후 본문·요약·화자 검토 표시·생성 상태를 비교하고, UI에서 full TXT/MD/DOCX/HWPX 8개의 실제 다운로드 이벤트와 파일 내용을 확인한다. 메모리 세션의 reload 후 재pairing과 저장 기록 보존은 별도로 판정한다. MD/DOCX/HWPX 실패 뒤 TXT fallback이면 해당 형식 통과로 처리하지 않는다. 웹 save-copy의 예상 403 뒤 정상 다운로드와 실제 실패도 구분한다.
+- 남은 관문은 아래 기존 릴리스 위험 표의 frozen·실제 HTTPS 접근·다운로드/설치 행에 갱신했다. 기능 회귀 mock·개발 서버·임의 도메인·localhost TLS로 이 검사를 대체하지 않았다. 제품/디자인 파일, 사용자 데이터, 전역 도구, 원래 서버를 변경하지 않았으며 빌드·설치·배포·commit/push는 하지 않았다.
+
+#### 후속: 검사 도구·실제 설치 r1·loopback TLS 전체 흐름 — 2026-10-18
+
+- 위 준비 차단 이후 사용자가 검사 도구·웹·설치 검사본 준비와 같은 두 표본의 재검증을 승인했다. 공식 NSIS 3.13 ZIP의 SHA256을 확인해 프로젝트 `.tmp/installed-https-audit-20261018/tools`에 준비했으며 전역 설치·PATH 변경은 하지 않았다. 현재 기능 수정과 경로 재확정 수정을 포함한 frozen `0.1.1-qa-20261018` 및 unsigned installer를 만들었다. manifest는 4,956개 파일을 연결하며 `signed=false`, `distributionReady=false`다.
+- 실제 `0.1.0-qa-20261018` 첫 설치는 HTTP 200이어도 데이터 생성 전후 AppData 경로의 mutex 식별자가 달라 준비 helper exit 3·등록 미완료였다. 데이터 생성 후 재시작은 helper exit 0을 확인했다. 데이터 준비 후 최종 경로를 다시 확정한 r1은 새 데이터·중단된 설치 복구 실행에서 installer exit 0, 등록 버전 `0.1.1-qa-20261018`, pending marker 없음으로 통과했다. 대상별 sidecar 정리와 NSIS 명령 위치·UTF-8 입력 수정도 포함하며 상세 시행착오는 `docs/tauri-desktop-release-checklist.md` 기존 12·13절에 기록했다.
+- full frozen smoke는 통과했다. host/installer preflight, 닫힌 manifest·읽기 전용 payload, ffmpeg·loopback·기본 거부, 단일 실행, pairing 만료/재사용/경합, startup-safe stop, 고정 포트 충돌·자체/외부 프로세스 구분, relocation 보존을 확인했다. 실행 중 엔진의 installer preflight `warning`은 로그에 구분한다. 이 smoke는 실제 모델 분석 성공이나 실모델 처리 후 정상 종료를 뜻하지 않는다.
+- Cloudflare 임시 공개는 자동 승인 검토가 명시적인 공개 승인을 요구해 거부했고 사용자 답변 대기다. 우선 `https://127.0.0.1:5443`에 TLS 웹을 준비하고 동일 origin을 엔진 설정/manifest에 연결했다. 검사 브라우저에만 QA 전용 공개키 지문 예외(SPKI pin)를 적용하며 OS 신뢰 저장소는 변경하지 않는다. 공개 HTTPS 배포·원격 origin에서 loopback 접근·Chrome/Edge Local Network Access·다른 PC·서명 관문은 통과하지 않았다.
+- 실모델 UI 진행 중 P2를 확인했다. 최초 401 이후 기록 상세(History)의 요약 버튼 1개가 `enabled=false`로 남았지만 실제 `/api/models/status`는 `managed_stopped`·`can_auto_start=true`·`managed_runtime_available=true`였다. 15초 대기 점검을 포함해 설정 열기→모델 상태 읽기 완료→닫기 조작 후 `enabled=true`로 회복했다. 회복 조작 중 설정값 변경·모델 다운로드·요약 POST는 0건이다. 확정된 결함은 UI 상태 불일치와 정상 설정 조작에 의한 회복이며, 인증 전환 후 준비 상태 동기화 누락은 원인 후보다. 제품 UI/디자인 소스는 수정하지 않고 `todo.md`에 후속 1건으로 올렸다. 증거는 QA `evidence/inspect-2026-10-17T16-49-54-000Z-34812/{readiness-recovery.json,inspect-after-settings-close.json}`이다. 이 회복 후 아래 UI 검사를 통과했지만 제품 P2가 해결된 것은 아니다. 설정 HTTP 응답 직후 닫아 mounted guard가 상태 반영을 취소했던 별도 QA 경합은 helper의 상태 읽기 완료 대기를 보강해 해소했으며 제품 결함과 구분한다.
+- 최종 결과: **설정 상태 읽기·닫기 회복 조치를 거친 뒤 실제 설치 r1의 두 표본에서 STT 결과→참석자 구분→실제 요약→저장/reload·재열기→UI 다운로드를 통과했다.** 화면이 보이는 bundled Chromium, native helper pairing, `https://127.0.0.1:5443`→`http://127.0.0.1:17863` 조합이다. 오디오는 최초 UI 시도에서 생성한 설치형 job을 재분석 없이 이어갔다. 앞선 Vite+소스 Python 결과를 설치형 결과로 대체하지 않았다.
+
+| 설치형 표본·job | 원본/표시 구간 | 참석자 구분·요약 | reload 전→후 검토 표시 | 실제 UI 다운로드 |
+|---|---|---|---|---|
+| 30초 WAV `242fe28a-0abf-4c80-ae7e-b9c39de13090` | 15 / 4 | `diarizationApplied=true`·`completed` | 3 → 3 | 4개 |
+| 15초 MP4 `c918b095-c22e-4bd6-8e71-0397eb94c4c5` | 2 / 1 | `diarizationApplied=true`·`completed` | 0 → 0 | 4개 |
+
+- 저장·파일 증거: 두 기록의 reload 전후 JSON bytes가 동일했다. 실제 다운로드는 TXT 대화록 2개와 정리 내용 MD·DOCX·HWPX 각 2개, 총 8개다. 크기·SHA256·MIME·본문·ZIP CRC·전체 XML 파싱·HWPX preview 대조를 통과했다. `save-copy` 403 뒤 export 200은 의도된 웹 fallback이며 실패나 TXT 대체로 판정하지 않는다. 검사 네트워크 위반 0건·page error 0건이며 선택적 외부 font 자산 3개 차단은 별도로 기록했다.
+- 요약 품질: 이번 WAV는 불명확한 성격 평가를 주제에서 생략해 민준에게 귀속했던 오류가 재발하지 않았고, 두 표본의 `actions`·`decisions`는 빈 목록이었다. 이는 해당 두 표본의 대화록 대조 결과이며 사람 원음 정답, 모든 입력의 인물 귀속, 모든 불명확 내용 보존을 보장하지 않는다.
+- 종료 P2: 두 실모델 작업 완료 후 `--stop` CLI exit 0은 종료 요청 접수였고 엔진 PID 44876은 15초 종료 대기 실패 뒤 최소 96초 이상 남았다. `Shutting down`은 기록됐지만 application shutdown complete는 없었고, 17863 포트가 닫혀도 프로세스와 약 4.27GB 메모리가 남았다. `server.run` 반환 전 mutex/atexit 정리가 끝나지 않는 구조이며 Uvicorn connection/transport/`wait_closed` 대기는 원인 후보일 뿐 stack이 없어 근본 원인은 미확정이다. generation-progress는 일반 JSON이므로 무한 SSE로 단정하지 않는다. 실제 모델 처리 뒤 제한 시간 내 종료·포트/mutex/자체 Ollama 해제·데이터 보존과 업데이트 전 stop 복구를 확인할 후속 P2를 `todo.md`에 추가했다. startup-safe stop 통과와 구분한다.
+- 변경·검증: 빌드 대상별 정리, NSIS 명령 위치·UTF-8 입력, 데이터 생성 뒤 runtime 경로 재확정만 필수 수정했고 디자인/UI 제품 소스는 수정하지 않았다. backend/frontend 독립 agent 2명이 최종 증거를 검토해 통과했다. 변경 영역 소스 검사는 합산 22개다. backend 작업 디렉터리에서 `.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest test_web_local_engine_runtime test_local_engine_preflight.LocalEnginePreflightTest.test_server_preflight_finishes_before_settings_data_or_engine_start test_local_engine_preflight.LocalEnginePreflightTest.test_server_installer_preflight_uses_canonical_targets_before_startup` 17개와 저장소 루트에서 `backend\.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest tests.test_web_local_engine_packaging` 5개를 각각 통과했다. 이는 NSIS 실제 컴파일·설치 복구·full frozen smoke·실모델 UI 증거와 함께 판정하며, 22개 자체가 실물 검증을 대신하지 않는다.
+- 한계: 기존 로컬 모델을 재사용했으므로 일반 사용자의 최초 모델 다운로드·준비, 공개 HTTPS에서의 로컬 네트워크 접근, Chrome/Edge 승인·거부·재승인·조직 정책, 다른 PC·서명, Word/한컴 직접 열기는 여전히 미검증이다. 이번 UI 검사에는 음성 재생/탐색과 주제·참석자 요약·보고서 생성도 포함하지 않았다. frozen의 TorchCodec·`tbb12.dll` 경고는 시험한 WAV/MP4의 메모리 waveform 경로를 막지 않았지만 범용 디코더 정상의 증거는 아니다.
+- 증거·보존: `.tmp/installed-https-audit-20261018/final-evidence-summary.json`, 같은 QA 폴더의 `evidence/resume-2026-10-17T16-53-06-831Z-32716/{manifest.json,network.json,*-rendered.json,*-record-before-reload.json,*-record-after-reload.json,downloads/*}`와 r1 provenance·`frozen-smoke-r1.log`를 보관한다. 정상 종료 잔류 후 이 세션 소유 엔진 44876, managed Ollama 36488·35032, static/TLS 2056·33356만 강제 정리했으며 `shutdown-result.json`의 `ownedProcessIdsRemaining=[]`를 확인했다. 기존 system Ollama 17392, 설치본·두 기록·다운로드 8개는 보존했다. 강제 정리 후에도 backend 결과 2개의 jobId·overview가 저장된 frontend 기록과 일치하고 8개 다운로드의 크기/SHA256이 manifest와 같은 것을 확인했다. 최종 요약은 `overallQaStatus=findings_open`, known issue 2건, `postShutdownDownloadHashesAndBackendSummariesVerified=true`다. `shutdown-delay.json`·`shutdown-result.json`에 실패와 정리를 분리했고, 같은 QA 폴더의 `restart_inspection.ps1`에 복원 명령을 보관한다. OS trust 변경은 없다.
+
+#### 후속: 실제 설치 r2의 인증 후 요약 수정·두 표본 재검증·종료 잔류 — 2026-10-18
+
+- 인증 후 요약 P2 수정: `MeetingHistory.tsx`가 기존 연결 context의 인증 상태를 구독하고 준비 상태 조회 effect를 재실행하도록 기능 코드 3줄만 연결했다. 이전 인증 시점의 응답은 기존 effect 취소 가드로 무시하며 마크업·문구·CSS는 바꾸지 않았다. 최초 미인증 401→실제 pairing UI 성공→`managed_stopped`·자동 시작 가능 응답→설정/포커스 조작 없이 요약 버튼 활성화 집중 회귀는 수정 전 실패·수정 후 통과했고 typecheck·변경 lint도 통과했다. 이번 runtime 집중 22개와 새 frontend 회귀는 앞선 r1의 17+5=22개와 별개의 검사 결과이며 중복 합산하지 않는다.
+- 설치·기본 smoke: `0.1.2-qa-20261018` frozen/installer로 기존 데이터를 유지한 실제 업데이트를 수행했다. `installation.json`은 57.1466초·installer exit 0·등록 버전 일치·pending marker 없음이며 `frozen-smoke.log`의 Stage 3B 기본 smoke도 통과했다. 이 기본 smoke와 실모델 전체 흐름·실모델 후 종료 판정은 각각 별도 증거다.
+- 실제 UI: 현재 UI 원본 61개 파일을 별도 snapshot에 복사하고 복사본에서 `build:web`를 실행했다. 과거 r1 증거는 덮어쓰지 않았다. 새 QA 브라우저 프로필 `audit-2026-10-17T22-09-11-723Z-34640`에서 같은 30초 WAV·15초 MP4를 모두 새 작업으로 처리했다. `https://127.0.0.1:5443`과 실제 설치 엔진을 연결했고 설정 열기/닫기 회복 옵션 없이 `readinessRecovery=[]`로 STT→참석자 구분→실제 요약→저장/reload·재열기→8개 다운로드를 통과했다. r1의 수동 회복 후 통과와 구분해 인증 후 요약 P2를 완료 처리한다.
+
+| 설치 r2 표본·job | 원본/표시 구간 | 구분·요약 | reload 전→후 검토 표시 | 실제 UI 다운로드 |
+|---|---|---|---|---|
+| WAV `5511a26f-e366-4eab-bc06-cfbfca0009fb` | 15 / 4 | `diarizationApplied=true`·`completed` | 3 → 3 | 4개 |
+| MP4 `c3c36b46-d4f9-4b67-b510-2b493695f38d` | 2 / 1 | `diarizationApplied=true`·`completed` | 0 → 0 | 4개 |
+
+- 저장·범위: 실제 UI 파일은 TXT 대화록 2개·정리 MD/DOCX/HWPX 각 2개다. network 위반·page error는 0건이며 `manifest.json`·각 `*-rendered.json`에 기록했다. 종료 전후 `preserved-before-stop.json`·`preserved-after-stop.json`의 13개 저장 증거/결과/다운로드 파일 hash 대조도 통과했다. 이 대조의 `recordFile`은 종료 전 브라우저에서 저장한 증거 파일이며, 종료 후 새 브라우저에서 IndexedDB를 다시 읽었다는 증거로 확대하지 않는다.
+- 종료 P2는 유지한다. `shutdown-result.json`에서 stop ACK는 exit 0·0.682초, 엔진 본체 34064는 약 1.964초 내 사라졌고 17863 포트와 mutex도 해제됐다. 하지만 자체 managed Ollama가 띄운 runner 8776과 그 conhost 15460은 남았고 당시 약 5.6GB 상주를 관측했다. `ownedProcessIdsRemaining=[8776,15460]`, `passed=false`, `forcedCleanupUsed=false`이며 foreign Ollama 36096은 보존됐다. 본체·managed Ollama 부모·부모 conhost 소멸을 전체 하위 프로세스 소멸로 취급하지 않는다. `engineExitCode:null`은 종료 뒤 `Get-Process`로 exit code를 관측하지 못한 결과여서 성공 0으로 기록하지 않는다. own 하위 프로세스 전체 정리 수정은 진행 중이고 이 r2 결과로 완료 처리하지 않는다.
+- 최신 증거 루트는 `.tmp/remaining-fixes-20261018`이다. `installation.json`, `frozen-smoke.log`, `web-source-provenance.json`, `evidence/audit-2026-10-17T22-09-11-723Z-34640/{manifest.json,network.json,*-rendered.json,*-record-before-reload.json,*-record-after-reload.json,downloads/*}`, `preserved-before-stop.json`, `shutdown-result.json`, `preserved-after-stop.json`을 함께 본다. 공개 HTTPS·원격 origin→loopback/LNA·Word/한컴 직접 열기·소비자 최초 모델 준비·다른 PC·서명은 여전히 미검증이며 A5/A6 전체 출시 완료가 아니다.
+
+#### 후속: r3 종료 수정·설치 파일 준비 후 사용자 요청으로 일시 중지 — 2026-10-18
+
+- `windows_process_job.py`와 `ollama_utils.py`에 소유한 Windows 하위 프로세스 묶음만 정리하는 처리를 추가했다. 일시 정지 상태로 실행한 뒤 전용 Job에 편입하고, 단일 초기 thread의 소유 PID를 확인한 후 재개한다. 부모가 먼저 끝나도 저장한 Job으로 자식·손자를 정리하며 외부 Ollama는 편입하지 않는다. 실제 Windows 잔류 RED→GREEN, 집중 25개와 독립 검토를 통과했다.
+- 별도 실제 설치 경로의 Ollama에서 기존 `gemma4:e2b`를 빈 입력으로 적재한 뒤 소유 프로세스 4개가 모두 0.328초에 종료됐다. 첫 단독 진단의 로그 없는 exit -1은 원인 미확정으로 남기고, 실제 설치 경로·native 시작 로그·Job 구성원/프로세스 handle 추적을 추가한 후속 결과로 판정했다. 사용자 음성은 이 단독 진단에 사용하지 않았다.
+- `0.1.3-qa-20261018`의 전체 frozen Stage 3B 기본 검사와 NSIS 설치 파일 제작이 완료됐다. 설치 파일은 `releases/web-local-engine-installer-poc/Barorok-Local-Engine-Setup-0.1.3-qa-20261018.exe`, 442,775,495 bytes, SHA256 `e34734381aa969b427ec80af90f27c5769af48f106a1ff826595d6f346cf89c6`이며 `signed=false`, `distributionReady=false`인 검사본이다.
+- 사용자가 설치 파일 완성까지만 진행한 뒤 잠시 멈추도록 요청했다. 따라서 **r3 설치·동일 음성/영상 전체 처리·설치본 종료/재시작은 미실행**이며, 현재 설치 버전은 r2인 `0.1.2-qa-20261018`이다. 정상 종료 P2는 이 설치본 검증 전까지 유지한다. 검사 소유 HTTPS 서버 32588을 종료했고 5443/17863 포트가 비었으며 외부 Ollama 36096은 보존했다. 원래 작업 폴더·복원 명령과 재개 경계는 `.tmp/remaining-fixes-20261018-r3/user-pause-state.json`에 기록했다. 공개 HTTPS/LNA와 다른 출시 관문의 미검증 상태도 유지한다.
+- 준비 증거는 `.tmp/remaining-fixes-20261018-r3/{native-owned-job-probe.json,native-owned-job-probe.log,native-ollama-diagnostic.log,frozen-smoke.log,frozen-build-r1-provenance.json,installer-r1-provenance.json,user-pause-state.json}`이다. 마크업·문구·CSS 변경 없이 기능 코드와 검사 환경만 수정했다.
+
 ### 0단계: 현재 계약 고정과 회귀 기준
 
 코드 변경 전에 다음을 기준으로 고정한다.
@@ -728,14 +1039,14 @@ staging·rollback은 3C에서 닫는다. 실제 HTTPS의 Chrome/Edge Local Netwo
 
 | 항목 | 상태 | 필요한 증거 | 종료 조건 | 마지막 확인 |
 | --- | --- | --- | --- | --- |
-| frozen payload의 실제 STT·화자 구분 분석 | 열림 | 설치된 실제 모델과 대표 WAV·video로 분석→저장→내보내기 smoke; build 시 torchcodec·`tbb12.dll` 경고 영향 분류 | 대표 입력이 성공하고 누락 native dependency가 제품 흐름에 영향을 주지 않거나 패키징 수정 후 재검증 | 2026-08-14 |
+| frozen payload의 실제 STT·화자 구분 분석 | 설치 r2·설정 우회 없는 실모델 UI 2건 통과; own 하위 프로세스 종료 P2·범용 디코더 위험 유지 | 설치된 실제 모델과 대표 WAV·video로 분석→저장→내보내기 smoke; build 시 torchcodec·`tbb12.dll` 경고 영향 분류. 시험한 waveform 경로와 범용 디코더 지원, startup stop과 실모델 후 전체 하위 프로세스 종료를 구분 | 대표 입력이 성공하고 누락 native dependency가 제품 흐름에 영향을 주지 않거나 패키징 수정 후 재검증 | 2026-10-18 실제 0.1.2 업데이트·별도 full frozen 기본 smoke 및 새 프로필의 WAV 15→4/MP4 2→1·구분·요약·reload·UI 파일 8개 통과(readinessRecovery=[]). 본체 약 1.964초 종료·포트/mutex 해제와 달리 own runner/conhost 잔류 P2는 미해결; 범용 디코더 미검증. QA remaining-fixes-20261018의 manifest·preserved-before/after-stop·shutdown-result |
 | 공식 지원 Windows·CPU·RAM·GPU·여유 디스크 | 열림 | Windows 11 x64 저사양·일반형·NVIDIA PC에서 설치, 모델 준비, 5분·30분·60분·2시간 입력 측정; Windows 10 x64와 Windows 11 ARM64는 별도 증거가 생기기 전 미지원 후보로 분리 | 최소·권장 사양, 예상 처리시간, 최대 권장 입력 길이와 미지원 환경이 사용자 문서·설치 전 점검에 동일하게 반영 | 2026-08-14 |
-| Chrome·Edge와 조직 정책의 Local Network Access | 열림·실환경 미실행 | 최신 stable Chrome·Edge의 실제 HTTPS에서 승인·거부·재승인, 브라우저 재시작, 관리 정책 사전 허용·차단 smoke; 창에서 엔진에 인증 요청하는 음성 재생과 A6 흐름을 함께 확인 | 지원 브라우저 범위와 상태별 복구 안내가 확정되고 회사 관리 브라우저의 차단을 설치 실패와 구분 | 2026-10-15 mock Chromium 재생 통과; 실제 HTTPS·관리 정책 증거 없음 |
+| Chrome·Edge와 조직 정책의 Local Network Access | 열림·loopback TLS UI 통과, 공개 HTTPS/LNA 실환경 미실행 | 최신 stable Chrome·Edge의 실제 HTTPS에서 승인·거부·재승인, 브라우저 재시작, 관리 정책 사전 허용·차단 smoke; 창에서 엔진에 인증 요청하는 음성 재생과 A6 흐름을 함께 확인 | 지원 브라우저 범위와 상태별 복구 안내가 확정되고 회사 관리 브라우저의 차단을 설치 실패와 구분 | 2026-10-18 설치 r1·`https://127.0.0.1:5443`·QA 전용 SPKI pin의 bundled Chromium UI 2건 통과(OS trust 변경 없음). 공개 Cloudflare는 자동 승인 검토 거부 후 사용자 공개 승인 대기; 원격 origin→loopback·LNA·다른 PC 증거 없음 |
 | 브라우저 음성 중계의 배포·장시간 파일 호환 | 열림·짧은 mock WAV만 통과 | 배포 후보 HTTPS에서 worker 파일·scope·CSP, 기존 worker 충돌, transferable stream 지원 확인; stable Chrome·Edge와 실제 설치 엔진으로 긴 WAV의 최초 재생·Range 탐색·회의 전환/만료/탭 종료 시 취소 및 메모리 측정 | 지원 환경에서 구간 응답과 재생이 유지되고 전체 파일 선다운로드 없이 전달되며 취소 후 읽기가 종료됨; 미지원 환경의 오류·복구 안내 확인 | 2026-10-15 단위 9개·20초 WAV·웹 자산 포함 통과; 장시간/실배포 증거 없음 |
-| 문서 다운로드의 실환경·편집기 호환 | 열림·실제 API 파일 내용/구조 11조합 통과 | 배포 후보 HTTPS·설치 엔진에서 Chrome/Edge 인증 다운로드, 한글 파일명·취소·만료 처리; 실제 Word DOCX와 한컴 HWPX 열기, 긴 한글 본문·표/문단·쪽 나눔 확인 | 지원 편집기에서 파일이 복구 경고 없이 열리고 최신 범위/내용이 보이며 잘림·중복·읽기 불가가 없고 브라우저 다운로드 완료·자원 해제가 확인됨 | 2026-10-15 ASGI 실제 파일 ZIP/XML/내용 및 mock UI 최신 payload 통과; 편집기·HTTPS 실물 증거 없음 |
+| 문서 다운로드의 실환경·편집기 호환 | 열림·설치 r1+loopback TLS UI 다운로드 8개 통과, 공개 브라우저/편집기 대기 | 배포 후보 HTTPS·설치 엔진에서 Chrome/Edge 인증 다운로드, 한글 파일명·취소·만료 처리; 실제 Word DOCX와 한컴 HWPX 열기, 긴 한글 본문·표/문단·쪽 나눔 확인 | 지원 편집기에서 파일이 복구 경고 없이 열리고 최신 범위/내용이 보이며 잘림·중복·읽기 불가가 없고 브라우저 다운로드 완료·자원 해제가 확인됨 | 2026-10-18 실제 UI TXT 대화록 2개·MD/DOCX/HWPX 정리 각 2개: 크기/SHA/MIME/본문/ZIP CRC/전체 XML/HWPX preview와 두 기록 reload 전후 JSON 불변 통과. 공개 HTTPS Chrome/Edge 취소/만료·Word/한컴 렌더링 미검증; 기존 Unicode 목록 P2 유지 |
 | 보조기술·확대의 실제 사용자 접근성 | 열림·대표 Chromium 키보드/ARIA 회귀 통과 | 배포 후보 Chrome/Edge에서 NVDA 또는 Narrator로 새 기록 필수 오류·설정/menu·상세 탭/재생·진행/실패 읽기; native 200% 확대·강제 색상·낮은 높이 조합 확인 | 이름/역할/상태와 오류·진행이 이해 가능하게 읽히고 모든 주요 동작·복구에 키보드 접근 가능하며 초점 유실·잘린 제어가 없음 | 2026-10-15 mocked Chromium 대표 흐름·메뉴/탭/설정 1024×720 통과; 실제 보조기술·확대 증거 없음 |
-| 고정 포트와 공용 PC·다중 Windows 사용자 | 열림 | `127.0.0.1:17863` 선점, 같은 PC의 두 사용자/RDP 세션, 엔진 재시작·절전 복귀 smoke | 다른 프로세스를 탐색·종료하지 않고 충돌 원인과 복구 동작을 사용자에게 제공하며 지원 범위를 명시 | 2026-08-14 |
-| 설치·모델 다운로드의 오프라인·프록시·보안 제품 영향 | 열림·unsigned PoC 소스만 확인 | 일반 인터넷, 인증 프록시, 완전 오프라인, Defender·SmartScreen·대표 조직 EDR에서 실제 서명된 installer·모델 받기·업데이트 확인; A5 신규/업데이트/재설치 데이터 보존 증거 필요 | 서명·관리자 배포·오프라인 모델 준비·중단 후 재개 절차가 있고 차단 원인을 사용자 조치와 관리자 조치로 구분; 실제 배포 후보 manifest·서명 검증 성공 | 2026-10-14 계획·소스 점검; 실제 설치 증거 없음 |
+| 고정 포트와 공용 PC·다중 Windows 사용자 | 열림·본체 종료 후 own runner/conhost 잔류 P2 | `127.0.0.1:17863` 선점, 같은 PC의 두 사용자/RDP 세션, 엔진 재시작·절전 복귀 및 실모델 처리 후 전체 하위 프로세스 stop smoke | 다른 프로세스를 탐색·종료하지 않고 충돌 원인과 복구 동작을 제공하며 지원 범위를 명시; 실모델 후 제한 시간 내 본체·포트·mutex·자체 Ollama/runner/conhost 해제와 데이터 보존 확인 | 2026-10-18 r2 두 실모델 처리 뒤 ACK0·본체 약 1.964초 종료·17863/mutex 해제. own runner8776/conhost15460 약 5.6GB 잔류로 passed=false, foreign36096 보존. engineExitCode:null은 미관측이며 성공0 아님. remaining-fixes-20261018/shutdown-result.json·TODO P2에서 추적; 하위 프로세스 수정 검증과 다중 사용자/RDP·절전은 미완료 |
+| 설치·모델 다운로드의 오프라인·프록시·보안 제품 영향 | 열림·unsigned r1 설치 복구·기존 모델 UI 통과, 소비자 최초 모델 준비 대기 | 실제 HTTPS origin·서명된 installer/update manifest URL을 확정하고 일반 인터넷, 인증 프록시, 완전 오프라인, Defender·SmartScreen·대표 조직 EDR에서 설치·모델 받기·업데이트 확인; A5 신규/업데이트/재설치 데이터 보존 증거 필요 | 서명·관리자 배포·오프라인 모델 준비·중단 후 재개 절차가 있고 차단 원인을 사용자 조치와 관리자 조치로 구분; 실제 배포 후보 manifest·서명 검증과 최초 웹 설치 흐름 성공 | 2026-10-18 공식 NSIS 3.13 hash·frozen/installer r1·설치 복구 exit 0 및 기존 로컬 모델 2건 확인. `signed=false`·`distributionReady=false`; 공개 설치/update URL·서명·다른 PC 데이터 보존·일반 사용자 최초 모델 다운로드·오프라인/프록시/EDR는 미검증 |
 | 지원용 진단과 민감정보 보호 | 열림 | 로그 회전·용량 제한, 오류 분류, token·pairing code·대화록·원본 경로 제외를 자동 검사한 진단 묶음 smoke | 사용자가 한 번에 내보낼 수 있는 비민감 진단 자료와 보존·삭제 기준이 정의되고 로그 무한 증가가 없음 | 2026-08-14 |
 
 완료 기준:

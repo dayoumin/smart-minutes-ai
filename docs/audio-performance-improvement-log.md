@@ -989,3 +989,33 @@ References:
 - `video\videoplayback.mp4` (104.6 seconds, four STT chunks) completed twice. The first run took 138.2 seconds and changed ETA from 206 to 56, 37, and 15 seconds, which was too optimistic after early chunks.
 - Live measured throughput is now capped by the stored same-fingerprint baseline for ETA purposes. A post-change run completed in 63.6 seconds with ETA 177, 126, 75, and 24 seconds, avoiding the abrupt optimistic drop. The runs had different warm/runtime state, so elapsed times are not a quality benchmark.
 - `backend/test_transcribe.py` no longer treats a generated 440 Hz tone as a speech fixture. It uses `LMO_REAL_AUDIO_FIXTURE` or `video\portable_video_15s.mp4`, and skips with an explicit reason when no real speech sample is available.
+
+## 2026-10-17 실모델 기능 점검: 의존성 준비 지연으로 미완료
+
+- 짧은 음성/영상의 실제 STT→참석자 구분→요약→저장·내보내기를 시도했다. 전처리/기본 모델/품질 파라미터는 변경하지 않았다. `test (4).mp4` 앞 30초 mono 16kHz WAV와 기존 `portable_video_15s.mp4`를 manifest에 등록했다. 사람 정답은 없으며 기존 모델 결과를 정답으로 사용하지 않았다.
+- 격리 `.tmp/native-model-audit-20261017`의 현재 소스 Python API를 사용했다. 기본 config/사용자 outputs/system Ollama는 보존했다. 설치형 엔진 폴더는 없었고 frozen/Tauri/HTTPS 증거가 아니다. 선택은 faster-whisper-large-v3 CPU, pyannote community-1, gemma4:e2b였으나 **실제 모델 결과는 0건**이다.
+- 최초 `.venv-desktop`에서 health·공간 preflight·real WAV 요청은 HTTP 200, 변환과 STT 30% 진입 SSE를 받았다. 514초 이상 heartbeat 관찰 후 검사자가 종료했다. 모델 경로 선택 로그만 있고 가중치 로딩 완료/최종 transcript/result는 없다. chunk hang이나 STT 품질 실패로 단정하지 않는다.
+- `.venv` 순차 준비에서 torch 2.11.0+cpu import는 247.89초에 완료됐다. 이후 faster-whisper→ctranslate2 converter→transformers/sympy 모듈·파일 읽기 stack이 바뀌며 진행됐지만 11분 이상 서버 준비에 도달하지 못해 종료했다. 90초 간격 `Timeout`은 faulthandler 진단이며 API timeout이 아니다. 완료된 분석 처리시간/품질 benchmark로 사용할 수 없다.
+- `.venv-desktop` torch 2.12.0+cpu/torchaudio 2.11.0+cpu, `.venv`는 둘 다 2.11.0+cpu다. 로컬 torchaudio METADATA에 Requires-Dist가 없으므로 요구사항 위반이나 지연 원인을 확정하지 않는다. 별도 메모리 관측은 69~73% 사용·8.29~9.61GB 여유였고 RAM 부족을 원인으로 단정하지 않는다. 전면 재설치/패키지 수정/모델 다운로드는 하지 않았다.
+- 후속은 `todo.md`의 A4 환경 복구다. 준비 완료 뒤 같은 표본/모델로 직렬 재실행하고 STT 결과·실제 화자 segment·LLM 로그와 본문·브라우저 저장 재열기·현재 export 파일을 확보해야 관문을 닫는다. 독립 agent도 빈 outputs와 최종 result 부재를 재검토했다. 제품/디자인 파일은 수정하지 않았고 검사 프로세스는 종료했다. 상세 증거와 재실행 명령은 실행 계획 6.6에 기록했다.
+
+## 2026-10-18 기존 실행 환경 재사용과 동일 표본 실모델 재검증
+
+- 전날 차단된 같은 30초 WAV·15초 MP4를 `.venv-desktop`의 현재 소스 엔진으로 재검증했다. 패키지 설치/다운그레이드, 모델/전처리/품질 옵션, 제품/디자인 코드는 변경하지 않았다. 공식 TorchAudio 2.11의 stable ABI는 torch 2.12를 지원하고 실제 두 import가 성공해 버전 차이 의문을 해소했다. 상세 근거는 실행 계획 6.6의 `실행 환경 확인·실제 모델 전체 흐름 재검증`이다.
+- 원인 범위: `.venv`의 ctranslate2 converter는 기본 STT에 불필요한 선택 의존성 Transformers를 import하고 모든 모델 소스를 직접 읽었다. 해당 패키지가 없는 기존 `.venv-desktop`로 그 경로를 피했다. 전날 native 초기 247초는 오늘 재현되지 않았으며 이 원인까지 해결했다고 선언하지 않는다. bytecode 청소/전면 재설치를 하지 않았다.
+- 단일 진단 import: torch 7.469초, torchaudio 0.891초, faster-whisper 1.718초, pyannote 20.813초. 이어서 검사 엔진의 torch+faster-whisper 준비는 1.08초였다. 환경/캐시 상태가 다르므로 성능 개선 배수나 일반 PC 예상 시간으로 쓰지 않는다.
+- 실제 WAV는 약 36.8초에 15개 STT 발언을 저장했고 구분 13.703초에 모델 화자 ID 3개/표시 4행을 만들었다. 영상은 실제 UI 분석으로 2개 발언, 별도 구분으로 ID 1개/표시 1행을 만들었다. 두 작업의 raw STT·본문 순서는 유지됐다. 모델 ID 수는 실제 사람 수 정답이 아니다.
+- 실제 gemma4:e2b 요약은 첫 WAV 177.203초(첫 로딩 포함), 후속 영상 5.797초에 completed다. 로그와 `/api/ps` tag/digest가 근거이며 legacy `settings.llm_model` 경로를 실제 모델 증거로 쓰지 않는다. 두 건 모두 결정/할 일은 비어 있고 임시 transcript 추출 fallback은 없었다. WAV의 불명확한 성격 평가를 민준에게 묶은 주제는 품질 P2로 기록했다.
+- STT/구분 후 여유 RAM 7.25GB/31.11GB(76% 사용)에서 검사 엔진만 같은 dir/port로 재시작해 11.15GB(64%)를 확보한 뒤 요약했다. 요약 중 관측은 여유 4.15GB(86%)였다. 작업 파일은 재시작 후 보존됐다. 단일 프로세스 최대 동시 상주 RAM이나 긴 파일 성능 검증은 아니다.
+- 실제 복구 변환·브라우저 저장·같은 상세 재열기/reload 2건과 동일 record payload sync/export가 통과했다. full TXT/MD/DOCX/HWPX 8개는 현재 제목/요약/기대 발언 포함, UTF-8/ZIP/XML 및 HWPX preview 일치, export 전후 저장 JSON 불변을 확인했다. 실제 UI 다운로드 버튼·Word/한컴 렌더링은 검사하지 않았다.
+- 발견 사항: 뒤 발언의 화자 검토 flag가 표시 병합/API에서 빠지는 P2와 요약 인물 귀속 P2를 `todo.md`에 남겼다. TorchCodec 내장 디코더/DLL 경고는 있지만 현재 메모리 waveform 구분은 성공했으며 다른 native 디코딩 경로의 정상성을 보장하지 않는다. native bootstrap adapter가 있는 일반 Chromium의 audio metadata GET 401은 실제 재생/HTTPS/Tauri 판정에 쓰지 않는다. 사람 정답 기반 품질과 설치/frozen은 여전히 미검증이다.
+- 환경·데이터·브라우저 agent가 독립 검토했고 저장/파일 경로의 추가 차단은 없었다. 실제 결과·8개 파일·모든 로그는 Git 제외 QA 폴더에 보존했다. 검사 엔진/전용 Ollama/브라우저/Vite를 종료하고 원래 system Ollama는 유지했다. 마지막 여유 RAM 13.86GB(55%).
+
+## 2026-10-18 화자 검토 표시 보존·요약 귀속 수정 후 동일 표본 비교
+
+- 앞선 두 P2를 backend에서 수정했다. 5종 검토 flag는 발언 병합에서 OR로 유지하고 화면 API·저장 요청에서 camel/snake를 왕복한다. 요약은 발언자와 평가 대상을 구분하는 근거 규칙을 공통 적용하고 장문 부분 요약의 확인 사항을 최종 병합에도 보존한다. 제품 frontend/디자인·모델·전처리·품질 옵션·패키지는 변경하지 않았다.
+- 같은 30초 WAV·15초 MP4를 새 job으로 실제 처리했다. 독립 agent가 동기화 전 보존 결과와 대조해 입력 fingerprint와 raw STT·정렬·표시 본문/순서/시각/화자 매핑이 같음을 확인했다. WAV는 STT 15개·표시 4행·원본 검토 3곳을 유지하며 표시 검토가 2→3행으로 복구됐다. 마지막 21.98~29.40초 행의 review/short-overlap 정보가 남았다. 영상은 STT 2개·표시 1행·검토 0개다.
+- 실제 gemma4:e2b 요약은 WAV 129.313초(첫 로딩 포함), 영상 1.656초로 completed다. WAV의 기존 `민준의 외모와 성격` 주제는 재현되지 않았고 `혜원의 그림 실력`, `민준의 외모`만 남았다. 대상 불명확한 성격 평가는 요약에서 제외됐으며 확인 사항은 비어 있다. 영상은 원문 업체 6곳과 제공 기간을 유지했다. 두 건 모두 결정/할 일을 임의 추가하지 않았다. 모델 출력 변동과 로딩 상태가 달라 처리시간 개선 비교로 해석하지 않는다.
+- 자동 검사 37개(표시/API 21+요약 16)와 독립 구현/데이터/실제 요약 검토 통과. 초기 부분 요약 테스트는 상수 patch가 함수 기본 인수에 반영되지 않아 호출 수가 달랐고, 실제 분할 함수에 크기를 명시해 fixture를 고쳤다. mock 검사와 실제 모델의 의미 검증을 구분한다.
+- 저장 JSON→복구 API→IndexedDB의 5종 flag 배열을 실제 비교하고 상세/reload의 badge 3개/0개를 확인했다. 브라우저 record sync·full TXT/MD/DOCX/HWPX 8개 내용/구조/JSON 불변 검사 후 API 재복원·reopen/reload도 통과했다. 상세 증거·명령·한계는 실행 계획 6.6의 `화자 검토 표시·요약 인물 귀속 수정과 동일 표본 재검증`에 기록했다.
+- 메모리: 31.11GB 중 시작 여유 12.46GB(59% 사용), WAV 구분 후 8.01GB(74%). 검사 엔진만 같은 명령/폴더/포트로 재시작해 음성 모델 캐시를 회수한 뒤 요약했다. 재시작 직후 여유 9.82GB(68%)였고 단일 프로세스 최대 상주나 긴 파일 검증은 아니다. 사람 정답·설치/frozen/HTTPS·편집기 관문과 TorchCodec 경고는 그대로 열린 범위다.

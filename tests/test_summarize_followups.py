@@ -75,7 +75,7 @@ class SummaryAttributionTest(unittest.TestCase):
         self.assertEqual(result["decisions"], generated["decisions"])
         self.assertEqual(result["needs_check"], [])
 
-    def test_partial_summary_uncertainties_survive_merge_and_empty_result_fallback(self):
+    def test_partial_summary_uncertainties_survive_merge(self):
         uncertainty = "태도 평가가 어느 사람에 관한 것인지 확인 필요"
         other_uncertainty = "인용한 의견의 발언자 확인 필요"
         segments = [
@@ -89,9 +89,8 @@ class SummaryAttributionTest(unittest.TestCase):
         for final in (
             {"overview": "발표 평가와 대상이 불명확한 의견을 분리해 정리함.", "needs_check": [other_uncertainty]},
             {"overview": "발표 평가와 별도 의견을 정리했지만 확인 사항은 누락됨."},
-            {},
         ):
-            with self.subTest(empty_merge=not final), patch("pipeline.summarize.MAX_DIRECT_SUMMARY_CHARS", 40), \
+            with self.subTest(final=final), patch("pipeline.summarize.MAX_DIRECT_SUMMARY_CHARS", 40), \
                     patch("pipeline.summarize._split_text_for_summary", side_effect=lambda text: _split_text_for_summary(text, max_chars=60)), \
                     patch("pipeline.summarize.generate_ollama_text", side_effect=[
                         json.dumps(value, ensure_ascii=False) for value in [*partials, final]
@@ -109,8 +108,6 @@ class SummaryAttributionTest(unittest.TestCase):
             self.assertIn(other_uncertainty, merge_prompt)
             self.assertEqual(result["needs_check"].count(uncertainty), 1)
             self.assertEqual(result["needs_check"].count(other_uncertainty), 1)
-            if not final:
-                self.assertTrue(any("임시 개요" in item for item in result["needs_check"]))
 
         with patch("pipeline.summarize.generate_ollama_text", return_value='{"overview":"새 회의 요약"}'):
             next_meeting = summarize_meeting(

@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import re
 from config_normalization import is_local_summary_model_path
@@ -18,6 +19,11 @@ EMPTY_SUMMARY = {
 
 MAX_DIRECT_SUMMARY_CHARS = 8000
 SUMMARY_CHUNK_CHARS = 6000
+# Character budgets follow the existing 6000-character source chunks and the
+# 8000-character direct path; they are not a model-token/context guarantee.
+SUMMARY_MERGE_CHARS = SUMMARY_CHUNK_CHARS
+SUMMARY_MAX_REDUCTION_ROUNDS = 8
+SUMMARY_MAX_GENERATION_CALLS = 128  # Includes the one allowed empty-shape retry.
 GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
 MAX_CONTEXT_GLOSSARY_ENTRIES = 80
 
@@ -200,14 +206,30 @@ def _build_prompt(
     meeting_context: dict | None = None,
     *,
     merging_partials: bool = False,
+    compact: bool = False,
 ) -> str:
     scope = "partial summaries" if merging_partials else "partial transcript" if partial else "transcript"
     context_block = _meeting_context_block(meeting_context)
     source_label = "Partial summaries" if merging_partials else "Transcript"
+    schema = '''{
+  "title": "short meeting title",
+  "overview": "brief summary",
+  "topics": ["topic 1"],
+  "decisions": ["decision 1"],
+  "actions": ["owner: task"],
+  "needs_check": ["unclear item"]
+}'''
+    recovery = ""
+    if compact:
+        schema = '{"title":"제목","overview":"근거 있는 요약","topics":[],"decisions":[],"actions":[],"needs_check":[]}'
+        recovery = (
+            "Write substantive summary content; a title or needs_check alone is insufficient.\n"
+        )
     return f"""You are a Korean meeting-minutes assistant.
 Summarize the {scope} into strict JSON only. Do not wrap it in Markdown.
 Write all JSON values in Korean unless a source term must remain in English.
 Do not invent facts. If the transcript is too short or unclear, put that in needs_check.
+{recovery}
 
 Attribution rules for every field, including title and topics:
 - Speaker labels identify who spoke, not who a remark describes.
@@ -217,14 +239,7 @@ Attribution rules for every field, including title and topics:
 - When combining partial summaries, preserve their needs_check uncertainties; an omitted subject must not be inferred or resolved by merging.
 
 Required JSON schema:
-{{
-  "title": "short meeting title",
-  "overview": "brief summary",
-  "topics": ["topic 1"],
-  "decisions": ["decision 1"],
-  "actions": ["owner: task"],
-  "needs_check": ["unclear item"]
-}}
+{schema}
 
 {context_block}
 {source_label}:
@@ -233,33 +248,109 @@ Required JSON schema:
 
 
 def _summary_has_content(summary: dict) -> bool:
-    return bool(
-        str(summary.get("overview", "")).strip()
-        or summary.get("topics")
-        or summary.get("topic_sections")
-        or summary.get("participant_summaries")
-        or summary.get("decisions")
-        or summary.get("actions")
-    )
+    def has_text(value) -> bool:
+        return isinstance(value, str) and bool(value.strip())
+
+    if has_text(summary.get("overview")):
+        return True
+    for key in ("topics", "decisions", "actions"):
+        values = summary.get(key)
+        if isinstance(values, list) and any(has_text(value) for value in values):
+            return True
+    for key in ("topic_sections", "participant_summaries"):
+        values = summary.get(key)
+        if isinstance(values, list) and any(
+            isinstance(value, dict) and has_text(value.get("summary")) for value in values
+        ):
+            return True
+    return False
 
 
-def _fallback_extract_summary(transcript_text: str) -> dict:
-    compact = re.sub(r"\s+", " ", transcript_text).strip()
-    return {
-        "title": "회의록",
-        "overview": compact[:500] + ("..." if len(compact) > 500 else ""),
-        "topics": [],
-        "topic_sections": [],
-        "participant_summaries": [],
-        "decisions": [],
-        "actions": [],
-        "needs_check": ["LLM 요약 결과가 비어 있어 transcript 앞부분을 임시 개요로 사용했습니다."],
-    }
+def _generate_summary_once(
+    model_name: str,
+    prompt: str,
+    *,
+    retry_prompt: str,
+    stage: str,
+    generate_text,
+) -> dict:
+    attempt_uncertainties: list[str] = []
+    for attempt, current_prompt in enumerate((prompt, retry_prompt), start=1):
+        logging.info(
+            "Summary request stage=%s attempt=%s input_chars=%s",
+            stage, attempt, len(current_prompt),
+        )
+        response_text = generate_text(model_name, current_prompt)
+        parsed = _parse_llm_json(response_text)
+        normalized = {}
+        if isinstance(parsed, dict):
+            # A malformed sibling field must not leak a non-string overview or
+            # non-text list entries into the saved MeetingRecord contract.
+            cleaned = dict(parsed)
+            for key in ("title", "overview"):
+                if not isinstance(cleaned.get(key), str):
+                    cleaned.pop(key, None)
+            for key in ("topics", "decisions", "actions", "needs_check"):
+                values = cleaned.get(key)
+                cleaned[key] = (
+                    [value for value in values if isinstance(value, str) and value.strip()]
+                    if isinstance(values, list) else []
+                )
+            normalized = _normalize_summary(cleaned)
+            for value in normalized["needs_check"]:
+                if value.strip() not in attempt_uncertainties:
+                    attempt_uncertainties.append(value.strip())
+        valid = isinstance(parsed, dict) and _summary_has_content(parsed) and _summary_has_content(normalized)
+        logging.info(
+            "Summary response stage=%s attempt=%s response_chars=%s root_type=%s has_content=%s",
+            stage, attempt, len(response_text), type(parsed).__name__, valid,
+        )
+        if valid:
+            for concern in attempt_uncertainties:
+                if concern not in normalized["needs_check"]:
+                    normalized["needs_check"].append(concern)
+            return normalized
+    raise failure_for_code("invalid_model_response")
 
 
-def _generate_summary_once(model_name: str, prompt: str) -> dict:
-    result_text = generate_ollama_text(model_name, prompt)
-    return _normalize_summary(_parse_llm_json(result_text))
+def _merge_summary_partials(partials: list[dict], generate_summary, remember_uncertainties) -> dict:
+    current = partials
+    for round_index in range(SUMMARY_MAX_REDUCTION_ROUNDS):
+        if len(current) == 1:
+            return current[0]
+        groups: list[list[dict]] = []
+        bodies: list[str] = []
+        for index, summary in enumerate(current, start=1):
+            # Omit only empty fields, never source entries or non-empty text.
+            item = f"부분 {index}: " + json.dumps(
+                {key: value for key, value in summary.items() if value},
+                ensure_ascii=False, separators=(",", ":"),
+            )
+            if len(item) > SUMMARY_MERGE_CHARS:
+                logging.info("Summary reduction rejected reason=oversized_item chars=%s limit=%s", len(item), SUMMARY_MERGE_CHARS)
+                raise failure_for_code("invalid_model_response")
+            if not groups or len(bodies[-1]) + 1 + len(item) > SUMMARY_MERGE_CHARS:
+                groups.append([summary])
+                bodies.append(item)
+            else:
+                groups[-1].append(summary)
+                bodies[-1] += "\n" + item
+        if len(groups) >= len(current):
+            logging.info("Summary reduction rejected reason=no_progress items=%s", len(current))
+            raise failure_for_code("invalid_model_response")
+        reduced = []
+        for index, (group, body) in enumerate(zip(groups, bodies), start=1):
+            if len(group) == 1:
+                reduced.append(group[0])
+                continue
+            merged = generate_summary(body, stage=f"merge-{round_index + 1}-{index}", merging_partials=True)
+            remember_uncertainties(merged)
+            reduced.append(merged)
+        current = reduced
+    if len(current) == 1:
+        return current[0]
+    logging.info("Summary reduction rejected reason=round_limit items=%s", len(current))
+    raise failure_for_code("invalid_model_response")
 
 
 def _generate_json_once(model_name_or_path: str, prompt: str) -> dict | list:
@@ -965,41 +1056,8 @@ def summarize_meeting(
     if not transcript_text.strip():
         return _error_summary("회의록", "요약할 transcript가 없습니다.")
 
-    prompt = _build_prompt(transcript_text, meeting_context=meeting_context)
-
-    if not os.path.exists(model_name_or_path) and not is_local_summary_model_path(model_name_or_path):
-        try:
-            print(f"[LLM] Generating summary with Ollama model: {model_name_or_path} ...")
-            partial_uncertainties: list[str] = []
-            if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:
-                partial_summaries = []
-                for index, chunk in enumerate(_split_text_for_summary(transcript_text), start=1):
-                    partial = _generate_summary_once(model_name_or_path, _build_prompt(chunk, partial=True, meeting_context=meeting_context))
-                    partial_uncertainties.extend(
-                        item.strip() for item in partial.get("needs_check", [])
-                        if isinstance(item, str) and item.strip()
-                    )
-                    partial_summaries.append(f"부분 {index}: {json.dumps(partial, ensure_ascii=False)}")
-                summary = _generate_summary_once(model_name_or_path, _build_prompt(
-                    "\n".join(partial_summaries),
-                    meeting_context=meeting_context,
-                    merging_partials=True,
-                ))
-            else:
-                summary = _generate_summary_once(model_name_or_path, prompt)
-            result = summary if _summary_has_content(summary) else _fallback_extract_summary(transcript_text)
-            # A merge may omit a caveat even when instructed to retain it. Keep
-            # unresolved source concerns visible without rewriting named subjects.
-            if partial_uncertainties:
-                result["needs_check"] = list(result["needs_check"])
-            for concern in partial_uncertainties:
-                if concern not in result["needs_check"]:
-                    result["needs_check"].append(concern)
-            return result
-        except Exception as exc:
-            return _generation_failure_summary(exc)
-
-    if not os.path.exists(model_name_or_path):
+    local_model = os.path.exists(model_name_or_path) or is_local_summary_model_path(model_name_or_path)
+    if local_model and not os.path.exists(model_name_or_path):
         failure = failure_for_code("model_missing")
         return _error_summary(
             "회의록 (생성 실패)",
@@ -1008,13 +1066,58 @@ def summarize_meeting(
         )
 
     try:
-        from llama_cpp import Llama
+        provider = generate_ollama_text
+        if local_model:
+            from llama_cpp import Llama
 
-        print(f"[LLM] Loading internal Llama engine with model: {model_name_or_path} ...")
-        llm = Llama(model_path=model_name_or_path, n_ctx=8192, n_gpu_layers=-1, verbose=False)
-        print("[LLM] Generating summary locally...")
-        response = llm(prompt, max_tokens=2048, stop=["```"], echo=False)
-        result_text = response["choices"][0]["text"].strip()
-        return _normalize_summary(_parse_llm_json(result_text))
+            llm = Llama(model_path=model_name_or_path, n_ctx=8192, n_gpu_layers=-1, verbose=False)
+
+            def provider(_model: str, prompt: str) -> str:
+                response = llm(prompt, max_tokens=2048, stop=["```"], echo=False)
+                return response["choices"][0]["text"].strip()
+
+        calls = 0
+
+        def bounded_generate(model: str, prompt: str) -> str:
+            nonlocal calls
+            if calls >= SUMMARY_MAX_GENERATION_CALLS:
+                logging.info("Summary generation rejected reason=call_limit calls=%s", calls)
+                raise failure_for_code("invalid_model_response")
+            calls += 1
+            return provider(model, prompt)
+
+        def generate_summary(source: str, *, stage: str, partial: bool = False, merging_partials: bool = False) -> dict:
+            arguments = {"partial": partial, "meeting_context": meeting_context, "merging_partials": merging_partials}
+            return _generate_summary_once(
+                model_name_or_path,
+                _build_prompt(source, **arguments),
+                retry_prompt=_build_prompt(source, **arguments, compact=True),
+                stage=stage,
+                generate_text=bounded_generate,
+            )
+
+        uncertainties: list[str] = []
+
+        def remember_uncertainties(summary: dict) -> None:
+            for value in summary.get("needs_check", []):
+                concern = value.strip()
+                if concern and concern not in uncertainties:
+                    uncertainties.append(concern)
+
+        if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:
+            partials = []
+            for index, chunk in enumerate(_split_text_for_summary(transcript_text), start=1):
+                partial = generate_summary(chunk, stage=f"partial-{index}", partial=True)
+                remember_uncertainties(partial)
+                partials.append(partial)
+            result = _merge_summary_partials(partials, generate_summary, remember_uncertainties)
+        else:
+            result = generate_summary(transcript_text, stage="direct")
+        # Preserve source and intermediate caveats even if a later merge omits
+        # them. This never resolves an uncertain subject by assigning a name.
+        for concern in uncertainties:
+            if concern not in result["needs_check"]:
+                result["needs_check"].append(concern)
+        return result
     except Exception as exc:
         return _generation_failure_summary(exc)

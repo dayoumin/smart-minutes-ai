@@ -44,6 +44,7 @@ export interface GetLocalEngineConnectionViewInput {
     connectionStarted: boolean;
     installerAvailable?: boolean;
     updateAvailable?: boolean;
+    analysisPrerequisitesMissing?: boolean;
 }
 
 const view = (
@@ -56,6 +57,7 @@ export const getLocalEngineConnectionView = ({
     connectionStarted,
     installerAvailable = false,
     updateAvailable = false,
+    analysisPrerequisitesMissing = false,
 }: GetLocalEngineConnectionViewInput): LocalEngineConnectionViewModel => {
     const analysisReady = snapshot.transport === 'reachable'
         && snapshot.authorization === 'authenticated'
@@ -66,7 +68,7 @@ export const getLocalEngineConnectionView = ({
         return view({
             scene: 'connected',
             tone: 'success',
-            title: '분석 준비 완료',
+            title: analysisPrerequisitesMissing ? '연결됨' : '분석 준비 완료',
             message: null,
             primaryAction: null,
             primaryLabel: null,
@@ -229,12 +231,12 @@ export const getLocalEngineConnectionView = ({
             scene: 'unreachable',
             tone: 'warning',
             title: '분석 기능에 연결하지 못했습니다',
-            message: '바로록 연결을 실행한 뒤 다시 시도하세요.',
-            primaryAction: installerAvailable ? 'download' : 'probe',
-            primaryLabel: installerAvailable ? '바로록 연결 받기' : '다시 연결',
+            message: '설치했다면 Windows 시작 메뉴에서 바로록 연결을 실행한 뒤 다시 확인하세요.',
+            primaryAction: 'probe',
+            primaryLabel: '연결 확인',
             primaryDisabled: false,
-            secondaryAction: installerAvailable ? 'probe' : null,
-            secondaryLabel: installerAvailable ? '다시 연결' : null,
+            secondaryAction: installerAvailable ? 'download' : null,
+            secondaryLabel: installerAvailable ? '바로록 연결 받기' : null,
             busy: false,
             analysisReady: false,
         });

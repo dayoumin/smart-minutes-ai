@@ -45,6 +45,7 @@ import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisRe
 import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
+import type { LocalEngineProbePayload } from './localEngineConnection';
 import { LocalEngineConnectionSurface } from './LocalEngineConnectionSurface';
 import { toUserFacingAnalysisError } from './apiError';
 
@@ -495,7 +496,9 @@ interface MeetingWriterProps {
 }
 
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, idleCompanion }) => {
-    const { snapshot: localEngineConnection, beginTransportCheck, reportTransport } = useLocalEngineConnection();
+    const { snapshot: localEngineConnection, beginTransportCheck, reportTransport, probeLocalEngine } = useLocalEngineConnection();
+    const [webConnectionRecoveryStarted, setWebConnectionRecoveryStarted] = useState(false);
+    const [connectionCheckRequired, setConnectionCheckRequired] = useState(false);
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => toLocalDateTimeInputValue());
     const [initialDateValue, setInitialDateValue] = useState(date);
@@ -553,7 +556,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         () => getReportTemplateById(selectedReportTemplateId),
         [selectedReportTemplateId],
     );
-    const localEngineConnectionRequired = LOCAL_ENGINE_CONNECTION_UI_ENABLED
+    const localEngineConnectionRequired = (LOCAL_ENGINE_CONNECTION_UI_ENABLED || webConnectionRecoveryStarted)
         && localEngineConnection.runtime === 'web-local-engine';
     const localEngineAnalysisReady = canUseLocalEngineCapability(localEngineConnection, 'analysis')
         && !localEngineConnection.updateRequired;
@@ -728,16 +731,26 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
 
         let healthReachable = false;
+        const readinessOwner = readinessLoopRef.current;
+        const superseded = () => readinessOwner !== readinessLoopRef.current;
         const transportCheckId = localEngineConnectionRequired ? null : beginTransportCheck();
         try {
             const apiBase = await getApiBase();
             await writeFrontendLog(`readiness start soft=${options.soft ? 'true' : 'false'} apiBase=${apiBase}`);
             const healthResponse = await localEngineClient.request('/api/health');
             await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
+            if (superseded()) return { state: 'checking', message: '' };
             healthReachable = true;
             setReadinessTimedOut(false);
             if (transportCheckId !== null) {
                 reportTransport(transportCheckId, transportFromHealthEvidence(true));
+            }
+            if (healthResponse.status === 401 || healthResponse.status === 403) {
+                setConnectionCheckRequired(!isTauriRuntime());
+                const message = '연결 상태를 확인해야 분석을 시작할 수 있습니다.';
+                setReadinessState('error');
+                setReadinessMessage(message);
+                return { state: 'error', message };
             }
             if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
 
@@ -745,9 +758,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
             const modelsResponse = await localEngineClient.request('/api/models/status');
             await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
+            if (superseded()) return { state: 'checking', message: '' };
+            if (modelsResponse.status === 401 || modelsResponse.status === 403) {
+                setConnectionCheckRequired(!isTauriRuntime());
+                const message = '연결 상태를 확인해야 분석을 시작할 수 있습니다.';
+                setReadinessState('error');
+                setReadinessMessage(message);
+                return { state: 'error', message };
+            }
             if (!modelsResponse.ok) {
                 const body = await modelsResponse.text().catch(() => '');
                 await writeFrontendLog(`readiness models non-ok body=${body.slice(0, 500)}`);
+                if (superseded()) return { state: 'checking', message: '' };
                 const message = options.soft
                     ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
                     : '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.';
@@ -758,6 +780,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
             const payload = await modelsResponse.json() as ModelsPayload;
             await writeFrontendLog(`readiness models payload ready=${payload.ready} count=${payload.models?.length ?? 0} errors=${payload.errors?.join(' | ') ?? ''}`);
+            if (superseded()) return { state: 'checking', message: '' };
+            setConnectionCheckRequired(false);
             setModelsPayload(payload);
 
             if (payload.ready) {
@@ -772,10 +796,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
         } catch (error) {
+            if (superseded()) return { state: 'checking', message: '' };
             if (transportCheckId !== null) {
                 reportTransport(transportCheckId, transportFromHealthEvidence(healthReachable));
             }
             await writeFrontendLog(`readiness error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
+            if (superseded()) return { state: 'checking', message: '' };
             const message = error instanceof Error && !options.soft
                 ? toUserFacingAnalysisError(error.message, { desktopApp: isTauriRuntime() })
                 : '분석 기능을 준비하고 있습니다. 첫 실행은 시간이 걸릴 수 있습니다.';
@@ -834,6 +860,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         window.addEventListener('analysis:settings-updated', handleSettingsUpdated);
         return () => {
             cancelled = true;
+            readinessLoopRef.current += 1;
             window.removeEventListener('focus', syncReadiness);
             window.removeEventListener('analysis:settings-updated', handleSettingsUpdated);
         };
@@ -896,6 +923,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
     const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
     const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
+    const engineNotConnected = readinessState === 'server-waiting' && !localEngineConnectionRequired;
     const startButtonOperationallyDisabled = isAnalyzing
         || isExtractingAudio
         || Boolean(matchingActiveDraft)
@@ -903,19 +931,31 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || resumeDraftFileMismatch
         || Boolean(fileDurationLimitError)
         || hasBlockingReadinessIssue
+        || engineNotConnected
         || (localEngineConnectionRequired && !localEngineAnalysisReady)
+        || (localEngineConnectionRequired && readinessState !== 'ready')
         || analysisStartBlocked;
-    const engineUnreachable = readinessTimedOut && readinessState === 'server-waiting' && !localEngineConnectionRequired;
+    const engineUnreachable = readinessTimedOut && engineNotConnected;
+    // From the first failed check until the 45s notice: one quiet line, so 분석 시작 is never silently unusable.
+    const showEngineCheckingLine = !isAnalyzing && ((engineNotConnected && !readinessTimedOut)
+        || (localEngineConnectionRequired && localEngineAnalysisReady
+            && !hasBlockingReadinessIssue && readinessState !== 'ready'));
     // The required-field error is shown in the action row (beside 분석 시작) instead of a banner below the fold.
     // Live list of what is still missing after a start attempt; it disappears as soon as the fields are filled.
     const formErrorInline = hasAttemptedStart && missingFields.length > 0 && !localEngineConnectionRequired && !isAnalyzing;
-    const showReadinessHint = (hasBlockingReadinessIssue || engineUnreachable) && !isAnalyzing && !localEngineConnectionRequired;
+    const showReadinessHint = !isAnalyzing && (localEngineConnectionRequired
+        ? localEngineAnalysisReady && hasBlockingReadinessIssue
+        : hasBlockingReadinessIssue || engineUnreachable);
     // ready=false can also mean an unusable device or a status error; only offer 모델 받기 when a required model is really missing.
     const requiredModelsAbsent = readinessState === 'missing-models' && missingRequiredModels.length > 0;
     const modelsMissing = requiredModelsAbsent && missingRequiredModels.some(model => model.downloadable);
+    // Required models Settings cannot download: reinstalling is the fix, so the row states the cause without a button.
+    const modelsNeedReinstall = requiredModelsAbsent && !modelsMissing;
     // Where the hint's button leads: missing models -> Settings > 모델; otherwise 문제 해결 (desktop) / 다시 확인 (web).
-    const readinessAction: 'models' | 'troubleshoot' | 'recheck' | null = !showReadinessHint
+    const readinessAction: 'models' | 'troubleshoot' | 'recheck' | 'connect' | null = !showReadinessHint || modelsNeedReinstall
         ? null
+        : !isTauriRuntime() && !localEngineConnectionRequired && (engineUnreachable || connectionCheckRequired)
+            ? 'connect'
         : modelsMissing && onOpenSettings
             ? 'models'
             : isTauriRuntime() && onOpenTroubleshooting ? 'troubleshoot' : 'recheck';
@@ -923,6 +963,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
         formErrorInline ? 'writer-form-error' : '',
         showReadinessHint ? 'writer-readiness-hint' : '',
+        showEngineCheckingLine ? 'writer-engine-checking' : '',
         localEngineConnectionRequired && !localEngineAnalysisReady ? 'writer-local-engine-requirement' : '',
     ].filter(Boolean).join(' ') || undefined;
 
@@ -930,6 +971,30 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const readinessBannerTone = modelsMissing ? 'info' : 'error';
     const readinessBannerTitle = modelsMissing ? '준비할 모델' : '분석을 시작할 수 없습니다';
 
+    const recheckDevelopmentReadiness = async (probe: LocalEngineProbePayload) => {
+        // A recovered anonymous dev API may have no pairing helper. It must actually accept
+        // the usual health/model requests; probe alone never grants authorization.
+        if (!import.meta.env.DEV || LOCAL_ENGINE_CONNECTION_UI_ENABLED || probe.update_required
+            || probe.api_contract_version !== 1 || !probe.capabilities.includes('analysis')) return;
+        const check = await refreshReadiness();
+        if (check.state === 'ready' || check.state === 'missing-models') {
+            setWebConnectionRecoveryStarted(false);
+        }
+    };
+
+    const handleCheckWebConnection = async () => {
+        // Hand ownership to the coordinator before probing; old anonymous checks must not undo pairing.
+        readinessLoopRef.current += 1;
+        setReadinessState('checking');
+        setReadinessMessage('');
+        setWebConnectionRecoveryStarted(true);
+        try {
+            const probe = await probeLocalEngine();
+            if (probe) await recheckDevelopmentReadiness(probe);
+        } catch {
+            // The connection surface explains the coordinator's current state and recovery action.
+        }
+    };
 
     const waitForBackendReady = async (): Promise<ReadinessCheck> => {
         const deadline = getNowMs() + BACKEND_READY_TIMEOUT_MS;
@@ -2600,13 +2665,24 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 </div>
                     <div className={`writer-action-bar ${localEngineConnectionRequired ? 'writer-action-bar-connection' : ''}`} aria-live="polite" aria-busy={isAnalyzing}>
                         {localEngineConnectionRequired && (
-                            <LocalEngineConnectionSurface />
+                            <LocalEngineConnectionSurface
+                                analysisPrerequisitesMissing={readinessState !== 'ready'}
+                                connectionRequested={webConnectionRecoveryStarted}
+                                onProbeCompleted={webConnectionRecoveryStarted ? recheckDevelopmentReadiness : undefined}
+                            />
                         )}
-                        {(formErrorInline || showReadinessHint) && (
+                        {(formErrorInline || showReadinessHint || showEngineCheckingLine) && (
                             <div className="writer-action-notes">
                         {formErrorInline && (
                             <p id="writer-form-error" className="writer-action-hint writer-action-hint-error">
                                 {`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`}
+                            </p>
+                        )}
+                        {showEngineCheckingLine && (
+                            <p id="writer-engine-checking" className="writer-action-hint">
+                                <Loader2 size={13} className="mr-1.5 inline-block animate-spin align-[-2px] motion-reduce:animate-none" aria-hidden="true" />
+                                {isTauriRuntime() ? '분석 기능 준비 중'
+                                    : localEngineConnectionRequired ? '분석 준비 확인 중' : '바로록 연결 확인 중'}
                             </p>
                         )}
                         {showReadinessHint && (
@@ -2614,8 +2690,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 {engineUnreachable
                                     ? isTauriRuntime()
                                         ? DESKTOP_ENGINE_NOT_READY_MESSAGE
-                                        : '이 PC의 분석 기능에 아직 연결되지 않았습니다. 바로록 연결을 실행해 주세요.'
-                                    : modelsMissing ? '분석에 필요한 모델이 아직 없습니다. 모델을 받으면 바로 시작할 수 있습니다.' : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
+                                        : '분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.'
+                                    : connectionCheckRequired
+                                        ? '연결 상태를 확인해야 분석을 시작할 수 있습니다.'
+                                    : modelsMissing
+                                        ? '분석에 필요한 모델이 아직 없습니다. 모델을 받으면 바로 시작할 수 있습니다.'
+                                        : modelsNeedReinstall
+                                            ? '필요한 모델이 없어 분석을 시작할 수 없습니다.'
+                                            : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
                             </p>
                         )}
                             </div>
@@ -2636,6 +2718,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <Button variant="outline" className="writer-hint-action" onClick={() => void handleRecheckEngine()} disabled={isRecheckingEngine}>
                                 <RefreshCw size={15} className={isRecheckingEngine ? 'animate-spin' : ''} aria-hidden="true" />
                                 {isRecheckingEngine ? '확인 중' : '다시 확인'}
+                            </Button>
+                        )}
+                        {readinessAction === 'connect' && (
+                            <Button variant="outline" className="writer-hint-action" onClick={() => void handleCheckWebConnection()}>
+                                <RefreshCw size={15} aria-hidden="true" />
+                                연결 확인
                             </Button>
                         )}
                         <div className="writer-primary-actions">

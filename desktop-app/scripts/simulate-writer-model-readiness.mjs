@@ -221,7 +221,8 @@ const run = async () => {
     const modelsTab = page.getByRole('tab', { name: '모델' });
     await modelsTab.waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await modelsTab.getAttribute('aria-selected'), 'true', 'model guidance should open the models tab');
-    await page.getByText('음성 인식 모델', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    // The panel heading and loaded model row share this label.
+    await page.locator('#settings-models-panel').getByText('음성 인식 모델', { exact: true }).first().waitFor({ state: 'visible', timeout: 10000 });
 
     await page.keyboard.press('Escape');
     await page.getByRole('dialog').waitFor({ state: 'detached' });

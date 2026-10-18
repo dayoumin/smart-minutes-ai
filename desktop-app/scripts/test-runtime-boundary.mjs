@@ -125,12 +125,17 @@ const introWithInstaller = getLocalEngineConnectionView({
 });
 assert.equal(introWithInstaller.secondaryAction, 'download', 'a configured installer is offered before the first connection attempt');
 assert.equal(introWithInstaller.secondaryLabel, '바로록 연결 받기');
-assert.equal(getLocalEngineConnectionView({
+const unreachableWithInstaller = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'unreachable' },
   pairingPhase: 'idle',
   connectionStarted: true,
   installerAvailable: true,
-}).primaryLabel, '바로록 연결 받기', 'the engine has one name in every connection state');
+});
+assert.equal(unreachableWithInstaller.primaryAction, 'probe', 'no response does not establish that installation is needed');
+assert.equal(unreachableWithInstaller.primaryLabel, '연결 확인');
+assert.equal(unreachableWithInstaller.secondaryAction, 'download');
+assert.equal(unreachableWithInstaller.secondaryLabel, '바로록 연결 받기');
+assert.match(unreachableWithInstaller.message, /설치했다면 Windows 시작 메뉴/);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
   pairingPhase: 'idle',
@@ -153,6 +158,10 @@ const connectedView = getLocalEngineConnectionView({
 });
 assert.equal(connectedView.scene, 'connected');
 assert.equal(connectedView.analysisReady, true);
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'authenticated', capabilities: new Set(['analysis']) },
+  pairingPhase: 'connected', connectionStarted: true, analysisPrerequisitesMissing: true,
+}).title, '연결됨', 'connection alone must not claim that model checks have completed');
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'expired' },
   pairingPhase: 'expired',

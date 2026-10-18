@@ -98,6 +98,131 @@ const startServer = async () => {
   }
 };
 
+const verifyDefaultWriterGuidance = async browser => {
+  const url = new URL(APP_URL);
+  url.searchParams.delete('localEngineConnection');
+  for (const scenario of ['anonymous', 'authorization', 'outage-recovery']) {
+    const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    const token = 'writer-guidance-test-token';
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    let healthUp = scenario !== 'outage-recovery';
+    let modelReady = true;
+    let probeCount = 0;
+    let healthCount = 0;
+    let heldModelCount = 0;
+    let holdAuthenticatedModels = scenario === 'authorization';
+    let releaseModels;
+    const modelGate = new Promise(resolve => { releaseModels = resolve; });
+    const models = () => ({ ready: modelReady, models: [{
+      key: 'stt_faster_whisper', label: '음성 인식 모델', required: true,
+      installed: modelReady, downloadable: true,
+    }], errors: [] });
+    try {
+      if (scenario === 'outage-recovery') await page.clock.install();
+      await page.route('**/api/**', async route => {
+        const path = new URL(route.request().url()).pathname;
+        const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+        if (path === '/api/health') {
+          healthCount += 1;
+          return healthUp ? json({ ok: true }) : route.abort('connectionrefused');
+        }
+        if (path === '/api/models/status') {
+          const authorized = route.request().headers().authorization === `Bearer ${token}`;
+          if (scenario === 'authorization' && !authorized) return json({ detail: 'authorization required' }, 401);
+          if (authorized && holdAuthenticatedModels) {
+            heldModelCount += 1;
+            await modelGate;
+          }
+          return json(models());
+        }
+        if (path === '/api/probe') {
+          probeCount += 1;
+          if (!healthUp) return route.abort('connectionrefused');
+          return json({ product_id: 'barorok-local-engine', engine_version: 'test', api_contract_version: 1,
+            capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
+            auth_state: 'pairing-required', pairing_available: scenario !== 'outage-recovery', update_required: false });
+        }
+        if (path === '/api/pair/start') {
+          assert.equal(scenario, 'authorization', 'anonymous development recovery must not require pairing');
+          return json({ pairing_id: 'writer-guidance-pairing', expires_in_seconds: 120 });
+        }
+        if (path === '/api/pair/complete') {
+          assert.deepEqual(route.request().postDataJSON(), { pairing_id: 'writer-guidance-pairing', code: '123456' });
+          return json({ session_token: token, expires_at: Math.floor(Date.now() / 1000) + 300,
+            capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] });
+        }
+        if (path === '/api/analyze') throw new Error('Guidance must not start analysis');
+        if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+        if (path === '/api/settings') return json({});
+        return json({ detail: 'not used by writer guidance' }, 404);
+      });
+      await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+      await page.getByLabel('회의 제목 *').fill(`안내 상태 ${scenario}`);
+      await page.getByLabel('회의 목적 *').fill('입력과 파일을 보존하며 다음 동작 확인');
+      await page.setInputFiles('#meeting-file-input', { name: 'guidance.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('guidance fixture') });
+      const analyze = page.locator('.writer-start-button');
+      if (scenario === 'anonymous') {
+        await page.waitForFunction(() => !document.querySelector('.writer-start-button')?.disabled);
+        assert.equal(await analyze.isEnabled(), true);
+        assert.equal(probeCount, 0, 'a working anonymous development API keeps its existing flow');
+        assert.equal(await page.locator('.local-engine-connection').count(), 0);
+      } else {
+        if (scenario === 'outage-recovery') {
+          await page.getByText('바로록 연결 확인 중', { exact: true }).waitFor();
+          assert.ok(healthCount > 0);
+          await page.clock.runFor(47_000);
+          await page.getByText('분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.', { exact: true }).waitFor();
+        } else {
+          await page.locator('#writer-readiness-hint').getByText('연결 상태를 확인해야 분석을 시작할 수 있습니다.', { exact: true }).waitFor();
+          assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0);
+        }
+        assert.equal(await analyze.isDisabled(), true);
+        await page.locator('.writer-action-bar').getByRole('button', { name: '연결 확인', exact: true }).click();
+        const rail = page.locator('.local-engine-connection');
+        if (scenario === 'outage-recovery') {
+          await rail.getByText('분석 기능에 연결하지 못했습니다', { exact: true }).waitFor();
+          await rail.getByText('설치했다면 Windows 시작 메뉴에서 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+          assert.equal(await rail.locator('a[href=""]').count(), 0);
+          healthUp = true;
+          await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+          await rail.waitFor({ state: 'hidden' });
+          assert.equal(await analyze.isEnabled(), true, 'a recovered anonymous API is usable without reloading');
+        } else {
+          await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+          const dialog = page.getByRole('dialog', { name: '이 브라우저 연결', exact: true });
+          await dialog.getByLabel('연결 코드', { exact: true }).fill('123456');
+          await dialog.getByRole('button', { name: '연결', exact: true }).click();
+          await rail.getByText('연결됨', { exact: true }).waitFor();
+          assert.equal(await rail.getByText('분석 준비 완료', { exact: true }).count(), 0);
+          assert.equal(await analyze.isDisabled(), true, 'model readiness must complete after pairing');
+          const deadline = Date.now() + 10_000;
+          while (!heldModelCount && Date.now() < deadline) await sleep(50);
+          assert.ok(heldModelCount > 0);
+          modelReady = false;
+          holdAuthenticatedModels = false;
+          releaseModels();
+          await page.locator('.writer-action-bar').getByRole('button', { name: '모델 받기', exact: true }).waitFor();
+          assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).isDisabled(), true);
+          modelReady = true;
+          await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+          await rail.getByText('분석 준비 완료', { exact: true }).waitFor();
+          assert.equal(await analyze.isEnabled(), true);
+        }
+        assert.ok(probeCount > 0);
+      }
+      assert.equal(await page.getByLabel('회의 제목 *').inputValue(), `안내 상태 ${scenario}`);
+      assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '입력과 파일을 보존하며 다음 동작 확인');
+      assert.equal(await page.locator('#meeting-file-input').evaluate(input => input.files[0]?.name), 'guidance.mp3');
+      assert.deepEqual(errors, []);
+      console.log(`ok - default writer guidance: ${scenario}`);
+    } finally {
+      releaseModels();
+      await page.close();
+    }
+  }
+};
+
 const verifySummaryReadinessAfterPairing = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   const sessionToken = 'summary-readiness-ui-test-session-token';
@@ -210,6 +335,10 @@ const run = async () => {
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'writer-guidance') {
+      await verifyDefaultWriterGuidance(browser);
+      return;
+    }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'summary-readiness') {
       await verifySummaryReadinessAfterPairing(browser);
       return;
@@ -326,7 +455,7 @@ const run = async () => {
     assert.equal(await rail.getByRole('button', { name: '설치 파일 준비 중', exact: true }).count(), 0);
 
     probeMode = 'reachable';
-    await rail.getByRole('button', { name: '다시 연결', exact: true }).click();
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await rail.getByText('이 브라우저를 연결해 주세요').waitFor({ state: 'visible' });
     await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
 

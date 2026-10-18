@@ -12,6 +12,7 @@ import {
 } from 'lucide-react';
 import { Button, IconButton, Input } from './components/common';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
+import type { LocalEngineProbePayload } from './localEngineConnection';
 import { getDistributionUrl } from './localEngineDistribution';
 import {
     getLocalEngineConnectionView,
@@ -21,6 +22,11 @@ import {
 interface LocalEngineConnectionSurfaceProps {
     installerUrl?: string;
     updateUrl?: string;
+    /** Connected but not ready to analyze (e.g. a required model is missing); the title must not say 분석 준비 완료. */
+    analysisPrerequisitesMissing?: boolean;
+    /** The writer already started a recovery probe from its compact action row. */
+    connectionRequested?: boolean;
+    onProbeCompleted?: (probe: LocalEngineProbePayload) => Promise<void>;
 }
 
 const PAIRING_CODE_PATTERN = /^\d{6,8}$/;
@@ -35,6 +41,9 @@ const SceneIcon: React.FC<{ scene: string; busy: boolean }> = ({ scene, busy }) 
 export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurfaceProps> = ({
     installerUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_INSTALLER_URL),
     updateUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_UPDATE_URL),
+    analysisPrerequisitesMissing = false,
+    connectionRequested = false,
+    onProbeCompleted,
 }) => {
     const {
         snapshot,
@@ -57,10 +66,11 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
     const view = useMemo(() => getLocalEngineConnectionView({
         snapshot,
         pairingPhase: pairingState.phase,
-        connectionStarted,
+        connectionStarted: connectionStarted || connectionRequested,
         installerAvailable: Boolean(installerUrl),
         updateAvailable: Boolean(updateUrl),
-    }), [connectionStarted, installerUrl, pairingState.phase, snapshot, updateUrl]);
+        analysisPrerequisitesMissing,
+    }), [analysisPrerequisitesMissing, connectionRequested, connectionStarted, installerUrl, pairingState.phase, snapshot, updateUrl]);
 
     useEffect(() => {
         if (pairingState.phase !== 'awaiting-code') return;
@@ -136,7 +146,8 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
         setConnectionStarted(true);
         setShowHelp(false);
         try {
-            await probeLocalEngine();
+            const result = await probeLocalEngine();
+            if (result) await onProbeCompleted?.(result);
         } catch {
             // The provider owns the durable transport state shown by this surface.
         }

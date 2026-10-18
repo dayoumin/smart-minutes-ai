@@ -499,6 +499,28 @@ def _stt_execution_fingerprint(model_path: str, device: str, chunk_seconds: int)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
+def _preserved_analysis_resume_progress(state: dict, config: dict) -> dict:
+    indices = state.get("completed_chunk_indices")
+    if (
+        not state.get("resume_supported")
+        or state.get("stage") == "completed"
+        or not isinstance(indices, list) or not indices
+        or any(isinstance(index, bool) or not isinstance(index, int) or index < 0 for index in indices)
+        or state.get("config_fingerprint") not in _analysis_compatible_config_fingerprints(config)
+    ):
+        return {}
+    # This preserves discovery metadata only. Each STT file still has to pass its
+    # input/config/execution/chunk validation before it can bypass transcription.
+    return {
+        key: copy.deepcopy(state[key])
+        for key in (
+            "chunk_count", "completed_chunk_indices", "stt_completed", "diarization_completed",
+            "summary_completed", "resume_supported", "last_progress",
+        )
+        if key in state
+    }
+
+
 def _seed_analysis_job_state(
     *,
     job_id: str,
@@ -511,19 +533,33 @@ def _seed_analysis_job_state(
     temp_dir = resolve_config_path(config["paths"]["temp_dir"])
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
     ensure_job_checkpoint_dirs(checkpoint_paths)
+    previous = _load_job_state(checkpoint_paths)
+    same_source_metadata = (
+        str(previous.get("source_filename") or "") == str(source_filename or "")
+        and _normalize_resume_file_size(previous.get("source_size")) == _normalize_resume_file_size(source_size)
+        and _normalize_resume_last_modified(previous.get("source_last_modified")) == _normalize_resume_last_modified(source_last_modified)
+    )
+    preserved_progress = (
+        _preserved_analysis_resume_progress(previous, config)
+        if resume_requested and same_source_metadata else {}
+    )
     _write_job_state(checkpoint_paths, {
         "job_id": job_id,
         "source_file": source_filename or job_id,
         "source_filename": source_filename or "",
         "source_size": _normalize_resume_file_size(source_size),
         "source_last_modified": _normalize_resume_last_modified(source_last_modified),
-        "config_fingerprint": _analysis_config_fingerprint(config),
+        # Keep the cache's identity until the pipeline checks the actual input.
+        # Relabeling old checkpoints with a new config could wrongly reuse audio.
+        "config_fingerprint": previous.get("config_fingerprint") if previous else _analysis_config_fingerprint(config),
         "pipeline_version": ANALYSIS_PIPELINE_VERSION,
         "checkpoint_version": ANALYSIS_CHECKPOINT_VERSION,
         "resume_requested": bool(resume_requested),
         "stage": "uploaded",
         "cancelled": False,
         "failed": False,
+        "chunk_count": 0,
+        "completed_chunk_indices": [],
         "resume_supported": False,
         "cleanup_policy": "preserve_checkpoints",
         "last_progress": {
@@ -532,6 +568,7 @@ def _seed_analysis_job_state(
             "status": "processing",
         },
         "last_heartbeat_at": datetime.now().isoformat(),
+        **preserved_progress,
     })
 
 
@@ -6667,6 +6704,9 @@ def process_audio_pipeline(
     ensure_job_checkpoint_dirs(checkpoint_paths)
     owner_run_id = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
     created_at = existing_state.get("created_at", datetime.now().isoformat())
+    preserved_progress = (
+        _preserved_analysis_resume_progress(existing_state, config) if resume_requested else {}
+    )
     _write_job_state(checkpoint_paths, {
         "job_id": job_id,
         **seeded_source_metadata,
@@ -6690,6 +6730,7 @@ def process_audio_pipeline(
         "resume_mode": resume_mode,
         "resume_message": resume_message,
         "resume_fallback_reason": resume_fallback_reason,
+        **preserved_progress,
     })
     current_stage = "preprocessing"
 

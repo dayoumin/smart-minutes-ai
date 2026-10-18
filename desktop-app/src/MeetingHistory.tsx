@@ -105,6 +105,7 @@ type TemplateUndoToast = {
 
 interface ModelsStatusResponse {
     summary_ready?: boolean;
+    summary_reason?: string;
     summary_message?: string;
     ollama_connection?: {
         status?: string;
@@ -1198,9 +1199,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 const ollamaConnection = payload.ollama_connection;
                 setSummaryRuntimeCanAutoStart(Boolean(
                     !payload.summary_ready
-                    && ollamaConnection?.status === 'managed_stopped'
-                    && ollamaConnection.can_auto_start
-                    && ollamaConnection.managed_runtime_available
+                    && (payload.summary_reason === 'runtime_preparing' || (
+                        (ollamaConnection?.status === 'managed_stopped' || ollamaConnection?.status === 'managed_starting')
+                        && ollamaConnection.can_auto_start
+                        && ollamaConnection.managed_runtime_available
+                    ))
                 ));
             } catch {
                 if (cancelled) return;

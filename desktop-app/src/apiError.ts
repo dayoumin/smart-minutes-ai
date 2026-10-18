@@ -27,6 +27,7 @@ const API_ERROR_MESSAGES: Record<string, string> = {
     diarization_runtime_error: '참석자 구분 중 문제가 발생했습니다. 원본 음성과 모델 준비 상태를 확인한 뒤 다시 실행해 주세요.',
     'model must be a valid Ollama model name': '요약 모델 이름 형식을 확인해 주세요. 예: gemma4:e2b',
     runtime_missing: '요약 프로그램을 찾지 못했습니다. 설정에서 요약 프로그램을 준비한 뒤 다시 시도해 주세요.',
+    runtime_preparing: '요약 프로그램을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.',
     server_unreachable: '요약 프로그램에 연결하지 못했습니다. 프로그램을 다시 실행한 뒤 다시 시도해 주세요.',
     model_missing: '사용할 요약 모델을 찾지 못했습니다. 설정에서 모델을 준비한 뒤 다시 시도해 주세요.',
     request_timeout: '정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.',

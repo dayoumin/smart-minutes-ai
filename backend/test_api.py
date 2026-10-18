@@ -872,7 +872,7 @@ class AnalyzeApiTest(unittest.TestCase):
         })
 
         with (
-            patch("model_manager.list_ollama_models", return_value=["llama3.2:3b"]),
+            patch("model_manager.read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("llama3.2:3b",))),
             patch("model_manager.ollama_executable_available", return_value=True),
         ):
             status = get_model_status(main.BASE_DIR, config)
@@ -891,7 +891,7 @@ class AnalyzeApiTest(unittest.TestCase):
         })
 
         with (
-            patch("model_manager.list_ollama_models", return_value=[]),
+            patch("model_manager.read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(False)),
             patch("model_manager.ollama_executable_available", return_value=False),
         ):
             status = get_model_status(main.BASE_DIR, config)
@@ -906,7 +906,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        with patch("model_manager.list_ollama_models", return_value=["llama3.2:3b"]):
+        with patch("model_manager.read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("llama3.2:3b",))):
             status = get_model_status(main.BASE_DIR, config)
 
         llm_model = next(model for model in status["models"] if model["key"] == "llm")
@@ -928,7 +928,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        with patch("model_manager.list_ollama_models", return_value=["gemma4:2b"]):
+        with patch("model_manager.read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("gemma4:2b",))):
             status = get_model_status(main.BASE_DIR, config)
 
         llm_model = next(model for model in status["models"] if model["key"] == "llm")
@@ -1339,6 +1339,7 @@ class AnalyzeApiTest(unittest.TestCase):
         with (
             patch.object(main, "load_config", return_value=config),
             patch.object(main, "get_model_status", return_value=model_status) as get_status,
+            patch.object(main, "get_stt_device_status", return_value={"gpu_usable": False}),
             patch.object(main, "_summary_model_readiness_from_status", return_value={"ready": False, "status": "skipped", "message": ""}) as summary_readiness,
             patch.object(main, "_ollama_connection_status", return_value=connection_status),
         ):
@@ -1381,13 +1382,17 @@ class AnalyzeApiTest(unittest.TestCase):
     def test_summary_model_readiness_passive_does_not_start_ollama(self) -> None:
         config = main.normalize_app_config({"summary": {"enabled": True, "model": "gemma4:e2b"}})
         with (
-            patch.object(main, "_resolve_summary_model", return_value="gemma4:e2b"),
-            patch.object(main, "ollama_model_exists", return_value=False) as model_exists,
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "probe_ollama_server", return_value=True),
+            patch.object(main, "wait_for_ollama_preparation") as prepare,
+            patch.object(main, "read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True)) as inventory,
         ):
             readiness = main._summary_model_readiness(config, start_ollama=False)
 
         self.assertFalse(readiness["ready"])
-        model_exists.assert_called_once_with("gemma4:e2b", start_server=False)
+        self.assertEqual(readiness["reason"], "model_missing")
+        inventory.assert_called_once_with(server_prepared=True)
+        prepare.assert_not_called()
 
     def test_manual_diarization_request_applies_limits_when_auto_is_disabled(self) -> None:
         decision = main._diarization_resource_decision(
@@ -2290,7 +2295,11 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(payload["selected_stt_model"], "faster-whisper-large-v3")
 
     def test_summary_model_readiness_reports_missing_default_ollama_model(self) -> None:
-        with patch.object(main, "ollama_model_exists", return_value=False):
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "wait_for_ollama_preparation", return_value=True),
+            patch.object(main, "read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True)),
+        ):
             readiness = main._summary_model_readiness({"summary": {"enabled": True}, "paths": {}})
 
         self.assertFalse(readiness["ready"])
@@ -2298,19 +2307,24 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertIn("gemma4:e2b", readiness["message"])
 
     def test_summary_model_readiness_accepts_available_ollama_model(self) -> None:
-        with patch.object(main, "ollama_model_exists", return_value=True):
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "wait_for_ollama_preparation", return_value=True),
+            patch.object(main, "read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("gemma-4b",))),
+        ):
             readiness = main._summary_model_readiness({"summary": {"enabled": True, "model": "gemma-4b"}, "paths": {}})
 
         self.assertTrue(readiness["ready"])
         self.assertEqual(readiness["status"], "ready")
 
     def test_summary_model_readiness_accepts_available_gemma4_4b_fallback(self) -> None:
-        def fake_ollama_exists(model_name: str, *, start_server: bool = True) -> bool:
-            return model_name == "gemma4:e4b"
-
-        with patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists):
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "wait_for_ollama_preparation", return_value=True),
+            patch.object(main, "read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("gemma4:e4b",))),
+        ):
             readiness = main._summary_model_readiness({"summary": {"enabled": True, "model": "gemma4:e2b"}, "paths": {}})
-            resolved_model = main._resolve_summary_model({"summary": {"enabled": True, "model": "gemma4:e2b"}, "paths": {}})
+            resolved_model = readiness["model"]
 
         self.assertTrue(readiness["ready"])
         self.assertEqual(readiness["status"], "ready")
@@ -2330,7 +2344,7 @@ class AnalyzeApiTest(unittest.TestCase):
         with (
             patch("main.load_config", return_value=config),
             patch("main.get_stt_device_status", return_value={"gpu_usable": False, "gpu_reason": "GPU unavailable", "recommended_device": "cpu", "selected_device_allowed": ["cpu"]}),
-            patch("model_manager.list_ollama_models", return_value=["gemma4:e4b"]),
+            patch("model_manager.read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("gemma4:e4b",))),
             patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists),
         ):
             response = self.client.get("/api/models/status")
@@ -2352,12 +2366,13 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        def fake_ollama_exists(model_name: str, *, start_server: bool = True) -> bool:
-            return model_name == "gemma4:e4b"
-
-        with patch.object(main, "ollama_model_exists", side_effect=fake_ollama_exists):
+        with (
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "wait_for_ollama_preparation", return_value=True),
+            patch.object(main, "read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("gemma4:e4b",))),
+        ):
             readiness = main._summary_model_readiness(config)
-            resolved_model = main._resolve_summary_model(config)
+            resolved_model = main._resolve_summary_model(config, ollama_models=("gemma4:e4b",))
 
         self.assertFalse(readiness["ready"])
         self.assertEqual(readiness["status"], "skipped")
@@ -2397,7 +2412,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "paths": {},
         })
 
-        with patch("model_manager.list_ollama_models", return_value=["llama3.2:3b"]):
+        with patch("model_manager.read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(True, ("llama3.2:3b",))):
             status = get_model_status(main.BASE_DIR, config)
 
         llm_model = next(model for model in status["models"] if model["key"] == "llm")
@@ -5291,7 +5306,9 @@ class AnalyzeApiTest(unittest.TestCase):
                     "actions": ["new action"],
                     "needs_check": ["new check"],
                 },
-            ), patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}):
+            ), patch.object(main, "_summary_model_readiness", return_value={"ready": True, "status": "ready", "message": ""}), patch.object(
+                main, "_refresh_transcript_and_summary_exports", return_value=main._result_outputs(job_id),
+            ):
                 response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
 
             self.assertEqual(response.status_code, 200)

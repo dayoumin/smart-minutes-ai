@@ -35,6 +35,7 @@ const {
 
 const {
   parseApiErrorBody,
+  toUserFacingAnalysisError,
 } = await importTsModule('src/apiError.ts');
 
 const reportTemplates = listReportTemplates();
@@ -102,6 +103,26 @@ assert.equal(structuredTimeout.code, 'request_timeout');
 assert.equal(structuredTimeout.retryable, true);
 assert.equal(structuredTimeout.userAction, 'retry');
 assert.equal(structuredTimeout.generationKind, 'meeting_report');
+
+const structuredPreparing = parseApiErrorBody(JSON.stringify({
+  detail: {
+    code: 'runtime_preparing',
+    message: 'raw backend readiness message',
+    retryable: true,
+    user_action: 'retry',
+    generation_kind: 'summary',
+  },
+}), 'fallback');
+assert.equal(structuredPreparing.message, '요약 프로그램을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.');
+assert.equal(structuredPreparing.detail, 'runtime_preparing');
+assert.equal(structuredPreparing.code, 'runtime_preparing');
+assert.equal(structuredPreparing.retryable, true);
+assert.equal(structuredPreparing.userAction, 'retry');
+assert.equal(structuredPreparing.generationKind, 'summary');
+assert.equal(
+  toUserFacingAnalysisError('runtime_preparing'),
+  '요약 프로그램을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.',
+);
 
 const structuredMissingModel = parseApiErrorBody(JSON.stringify({
   detail: {

@@ -55,6 +55,34 @@ class OllamaModelListTest(unittest.TestCase):
         ):
             self.assertEqual(model_manager.list_ollama_models(), [])
 
+    def test_strict_inventory_distinguishes_empty_store_from_failed_lookup(self):
+        for body, complete in (
+            (b'{"models":[]}', True), (b'{}', False), (b'{"models":[{"name":3}]}', False),
+        ):
+            with (
+                self.subTest(body=body),
+                patch.object(model_manager.urllib.request, "urlopen", return_value=BytesIO(body)),
+                patch.object(model_manager, "ensure_ollama_server_running") as start,
+                patch.object(model_manager, "probe_ollama_server") as probe,
+            ):
+                inventory = model_manager.read_ollama_model_inventory(server_prepared=True)
+            self.assertEqual(inventory.complete, complete)
+            self.assertEqual(inventory.models, ())
+            start.assert_not_called()
+            probe.assert_not_called()
+
+    def test_strict_inventory_http_and_timeout_failures_are_not_confirmed_absence(self):
+        import urllib.error
+
+        for error in (TimeoutError("busy"), urllib.error.HTTPError("http://local", 503, "busy", {}, None)):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(model_manager.urllib.request, "urlopen", side_effect=error),
+            ):
+                inventory = model_manager.read_ollama_model_inventory(server_prepared=True)
+            self.assertFalse(inventory.complete)
+            self.assertEqual(inventory.models, ())
+
 
 if __name__ == "__main__":
     unittest.main()

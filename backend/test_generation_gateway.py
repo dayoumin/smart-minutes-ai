@@ -5,6 +5,7 @@ import sys
 import unittest
 import urllib.error
 from pathlib import Path
+from io import BytesIO
 from unittest.mock import patch
 
 BACKEND_DIR = str(Path(__file__).resolve().parent)
@@ -43,6 +44,59 @@ class GenerationGatewayTest(unittest.TestCase):
         self.assertEqual(raised.exception.user_action, "open_settings")
         ensure_runtime.assert_not_called()
 
+    def test_preparing_failure_remains_retryable_with_existing_detail_contract(self) -> None:
+        failure = generation_gateway.failure_for_code("runtime_preparing")
+        self.assertEqual(failure.http_status, 503)
+        self.assertEqual(failure.as_detail("summary"), {
+            "code": "runtime_preparing", "message": failure.user_message,
+            "retryable": True, "user_action": "retry", "generation_kind": "summary",
+        })
+
+    def test_prepared_runtime_is_scoped_to_the_model_and_operation(self) -> None:
+        with (
+            patch.object(generation_gateway, "ollama_executable_available", return_value=True),
+            patch.object(generation_gateway, "ensure_ollama_server_running", return_value=True) as ensure,
+        ):
+            with generation_gateway.prepared_ollama_runtime("gemma4:e4b"):
+                generation_gateway._ensure_runtime("gemma4:e4b")
+                ensure.assert_not_called()
+                generation_gateway._ensure_runtime("another:model")
+                self.assertEqual(ensure.call_count, 1)
+            generation_gateway._ensure_runtime("gemma4:e4b")
+        self.assertEqual(ensure.call_count, 2)
+
+    def test_http_logging_contains_timings_without_content_or_model(self) -> None:
+        payload = {
+            "response": "PRIVATE RESPONSE", "load_duration": 123,
+            "prompt_eval_duration": 456, "eval_duration": 789,
+        }
+        with (
+            patch.object(generation_gateway, "_ensure_runtime"),
+            patch.object(generation_gateway.urllib.request, "urlopen", return_value=BytesIO(json.dumps(payload).encode())) as request,
+            self.assertLogs(level="INFO") as logs,
+        ):
+            self.assertEqual(generation_gateway._generate_with_http("PRIVATE MODEL", "PRIVATE PROMPT"), "PRIVATE RESPONSE")
+        self.assertEqual(request.call_args.kwargs["timeout"], 600)
+        output = "\n".join(logs.output)
+        self.assertIn("request begin", output)
+        self.assertIn("load_duration_ns=123", output)
+        self.assertIn("prompt_eval_duration_ns=456", output)
+        self.assertIn("eval_duration_ns=789", output)
+        for value in ("PRIVATE RESPONSE", "PRIVATE MODEL", "PRIVATE PROMPT"):
+            self.assertNotIn(value, output)
+
+    def test_failed_http_logging_does_not_include_exception_details(self) -> None:
+        with (
+            patch.object(generation_gateway, "_ensure_runtime"),
+            patch.object(generation_gateway.urllib.request, "urlopen", side_effect=TimeoutError("PRIVATE ERROR")),
+            self.assertLogs(level="INFO") as logs,
+        ):
+            with self.assertRaises(TimeoutError):
+                generation_gateway._generate_with_http("PRIVATE MODEL", "PRIVATE PROMPT")
+        output = "\n".join(logs.output)
+        self.assertIn("status=failed code=request_timeout", output)
+        self.assertNotIn("PRIVATE", output)
+
     def test_timeout_does_not_retry_with_cli(self) -> None:
         with (
             patch.object(generation_gateway, "_generate_with_http", side_effect=TimeoutError("late")),
@@ -67,6 +121,18 @@ class GenerationGatewayTest(unittest.TestCase):
 
         self.assertEqual(result, '{"summary":"ok"}')
         cli_generate.assert_called_once_with("gemma4:e2b", "prompt")
+
+    def test_prepared_runtime_connection_loss_does_not_restart_through_cli(self) -> None:
+        with (
+            patch.object(generation_gateway, "_generate_with_http", side_effect=urllib.error.URLError(ConnectionRefusedError())),
+            patch.object(generation_gateway, "_generate_with_cli") as cli_generate,
+            generation_gateway.prepared_ollama_runtime("gemma4:e2b"),
+        ):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway.generate_ollama_text("gemma4:e2b", "prompt")
+        self.assertEqual(raised.exception.code, "server_unreachable")
+        self.assertTrue(raised.exception.retryable)
+        cli_generate.assert_not_called()
 
     def test_cli_failure_does_not_expose_raw_process_output(self) -> None:
         process_error = subprocess.CalledProcessError(

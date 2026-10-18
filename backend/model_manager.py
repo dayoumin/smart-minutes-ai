@@ -166,31 +166,50 @@ def ollama_model_exists(model_name: str, *, start_server: bool = True) -> bool:
     return model_name in list_ollama_models(start_server=start_server)
 
 
-def list_ollama_models(*, start_server: bool = True) -> list[str]:
+@dataclass(frozen=True)
+class OllamaModelInventory:
+    complete: bool
+    models: tuple[str, ...] = ()
+
+
+def read_ollama_model_inventory(*, start_server: bool = True, server_prepared: bool = False) -> OllamaModelInventory:
+    """Read one inventory; an unavailable or malformed reply is not an empty store."""
     try:
-        if start_server:
+        if server_prepared:
+            pass
+        elif start_server:
             if not ensure_ollama_server_running(timeout_seconds=10):
-                return []
+                return OllamaModelInventory(False)
         elif not probe_ollama_server(timeout_seconds=2):
-            return []
+            return OllamaModelInventory(False)
         # Starting the CLI can exceed the lookup timeout on a busy Windows PC,
         # even while the same runtime's HTTP API is already responsive.
         with urllib.request.urlopen(f"{get_ollama_base_url()}/api/tags", timeout=5) as response:
             payload = json.load(response)
-        rows = payload.get("models", []) if isinstance(payload, dict) else []
+        rows = payload.get("models") if isinstance(payload, dict) else None
         if not isinstance(rows, list):
-            return []
+            return OllamaModelInventory(False)
     except Exception:
-        return []
+        return OllamaModelInventory(False)
 
     models: list[str] = []
+    complete = True
     for row in rows:
         if not isinstance(row, dict):
+            complete = False
             continue
         name = row.get("name")
-        if isinstance(name, str) and name.strip() and name.strip() not in models:
+        if not isinstance(name, str) or not name.strip():
+            complete = False
+            continue
+        if name.strip() not in models:
             models.append(name.strip())
-    return models
+    return OllamaModelInventory(complete, tuple(models))
+
+
+def list_ollama_models(*, start_server: bool = True) -> list[str]:
+    # Preserve the existing best-effort list API for callers that only need names.
+    return list(read_ollama_model_inventory(start_server=start_server).models)
 
 
 def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama: bool = True) -> dict:
@@ -203,8 +222,9 @@ def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama
     visible_options = list(options) if uses_configured_option else []
     candidate_models = get_summary_candidate_models(config)
     ollama_available = ollama_executable_available()
+    inventory = read_ollama_model_inventory(start_server=start_ollama)
     ollama_models = []
-    for model in list_ollama_models(start_server=start_ollama):
+    for model in inventory.models:
         normalized_model = normalize_summary_model_name(model)
         if normalized_model and normalized_model not in ollama_models:
             ollama_models.append(normalized_model)
@@ -259,6 +279,7 @@ def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama
         "installed_model": installed_model,
         "installed_models": installed_models,
         "ollama_available": ollama_available,
+        "inventory_checked": inventory.complete,
         "configured_model": configured_model,
         "required": False,
         "gated": False,

@@ -39,7 +39,7 @@ from config_normalization import (
     normalize_app_config,
     remove_summary_user_model,
 )
-from generation_gateway import classify_generation_exception, failure_for_code
+from generation_gateway import classify_generation_exception, failure_for_code, prepared_ollama_runtime
 from local_engine_security import (
     LocalEngineAuthMiddleware,
     LocalEnginePairingCoordinator,
@@ -69,6 +69,8 @@ from model_manager import (
     get_model_spec,
     normalize_windows_path,
     ollama_model_exists,
+    list_ollama_models,
+    read_ollama_model_inventory,
     resolve_model_path,
 )
 from ollama_utils import (
@@ -77,10 +79,12 @@ from ollama_utils import (
     find_ollama_executable,
     get_local_ollama_runtime_dir,
     get_portable_ollama_runtime_dir,
+    is_embedded_ollama_running,
     ollama_executable_available,
     ollama_subprocess_env,
     probe_ollama_server,
     using_embedded_ollama,
+    wait_for_ollama_preparation,
 )
 from pipeline.transcribe import get_stt_device_status
 from pipeline.transcript_display import SPEAKER_REVIEW_FLAG_ALIASES, speaker_review_flags
@@ -904,6 +908,7 @@ async def models_status() -> dict:
         status["diarization_generate_during_analysis"] = diarization_during_analysis
         status["summary_ready"] = bool(summary_readiness.get("ready"))
         status["summary_status"] = summary_readiness.get("status")
+        status["summary_reason"] = summary_readiness.get("reason", "")
         status["summary_message"] = summary_readiness.get("message", "")
         status["system_profile"] = {"memory_gb": memory_gb}
         status["summary_model_recommendation"] = _summary_model_recommendation(config, memory_gb)
@@ -979,6 +984,8 @@ def _ollama_connection_status(timeout_seconds: int = 3) -> dict:
         status = "missing"
     elif source == "managed" and server_ready:
         status = "managed_ready"
+    elif source == "managed" and is_embedded_ollama_running():
+        status = "managed_starting"
     elif source == "managed":
         status = "managed_stopped"
     elif server_ready:
@@ -2891,17 +2898,26 @@ def _save_job_result(job_id: str, result_data: dict) -> None:
         f.write("\n")
 
 
-def _resolve_summary_model(config: dict, *, start_ollama: bool = True) -> str:
+def _configured_summary_model(config: dict) -> str:
     summary_config = config.get("summary", {}) if isinstance(config.get("summary", {}), dict) else {}
-    llm_model = str(summary_config.get("model") or DEFAULT_SUMMARY_MODEL).strip()
+    llm_model = normalize_summary_model_name(summary_config.get("model") or DEFAULT_SUMMARY_MODEL)
     if llm_model and llm_model.startswith((".", "..")):
         llm_model = os.path.normpath(os.path.join(BASE_DIR, llm_model))
+    return llm_model
+
+
+def _resolve_summary_model(config: dict, *, start_ollama: bool = True, ollama_models: tuple[str, ...] | None = None) -> str:
+    llm_model = _configured_summary_model(config)
     if llm_model and os.path.isfile(llm_model):
         return llm_model
     if is_local_summary_model_path(llm_model):
         return llm_model
+    available_models = {
+        normalize_summary_model_name(model)
+        for model in (list_ollama_models(start_server=start_ollama) if ollama_models is None else ollama_models)
+    }
     for candidate in get_summary_candidate_models(config):
-        if candidate and (ollama_model_exists(candidate) if start_ollama else ollama_model_exists(candidate, start_server=False)):
+        if candidate and candidate in available_models:
             return candidate
     return llm_model
 
@@ -2927,7 +2943,15 @@ def _summary_model_readiness_from_status(config: dict, status: dict, ollama_conn
     ).strip()
     local_model = is_local_summary_model_path(configured_model)
     connection_status = str(ollama_connection.get("status") or "")
-    if local_model or connection_status in {"managed_ready", "system_ready"}:
+    if local_model:
+        reason = "model_missing"
+        message = "회의 요약 모델이 준비되지 않아 대화록만 생성합니다. 설정에서 회의 요약 모델을 준비해 주세요."
+    elif connection_status == "managed_starting" or (
+        connection_status in {"managed_ready", "system_ready"} and llm_status.get("inventory_checked") is False
+    ):
+        reason = "runtime_preparing"
+        message = failure_for_code(reason).user_message
+    elif connection_status in {"managed_ready", "system_ready"}:
         reason = "model_missing"
         message = "회의 요약 모델이 준비되지 않아 대화록만 생성합니다. 설정에서 회의 요약 모델을 준비해 주세요."
     elif connection_status in {"managed_stopped", "system_stopped"}:
@@ -2945,7 +2969,9 @@ def _summary_model_readiness_from_status(config: dict, status: dict, ollama_conn
     }
 
 
-def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict:
+def _summary_model_readiness(
+    config: dict, *, start_ollama: bool = True, preparation_timeout_seconds: float = 10,
+) -> dict:
     summary_config = config.get("summary", {})
     if not summary_config.get("enabled", True):
         return {
@@ -2955,7 +2981,7 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
             "reason": "generation_disabled",
         }
 
-    model_name_or_path = _resolve_summary_model(config, start_ollama=start_ollama)
+    model_name_or_path = _configured_summary_model(config)
     if not model_name_or_path:
         return {
             "ready": False,
@@ -2965,7 +2991,7 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
         }
 
     if os.path.isfile(model_name_or_path):
-        return {"ready": True, "status": "ready", "message": ""}
+        return {"ready": True, "status": "ready", "message": "", "model": model_name_or_path, "runtime_prepared": False}
 
     if is_local_summary_model_path(model_name_or_path):
         return {
@@ -2975,22 +3001,33 @@ def _summary_model_readiness(config: dict, *, start_ollama: bool = True) -> dict
             "reason": "model_missing",
         }
 
-    if ollama_model_exists(model_name_or_path, start_server=start_ollama):
-        return {"ready": True, "status": "ready", "message": ""}
-
-    connection_status = _ollama_connection_status().get("status")
-    reason = (
-        "runtime_missing"
-        if connection_status == "missing"
-        else "server_unreachable"
-        if connection_status in {"system_stopped", "managed_stopped"}
-        else "model_missing"
-    )
+    if not ollama_executable_available():
+        reason = "runtime_missing"
+    elif not (
+        wait_for_ollama_preparation(timeout_seconds=preparation_timeout_seconds)
+        if start_ollama else probe_ollama_server(timeout_seconds=2)
+    ):
+        reason = "runtime_preparing" if is_embedded_ollama_running() else "server_unreachable"
+    else:
+        inventory = read_ollama_model_inventory(server_prepared=True)
+        if not inventory.complete:
+            reason = "runtime_preparing"
+        else:
+            model_name_or_path = _resolve_summary_model(config, ollama_models=inventory.models)
+            if model_name_or_path in {normalize_summary_model_name(model) for model in inventory.models}:
+                return {
+                    "ready": True, "status": "ready", "message": "",
+                    "model": model_name_or_path, "runtime_prepared": True,
+                }
+            reason = "model_missing"
     return {
         "ready": False,
         "status": "skipped",
         "reason": reason,
-        "message": f"요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 Ollama에 {model_name_or_path} 모델을 준비해 주세요.",
+        "message": (
+            f"요약 AI가 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 Ollama에 {model_name_or_path} 모델을 준비해 주세요."
+            if reason == "model_missing" else failure_for_code(reason).user_message
+        ),
     }
 
 
@@ -4079,18 +4116,21 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
 
         try:
             config = load_config()
-            readiness = await asyncio.to_thread(_summary_model_readiness, config)
+            readiness = await asyncio.to_thread(_summary_model_readiness, config, preparation_timeout_seconds=300)
             if not readiness["ready"]:
                 failure = failure_for_code(str(readiness.get("reason") or "model_missing"))
                 summary_data = _failed_summary(failure)
             else:
-                summary_data = await asyncio.to_thread(
-                    lambda: summarize_meeting(
-                        segments,
-                        _resolve_summary_model(config),
-                        meeting_context=_meeting_context_from_result_data(result_data),
-                    )
-                )
+                def generate_prepared_summary():
+                    model = readiness.get("model") or _configured_summary_model(config)
+                    with prepared_ollama_runtime(model if readiness.get("runtime_prepared") else ""):
+                        return summarize_meeting(
+                            segments,
+                            model,
+                            meeting_context=_meeting_context_from_result_data(result_data),
+                        )
+
+                summary_data = await asyncio.to_thread(generate_prepared_summary)
         except Exception as exc:
             http_error = _generation_http_exception(exc, "summary")
             with GENERATION_STATUS_LOCK:

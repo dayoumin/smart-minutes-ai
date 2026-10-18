@@ -101,6 +101,7 @@ interface ModelStatus {
     configured_model?: string;
     installed_model?: string;
     installed_models?: string[];
+    inventory_checked?: boolean;
     ollama_available?: boolean;
     installed: boolean;
     required: boolean;
@@ -161,6 +162,7 @@ interface ModelsPayload {
     selected_stt_device?: 'cpu' | 'cuda';
     ollama_runtime_status?: OllamaRuntimeDownloadStatus;
     ollama_connection?: OllamaConnectionStatus;
+    summary_reason?: string;
     system_profile?: {
         memory_gb?: number | null;
     };
@@ -229,7 +231,7 @@ interface OllamaRuntimeDownloadStatus {
 }
 
 interface OllamaConnectionStatus {
-    status?: 'missing' | 'managed_ready' | 'managed_stopped' | 'system_ready' | 'system_stopped';
+    status?: 'missing' | 'managed_ready' | 'managed_stopped' | 'managed_starting' | 'system_ready' | 'system_stopped';
     source?: 'none' | 'managed' | 'system';
     executable_available?: boolean;
     server_ready?: boolean;
@@ -332,11 +334,18 @@ const getOllamaRuntimeStatusMessage = (status?: OllamaRuntimeDownloadStatus | nu
     return status.message;
 };
 
-const getOllamaConnectionNotice = (connection?: OllamaConnectionStatus | null): {
+const getOllamaConnectionNotice = (connection?: OllamaConnectionStatus | null, summaryReason?: string): {
     tone: 'info' | 'warning';
     heading: string;
     message: string;
 } | null => {
+    if (connection?.status === 'managed_starting' || summaryReason === 'runtime_preparing') {
+        return {
+            tone: 'info',
+            heading: '요약 프로그램을 준비하고 있습니다.',
+            message: '준비가 끝나면 모델 준비 상태를 다시 확인해 주세요.',
+        };
+    }
     if (!connection) return null;
     if (connection.status === 'system_stopped') {
         return {
@@ -1634,10 +1643,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaCanAutoStart = Boolean(ollamaConnection?.can_auto_start || ollamaRuntimeAvailable);
     const ollamaSystemStopped = ollamaConnection?.status === 'system_stopped';
     const ollamaManagedStopped = ollamaConnection?.status === 'managed_stopped';
+    const ollamaRuntimePreparing = ollamaConnection?.status === 'managed_starting' || models?.summary_reason === 'runtime_preparing';
+    const summaryModelInventoryUnknown = ollamaRuntimePreparing || summaryModelStatus?.inventory_checked === false;
     const ollamaMissing = ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable);
     const ollamaModelActionsReady = Boolean(ollamaServerReady || ollamaCanAutoStart);
     const showOllamaRuntimeAction = Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
-    const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection);
+    const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection, models?.summary_reason);
     const configuredSummaryModel = normalizeSummaryModelName(settings?.summary?.model);
     const selectedSummaryInstalled = Boolean(selectedSummaryModel && installedSummaryModels.has(selectedSummaryModel));
     const isSummaryOptionInstalled = (modelName?: string) => Boolean(modelName && installedSummaryModels.has(modelName));
@@ -1654,7 +1665,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             ? `GPU는 감지됐지만 CUDA 런타임이 필요합니다. ${gpuReason}`
             : gpuReason;
     const recommendedSummaryModel = models?.summary_model_recommendation?.model || summaryModelOptions[0]?.model || '';
-    const summaryModelHint = selectedSummaryModel && !selectedSummaryInstalled
+    const summaryModelHint = summaryModelInventoryUnknown
+        ? '모델 상태를 아직 확인하지 못했습니다.'
+        : selectedSummaryModel && !selectedSummaryInstalled
         ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
         : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
@@ -1665,7 +1678,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         : ollamaSystemStopped
             ? '1. 음성 인식 모델을 준비합니다. 2. Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인합니다. 3. 회의 요약 모델을 받습니다.'
         : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램을 받습니다. 3. 회의 요약 모델을 받습니다.';
-    const summaryModelOllamaHelp = modelStatusCanAutoRetry
+    const summaryModelOllamaHelp = ollamaRuntimePreparing
+        ? '요약 프로그램이 준비 중이라 회의 요약 모델 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.'
+        : summaryModelInventoryUnknown
+            ? '회의 요약 모델 보유 여부를 아직 확인하지 못했습니다. 준비 상태를 다시 확인해 주세요.'
+        : modelStatusCanAutoRetry
         ? '준비 상태 확인이 지연되고 있습니다. 아래에는 마지막으로 확인한 상태를 표시합니다.'
         : selectedSummaryInstalled
             ? '회의 요약 모델을 바로 사용할 수 있습니다.'

@@ -32,7 +32,7 @@ class ConfigContractTest(unittest.TestCase):
 
             with (
                 patch.object(model_manager, "ollama_executable_available", return_value=False),
-                patch.object(model_manager, "list_ollama_models", return_value=[]),
+                patch.object(model_manager, "read_ollama_model_inventory", return_value=model_manager.OllamaModelInventory(False)),
             ):
                 status = model_manager._summary_model_status(temp_dir, config, start_ollama=False)
 

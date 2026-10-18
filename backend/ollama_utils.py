@@ -1,5 +1,6 @@
 import atexit
 import hashlib
+import logging
 import os
 import subprocess
 import shutil
@@ -14,9 +15,15 @@ from windows_process_job import WindowsProcessJob, start_owned_process
 
 _EMBEDDED_OLLAMA_PROCESS: subprocess.Popen | None = None
 _EMBEDDED_OLLAMA_JOB: WindowsProcessJob | None = None
+_EMBEDDED_OLLAMA_STARTED_AT: float | None = None
+_EMBEDDED_OLLAMA_READY_AT: float | None = None
+_EMBEDDED_OLLAMA_API_READY = False
+_EMBEDDED_OLLAMA_START_ERROR: str | None = None
+_EMBEDDED_OLLAMA_EXIT_REPORTED = False
 _EMBEDDED_OLLAMA_LOCK = threading.RLock()
 _EMBEDDED_OLLAMA_BASE_PORT = 11435
 _EMBEDDED_OLLAMA_PORT_RANGE = 2000
+_LOGGER = logging.getLogger(__name__)
 
 
 def _backend_dir() -> Path:
@@ -193,43 +200,142 @@ def probe_ollama_server(timeout_seconds: int = 2) -> bool:
     return _ollama_api_ready(timeout_seconds)
 
 
-def ensure_ollama_server_running(timeout_seconds: int = 15) -> bool:
+def is_embedded_ollama_running() -> bool:
+    """Inspect only our retained process; never probe or start a runtime."""
+    with _EMBEDDED_OLLAMA_LOCK:
+        return _EMBEDDED_OLLAMA_PROCESS is not None and _EMBEDDED_OLLAMA_PROCESS.poll() is None
+
+
+def get_embedded_ollama_status() -> dict:
+    """Return the last readiness observation without HTTP or process creation."""
+    with _EMBEDDED_OLLAMA_LOCK:
+        process = _EMBEDDED_OLLAMA_PROCESS
+        exit_code = process.poll() if process is not None else None
+        running = process is not None and exit_code is None
+        if running:
+            state = "ready" if _EMBEDDED_OLLAMA_API_READY else "starting"
+        else:
+            state = "failed" if process is not None or _EMBEDDED_OLLAMA_START_ERROR else "stopped"
+        return {
+            "state": state,
+            "running": running,
+            "elapsed_seconds": (
+                max(time.monotonic() - _EMBEDDED_OLLAMA_STARTED_AT, 0.0)
+                if _EMBEDDED_OLLAMA_STARTED_AT is not None else None
+            ),
+            "exit_code": exit_code,
+        }
+
+
+def _record_ollama_ready(process: subprocess.Popen | None) -> None:
+    global _EMBEDDED_OLLAMA_READY_AT, _EMBEDDED_OLLAMA_API_READY
+    with _EMBEDDED_OLLAMA_LOCK:
+        if process is None or process is not _EMBEDDED_OLLAMA_PROCESS or process.poll() is not None:
+            return
+        _EMBEDDED_OLLAMA_API_READY = True
+        if _EMBEDDED_OLLAMA_READY_AT is None:
+            _EMBEDDED_OLLAMA_READY_AT = time.monotonic()
+            elapsed = (
+                _EMBEDDED_OLLAMA_READY_AT - _EMBEDDED_OLLAMA_STARTED_AT
+                if _EMBEDDED_OLLAMA_STARTED_AT is not None else 0.0
+            )
+            _LOGGER.info("Managed Ollama API ready (pid=%s, startup_elapsed_seconds=%.3f)", getattr(process, "pid", None), elapsed)
+
+
+def _owned_ollama_exited(process: subprocess.Popen) -> bool:
+    global _EMBEDDED_OLLAMA_EXIT_REPORTED
+    exit_code = process.poll()
+    if exit_code is None:
+        return False
+    with _EMBEDDED_OLLAMA_LOCK:
+        if process is _EMBEDDED_OLLAMA_PROCESS and not _EMBEDDED_OLLAMA_EXIT_REPORTED:
+            _EMBEDDED_OLLAMA_EXIT_REPORTED = True
+            elapsed = (
+                time.monotonic() - _EMBEDDED_OLLAMA_STARTED_AT
+                if _EMBEDDED_OLLAMA_STARTED_AT is not None else 0.0
+            )
+            _LOGGER.warning("Managed Ollama exited (pid=%s, exit_code=%s, elapsed_seconds=%.3f)", getattr(process, "pid", None), exit_code, elapsed)
+    return True
+
+
+def _wait_for_ollama_server(timeout_seconds: float) -> bool:
     global _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB
+    global _EMBEDDED_OLLAMA_STARTED_AT, _EMBEDDED_OLLAMA_API_READY
+    global _EMBEDDED_OLLAMA_START_ERROR
 
     if not using_embedded_ollama():
         return _ollama_api_ready()
 
+    # Count the first probe and process creation in the same wait budget. A
+    # probe already in progress can finish up to its two-second socket timeout
+    # after this deadline; native process creation is synchronous as before.
+    deadline = time.monotonic() + max(float(timeout_seconds), 1.0)
     with _EMBEDDED_OLLAMA_LOCK:
         if _ollama_api_ready():
+            _record_ollama_ready(_EMBEDDED_OLLAMA_PROCESS)
             return True
+        _EMBEDDED_OLLAMA_API_READY = False
 
         if _EMBEDDED_OLLAMA_PROCESS is None or _EMBEDDED_OLLAMA_PROCESS.poll() is not None:
             stop_embedded_ollama_server()
-            _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB = start_owned_process(
-                [find_ollama_executable(), "serve"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                stdin=subprocess.DEVNULL,
-                env=ollama_subprocess_env(),
-                **hidden_subprocess_kwargs(),
-            )
+            _EMBEDDED_OLLAMA_STARTED_AT = time.monotonic()
+            try:
+                _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB = start_owned_process(
+                    [find_ollama_executable(), "serve"],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    env=ollama_subprocess_env(),
+                    **hidden_subprocess_kwargs(),
+                )
+            except Exception as error:
+                _EMBEDDED_OLLAMA_START_ERROR = type(error).__name__
+                _LOGGER.warning("Managed Ollama failed to start (error_type=%s, elapsed_seconds=%.3f)", _EMBEDDED_OLLAMA_START_ERROR, time.monotonic() - _EMBEDDED_OLLAMA_STARTED_AT)
+                raise
+            _LOGGER.info("Managed Ollama started (pid=%s)", getattr(_EMBEDDED_OLLAMA_PROCESS, "pid", None))
+        process = _EMBEDDED_OLLAMA_PROCESS
 
-    deadline = time.monotonic() + max(timeout_seconds, 1)
     while time.monotonic() < deadline:
+        if _owned_ollama_exited(process):
+            return False
         if _ollama_api_ready():
+            _record_ollama_ready(process)
             return True
-        time.sleep(0.25)
-    return _ollama_api_ready()
+        if _owned_ollama_exited(process):
+            return False
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(0.25, remaining))
+    _owned_ollama_exited(process)
+    return False
+
+
+def ensure_ollama_server_running(timeout_seconds: int = 15) -> bool:
+    """Keep the short readiness check used by ordinary runtime operations."""
+    return _wait_for_ollama_server(timeout_seconds)
+
+
+def wait_for_ollama_preparation(timeout_seconds: float = 300) -> bool:
+    """Wait for an explicit model action, reusing a live owned startup."""
+    return _wait_for_ollama_server(timeout_seconds)
 
 
 def stop_embedded_ollama_server(timeout_seconds: int = 5) -> None:
     global _EMBEDDED_OLLAMA_PROCESS, _EMBEDDED_OLLAMA_JOB
+    global _EMBEDDED_OLLAMA_STARTED_AT, _EMBEDDED_OLLAMA_READY_AT
+    global _EMBEDDED_OLLAMA_API_READY, _EMBEDDED_OLLAMA_START_ERROR
+    global _EMBEDDED_OLLAMA_EXIT_REPORTED
 
     with _EMBEDDED_OLLAMA_LOCK:
         process = _EMBEDDED_OLLAMA_PROCESS
         job = _EMBEDDED_OLLAMA_JOB
         _EMBEDDED_OLLAMA_PROCESS = None
         _EMBEDDED_OLLAMA_JOB = None
+        _EMBEDDED_OLLAMA_STARTED_AT = None
+        _EMBEDDED_OLLAMA_READY_AT = None
+        _EMBEDDED_OLLAMA_API_READY = False
+        _EMBEDDED_OLLAMA_START_ERROR = None
+        _EMBEDDED_OLLAMA_EXIT_REPORTED = False
         try:
             if process is not None and process.poll() is None:
                 try:

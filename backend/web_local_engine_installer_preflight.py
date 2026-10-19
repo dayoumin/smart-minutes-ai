@@ -6,7 +6,6 @@ import http.client
 import json
 import os
 import stat
-import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path, PureWindowsPath
@@ -18,6 +17,7 @@ from local_engine_preflight import (
     StorageRequirement,
     collect_installer_target_preflight,
     inspect_fixed_port,
+    is_inside_user_temp,
     write_preflight_json,
 )
 
@@ -295,14 +295,6 @@ def evaluate_installer_preflight(
     )
 
 
-def _is_same_or_child(path: Path, root: Path) -> bool:
-    try:
-        path.relative_to(root)
-        return True
-    except ValueError:
-        return False
-
-
 def write_installer_decision(
     path: str | os.PathLike[str],
     decision: InstallerDecision,
@@ -310,9 +302,8 @@ def write_installer_decision(
     request_generation: int,
     temp_root: str | os.PathLike[str] | None = None,
 ) -> None:
-    allowed_root = Path(temp_root or tempfile.gettempdir()).expanduser().resolve()
     output_path = Path(path).expanduser().resolve()
-    if not _is_same_or_child(output_path, allowed_root):
+    if not is_inside_user_temp(output_path, temp_root=temp_root):
         raise ValueError("Installer decision must stay inside the user temporary directory")
     if not output_path.parent.is_dir():
         raise ValueError("Installer decision parent is unavailable")

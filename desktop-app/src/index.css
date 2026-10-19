@@ -1526,6 +1526,24 @@
     color: var(--brand-primary);
   }
 
+  .writer-file-privacy-link {
+    @apply shrink-0 rounded-sm p-0 font-medium;
+    border: 0;
+    background: transparent;
+    color: var(--brand-primary);
+  }
+
+  .writer-file-privacy-link:hover {
+    color: var(--brand-primary-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .writer-file-privacy-link:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+  }
+
   .writer-action-bar {
     @apply flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end;
   }
@@ -1756,25 +1774,6 @@
     color: var(--text-muted);
   }
 
-  .local-engine-info-tip {
-    @apply relative inline-flex shrink-0;
-  }
-
-  .local-engine-info-trigger {
-    @apply inline-flex h-6 w-6 items-center justify-center rounded-full;
-    border: 0;
-    padding: 0;
-    background: transparent;
-    color: var(--text-muted);
-  }
-
-  .local-engine-info-trigger:hover,
-  .local-engine-info-trigger:focus-visible {
-    color: var(--text-default);
-    background: color-mix(in srgb, var(--local-engine-tone) 10%, transparent);
-  }
-
-  .local-engine-info-trigger:focus-visible,
   .local-engine-pairing-dialog:focus-visible {
     outline: 2px solid var(--focus-ring-color);
     outline-offset: 2px;
@@ -1782,22 +1781,6 @@
 
   .local-engine-connection-status:focus {
     outline: none;
-  }
-
-  .local-engine-info-tooltip {
-    @apply pointer-events-none absolute left-0 z-20 w-max max-w-[min(18rem,calc(100vw-2rem))] px-2.5 py-2 text-xs leading-5 opacity-0;
-    bottom: calc(100% + 0.45rem);
-    border: 1px solid var(--border-default);
-    border-radius: var(--radius-btn);
-    background: var(--color-neutral-0);
-    color: var(--text-default);
-    box-shadow: var(--shadow-overlay);
-    transition: opacity 120ms ease-out;
-  }
-
-  .local-engine-info-tip:hover .local-engine-info-tooltip,
-  .local-engine-info-tip:focus-within .local-engine-info-tooltip {
-    opacity: 1;
   }
 
   .local-engine-connection-actions {
@@ -1868,6 +1851,76 @@
 
   .local-engine-pairing-actions {
     @apply mt-3 flex justify-end gap-2;
+  }
+
+  .local-processing-backdrop {
+    @apply fixed inset-0 z-[80] flex items-center justify-center p-4;
+    background: var(--bg-overlay);
+    overscroll-behavior: contain;
+  }
+
+  .local-processing-dialog {
+    @apply w-full max-w-lg overflow-y-auto border bg-background p-6 text-foreground;
+    max-height: calc(100dvh - 2rem);
+    border-radius: var(--radius-dialog);
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-overlay);
+  }
+
+  .local-processing-header {
+    @apply flex items-center gap-3;
+  }
+
+  .local-processing-header h3 {
+    @apply text-lg font-semibold leading-snug;
+  }
+
+  .local-processing-summary {
+    @apply mt-4 grid gap-2 text-sm leading-relaxed;
+    color: var(--text-default);
+  }
+
+  .local-processing-details {
+    @apply mt-4 grid gap-3 border-t pt-4 text-sm leading-relaxed;
+    border-color: var(--border-default);
+  }
+
+  .local-processing-details > div {
+    @apply grid gap-1 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-3;
+  }
+
+  .local-processing-details dt {
+    @apply font-medium;
+  }
+
+  .local-processing-details dd {
+    @apply text-muted-foreground;
+  }
+
+  .local-processing-actions {
+    @apply mt-6 flex flex-wrap items-center justify-end gap-3;
+  }
+
+  .local-processing-link {
+    @apply mr-auto rounded-sm p-0 text-sm font-medium;
+    border: 0;
+    background: transparent;
+    color: var(--brand-primary);
+  }
+
+  .local-processing-link:hover {
+    color: var(--brand-primary-hover);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+
+  .local-processing-link:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+  }
+
+  .local-processing-footnote {
+    @apply mt-4 text-xs leading-5 text-muted-foreground;
   }
 
   @container writer (max-width: 40rem) {

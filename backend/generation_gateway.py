@@ -36,7 +36,7 @@ GENERATION_ERROR_MESSAGES = {
 }
 
 
-@dataclass(frozen=True)
+@dataclass
 class GenerationFailure(RuntimeError):
     code: str
     retryable: bool
@@ -118,6 +118,28 @@ def classify_generation_exception(error: BaseException) -> GenerationFailure:
 
 
 _PREPARED_OLLAMA_MODEL: ContextVar[str] = ContextVar("prepared_ollama_model", default="")
+_GENERATION_HTTP_TRANSPORT: ContextVar[object | None] = ContextVar("generation_http_transport", default=None)
+_GENERATION_RESPONSE_SCHEMA: ContextVar[dict | None] = ContextVar("generation_response_schema", default=None)
+
+
+@contextmanager
+def generation_response_schema(schema: dict):
+    """Constrain only this structured extraction, preserving ordinary requests."""
+    token = _GENERATION_RESPONSE_SCHEMA.set(schema)
+    try:
+        yield
+    finally:
+        _GENERATION_RESPONSE_SCHEMA.reset(token)
+
+
+@contextmanager
+def generation_http_transport(open_request):
+    """Scope an explicit transport to a diagnostic operation, never the app globally."""
+    token = _GENERATION_HTTP_TRANSPORT.set(open_request)
+    try:
+        yield
+    finally:
+        _GENERATION_HTTP_TRANSPORT.reset(token)
 
 
 @contextmanager
@@ -145,7 +167,7 @@ def _generate_with_http(model_name: str, prompt: str) -> str:
         "model": model_name,
         "prompt": prompt,
         "stream": False,
-        "format": "json",
+        "format": _GENERATION_RESPONSE_SCHEMA.get() or "json",
     }).encode("utf-8")
     request = urllib.request.Request(
         f"{get_ollama_base_url()}/api/generate",
@@ -156,7 +178,8 @@ def _generate_with_http(model_name: str, prompt: str) -> str:
     started = time.monotonic()
     logging.info("Ollama generation request begin")
     try:
-        with urllib.request.urlopen(request, timeout=600) as response:
+        open_request = _GENERATION_HTTP_TRANSPORT.get() or urllib.request.urlopen
+        with open_request(request, timeout=600) as response:
             data = json.loads(response.read().decode("utf-8"))
         result = data.get("response", "") if isinstance(data, dict) else ""
         if not isinstance(result, str) or not result.strip():

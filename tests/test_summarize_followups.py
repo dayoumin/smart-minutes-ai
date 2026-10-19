@@ -83,15 +83,21 @@ class SummaryAttributionTest(unittest.TestCase):
             {"speaker": "SPEAKER_01", "text": "다른 부서의 누군가가 불친절하다는 의견이 있었습니다."},
         ]
         partials = [
-            {"overview": "발표 자료에 대한 평가", "needs_check": [uncertainty, uncertainty]},
-            {"overview": "대상이 불명확한 의견", "needs_check": [other_uncertainty]},
+            {"notes": [{"kind": "discussion", "topic": "발표 평가", "text": "발표 자료에 대한 평가",
+                        "evidence_ids": ["s1"], "opposing": [], "conditions": []}],
+             "needs_check": [uncertainty, uncertainty]},
+            {"notes": [{"kind": "discussion", "topic": "대상 미확인 의견", "text": "대상이 불명확한 의견",
+                        "evidence_ids": ["s1"], "opposing": [], "conditions": []}],
+             "needs_check": [other_uncertainty]},
         ]
         for final in (
-            {"overview": "발표 평가와 대상이 불명확한 의견을 분리해 정리함.", "needs_check": [other_uncertainty]},
-            {"overview": "발표 평가와 별도 의견을 정리했지만 확인 사항은 누락됨."},
+            {"title": "평가 회의", "overview": "발표 평가와 대상이 불명확한 의견을 분리해 정리함.",
+             "groups": [{"topic": "서로 다른 평가", "ids": ["u1-n1", "u2-n1"]}], "needs_check": [other_uncertainty]},
+            {"title": "평가 회의", "overview": "발표 평가와 별도 의견을 정리했지만 확인 사항은 누락됨.",
+             "groups": [{"topic": "서로 다른 평가", "ids": ["u1-n1", "u2-n1"]}]},
         ):
             with self.subTest(final=final), patch("pipeline.summarize.MAX_DIRECT_SUMMARY_CHARS", 40), \
-                    patch("pipeline.summarize._split_text_for_summary", side_effect=lambda text: _split_text_for_summary(text, max_chars=60)), \
+                    patch("pipeline.summarize._split_text_for_summary", return_value=[segment["text"] for segment in segments]), \
                     patch("pipeline.summarize.generate_ollama_text", side_effect=[
                         json.dumps(value, ensure_ascii=False) for value in [*partials, final]
                     ]) as generate:
@@ -100,14 +106,15 @@ class SummaryAttributionTest(unittest.TestCase):
             self.assertEqual(generate.call_count, 3, "Use the existing two partial calls and one merge only")
             for call in generate.call_args_list:
                 self.assert_attribution_rules(call.args[1])
-            self.assertIn("Summarize the partial transcript", generate.call_args_list[0].args[1])
             merge_prompt = generate.call_args_list[-1].args[1]
-            self.assertIn("Summarize the partial summaries", merge_prompt)
-            self.assertIn("Partial summaries:", merge_prompt)
-            self.assertIn(uncertainty, merge_prompt)
-            self.assertIn(other_uncertainty, merge_prompt)
+            # Uncertainties are carried independently, so even a grouping plan
+            # that omits them cannot discard them or attach them to a person.
+            self.assertIn("u1-n1", merge_prompt)
+            self.assertIn("u2-n1", merge_prompt)
             self.assertEqual(result["needs_check"].count(uncertainty), 1)
             self.assertEqual(result["needs_check"].count(other_uncertainty), 1)
+            self.assertIn("대상이 불명확한 의견", " ".join(result["topics"]))
+            self.assertNotIn("검토자 가", " ".join(result["topics"]))
 
         with patch("pipeline.summarize.generate_ollama_text", return_value='{"overview":"새 회의 요약"}'):
             next_meeting = summarize_meeting(

@@ -8,6 +8,19 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
+
+const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
+// Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
+const openProcessingHelp = async page => {
+  await page.locator('.writer-file-privacy-note').getByRole('button', { name: '처리 방식', exact: true }).click();
+  const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
+  await help.waitFor({ state: 'visible', timeout: 10000 });
+  return help;
+};
+const closeProcessingHelp = async (page, help) => {
+  await page.keyboard.press('Escape');
+  await help.waitFor({ state: 'hidden', timeout: 10000 });
+};
 const shouldStartServer = !process.env.APP_URL;
 const WRITER_CAPTURE_DIR = process.env.WRITER_CAPTURE_DIR ?? null;
 
@@ -354,7 +367,10 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByLabel('회의 제목 *').fill('최신 설정 확인');
     await page.getByLabel('회의 목적 *').fill('분석 시작 직전 설정 재조회');
-    assert.equal(await page.getByText(startPrivacyMessage, { exact: true }).count(), 0, 'analysis-start privacy guidance should not appear before the start request');
+    const preloadHelp = await openProcessingHelp(page);
+    await preloadHelp.locator('#local-processing-details').waitFor({ timeout: 10000 });
+    assert.equal(await preloadHelp.getByText(startPrivacyMessage, { exact: true }).count(), 0, 'analysis-start privacy guidance should not appear before the start request');
+    await closeProcessingHelp(page, preloadHelp);
     const preloadSettingsCount = await waitForSettingsQuiet(1);
     acceptStartSettings = true;
     await page.getByRole('button', { name: '분석 시작' }).click();
@@ -373,11 +389,13 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
     }
     assert.ok(initialSettingsSettled, 'stale initial settings response should be delivered');
     await sleep(200);
-    const latestPrivacyMessage = page.getByText(startPrivacyMessage, { exact: true });
+    const latestHelp = await openProcessingHelp(page);
+    const latestPrivacyMessage = latestHelp.getByText(startPrivacyMessage, { exact: true });
     await latestPrivacyMessage.waitFor({ timeout: 10000 });
     assert.equal(await latestPrivacyMessage.isVisible(), true, 'latest privacy guidance should remain after a failed analysis and a stale settings response');
-    assert.equal(await page.getByText(stalePrivacyMessage, { exact: true }).count(), 0, 'stale privacy guidance should not replace the analysis-start response');
-    assert.equal(await page.getByText(preloadPrivacyMessage, { exact: true }).count(), 0, 'preload privacy guidance should not replace the analysis-start response');
+    assert.equal(await latestHelp.getByText(stalePrivacyMessage, { exact: true }).count(), 0, 'stale privacy guidance should not replace the analysis-start response');
+    assert.equal(await latestHelp.getByText(preloadPrivacyMessage, { exact: true }).count(), 0, 'preload privacy guidance should not replace the analysis-start response');
+    await closeProcessingHelp(page, latestHelp);
     console.log('ok - latest analysis settings scenario');
   } finally {
     releaseInitialSettings();

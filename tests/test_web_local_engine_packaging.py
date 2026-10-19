@@ -197,6 +197,46 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('$PreflightExit == 10', installer)
         self.assertIn('$PreflightExit == 20', installer)
         self.assertIn('$PreflightExit == 30', installer)
+        preflight_run = installer.split('Function RunInstallerPreflight\n', 1)[1].split('FunctionEnd', 1)[0]
+        self.assertLess(preflight_run.index('ClearErrors'), preflight_run.index('ExecWait'))
+        self.assertIn('IfErrors 0 +3\n  StrCpy $PreflightExit "launch_failed"\n  Goto done', preflight_run)
+        self.assertIn('$PreflightExit == "launch_failed"', installer)
+        self.assertIn('백신 프로그램이 설치 파일을 차단했는지', installer)
+        self.assertLess(
+            installer.index('$PreflightExit == "launch_failed"'),
+            installer.index('설치 전 점검 결과를 확인하지 못했습니다'),
+        )
+        installer_lines = installer.splitlines()
+        helper_calls = [
+            index for index, line in enumerate(installer_lines)
+            if line.lstrip().startswith('ExecWait')
+            and ('barorok-installer-preflight.exe"' in line or '"$InstalledHelper"' in line)
+            and '--result-json' not in line
+        ]
+        guarded_outputs = []
+        for index in helper_calls:
+            call = installer_lines[index]
+            indent = call[: len(call) - len(call.lstrip())]
+            output_var = call.rsplit(' ', 1)[1]
+            self.assertEqual(installer_lines[index - 1], f'{indent}ClearErrors', call)
+            self.assertEqual(installer_lines[index + 1], f'{indent}IfErrors 0 +2', call)
+            self.assertEqual(installer_lines[index + 2], f'{indent}StrCpy {output_var} "launch_failed"', call)
+            guarded_outputs.append((call.split("' ", 1)[0].split('" ', 1)[1].split(' ', 1)[0], output_var))
+        self.assertEqual(
+            guarded_outputs,
+            [
+                ('--probe-stopped-engine', '$1'),
+                ('--cleanup-owned-tree', '$CleanupExit'),
+                ('--validate-owned-tree', '$CleanupExit'),
+                ('--validate-owned-tree', '$CleanupExit'),
+                ('--cleanup-uninstall-tombstone', '$CleanupExit'),
+                ('--probe-running-engine', '$0'),
+                ('--probe-stopped-engine', '$1'),
+                ('--cleanup-owned-tree', '$0'),
+            ],
+        )
+        self.assertNotIn('StrCpy $CleanupExit 0', installer)
+        self.assertNotIn('$CleanupExit <> 0', installer)
         self.assertIn('stop_local_engine_and_retry', installer)
         self.assertIn('${INSTALLER_MUTEX}', installer)
         self.assertIn('.LocalEngine-stage', installer)

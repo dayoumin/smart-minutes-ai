@@ -374,11 +374,40 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
-    // Without an engine answer the reserved line still states the local-only promise instead of staying blank.
-    await page.locator('.writer-file-privacy-note')
-      .getByText('음성 파일은 이 PC에서만 처리하고, 회의록은 이 PC에만 보관합니다.', { exact: true })
-      .waitFor({ timeout: 10000 });
-    console.log('ok - new-record home keeps the local-only note without an engine answer');
+    // The processing promise is fixed copy, so it shows even before (or without) an engine answer.
+    const privacyNote = page.locator('.writer-file-privacy-note');
+    await privacyNote.getByText('음성·영상과 대화록은 이 PC에서 처리합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    const noteBox = await privacyNote.boundingBox();
+    assert.ok(noteBox && noteBox.height <= 24, `the processing note must stay one line at 1280px (height ${noteBox?.height})`);
+    const helpTitle = '회의 내용은 내 PC에서 처리합니다';
+    // The first-visit notice belongs to the web connection build; the default dev UI opens straight to the writer.
+    assert.equal(await page.getByRole('dialog', { name: helpTitle }).count(), 0, 'first-visit notice must not open without the connection build flag');
+
+    const helpButton = privacyNote.getByRole('button', { name: '처리 방식', exact: true });
+    assert.equal(await helpButton.getAttribute('aria-haspopup'), 'dialog');
+    await helpButton.click();
+    const help = page.getByRole('dialog', { name: helpTitle });
+    await help.waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '확인');
+    // Help opens straight to the details; the first-visit toggle and footnote are intro-only.
+    for (const term of ['처리', '보관', '인터넷', '삭제']) {
+      assert.equal(await help.locator('dt').getByText(term, { exact: true }).count(), 1, `help must explain ${term}`);
+    }
+    assert.equal(await help.getByRole('button', { name: '처리 방식 자세히 보기' }).count(), 0);
+    assert.equal(await help.getByRole('button', { name: '시작하기' }).count(), 0);
+    assert.equal(await help.getByText('웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.').count(), 0);
+    // Without an engine answer the storage row still states the local-only promise instead of guessing a retention.
+    await help.getByText('회의록은 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await help.getByText('분석용 임시 음성은 완료 후 삭제', { exact: false }).count(), 0);
+    const dialogBox = await help.boundingBox();
+    assert.ok(dialogBox && dialogBox.y >= 0 && dialogBox.y + dialogBox.height <= 720, 'help must fit inside a 1280x720 window');
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'focus must stay inside the help dialog');
+    await page.keyboard.press('Escape');
+    await help.waitFor({ state: 'hidden', timeout: 10000 });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '처리 방식');
+    assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'closing help must not mark the first-visit notice as seen');
+    console.log('ok - new-record home keeps the local processing note and help without an engine answer');
   } finally {
     await context.close();
   }

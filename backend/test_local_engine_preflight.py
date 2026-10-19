@@ -24,6 +24,7 @@ from local_engine_preflight import (
     probe_write_cleanup,
     read_installer_preflight_request,
     read_volume_space,
+    user_temp_roots,
     windows_machine_code_to_architecture,
     write_preflight_json,
 )
@@ -135,6 +136,34 @@ class LocalEnginePreflightTest(unittest.TestCase):
             outside = root.parent / "outside-preflight.json"
             with self.assertRaisesRegex(ValueError, "temporary directory"):
                 write_preflight_json(outside, payload, temp_root=root)
+
+    def test_json_output_accepts_windows_temp_path_when_tmp_and_temp_differ(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            python_temp = root / "TEMP 기준"
+            windows_temp = root / "TMP 기준"
+            outside = root / "바깥"
+            for folder in (python_temp, windows_temp, outside):
+                folder.mkdir()
+            payload = {"schema_version": 1, "overall_status": "pass", "checks": []}
+            with (
+                patch("local_engine_preflight.tempfile.gettempdir", return_value=str(python_temp)),
+                patch("local_engine_preflight._windows_temp_path", return_value=str(windows_temp) + "\\"),
+            ):
+                self.assertEqual(user_temp_roots(), (python_temp.resolve(), windows_temp.resolve()))
+                self.assertFalse((windows_temp / "preflight.json").exists())
+                written = write_preflight_json(windows_temp / "preflight.json", payload)
+                self.assertEqual(json.loads(written.read_text(encoding="utf-8")), payload)
+                write_preflight_json(python_temp / "preflight.json", payload)
+                with self.assertRaisesRegex(ValueError, "temporary directory"):
+                    write_preflight_json(outside / "preflight.json", payload)
+            self.assertFalse((outside / "preflight.json").exists())
+            self.assertEqual(user_temp_roots(temp_root=python_temp), (python_temp.resolve(),))
+            with (
+                patch("local_engine_preflight.tempfile.gettempdir", return_value=str(python_temp)),
+                patch("local_engine_preflight._windows_temp_path", return_value=str(python_temp)),
+            ):
+                self.assertEqual(user_temp_roots(), (python_temp.resolve(),))
 
     def test_json_output_does_not_leave_a_partial_result_when_publish_fails(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

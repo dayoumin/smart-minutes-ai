@@ -32,6 +32,26 @@ class GenerationGatewayTest(unittest.TestCase):
                 self.assertEqual(failure.code, expected_code)
                 self.assertNotIn("raw internal detail", failure.user_message)
 
+    def test_model_that_does_not_fit_in_memory_points_at_settings(self) -> None:
+        body = b'{"error":"model requires more system memory (12.4 GiB) than is available (7.8 GiB)"}'
+        http_error = urllib.error.HTTPError("http://local", 500, "Internal Server Error", {}, BytesIO(body))
+        first = generation_gateway.classify_generation_exception(http_error)
+        # Classified twice (log + caller): the body is read once and the answer stays the same.
+        second = generation_gateway.classify_generation_exception(http_error)
+        for failure in (first, second):
+            self.assertEqual(failure.code, "model_too_large")
+            self.assertFalse(failure.retryable)
+            self.assertEqual(failure.user_action, "open_settings")
+            self.assertNotIn("GiB", failure.user_message)
+        vram = urllib.error.HTTPError("http://local", 500, "err", {}, BytesIO(b'{"error":"cudaMalloc failed: out of memory"}'))
+        self.assertEqual(generation_gateway.classify_generation_exception(vram).code, "model_too_large")
+        cli = subprocess.CalledProcessError(1, ["ollama", "run"], stderr="Error: model requires more system memory")
+        self.assertEqual(generation_gateway.classify_generation_exception(cli).code, "model_too_large")
+        paging = urllib.error.HTTPError("http://local", 500, "err", {}, BytesIO(b'{"error":"The paging file is too small for this operation to complete."}'))
+        self.assertEqual(generation_gateway.classify_generation_exception(paging).code, "model_too_large")
+        other = urllib.error.HTTPError("http://local", 500, "err", {}, BytesIO(b'{"error":"unexpected EOF"}'))
+        self.assertEqual(generation_gateway.classify_generation_exception(other).code, "generation_internal_error")
+
     def test_missing_runtime_is_reported_before_start_attempt(self) -> None:
         with (
             patch.object(generation_gateway, "ollama_executable_available", return_value=False),

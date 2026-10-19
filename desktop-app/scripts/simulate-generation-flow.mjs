@@ -142,4 +142,18 @@ assert.equal(structuredMissingModel.retryable, false);
 assert.equal(structuredMissingModel.userAction, 'open_settings');
 assert.equal(structuredMissingModel.generationKind, 'topic_sections');
 
+// A summary model too large for this PC points at Settings (smaller model), not at another retry.
+const structuredTooLarge = parseApiErrorBody(JSON.stringify({
+  detail: {
+    code: 'model_too_large',
+    message: 'model requires more system memory (12.4 GiB) than is available (7.8 GiB)',
+    retryable: false,
+    user_action: 'open_settings',
+    generation_kind: 'summary',
+  },
+}), 'fallback');
+assert.equal(structuredTooLarge.message, '이 PC의 메모리가 부족해 요약 모델을 실행하지 못했습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.');
+assert.equal(structuredTooLarge.retryable, false);
+assert.equal(structuredTooLarge.userAction, 'open_settings');
+
 console.log('ok - generation flow simulation');

@@ -28,6 +28,7 @@ GENERATION_ERROR_MESSAGES = {
     "server_unreachable": "요약 프로그램에 연결하지 못했습니다. 프로그램을 다시 실행한 뒤 다시 시도해 주세요.",
     "runtime_preparing": "요약 프로그램을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.",
     "model_missing": "사용할 요약 모델을 찾지 못했습니다. 설정에서 모델을 준비한 뒤 다시 시도해 주세요.",
+    "model_too_large": "이 PC의 메모리가 부족해 요약 모델을 실행하지 못했습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.",
     "request_timeout": "정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.",
     "invalid_model_response": "정리 결과 형식을 확인하지 못했습니다. 기존 결과는 보존되었습니다. 다시 시도해 주세요.",
     "generation_cancelled": "정리를 취소했습니다. 기존 결과는 보존되었습니다.",
@@ -53,6 +54,7 @@ class GenerationFailure(RuntimeError):
             "server_unreachable": 503,
             "runtime_preparing": 503,
             "model_missing": 409,
+            "model_too_large": 409,
             "request_timeout": 504,
             "invalid_model_response": 502,
             "generation_cancelled": 409,
@@ -73,7 +75,7 @@ class GenerationFailure(RuntimeError):
 def failure_for_code(code: str) -> GenerationFailure:
     if code == "runtime_missing":
         return GenerationFailure(code, False, "open_settings")
-    if code == "model_missing":
+    if code in {"model_missing", "model_too_large"}:
         return GenerationFailure(code, False, "open_settings")
     if code == "generation_disabled":
         return GenerationFailure(code, False, "open_settings")
@@ -82,6 +84,38 @@ def failure_for_code(code: str) -> GenerationFailure:
     if code == "generation_cancelled":
         return GenerationFailure(code, True, "retry")
     return GenerationFailure("generation_internal_error", True, "retry")
+
+
+# Ollama's own wording when a model does not fit in RAM/VRAM ("model requires more system memory (...) than is
+# available", "cudaMalloc failed: out of memory"). Retrying cannot help; a smaller model can.
+_MODEL_TOO_LARGE_MARKERS = (
+    "requires more system memory",
+    "out of memory",
+    "cudamalloc failed",
+    "insufficient memory",
+    "not enough memory",
+    "unable to allocate",
+    "paging file is too small",
+)
+
+
+def _http_error_text(error: urllib.error.HTTPError) -> str:
+    """The error body, read once: the same error is classified for the log and again by the caller."""
+    cached = getattr(error, "_generation_error_text", None)
+    if cached is None:
+        try:
+            cached = (error.read() or b"").decode("utf-8", "replace")[:2000]
+        except Exception:
+            cached = ""
+        try:
+            error._generation_error_text = cached
+        except Exception:
+            pass
+    return cached.lower()
+
+
+def _mentions_model_too_large(text: str) -> bool:
+    return any(marker in text for marker in _MODEL_TOO_LARGE_MARKERS)
 
 
 def classify_generation_exception(error: BaseException) -> GenerationFailure:
@@ -94,6 +128,8 @@ def classify_generation_exception(error: BaseException) -> GenerationFailure:
     if isinstance(error, (TimeoutError, socket.timeout, subprocess.TimeoutExpired)):
         return failure_for_code("request_timeout")
     if isinstance(error, urllib.error.HTTPError):
+        if error.code >= 500 and _mentions_model_too_large(_http_error_text(error)):
+            return failure_for_code("model_too_large")
         if error.code == 404:
             return failure_for_code("model_missing")
         if error.code in {408, 504}:
@@ -108,6 +144,8 @@ def classify_generation_exception(error: BaseException) -> GenerationFailure:
         return failure_for_code("server_unreachable")
     if isinstance(error, subprocess.CalledProcessError):
         output = f"{error.stdout or ''}\n{error.stderr or ''}".lower()
+        if _mentions_model_too_large(output):
+            return failure_for_code("model_too_large")
         if "model" in output and ("not found" in output or "missing" in output):
             return failure_for_code("model_missing")
         if "ollama" in output and ("not found" in output or "cannot find" in output):

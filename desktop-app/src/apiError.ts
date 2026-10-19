@@ -32,6 +32,8 @@ const API_ERROR_MESSAGES: Record<string, string> = {
     runtime_preparing: '요약 프로그램을 준비하고 있습니다. 잠시 후 다시 시도해 주세요.',
     server_unreachable: '요약 프로그램에 연결하지 못했습니다. 프로그램을 다시 실행한 뒤 다시 시도해 주세요.',
     model_missing: '사용할 요약 모델을 찾지 못했습니다. 설정에서 모델을 준비한 뒤 다시 시도해 주세요.',
+    // Ollama could not fit the model in RAM/VRAM: a retry fails the same way, the recommended (smaller) model works.
+    model_too_large: '이 PC의 메모리가 부족해 요약 모델을 실행하지 못했습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.',
     request_timeout: '정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.',
     invalid_model_response: '정리 결과 형식을 확인하지 못했습니다. 기존 결과는 보존되었습니다. 다시 시도해 주세요.',
     generation_cancelled: '정리를 취소했습니다. 기존 결과는 보존되었습니다.',

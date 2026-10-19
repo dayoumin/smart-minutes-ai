@@ -183,7 +183,7 @@ const verifyDefaultWriterGuidance = async browser => {
         const rail = page.locator('.local-engine-connection');
         if (scenario === 'outage-recovery') {
           await rail.getByText('분석 기능에 연결하지 못했습니다', { exact: true }).waitFor();
-          await rail.getByText('설치했다면 Windows 시작 메뉴에서 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+          await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
           assert.equal(await rail.locator('a[href=""]').count(), 0);
           healthUp = true;
           await rail.getByRole('button', { name: '연결 확인', exact: true }).click();

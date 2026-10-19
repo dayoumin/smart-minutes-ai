@@ -232,7 +232,7 @@ export const getLocalEngineConnectionView = ({
             scene: 'unreachable',
             tone: 'warning',
             title: '분석 기능에 연결하지 못했습니다',
-            message: '설치했다면 Windows 시작 메뉴에서 바로록 연결을 실행한 뒤 다시 확인하세요.',
+            message: '설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.',
             primaryAction: 'probe',
             primaryLabel: '연결 확인',
             primaryDisabled: false,

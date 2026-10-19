@@ -213,9 +213,11 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
             : <Link2 size={15} aria-hidden="true" />;
     const testInstallerNotice = import.meta.env.VITE_LOCAL_ENGINE_TEST_RELEASE === 'true'
         && installerUrl && (view.primaryAction === 'download' || view.secondaryAction === 'download')
-        ? '서명되지 않은 테스트 설치 파일입니다. Windows 보안 경고가 표시될 수 있습니다.'
+        ? '테스트 설치 파일이라 Windows 보안 경고가 나올 수 있습니다.'
         : undefined;
-    const statusMessage = [view.message, testInstallerNotice].filter(Boolean).join(' ');
+    const hasHelp = !['intro', 'checking', 'pairing', 'connected'].includes(view.scene);
+    // With 문제 해결 present, the install warning moves into its help so the row stays short.
+    const statusMessage = [view.message, hasHelp ? undefined : testInstallerNotice].filter(Boolean).join(' ');
 
     return (
         <div className={`local-engine-connection local-engine-connection-${view.tone}`} data-scene={view.scene}>
@@ -275,7 +277,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
                         {view.primaryLabel}
                     </Button>
                 )}
-                {!['intro', 'checking', 'pairing', 'connected'].includes(view.scene) && (
+                {hasHelp && (
                     <Button
                         variant="ghost"
                         className="local-engine-help-action"
@@ -291,7 +293,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
 
             {showHelp && (
                 <div id="local-engine-help" className="local-engine-help">
-                    Windows 시작 메뉴에서 바로록 연결을 실행하세요. 회사 PC에서 차단되면 관리자에게 허용을 요청하세요.
+                    Windows 시작 메뉴에서 바로록 연결을 실행하세요. 회사 PC에서 차단되면 관리자에게 허용을 요청하세요.{testInstallerNotice && ` ${testInstallerNotice}`}
                 </div>
             )}
 

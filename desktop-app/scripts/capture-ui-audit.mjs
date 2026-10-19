@@ -752,6 +752,8 @@ const captures = [
   { id: 'C0', path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 첫 방문 처리 방식 안내', steps: async page => { await page.getByRole('dialog').waitFor(); await page.waitForTimeout(400); } },
   { id: 'C0@800', viewport: NARROW, path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 첫 방문 처리 방식 안내, 좁은 창', steps: async page => { await page.getByRole('dialog').waitFor(); await page.waitForTimeout(400); } },
   { id: 'C1', path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 연결 화면 (연결 없음)', init: () => window.localStorage.setItem('localProcessingIntroSeen', '1'), steps: async page => { await page.waitForTimeout(4000); } },
+  { id: 'C2', path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 연결 실패 (연결 확인 뒤)', init: () => window.localStorage.setItem('localProcessingIntroSeen', '1'), steps: async page => { await page.getByRole('button', { name: '연결 확인' }).click(); await page.getByText('분석 기능에 연결하지 못했습니다').waitFor(); await page.waitForTimeout(400); } },
+  { id: 'C2@800', viewport: NARROW, path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 연결 실패, 좁은 창', init: () => window.localStorage.setItem('localProcessingIntroSeen', '1'), steps: async page => { await page.getByRole('button', { name: '연결 확인' }).click(); await page.getByText('분석 기능에 연결하지 못했습니다').waitFor(); await page.waitForTimeout(400); } },
   { id: 'F1', path: '?view=archive', note: '기록 찾기 (개발용 진입)', steps: async page => { await seedAndReload(page); } },
 ];
 

@@ -135,7 +135,7 @@ assert.equal(unreachableWithInstaller.primaryAction, 'probe', 'no response does 
 assert.equal(unreachableWithInstaller.primaryLabel, '연결 확인');
 assert.equal(unreachableWithInstaller.secondaryAction, 'download');
 assert.equal(unreachableWithInstaller.secondaryLabel, '바로록 연결 받기');
-assert.match(unreachableWithInstaller.message, /설치했다면 Windows 시작 메뉴/);
+assert.match(unreachableWithInstaller.message, /설치했다면 바로록 연결을 실행/);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
   pairingPhase: 'idle',

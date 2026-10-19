@@ -30,6 +30,7 @@ GENERATION_ERROR_MESSAGES = {
     "model_missing": "사용할 요약 모델을 찾지 못했습니다. 설정에서 모델을 준비한 뒤 다시 시도해 주세요.",
     "model_too_large": "이 PC의 메모리가 부족해 요약 모델을 실행하지 못했습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.",
     "request_timeout": "정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.",
+    "model_too_slow": "요약 모델이 GPU 메모리에 다 들어가지 않아 느리게 실행되었고 시간이 초과되었습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.",
     "invalid_model_response": "정리 결과 형식을 확인하지 못했습니다. 기존 결과는 보존되었습니다. 다시 시도해 주세요.",
     "generation_cancelled": "정리를 취소했습니다. 기존 결과는 보존되었습니다.",
     "generation_disabled": "정리 기능이 꺼져 있습니다. 설정에서 정리 기능을 켠 뒤 다시 시도해 주세요.",
@@ -56,6 +57,7 @@ class GenerationFailure(RuntimeError):
             "model_missing": 409,
             "model_too_large": 409,
             "request_timeout": 504,
+            "model_too_slow": 504,
             "invalid_model_response": 502,
             "generation_cancelled": 409,
             "generation_disabled": 409,
@@ -75,7 +77,7 @@ class GenerationFailure(RuntimeError):
 def failure_for_code(code: str) -> GenerationFailure:
     if code == "runtime_missing":
         return GenerationFailure(code, False, "open_settings")
-    if code in {"model_missing", "model_too_large"}:
+    if code in {"model_missing", "model_too_large", "model_too_slow"}:
         return GenerationFailure(code, False, "open_settings")
     if code == "generation_disabled":
         return GenerationFailure(code, False, "open_settings")
@@ -269,6 +271,60 @@ def _generate_with_cli(model_name: str, prompt: str) -> str:
     return response.stdout
 
 
+def _same_ollama_model(name: str, model_name: str) -> bool:
+    def normalize(value: str) -> str:
+        value = value.strip().lower()
+        return value if ":" in value else f"{value}:latest"
+    return bool(name) and normalize(name) == normalize(model_name)
+
+
+def _model_partly_on_cpu(model_name: str) -> bool:
+    """True only with evidence: Ollama reports this model loaded with part of it outside GPU memory.
+
+    A 6000-character chunk normally finishes well inside the request timeout, so a timeout with the model split
+    between GPU and CPU means the model is too heavy for this PC. No answer, no GPU (size_vram 0) or a model that
+    is not loaded yet is not evidence, and the caller keeps the plain timeout.
+    """
+    request = urllib.request.Request(f"{get_ollama_base_url()}/api/ps", method="GET")
+    try:
+        open_request = _GENERATION_HTTP_TRANSPORT.get() or urllib.request.urlopen
+        with open_request(request, timeout=3) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return False
+    for entry in (data.get("models") or []) if isinstance(data, dict) else []:
+        if not isinstance(entry, dict):
+            continue
+        if not (_same_ollama_model(str(entry.get("name") or ""), model_name)
+                or _same_ollama_model(str(entry.get("model") or ""), model_name)):
+            continue
+        size, size_vram = entry.get("size"), entry.get("size_vram")
+        if type(size) is int and type(size_vram) is int and 0 < size_vram < size:
+            logging.info("Ollama generation timeout with the model split between GPU and CPU gpu_share=%.2f", size_vram / size)
+            return True
+    return False
+
+
+def _unload_model(model_name: str) -> None:
+    """Ask Ollama to drop this model once it is idle, so the next try places it again.
+
+    Ollama reuses a loaded model as is for keep_alive (5 minutes by default): after closing other programs, a retry
+    would otherwise run on the same GPU/CPU split and time out again. Best effort; failures are ignored.
+    """
+    request = urllib.request.Request(
+        f"{get_ollama_base_url()}/api/generate",
+        data=json.dumps({"model": model_name, "keep_alive": 0}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        open_request = _GENERATION_HTTP_TRANSPORT.get() or urllib.request.urlopen
+        with open_request(request, timeout=3) as response:
+            response.read()
+    except Exception:
+        pass
+
+
 def generate_ollama_text(model_name: str, prompt: str) -> str:
     """Generate once, using CLI only when HTTP was definitely connection-refused."""
     try:
@@ -280,4 +336,9 @@ def generate_ollama_text(model_name: str, prompt: str) -> str:
             result_text = _generate_with_cli(model_name, prompt)
         return result_text
     except Exception as error:
-        raise classify_generation_exception(error) from error
+        failure = classify_generation_exception(error)
+        # A retry of a model split between GPU and CPU times out the same way; a lighter model is the fix.
+        if failure.code == "request_timeout" and _model_partly_on_cpu(model_name):
+            failure = failure_for_code("model_too_slow")
+            _unload_model(model_name)
+        raise failure from error

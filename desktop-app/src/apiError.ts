@@ -35,6 +35,8 @@ const API_ERROR_MESSAGES: Record<string, string> = {
     // Ollama could not fit the model in RAM/VRAM: a retry fails the same way, the recommended (smaller) model works.
     model_too_large: '이 PC의 메모리가 부족해 요약 모델을 실행하지 못했습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.',
     request_timeout: '정리 시간이 초과되었습니다. 기존 대화록과 정리 결과는 보존되었습니다. 잠시 후 다시 시도해 주세요.',
+    // Timed out with the model split between GPU and CPU: a retry times out again, a lighter model does not.
+    model_too_slow: '요약 모델이 GPU 메모리에 다 들어가지 않아 느리게 실행되었고 시간이 초과되었습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.',
     invalid_model_response: '정리 결과 형식을 확인하지 못했습니다. 기존 결과는 보존되었습니다. 다시 시도해 주세요.',
     generation_cancelled: '정리를 취소했습니다. 기존 결과는 보존되었습니다.',
     generation_disabled: '정리 기능이 꺼져 있습니다. 설정에서 정리 기능을 켠 뒤 다시 시도해 주세요.',

@@ -153,6 +153,7 @@ class GenerationGatewayTest(unittest.TestCase):
     def test_timeout_does_not_retry_with_cli(self) -> None:
         with (
             patch.object(generation_gateway, "_generate_with_http", side_effect=TimeoutError("late")),
+            patch.object(generation_gateway, "_model_partly_on_cpu", return_value=False),
             patch.object(generation_gateway, "_generate_with_cli") as cli_generate,
         ):
             with self.assertRaises(generation_gateway.GenerationFailure) as raised:
@@ -160,6 +161,57 @@ class GenerationGatewayTest(unittest.TestCase):
 
         self.assertEqual(raised.exception.code, "request_timeout")
         cli_generate.assert_not_called()
+
+    def test_timeout_with_model_split_between_gpu_and_cpu_points_at_a_lighter_model(self) -> None:
+        def failure_for(models, model_name="gemma4:e4b"):
+            calls = []
+
+            def open_request(request, timeout):
+                self.assertLessEqual(timeout, 3)
+                body = json.loads(request.data.decode("utf-8")) if request.data else None
+                calls.append((request.full_url.rsplit("/api/", 1)[-1], body))
+                if request.full_url.endswith("/api/ps"):
+                    return BytesIO(json.dumps({"models": models}).encode("utf-8"))
+                return BytesIO(b"{}")
+
+            with (
+                patch.object(generation_gateway, "_generate_with_http", side_effect=TimeoutError("late")),
+                generation_gateway.generation_http_transport(open_request),
+            ):
+                with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                    generation_gateway.generate_ollama_text(model_name, "prompt")
+            return raised.exception, calls
+
+        split, calls = failure_for([{"name": "gemma4:e4b", "model": "gemma4:e4b", "size": 9_000_000_000, "size_vram": 4_000_000_000}])
+        self.assertEqual(split.code, "model_too_slow")
+        self.assertFalse(split.retryable)
+        self.assertEqual(split.user_action, "open_settings")
+        # The split model is dropped so the next try is placed again instead of reusing the split for 5 minutes.
+        self.assertEqual(calls, [("ps", None), ("generate", {"model": "gemma4:e4b", "keep_alive": 0})])
+        # Names: an untagged name is ':latest', `model` alone is enough, case does not matter.
+        self.assertEqual(failure_for([{"name": "Gemma4:latest", "size": 9_000, "size_vram": 4_000}], "gemma4")[0].code, "model_too_slow")
+        self.assertEqual(failure_for([{"model": "gemma4:e4b", "size": 9_000, "size_vram": 4_000}])[0].code, "model_too_slow")
+        # No evidence keeps the plain timeout and unloads nothing: fully on GPU, no GPU, another model, nothing loaded.
+        for models in (
+            [{"name": "gemma4:e4b", "size": 9_000, "size_vram": 9_000}],
+            [{"name": "gemma4:e4b", "size": 9_000, "size_vram": 0}],
+            [{"name": "gemma4:e2b", "size": 9_000, "size_vram": 4_000}],
+            [],
+        ):
+            failure, calls = failure_for(models)
+            self.assertEqual(failure.code, "request_timeout")
+            self.assertEqual([url for url, _ in calls], ["ps"])
+
+    def test_timeout_probe_failure_keeps_the_plain_timeout(self) -> None:
+        def broken(request, timeout):
+            raise urllib.error.URLError(ConnectionRefusedError())
+        with (
+            patch.object(generation_gateway, "_generate_with_http", side_effect=TimeoutError("late")),
+            generation_gateway.generation_http_transport(broken),
+        ):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway.generate_ollama_text("gemma4:e4b", "prompt")
+        self.assertEqual(raised.exception.code, "request_timeout")
 
     def test_connection_refused_can_use_cli_once(self) -> None:
         with (

@@ -156,4 +156,11 @@ assert.equal(structuredTooLarge.message, '이 PC의 메모리가 부족해 요�
 assert.equal(structuredTooLarge.retryable, false);
 assert.equal(structuredTooLarge.userAction, 'open_settings');
 
+// A timeout with the model split between GPU and CPU also points at a lighter model.
+const structuredTooSlow = parseApiErrorBody(JSON.stringify({
+  detail: { code: 'model_too_slow', message: 'raw', retryable: false, user_action: 'open_settings', generation_kind: 'summary' },
+}), 'fallback');
+assert.equal(structuredTooSlow.message, '요약 모델이 GPU 메모리에 다 들어가지 않아 느리게 실행되었고 시간이 초과되었습니다. 다른 프로그램을 닫거나 설정에서 더 가벼운 모델(권장 모델)로 바꾼 뒤 다시 시도해 주세요. 기존 대화록과 정리 결과는 보존되었습니다.');
+assert.equal(structuredTooSlow.userAction, 'open_settings');
+
 console.log('ok - generation flow simulation');

@@ -413,9 +413,8 @@ def read_installer_preflight_request(
     *,
     temp_root: str | os.PathLike[str] | None = None,
 ) -> tuple[int | None, dict[str, StorageRequirement]]:
-    allowed_root = Path(temp_root or tempfile.gettempdir()).expanduser().resolve()
     resolved_request = Path(request_path).expanduser().resolve()
-    if not _is_same_or_child(resolved_request, allowed_root):
+    if not is_inside_user_temp(resolved_request, temp_root=temp_root):
         raise ValueError("Installer preflight request must stay inside the user temporary directory")
     if not resolved_request.is_file():
         raise ValueError("Installer preflight request does not exist")
@@ -947,15 +946,55 @@ def _is_same_or_child(path: Path, root: Path) -> bool:
         return False
 
 
+def _windows_temp_path() -> str | None:
+    if os.name != "nt":
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetTempPathW.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p]
+        kernel32.GetTempPathW.restype = ctypes.c_uint32
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = kernel32.GetTempPathW(len(buffer), buffer)
+    except (AttributeError, OSError):
+        return None
+    if length == 0 or length >= len(buffer):
+        return None
+    return buffer.value
+
+
+def user_temp_roots(temp_root: str | os.PathLike[str] | None = None) -> tuple[Path, ...]:
+    if temp_root is not None:
+        return (Path(temp_root).expanduser().resolve(),)
+    # The NSIS installer creates $PLUGINSDIR under GetTempPathW (TMP first),
+    # while tempfile.gettempdir() prefers TEMP. Accept both so a user whose
+    # TMP and TEMP differ is not rejected as a contract failure.
+    candidates = [tempfile.gettempdir(), _windows_temp_path()]
+    roots: list[Path] = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        resolved = Path(candidate).expanduser().resolve()
+        if all(os.path.normcase(str(resolved)) != os.path.normcase(str(root)) for root in roots):
+            roots.append(resolved)
+    return tuple(roots)
+
+
+def is_inside_user_temp(
+    path: Path,
+    *,
+    temp_root: str | os.PathLike[str] | None = None,
+) -> bool:
+    return any(_is_same_or_child(path, root) for root in user_temp_roots(temp_root))
+
+
 def write_preflight_json(
     output_path: str | os.PathLike[str],
     payload: Mapping[str, object],
     *,
     temp_root: str | os.PathLike[str] | None = None,
 ) -> Path:
-    allowed_root = Path(temp_root or tempfile.gettempdir()).expanduser().resolve()
     resolved_output = Path(output_path).expanduser().resolve()
-    if not _is_same_or_child(resolved_output, allowed_root):
+    if not is_inside_user_temp(resolved_output, temp_root=temp_root):
         raise ValueError("Preflight JSON output must stay inside the user temporary directory")
     if not resolved_output.parent.is_dir():
         raise ValueError("Preflight JSON output directory does not exist")

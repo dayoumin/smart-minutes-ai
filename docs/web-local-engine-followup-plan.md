@@ -688,3 +688,11 @@ $auditPython = 'D:\Projects\LMO_audio\backend\.venv-desktop\Scripts\python.exe'
 장시간 연결 후속을 `be78cf3`으로 수정했다. 실제60분 SSE 뒤 보호 조회401·renew0, 같은 frozen client/store SHA와15분 만료 시 credential 소거 경로를 확인했다. 유효한 분석 SSE/지정 생성 POST가 진행 중일 때만 기존renew를 미리 사용하고 idle15분·origin·capabilities·사용자 폐기/새 연결 우선권은 유지한다. 신규 가상 시계13·기존auth22·runtime-boundary·typecheck·변경lint 및 독립 검토를 통과했다. 새 검사 웹 버전 `d16af4df-93bd-40a7-836e-0c812211e2bc`는 source drift0·HTML/JS/CSS3개 readback·운영 배포 목록 불변을 확인했다. 기존60분 대화록을 실제 UI에서 이어 처리해 참석자 구분(23:37:11→23:53:38)·요약(→23:55:41) 모두200, 진행 중renew200을 관측했다. 새로고침 재pair의 준비 관측 전에 확인한 QA 도구 경합은 원본 실패를 보존하고 보완 중이며, 완료된 STT/구분/요약을 반복하지 않고 재열기·파일만 이어 검증한다.120분/실제idle/원복은 아직 미완료다.
 
 2026-10-19 00:07 KST: 준비 창은 IPC 연결 준비가 기록된 뒤 표시됨을 확인해, 정확한 QA helper PID·창 제목·origin 관측 후에만 웹 확인 버튼을 누르도록 검사 도구를 보완했다. `continue-60m-2026-10-18T15-06-40-780Z-9144`는 완료 기록의 새로고침·브라우저 실제 종료/재실행 및 TXT/MD/DOCX/HWPX 다운로드를 통과했다. 표시175행·검토47배지와 대화록/요약 SHA가 세 시점에 동일하고, analyze/generate 추가 요청0·원본120 checkpoint와 앞 실패 증거 불변을 확인했다. 파일 내용·순서·ZIP CRC/전체 XML/HWPX preview 검사를 포함하며 Word/Hancom 렌더 검사는 아니다. 00:08에 별도 새 QA profile로 실제120분 검사를 시작했다. 근거는 `.tmp/two-hour-audit-20261018/evidence/continue-60m-2026-10-18T15-06-40-780Z-9144/{manifest.json,60m-continue-rendered.json,continuation-result.json,network.json}`이다.
+
+### 설치 전 점검 실패 메시지의 원인과 수정 — 2026-10-19
+
+- 증상: 공개 0.1.5 설치 파일 실행 시 "설치 전 점검 결과를 확인하지 못했습니다" 표시. 이 메시지는 점검 도우미 exit 코드가 0/10/20/30이 아닐 때 나온다.
+- 확인: 공개 파일(442,772,108 bytes, SHA `dcf08c15…3aec`)의 다운로드는 정상이었다. 설치 파일에서 꺼낸 실제 도우미와 manifest는 이 PC에서 exit 10(정상 확인 단계)이었다.
+- 원인(재현됨): NSIS는 `$PLUGINSDIR`를 `GetTempPathW`(TMP 우선) 아래에 만들지만, 도우미는 결과 JSON·결정 INI를 `tempfile.gettempdir()`(TEMP 우선) 안으로만 허용했다. TMP와 TEMP가 다른 PC에서는 `ValueError`가 발생해 exit 2가 됐다. 배포 도우미로 TMP≠TEMP를 재현하면 exit 2, 같게 하면 exit 10이다.
+- 수정: `local_engine_preflight.user_temp_roots()`가 두 경로를 모두 per-user 임시 위치로 허용한다. NSIS는 `ExecWait` 실행 자체가 실패하면(백신 차단 등) 별도 안내를 보여 주며, 일반 계약 실패 메시지와 구분한다.
+- 남은 일: 수정본은 **아직 다시 빌드하거나 배포하지 않았다**. 이 PC에 `makensis`가 없어 NSIS 컴파일 검증이 필요하다. 다른 helper 호출(cleanup/validate/probe)에도 같은 실행 실패 감지는 아직 없다.

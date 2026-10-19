@@ -604,6 +604,49 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             leftovers = [path for path in root.rglob("*") if "preflight" in path.name.lower()]
             self.assertEqual(leftovers, [])
 
+    @unittest.skipUnless(os.name == "nt", "Windows source smoke")
+    def test_main_accepts_nsis_plugins_dir_when_tmp_and_temp_differ(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            python_temp = root / "TEMP 폴더"
+            nsis_temp = root / "TMP 폴더"
+            plugins_dir = nsis_temp / "nsA1B2.tmp"
+            local_app_data = root / "사용자 자료"
+            python_temp.mkdir()
+            plugins_dir.mkdir(parents=True)
+            local_app_data.mkdir()
+            manifest = self._manifest(root)
+            result = plugins_dir / "preflight-result.json"
+            decision = plugins_dir / "preflight-decision.ini"
+            previous_tempdir = tempfile.tempdir
+            try:
+                tempfile.tempdir = str(python_temp)
+                with patch.dict(
+                    os.environ,
+                    {"TEMP": str(python_temp), "TMP": str(nsis_temp), "LOCALAPPDATA": str(local_app_data)},
+                ):
+                    exit_code = main([
+                        "--manifest", str(manifest),
+                        "--result-json", str(result),
+                        "--decision-ini", str(decision),
+                        "--request-generation", "1",
+                    ])
+            finally:
+                tempfile.tempdir = previous_tempdir
+
+            self.assertEqual(exit_code, 10)
+            self.assertTrue(result.is_file())
+            self.assertEqual(
+                decision.read_text(encoding="utf-8").splitlines(),
+                [
+                    "[preflight]",
+                    "decision=confirm",
+                    "primary_action=retry_check",
+                    "request_generation=1",
+                ],
+            )
+            self.assertEqual(list(python_temp.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()

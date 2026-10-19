@@ -1862,6 +1862,7 @@
   .local-processing-dialog {
     @apply w-full max-w-lg overflow-y-auto border bg-background p-6 text-foreground;
     max-height: calc(100dvh - 2rem);
+    word-break: keep-all;
     border-radius: var(--radius-dialog);
     border-color: var(--border-default);
     box-shadow: var(--shadow-overlay);

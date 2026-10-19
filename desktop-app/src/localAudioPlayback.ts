@@ -61,6 +61,11 @@ const disposeAll = () => {
     for (const lease of leases.values()) for (const controller of lease.controllers) controller.abort();
     leases.clear();
 };
+const handlePageHide = (event: PageTransitionEvent) => {
+    // BFCache retains the document and its audio elements, including their URLs.
+    // Keep their leases alive until explicit disposal or permanent departure.
+    if (!event.persisted) disposeAll();
+};
 const ensureWorker = async (): Promise<void> => {
     if (!window.isSecureContext || !('serviceWorker' in navigator)) throw new Error('Audio playback is unavailable.');
     if (!registrationPromise) {
@@ -81,7 +86,7 @@ const ensureWorker = async (): Promise<void> => {
             });
             if (!listening) {
                 navigator.serviceWorker.addEventListener('message', handleAudioRequest);
-                window.addEventListener('pagehide', disposeAll);
+                window.addEventListener('pagehide', handlePageHide);
                 listening = true;
             }
         })().catch(error => { registrationPromise = null; throw error; });
@@ -113,6 +118,6 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
     disposeAll();
     if (listening) {
         navigator.serviceWorker.removeEventListener('message', handleAudioRequest);
-        window.removeEventListener('pagehide', disposeAll);
+        window.removeEventListener('pagehide', handlePageHide);
     }
 });

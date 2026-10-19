@@ -30,6 +30,7 @@
     "test:export-consistency": "node scripts/test-export-consistency.mjs",
     "test:audio-playback-transport": "node --experimental-strip-types scripts/test-audio-playback-transport.mjs",
     "test:audio-playback": "node scripts/simulate-audio-playback.mjs",
+    "test:audio-back-navigation": "node scripts/simulate-audio-back-navigation.mjs",
     "test:settings-backend-restart": "node scripts/simulate-settings-backend-restart.mjs",
     "test:settings-model-management": "node scripts/simulate-settings-model-management.mjs",
     "test:analysis-stop-flow": "node scripts/simulate-analysis-stop-flow.mjs",

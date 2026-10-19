@@ -26,6 +26,7 @@ For the broader user-facing scenario matrix across file length, file type, stop/
 - `corepack pnpm --dir desktop-app test:export-consistency`
 - `corepack pnpm --dir desktop-app test:audio-playback-transport`
 - `corepack pnpm --dir desktop-app test:audio-playback`
+- `corepack pnpm --dir desktop-app test:audio-back-navigation`
 - `corepack pnpm --dir desktop-app test:edit-guard-flow`
 - `corepack pnpm --dir desktop-app test:close-guard-flow`
 - `corepack pnpm --dir desktop-app test:settings-backend-restart`
@@ -158,6 +159,32 @@ corepack pnpm --dir desktop-app test:audio-playback
 Start the documented Vite command on a verified free port before the browser test and use its
 actual URL. These checks do not prove actual HTTPS Local Network Access permission, installed
 Chrome/Edge support, real local-engine processing or long-file memory behavior.
+
+### Audio after browser Back — 2026-10-19
+
+`test:audio-back-navigation` bundles the actual audio transport into a small production test
+document under `.tmp/audio-back-navigation`, serves that document and a separate-origin exit
+page on two automatically assigned loopback ports, and closes both servers and Chromium after
+the check. It needs the project-local Playwright browser cache above; no existing Vite server or
+local engine is used. Its authenticated WAV endpoint is a test fixture, not a running engine.
+The Chromium launch explicitly removes Playwright's default BFCache-disabling flag and uses the
+full Chromium channel. No live-reload WebSocket or browser request interception is used.
+
+The check plays audio, visits the other origin, and returns with browser Back. It asserts that
+`pageshow.persisted` is true and the same document instance survives, then checks the old audio
+URL, reloads the native audio element and confirms playback advances. Before the fix the genuine
+restore returned 404 because `pagehide` cleared its lease. The fixed transport retains leases
+for a persisted page, while explicit disposal and non-persisted `pagehide` still return 404.
+The latter cleanup assertion dispatches the lifecycle event directly so its source can be checked
+before the document is destroyed. This does not prove whole-app restoration, real HTTPS engine
+access, system Chrome/Edge behavior or memory pressure eviction behavior.
+
+Commit-preparation recheck on 2026-10-19 passed: `corepack pnpm@10.33.2 --dir desktop-app
+typecheck`, changed-file ESLint, `test:audio-playback-transport` (9 tests), and
+`test:audio-back-navigation`. The last check observed a genuine BFCache restore, the old audio
+URL returning 200, resumed playback, and 404 after disposal/permanent-departure cleanup.
+The existing pnpm cache was selected explicitly after Corepack's sandbox-default cache path
+was missing; dependencies were not reinstalled. The same runtime scope limitations above apply.
 
 - These scripts use the project `playwright` package, not the Codex in-app browser.
 - On this Windows PC, set the project-local Playwright cache before both installation and

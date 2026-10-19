@@ -90,8 +90,12 @@ FunctionEnd
 Function RunInstallerPreflight
   Delete "$PreflightResult"
   Delete "$PreflightDecision"
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --manifest "$PLUGINSDIR\poc-manifest.json" --result-json "$PreflightResult" --decision-ini "$PreflightDecision" --request-generation $RequestGeneration' $PreflightExit
   StrCpy $PreflightAction "none"
+  IfErrors 0 +3
+  StrCpy $PreflightExit "launch_failed"
+  Goto done
   IfFileExists "$PreflightDecision" 0 done
   ReadINIStr $PreflightAction "$PreflightDecision" "preflight" "primary_action"
 done:
@@ -116,7 +120,10 @@ Function WaitForEngineStopped
   StrCpy $0 0
 wait_retry:
   IntOp $0 $0 + 1
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --probe-stopped-engine' $1
+  IfErrors 0 +2
+  StrCpy $1 "launch_failed"
   ${If} $1 == 0
     Return
   ${EndIf}
@@ -130,20 +137,32 @@ wait_retry:
 FunctionEnd
 
 Function CleanupOwnedTree
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --cleanup-owned-tree "$CleanupTarget" --manifest "$CleanupManifest"' $CleanupExit
+  IfErrors 0 +2
+  StrCpy $CleanupExit "launch_failed"
 FunctionEnd
 
 Function ValidateOwnedTree
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --validate-owned-tree "$CleanupTarget" --manifest "$CleanupManifest"' $CleanupExit
+  IfErrors 0 +2
+  StrCpy $CleanupExit "launch_failed"
 FunctionEnd
 
 Function ValidateCompleteStage
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --validate-owned-tree "$CleanupTarget" --manifest "$CleanupManifest" --require-complete-tree --require-transaction-marker' $CleanupExit
+  IfErrors 0 +2
+  StrCpy $CleanupExit "launch_failed"
 FunctionEnd
 
 Function RecoverInterruptedTransaction
   IfFileExists "$INSTDIR\${UNINSTALL_MARKER}" 0 recovery_check_stage
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --cleanup-uninstall-tombstone "$INSTDIR"' $CleanupExit
+  IfErrors 0 +2
+  StrCpy $CleanupExit "launch_failed"
   ${If} $CleanupExit != 0
     Goto recovery_failed
   ${EndIf}
@@ -310,6 +329,10 @@ preflight_retry:
     SetErrorLevel 30
     MessageBox MB_OK|MB_ICONSTOP "설치 환경을 확인하지 못했습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 문의해 주세요."
     Abort
+  ${ElseIf} $PreflightExit == "launch_failed"
+    SetErrorLevel 30
+    MessageBox MB_OK|MB_ICONSTOP "설치 점검 도구를 실행하지 못했습니다. 백신 프로그램이 설치 파일을 차단했는지 확인한 뒤 다시 실행해 주세요."
+    Abort
   ${Else}
     SetErrorLevel 2
     MessageBox MB_OK|MB_ICONSTOP "설치 전 점검 결과를 확인하지 못했습니다. 설치 파일을 다시 받아 실행해 주세요."
@@ -401,7 +424,10 @@ create_stage:
   StrCpy $ReadinessAttempts 0
 readiness_retry:
   IntOp $ReadinessAttempts $ReadinessAttempts + 1
+  ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --probe-running-engine --manifest "$PLUGINSDIR\poc-manifest.json"' $0
+  IfErrors 0 +2
+  StrCpy $0 "launch_failed"
   ${If} $0 == 0
     Goto readiness_ready
   ${EndIf}
@@ -545,7 +571,10 @@ Function un.WaitForEngineStopped
   StrCpy $0 0
 un_wait_retry:
   IntOp $0 $0 + 1
+  ClearErrors
   ExecWait '"$InstalledHelper" --probe-stopped-engine' $1
+  IfErrors 0 +2
+  StrCpy $1 "launch_failed"
   ${If} $1 == 0
     Return
   ${EndIf}
@@ -575,7 +604,10 @@ Section "Uninstall"
   Call un.WaitForEngineStopped
 
 remove_program:
+  ClearErrors
   ExecWait '"$InstalledHelper" --cleanup-owned-tree "$INSTDIR" --manifest "$INSTDIR\poc-manifest.json" --preserve-self-removal-files' $0
+  IfErrors 0 +2
+  StrCpy $0 "launch_failed"
   ${If} $0 != 0
     SetErrorLevel 20
     MessageBox MB_OK|MB_ICONSTOP "설치 폴더에 선언되지 않은 파일이 있어 자동으로 삭제하지 않았습니다. 파일을 확인한 뒤 다시 시도해 주세요."

@@ -181,6 +181,9 @@ interface ModelsPayload {
     ready: boolean;
     models: ModelStatus[];
     errors?: string[];
+    selected_stt_device?: string;
+    stt_device_status?: { gpu_usable?: boolean; gpu_reason?: string };
+    diarization_generate_during_analysis?: boolean;
 }
 
 interface AnalysisStoragePreflightPayload {
@@ -329,8 +332,12 @@ const requestWithinPreparationTimeout = async (
 };
 
 // One sentence for missing required models. Point at 모델 받기 only when Settings can actually download one of them.
-const describeMissingModels = (models: ModelStatus[] = []): string => {
+const describeMissingModels = (models: ModelStatus[] = [], diarizationDuringAnalysis = false): string => {
     const missing = models.filter(model => model.required && !model.installed);
+    // The diarization model is required only while 참석자 구분까지 이어서 실행 is on; turning it off is the quick way through.
+    if (diarizationDuringAnalysis && missing.length > 0 && missing.every(model => model.key === 'diarization')) {
+        return '참석자 구분 모델이 없어 분석 중에 참석자를 구분할 수 없습니다. 설정에서 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.';
+    }
     const list = missing.map(model => getUserModelLabel(model)).join(', ') || '필수 모델';
     if (missing.some(model => model.downloadable)) {
         return `분석을 시작하려면 ${list} 준비가 필요합니다. 모델 받기를 누르면 설정에서 바로 받을 수 있습니다.`;
@@ -551,11 +558,13 @@ interface MeetingWriterProps {
     onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
     /** Opens Settings at 문제 해결 (desktop: restart the analysis engine). */
     onOpenTroubleshooting?: () => void;
+    /** Opens Settings > 일반 at 분석 장치 (GPU unusable) or 참석자 구분까지 이어서 실행 (its model is missing). */
+    onOpenAnalysisSettings?: (section: 'device' | 'diarization') => void;
     /** Shown under the input form while no analysis, completion or resume selection is on screen. */
     idleCompanion?: React.ReactNode;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, idleCompanion }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, onOpenAnalysisSettings, idleCompanion }) => {
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport, probeLocalEngine } = useLocalEngineConnection();
     const [webConnectionRecoveryStarted, setWebConnectionRecoveryStarted] = useState(false);
     const [connectionCheckRequired, setConnectionCheckRequired] = useState(false);
@@ -597,7 +606,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [lastRealProgressAt, setLastRealProgressAt] = useState(() => Date.now());
     const [storedErrorMessage, setErrorMessage] = useState('');
     // Why the analysis failed and, when the transcript was already saved, which meeting holds it.
-    const [analysisFailure, setAnalysisFailure] = useState<{ cause: UserErrorCause; savedMeetingId: string | null } | null>(null);
+    const [analysisFailure, setAnalysisFailure] = useState<{ cause: UserErrorCause; savedMeetingId: string | null; onGpu?: boolean } | null>(null);
     const [hasAttemptedStart, setHasAttemptedStart] = useState(false);
     const [fileDurationSeconds, setFileDurationSeconds] = useState<number | null>(null);
     const fileDurationLimitError = getAnalysisDurationLimitError(fileDurationSeconds);
@@ -872,8 +881,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 return { state: 'ready', message: '', models: payload };
             }
 
-            // errors[0] carries the real cause when nothing is missing (e.g. GPU not usable).
-            const message = payload.errors?.[0] || describeMissingModels(payload.models);
+            // A missing model is fixed first, so it names the banner; otherwise errors[0] is the real cause (e.g. GPU not usable).
+            const requiredMissing = payload.models.some(model => model.required && !model.installed);
+            const missingMessage = describeMissingModels(payload.models, payload.diarization_generate_during_analysis === true);
+            const message = requiredMissing ? missingMessage : payload.errors?.[0] || missingMessage;
             setReadinessState('missing-models');
             setReadinessMessage(message);
             return { state: 'missing-models', message, models: payload };
@@ -927,7 +938,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     return;
                 }
 
-                if (check.state === 'missing-models') return;
+                if (check.state === 'missing-models') {
+                    // Only a model download can clear this on its own (a GPU or reinstall problem cannot), and it can
+                    // finish while Settings is closed: keep a slow, soft check for that case only.
+                    const downloadPending = (check.models?.models || []).some(model => model.required && !model.installed && model.downloadable);
+                    if (!downloadPending) return;
+                    finalCheckDone = true;
+                    do {
+                        await sleep(READINESS_SLOW_POLL_MS);
+                    } while (!superseded() && document.visibilityState === 'hidden');
+                    continue;
+                }
                 if (pastDeadline) {
                     if (check.state === 'error') return;
                     if (check.state === 'server-waiting' && !check.reachable) setReadinessTimedOut(true);
@@ -1039,11 +1060,22 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const modelsMissing = requiredModelsAbsent && missingRequiredModels.some(model => model.downloadable);
     // Required models Settings cannot download: reinstalling is the fix, so the row states the cause without a button.
     const modelsNeedReinstall = requiredModelsAbsent && !modelsMissing;
+    // Only the diarization model is missing and it is required by 참석자 구분까지 이어서 실행: turning that off is the fix.
+    const diarizationSettingBlocks = modelsNeedReinstall && modelsPayload?.diarization_generate_during_analysis === true
+        && missingRequiredModels.every(model => model.key === 'diarization');
+    // GPU selected but unusable (all models present): switching 분석 장치 to CPU is the fix, not a restart.
+    const gpuUnavailable = readinessState === 'missing-models' && !requiredModelsAbsent
+        && modelsPayload?.selected_stt_device === 'cuda' && modelsPayload?.stt_device_status?.gpu_usable === false;
     // Where the hint's button leads: missing models -> Settings > 모델; otherwise 문제 해결 (desktop) / 다시 확인 (web).
-    const readinessAction: 'models' | 'troubleshoot' | 'recheck' | 'connect' | null = !showReadinessHint || modelsNeedReinstall
+    const readinessAction: 'models' | 'device' | 'diarization' | 'troubleshoot' | 'recheck' | 'connect' | null = !showReadinessHint
+        || (modelsNeedReinstall && !(diarizationSettingBlocks && onOpenAnalysisSettings))
         ? null
         : !isTauriRuntime() && !localEngineConnectionRequired && (engineUnreachable || connectionCheckRequired)
             ? 'connect'
+        : diarizationSettingBlocks && onOpenAnalysisSettings
+            ? 'diarization'
+        : gpuUnavailable && onOpenAnalysisSettings
+            ? 'device'
         : modelsMissing && onOpenSettings
             ? 'models'
             : isTauriRuntime() && onOpenTroubleshooting && !localEngineConnectionRequired ? 'troubleshoot' : 'recheck';
@@ -2180,6 +2212,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             }
             const failure = describeAnalysisError(error, { desktopApp: isTauriRuntime() });
             const message = failure.message;
+            // GPU guidance only when this run used the GPU and the engine's own text names it: a host RAM failure
+            // (bad_alloc) while 분석 장치 is GPU is not helped by switching to CPU.
+            const rawFailureText = error instanceof Error ? error.message : String(error);
+            const failedOnGpuRun = modelsPayload?.selected_stt_device === 'cuda'
+                && (failure.cause === 'gpu' || /cuda|cublas|cudnn|gpu/i.test(rawFailureText));
             await writeFrontendLog(`analysis failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const failedJobId = analysisResumeDraftIdRef.current;
             if (mediaAdmissionRejected || analysisPreserveExistingRef.current) {
@@ -2208,7 +2245,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             // The meeting already holds the transcript: say so first and lead to it (WR-3).
             const savedMeetingId = transcriptKept ? transcriptSavedMeetingIdRef.current : null;
             setAnalysisPhase('error');
-            setAnalysisFailure({ cause: failure.cause, savedMeetingId });
+            setAnalysisFailure({ cause: failure.cause, savedMeetingId, onGpu: failedOnGpuRun });
             // With the transcript saved, what is left is finished from the meeting itself, so the sentence names that
             // step (with its cause) instead of telling the user to rerun the whole analysis.
             const unfinishedStep = diarizationDuringAnalysis ? '참석자 구분' : '남은 분석';
@@ -2494,8 +2531,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const audioExtractFailed = audioExtractNotice?.tone === 'error';
     const showAnalysisFailure = !isAnalyzing && analysisPhase === 'error' && Boolean(errorMessage);
     const failureCause = analysisFailure?.cause ?? 'other';
-    const failureAction: 'open-result' | 'troubleshoot' | 'recheck' | 'choose-file' | 'retry' = analysisFailure?.savedMeetingId
+    // Out of memory on the GPU, or the GPU failing at run time: retrying on the GPU fails the same way. Once 분석 장치
+    // is CPU, 다시 시도 is the next step again.
+    const failedOnGpuMemory = failureCause === 'memory' && Boolean(analysisFailure?.onGpu);
+    const failedOnGpu = Boolean(analysisFailure?.onGpu) && (failureCause === 'gpu' || failureCause === 'memory')
+        && modelsPayload?.selected_stt_device !== 'cpu' && Boolean(onOpenAnalysisSettings);
+    const failureAction: 'open-result' | 'troubleshoot' | 'recheck' | 'choose-file' | 'device' | 'retry' = analysisFailure?.savedMeetingId
         ? 'open-result'
+        : failedOnGpu
+            ? 'device'
         : failureCause === 'engine-disconnected'
             ? (isTauriRuntime() && onOpenTroubleshooting ? 'troubleshoot' : 'recheck')
             : failureCause === 'unsupported-file'
@@ -2891,8 +2935,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                     : modelsMissing
                                         ? '분석에 필요한 모델이 아직 없습니다. 모델을 받으면 바로 시작할 수 있습니다.'
                                         : modelsNeedReinstall
-                                            ? '필요한 모델이 없어 분석을 시작할 수 없습니다.'
-                                            : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
+                                            ? diarizationSettingBlocks
+                                                ? '참석자 구분 모델이 없습니다. 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.'
+                                                : '필요한 모델이 없어 분석을 시작할 수 없습니다.'
+                                            : gpuUnavailable
+                                                ? 'GPU를 쓸 수 없습니다. 분석 장치를 CPU로 바꾸면 바로 시작할 수 있습니다.'
+                                                : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
                             </p>
                         )}
                             </div>
@@ -2901,6 +2949,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <Button variant="outline" className="writer-hint-action" onClick={onOpenSettings}>
                                 <Download size={15} aria-hidden="true" />
                                 모델 받기
+                            </Button>
+                        )}
+                        {readinessAction === 'device' && (
+                            <Button variant="outline" className="writer-hint-action" onClick={() => onOpenAnalysisSettings?.('device')}>
+                                <Settings size={15} aria-hidden="true" />
+                                분석 장치 설정
+                            </Button>
+                        )}
+                        {readinessAction === 'diarization' && (
+                            <Button variant="outline" className="writer-hint-action" onClick={() => onOpenAnalysisSettings?.('diarization')}>
+                                <Settings size={15} aria-hidden="true" />
+                                참석자 구분 설정
                             </Button>
                         )}
                         {readinessAction === 'troubleshoot' && (
@@ -2949,12 +3009,23 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 <AlertCircle size={18} aria-hidden="true" />
                             </div>
                             <div className="min-w-0 flex-1">
-                                <div className="writer-analysis-result-message break-words">{errorMessage}</div>
+                                <div className="writer-analysis-result-message break-words">
+                                    {failedOnGpuMemory ? 'GPU 메모리가 부족해 분석을 마치지 못했습니다.' : errorMessage}
+                                </div>
+                                {failureAction === 'device' && failedOnGpuMemory && (
+                                    <p className="mt-1 text-sm text-muted-foreground">분석 장치를 CPU로 바꾸면 GPU 메모리와 상관없이 분석할 수 있습니다. CPU는 더 오래 걸릴 수 있습니다.</p>
+                                )}
                                 {/* The primary action follows the cause: saved transcript, connection, unreadable file, or a retry. */}
                                 <div className="writer-analysis-result-actions">
                                     {failureAction === 'open-result' && (
                                         <Button variant="primary" onClick={handleOpenFailedMeeting}>
                                             결과 보기
+                                        </Button>
+                                    )}
+                                    {failureAction === 'device' && (
+                                        <Button variant="primary" onClick={() => onOpenAnalysisSettings?.('device')}>
+                                            <Settings size={14} aria-hidden="true" />
+                                            분석 장치 설정
                                         </Button>
                                     )}
                                     {failureAction === 'troubleshoot' && (
@@ -3174,7 +3245,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <AlertCircle size={18} />
                             <div>
                                 <div className="font-semibold">{readinessBannerTitle}</div>
-                                <div className="mt-1">{readinessMessage}</div>
+                                <div className="mt-1">
+                                    {gpuUnavailable
+                                        ? '이 PC에서 GPU 가속을 쓸 수 있는 환경이 아직 준비되지 않았습니다. 설정에서 분석 장치를 CPU로 바꾸면 분석할 수 있습니다.'
+                                        : readinessMessage}
+                                </div>
                             </div>
                         </div>
                         {/* The way forward (모델 받기 / 문제 해결 / 다시 확인) sits beside 분석 시작; only add a recheck here when it is not already there. */}

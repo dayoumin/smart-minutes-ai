@@ -4,7 +4,7 @@ import { MeetingWriter } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
 import type { MeetingDetailOpenRequest, MeetingDetailTab } from './MeetingHistory';
 import { Settings } from './Settings';
-import type { SettingsTab } from './Settings';
+import type { SettingsSection, SettingsTab } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
 import { isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
@@ -170,7 +170,7 @@ export const App: React.FC = () => {
     const closeGuardSourcesRef = useRef(new Map<string, boolean>());
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general');
-    const [settingsInitialSection, setSettingsInitialSection] = useState<'troubleshooting' | undefined>(undefined);
+    const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection | undefined>(undefined);
     const leaveGuardRef = React.useRef<() => boolean>(() => true);
     const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
     const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
@@ -218,7 +218,7 @@ export const App: React.FC = () => {
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(current => current === id ? fallbackId : current);
     };
-    const openSettings = (tab: SettingsTab = 'general', section?: 'troubleshooting') => {
+    const openSettings = (tab: SettingsTab = 'general', section?: SettingsSection) => {
         setSettingsInitialTab(tab);
         setSettingsInitialSection(section);
         setIsSettingsOpen(true);
@@ -391,6 +391,7 @@ export const App: React.FC = () => {
                         analysisStartBlockedReason={newMeetingBlockedReason}
                         resumeDraftSelectionRequest={resumeDraftSelectionRequest}
                         onOpenTroubleshooting={() => openSettings('general', 'troubleshooting')}
+                        onOpenAnalysisSettings={section => openSettings('general', section)}
                         onRegisterLeaveGuard={(guard) => {
                             writerLeaveGuardRef.current = guard ?? (() => true);
                         }}

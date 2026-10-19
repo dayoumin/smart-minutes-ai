@@ -7,12 +7,25 @@ import errno
 INSUFFICIENT_MEMORY = "insufficient_memory"
 INSUFFICIENT_STORAGE = "insufficient_storage"
 UNSUPPORTED_MEDIA = "unsupported_media"
+GPU_UNAVAILABLE = "gpu_unavailable"
 
 _MEMORY_MARKERS = (
     "out of memory",  # CUDA / ctranslate2 / torch
     "cannot allocate memory",
     "bad_alloc",
     "not enough memory",
+)
+# CUDA libraries or driver failing at run time (GPU selected explicitly; `auto` already falls back to CPU).
+# Checked after memory, so "CUDA failed with error out of memory" stays a memory failure.
+_GPU_MARKERS = (
+    "cublas",
+    "cudnn",
+    "cudart",
+    "cuda driver",
+    "cuda runtime",
+    "cuda error",
+    "cuda failed",
+    "no cuda-capable device",
 )
 _STORAGE_MARKERS = (
     "no space left on device",
@@ -41,6 +54,8 @@ def classify_analysis_failure(exc: BaseException) -> str | None:
         return INSUFFICIENT_MEMORY
     if any(marker in text for marker in _STORAGE_MARKERS):
         return INSUFFICIENT_STORAGE
+    if any(marker in text for marker in _GPU_MARKERS):
+        return GPU_UNAVAILABLE
     if any(marker in text for marker in _UNSUPPORTED_MEDIA_MARKERS):
         return UNSUPPORTED_MEDIA
     return None

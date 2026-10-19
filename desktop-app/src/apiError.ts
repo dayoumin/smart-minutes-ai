@@ -58,7 +58,7 @@ const HANGUL_PATTERN = /[\uAC00-\uD7A3]/;
 const BROWSER_FETCH_FAILURE_PATTERN = /^(typeerror: )?(failed to fetch|networkerror when attempting to fetch resource\.?|load failed|network error)$/i;
 
 /** What went wrong, in terms of what the user can do next. */
-export type UserErrorCause = 'memory' | 'unsupported-file' | 'disk-space' | 'engine-disconnected' | 'timeout' | 'other';
+export type UserErrorCause = 'memory' | 'gpu' | 'unsupported-file' | 'disk-space' | 'engine-disconnected' | 'timeout' | 'other';
 
 export interface UserFacingError {
     cause: UserErrorCause;
@@ -78,6 +78,7 @@ export class EngineError extends Error {
 
 const CODE_CAUSES: Record<string, UserErrorCause> = {
     insufficient_memory: 'memory',
+    gpu_unavailable: 'gpu',
     insufficient_storage: 'disk-space',
     unsupported_media: 'unsupported-file',
     media_duration_unavailable: 'unsupported-file',
@@ -90,6 +91,8 @@ const CODE_CAUSES: Record<string, UserErrorCause> = {
 const TEXT_CAUSES: Array<[RegExp, UserErrorCause]> = [
     [/out of memory|cannot allocate memory|bad_alloc|not enough memory|메모리가 부족/i, 'memory'],
     [/no space left on device|not enough space on the disk|quota.*exceeded|저장 공간이 부족/i, 'disk-space'],
+    // After memory: "CUDA failed with error out of memory" is a memory failure, other CUDA run-time failures are the GPU.
+    [/cublas|cudnn|cudart|cuda (driver|runtime|error|failed)|no cuda-capable device/i, 'gpu'],
     // Final ffmpeg errors only: stderr also carries warnings (e.g. codec parameters) for files that decode fine.
     [/invalid data found when processing input|does not contain any stream|moov atom not found/i, 'unsupported-file'],
     [/timed? ?out|timeout/i, 'timeout'],
@@ -107,6 +110,7 @@ type ActionableCause = Exclude<UserErrorCause, 'engine-disconnected' | 'other'>;
 
 const ANALYSIS_CAUSE_MESSAGES: Record<ActionableCause, string> = {
     memory: '이 PC의 메모리가 부족합니다. 다른 프로그램을 닫은 뒤 다시 시도해 주세요.',
+    gpu: 'GPU로 분석하지 못했습니다. 설정에서 분석 장치를 CPU로 바꾸면 분석할 수 있습니다.',
     'disk-space': '저장 공간이 부족합니다. 파일을 정리해 공간을 확보한 뒤 다시 시도해 주세요.',
     'unsupported-file': '이 파일은 읽을 수 없습니다. 재생되는 음성·영상 파일을 선택해 주세요.',
     timeout: '응답이 너무 오래 걸려 멈췄습니다. 잠시 뒤 다시 시도해 주세요.',
@@ -115,6 +119,7 @@ const ANALYSIS_CAUSE_MESSAGES: Record<ActionableCause, string> = {
 // Second sentence after "…하지 못했습니다." on screens where the first sentence already says what failed.
 const NEXT_STEP_BY_CAUSE: Record<ActionableCause, string> = {
     memory: '메모리가 부족하니 다른 프로그램을 닫은 뒤 다시 시도해 주세요.',
+    gpu: 'GPU를 사용하지 못했습니다. 바로록을 다시 실행한 뒤 다시 시도해 주세요.',
     'disk-space': '저장 공간을 확보한 뒤 다시 시도해 주세요.',
     'unsupported-file': '재생되는 음성·영상 파일인지 확인해 주세요.',
     timeout: '응답이 늦어 멈췄습니다. 잠시 뒤 다시 시도해 주세요.',

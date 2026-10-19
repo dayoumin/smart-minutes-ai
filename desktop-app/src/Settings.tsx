@@ -249,10 +249,12 @@ interface SettingsProps {
     analysisActive?: boolean;
     initialTab?: SettingsTab;
     /** Scroll a section into view on open (the writer's 문제 해결 button). */
-    initialSection?: 'troubleshooting';
+    initialSection?: SettingsSection;
 }
 
 export type SettingsTab = 'general' | 'models';
+/** Where a writer shortcut lands inside 일반: 문제 해결 (재시작), 분석 장치, or 참석자 구분까지 이어서 실행. */
+export type SettingsSection = 'troubleshooting' | 'device' | 'diarization';
 
 const getUserModelLabel = (model: ModelStatus): string => {
     if (model.key === 'stt_faster_whisper') return '음성 인식 모델';
@@ -477,29 +479,37 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setActiveTab(initialTab);
     }, [initialTab]);
 
-    const troubleshootingScrolledRef = useRef(false);
+    const initialSectionHandledRef = useRef(false);
     const restartButtonRef = useRef<HTMLButtonElement | null>(null);
+    const deviceSelectRef = useRef<HTMLSelectElement | null>(null);
+    const diarizationToggleRef = useRef<HTMLInputElement | null>(null);
     const restartFocusPendingRef = useRef(false);
     useEffect(() => {
-        // Scroll once when opened from the writer's 문제 해결 button, not on every return to the 일반 tab.
-        if (initialSection !== 'troubleshooting' || activeTab !== 'general' || troubleshootingScrolledRef.current) return undefined;
+        // Scroll once when opened from a writer shortcut (문제 해결 / 분석 장치 / 참석자 구분), not on every return to the 일반 tab.
+        if (!initialSection || activeTab !== 'general' || initialSectionHandledRef.current) return undefined;
+        // Analysis controls only exist once settings have loaded; 재시작 is there from the start.
+        if (initialSection !== 'troubleshooting' && (!settings || isRestartingBackend)) return undefined;
         let focusFrame = 0;
         const frame = window.requestAnimationFrame(() => {
             // Mark done only once it runs: StrictMode's mount-unmount-mount cancels the first frame.
-            troubleshootingScrolledRef.current = true;
-            const section = document.getElementById('settings-troubleshooting');
-            section?.scrollIntoView({ block: 'center' });
-            // The dialog focuses its close button on the first frame; the user came for 재시작, so move there next.
+            initialSectionHandledRef.current = true;
+            const sectionId = initialSection === 'device'
+                ? 'settings-analysis-device'
+                : initialSection === 'diarization' ? 'settings-analysis-diarization' : 'settings-troubleshooting';
+            document.getElementById(sectionId)?.scrollIntoView({ block: 'center' });
+            // The dialog focuses its close button on the first frame; the user came for this control, so move there next.
             focusFrame = window.requestAnimationFrame(() => {
-                const restartButton = restartButtonRef.current;
-                if (restartButton && !restartButton.disabled) restartButton.focus({ preventScroll: true });
+                const target = initialSection === 'device'
+                    ? deviceSelectRef.current
+                    : initialSection === 'diarization' ? diarizationToggleRef.current : restartButtonRef.current;
+                if (target && !target.disabled) target.focus({ preventScroll: true });
             });
         });
         return () => {
             window.cancelAnimationFrame(frame);
             window.cancelAnimationFrame(focusFrame);
         };
-    }, [activeTab, initialSection]);
+    }, [activeTab, initialSection, isRestartingBackend, settings]);
 
     useEffect(() => {
         const previouslyFocusedElement = previouslyFocusedElementRef.current;
@@ -1931,13 +1941,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             <div className="settings-group">
                                 <h4>분석</h4>
                                 <div className="settings-list">
-                                    <label className="settings-row">
+                                    <label id="settings-analysis-device" className="settings-row">
                                         <span className="settings-row-copy">
                                             <span className="settings-row-title">분석 장치</span>
                                             <span className="settings-row-description">{gpuStatusText}</span>
                                         </span>
                                         {renderEngineSetting(
                                             <select
+                                                ref={deviceSelectRef}
                                                 value={sttDevice}
                                                 onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
                                                 className="select-field settings-row-select"
@@ -1962,6 +1973,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         )}
                                     </label>
                                     <label
+                                        id="settings-analysis-diarization"
                                         className="settings-row"
                                         title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
                                     >
@@ -1972,6 +1984,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         {renderEngineSetting(
                                             <input
                                                 type="checkbox"
+                                                ref={diarizationToggleRef}
                                                 className="settings-switch"
                                                 checked={diarizationDuringAnalysis}
                                                 onChange={event => setDiarizationDuringAnalysis(event.target.checked)}

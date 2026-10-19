@@ -203,6 +203,105 @@ const verifyWebSettingsRecovery = async (browser) => {
   }
 };
 
+// GPU selected but unusable, models present: the way forward is 분석 장치 (CPU), not a restart or a model download.
+const verifyGpuUnavailable = async (browser) => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const gpu = { selected: 'cuda' };
+  try {
+    await page.route('**/api/health', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+    await page.route('**/api/models/status', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ready: gpu.selected !== 'cuda',
+        models: [{ key: 'stt_faster_whisper', label: 'Faster Whisper Large v3', required: true, installed: true, downloadable: true }],
+        selected_stt_device: gpu.selected,
+        stt_device_status: { gpu_detected: true, gpu_usable: false, gpu_reason: 'CUDA 런타임이 준비되지 않았습니다.' },
+        errors: gpu.selected === 'cuda' ? ['CUDA 런타임이 준비되지 않았습니다.'] : [],
+      }),
+    }));
+    await page.route('**/api/settings', route => {
+      if (route.request().method() === 'PATCH') {
+        const device = route.request().postDataJSON()?.stt?.device;
+        if (device) gpu.selected = device;
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ stt: { device: gpu.selected } }) });
+    });
+    await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+
+    const actionBar = page.locator('.writer-action-bar');
+    await page.locator('#writer-readiness-hint').getByText('GPU를 쓸 수 없습니다. 분석 장치를 CPU로 바꾸면 바로 시작할 수 있습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0, 'a GPU problem is not a missing model');
+    assert.equal(await actionBar.getByRole('button', { name: /문제 해결/ }).count(), 0);
+    assert.equal(await page.getByText(/CUDA|DLL/).count(), 0, 'the GPU guidance does not show implementation terms');
+    await actionBar.getByRole('button', { name: '분석 장치 설정', exact: true }).click();
+    const dialog = page.getByRole('dialog', { name: '설정' });
+    await dialog.waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => document.activeElement?.closest('#settings-analysis-device') !== null, undefined, { timeout: 10000 });
+    await page.locator('#settings-analysis-device select').selectOption('cpu');
+    for (let attempt = 0; attempt < 40 && gpu.selected !== 'cpu'; attempt += 1) {
+      await page.waitForTimeout(100);
+    }
+    assert.equal(gpu.selected, 'cpu', 'switching 분석 장치 should save CPU');
+    await page.keyboard.press('Escape');
+    await dialog.waitFor({ state: 'detached' });
+    await page.locator('#writer-readiness-hint').waitFor({ state: 'detached', timeout: 15000 });
+    console.log('ok - an unusable GPU points at 분석 장치 and clears after switching to CPU');
+  } finally {
+    await page.close();
+  }
+};
+
+// Only the diarization model is missing, and only because 참석자 구분까지 이어서 실행 is on: turning it off is the way.
+const verifyDiarizationSettingShortcut = async (browser) => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const settings = { duringAnalysis: true };
+  try {
+    await page.route('**/api/health', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+    await page.route('**/api/models/status', route => route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ready: !settings.duringAnalysis,
+        models: [
+          { key: 'stt_faster_whisper', label: 'Faster Whisper Large v3', required: true, installed: true, downloadable: true },
+          { key: 'diarization', label: 'pyannote', required: settings.duringAnalysis, installed: false, downloadable: false },
+        ],
+        diarization_generate_during_analysis: settings.duringAnalysis,
+        errors: [],
+      }),
+    }));
+    await page.route('**/api/settings', route => {
+      if (route.request().method() === 'PATCH') {
+        const during = route.request().postDataJSON()?.diarization?.generate_during_analysis;
+        if (typeof during === 'boolean') settings.duringAnalysis = during;
+      }
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ diarization: { generate_during_analysis: settings.duringAnalysis } }) });
+    });
+    await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+
+    const actionBar = page.locator('.writer-action-bar');
+    await page.locator('#writer-readiness-hint').getByText('참석자 구분 모델이 없습니다. 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByText('설정에서 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.', { exact: false }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByText('다시 설치', { exact: false }).count(), 0, 'turning one setting off beats reinstalling');
+    await actionBar.getByRole('button', { name: '참석자 구분 설정', exact: true }).click();
+    await page.getByRole('dialog', { name: '설정' }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.waitForFunction(() => document.activeElement?.closest('#settings-analysis-diarization') !== null, undefined, { timeout: 10000 });
+    await page.locator('#settings-analysis-diarization input').uncheck();
+    for (let attempt = 0; attempt < 40 && settings.duringAnalysis; attempt += 1) {
+      await page.waitForTimeout(100);
+    }
+    assert.equal(settings.duringAnalysis, false, 'the setting should be saved off');
+    await page.keyboard.press('Escape');
+    await page.locator('#writer-readiness-hint').waitFor({ state: 'detached', timeout: 15000 });
+    console.log('ok - a missing diarization model points at the one setting that unblocks analysis');
+  } finally {
+    await page.close();
+  }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -284,6 +383,20 @@ const run = async () => {
     await prepareModel();
     await page.waitForFunction(() => document.activeElement?.classList.contains('file-drop-zone'));
 
+    // A download that finishes while Settings is closed clears the hint on the writer's own slow check: no focus or
+    // settings event is sent, and the hint clears within one slow interval.
+    state.ready = false;
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await page.getByRole('button', { name: '모델 받기', exact: true }).waitFor({ timeout: 10000 });
+    await page.evaluate(() => {
+      window.__readinessEvents = 0;
+      window.addEventListener('focus', () => { window.__readinessEvents += 1; });
+      window.addEventListener('analysis:settings-updated', () => { window.__readinessEvents += 1; });
+    });
+    state.ready = true;
+    await page.locator('#writer-readiness-hint').waitFor({ state: 'detached', timeout: 20000 });
+    assert.equal(await page.evaluate(() => window.__readinessEvents), 0, 'the slow check cleared the hint without any event');
+
     // A missing model that Settings cannot download must not point at 모델 받기.
     state.ready = false;
     state.downloadable = false;
@@ -298,6 +411,8 @@ const run = async () => {
     assert.equal(await page.getByText('모델 받기를 누르면', { exact: false }).count(), 0);
 
     await verifyWebSettingsRecovery(browser);
+    await verifyGpuUnavailable(browser);
+    await verifyDiarizationSettingShortcut(browser);
     console.log('ok - writer model readiness simulation');
   } catch (error) {
     console.error(error);

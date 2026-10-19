@@ -2,6 +2,7 @@ import errno
 import unittest
 
 from analysis_errors import (
+    GPU_UNAVAILABLE,
     INSUFFICIENT_MEMORY,
     INSUFFICIENT_STORAGE,
     UNSUPPORTED_MEDIA,
@@ -17,6 +18,17 @@ class ClassifyAnalysisFailureTest(unittest.TestCase):
             INSUFFICIENT_MEMORY,
         )
         self.assertEqual(classify_analysis_failure(RuntimeError("std::bad_alloc")), INSUFFICIENT_MEMORY)
+
+    def test_gpu_runtime_failures(self):
+        self.assertEqual(
+            classify_analysis_failure(RuntimeError("Failed to load faster-whisper model: Library cublas64_12.dll is not found or cannot be loaded")),
+            GPU_UNAVAILABLE,
+        )
+        self.assertEqual(
+            classify_analysis_failure(RuntimeError("STT processing failed: CUDA failed with error CUDA driver version is insufficient for CUDA runtime version")),
+            GPU_UNAVAILABLE,
+        )
+        self.assertEqual(classify_analysis_failure(RuntimeError("Could not load library cudnn_ops64_9.dll")), GPU_UNAVAILABLE)
 
     def test_storage_failures(self):
         self.assertEqual(
@@ -54,6 +66,9 @@ class ClassifyAnalysisFailureTest(unittest.TestCase):
             "ffmpeg chunking failed: Could not find codec parameters for stream 1 (Video: none)",
         )))
         self.assertIsNone(classify_analysis_failure(OSError(errno.EACCES, "Permission denied")))
+        # Mentioning a GPU is not a GPU failure.
+        self.assertIsNone(classify_analysis_failure(RuntimeError("GPU 가속 조건 확인 후 다시 시도")))
+        self.assertIsNone(classify_analysis_failure(RuntimeError("diarization pipeline failed on segment 3")))
 
 
 if __name__ == "__main__":

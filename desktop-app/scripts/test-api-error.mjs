@@ -27,6 +27,11 @@ await test('analysis failures are classified by engine code before wording', () 
 
 await test('older engines without a code are classified from raw wording', () => {
   assert.equal(describeAnalysisError(new Error('RuntimeError: CUDA out of memory. Tried to allocate 2.00 GiB')).cause, 'memory');
+  // GPU run-time failures: by code, by raw library text; memory still wins for a CUDA out-of-memory.
+  assert.equal(describeAnalysisError(new EngineError('Library cublas64_12.dll is not found', 'gpu_unavailable')).cause, 'gpu');
+  assert.equal(describeAnalysisError(new Error('Could not load library cudnn_ops64_9.dll')).cause, 'gpu');
+  assert.equal(describeAnalysisError(new Error('CUDA error: out of memory')).cause, 'memory');
+  assert.equal(describeAnalysisError(new Error('std::bad_alloc')).cause, 'memory');
   assert.equal(describeAnalysisError(new Error('[Errno 28] No space left on device')).cause, 'disk-space');
   assert.equal(describeAnalysisError(new Error('ffmpeg conversion failed: a.m4a: Invalid data found when processing input')).cause, 'unsupported-file');
   assert.equal(describeAnalysisError(new DOMException('The request timed out.', 'TimeoutError')).cause, 'timeout');

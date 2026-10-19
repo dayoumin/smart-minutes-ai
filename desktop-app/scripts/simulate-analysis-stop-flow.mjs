@@ -925,6 +925,28 @@ const FAILURE_CAUSES = [
     primary: '다시 시도',
   },
   {
+    // On the GPU, running out of memory again is the likely result of a retry: 분석 장치 (CPU) leads.
+    name: 'gpu-memory',
+    gpuSelected: true,
+    events: [errorEvent('CUDA failed with error out of memory', 'insufficient_memory')],
+    message: 'GPU 메모리가 부족해 분석을 마치지 못했습니다.',
+    primary: '분석 장치 설정',
+  },
+  {
+    name: 'gpu-selected-host-memory',
+    gpuSelected: true,
+    events: [errorEvent('std::bad_alloc', 'insufficient_memory')],
+    message: MEMORY_MESSAGE,
+    primary: '다시 시도',
+  },
+  {
+    name: 'gpu-runtime',
+    gpuSelected: true,
+    events: [errorEvent('Failed to load faster-whisper model: Library cublas64_12.dll is not found or cannot be loaded', 'gpu_unavailable')],
+    message: 'GPU로 분석하지 못했습니다. 설정에서 분석 장치를 CPU로 바꾸면 분석할 수 있습니다.',
+    primary: '분석 장치 설정',
+  },
+  {
     name: 'engine-disconnected',
     abortAnalyze: true,
     message: '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
@@ -947,6 +969,23 @@ const runFailureCauseScenarios = async (browser, fixture) => {
     const page = await context.newPage();
     try {
       await installBaseRoutes(page);
+      if (scenario.gpuSelected) {
+        await page.route('**/api/models/status', route => route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({
+            ready: true,
+            models: [{ key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true }],
+            selected_stt_device: 'cuda',
+            stt_device_status: { gpu_detected: true, gpu_usable: true },
+          }),
+        }));
+        await page.route('**/api/settings', route => route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          body: JSON.stringify({ stt: { device: 'cuda' }, privacy: { preserve_extracted_audio: false } }),
+        }));
+      }
       await page.route('**/api/analyze/draft-statuses', route => route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1005,6 +1044,12 @@ const runFailureCauseScenarios = async (browser, fixture) => {
         await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
         assert.equal(await page.locator('.selected-file-card').count(), 0, 'the unreadable file is no longer selected');
         assert.equal(await page.getByLabel('회의 제목 *').inputValue(), meetingTitle, 'the other inputs are kept');
+      } else if (scenario.name === 'gpu-memory') {
+        await failurePanel.getByText('분석 장치를 CPU로 바꾸면', { exact: false }).waitFor({ timeout: 5000 });
+        assert.equal(await failurePanel.getByRole('button', { name: '다시 시도' }).count(), 1, 'a retry stays available as the secondary action');
+        await firstAction.click();
+        await page.getByRole('dialog', { name: '설정' }).waitFor({ timeout: 10000 });
+        await page.waitForFunction(() => document.activeElement?.closest('#settings-analysis-device') !== null, undefined, { timeout: 10000 });
       } else if (scenario.name === 'engine-disconnected') {
         await firstAction.click();
         await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });

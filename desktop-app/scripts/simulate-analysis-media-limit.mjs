@@ -113,14 +113,14 @@ try {
     await page.locator('#meeting-title').fill('입력 보존 확인');
     await page.locator('#meeting-purpose').fill('길이 확인 오류 후 원래 입력 유지');
     await page.setInputFiles('#meeting-file-input', { name: 'over.wav', mimeType: 'audio/wav', buffer: Buffer.alloc(64) });
-    await page.locator('#writer-form-error').filter({ hasText: limitMessage }).waitFor();
+    await page.locator('#writer-form-error').filter({ hasText: `선택한 파일은 약 2시간 1분입니다. ${limitMessage}` }).waitFor();
     assert.equal(await page.locator('.writer-start-button').isDisabled(), true);
     await expectSelectedFile(page, 'over.wav');
     assert.equal(requests.length, 0);
 
     await page.setInputFiles('#meeting-file-input', { name: 'boundary.wav', mimeType: 'audio/wav', buffer: boundaryBytes });
     await waitEnabled(page);
-    assert.equal(await page.getByText(limitMessage, { exact: true }).count(), 0);
+    assert.equal(await page.getByText('선택한 파일은 약', { exact: false }).count(), 0);
     await page.locator('.writer-start-button').click();
     await page.getByRole('alert').filter({ hasText: limitMessage }).waitFor();
     assert.equal(requests.length, 1, 'exactly 7200s reaches authoritative server validation');

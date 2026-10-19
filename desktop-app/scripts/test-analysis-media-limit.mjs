@@ -12,9 +12,10 @@ await test('two hours is allowed; even a fractional excess requires a shorter fi
   for (const duration of [1, 3600, 7199.999, 7200]) {
     assert.equal(getAnalysisDurationLimitError(duration), null);
   }
-  for (const duration of [7200.001, 7201, 10800]) {
-    assert.equal(getAnalysisDurationLimitError(duration), ANALYSIS_DURATION_LIMIT_MESSAGE);
-  }
+  // The selected file's length comes first, rounded up so just over the limit never reads as two hours.
+  assert.equal(getAnalysisDurationLimitError(7200.001), `선택한 파일은 약 2시간 1분입니다. ${ANALYSIS_DURATION_LIMIT_MESSAGE}`);
+  assert.equal(getAnalysisDurationLimitError(9000), `선택한 파일은 약 2시간 30분입니다. ${ANALYSIS_DURATION_LIMIT_MESSAGE}`);
+  assert.equal(getAnalysisDurationLimitError(10800), `선택한 파일은 약 3시간입니다. ${ANALYSIS_DURATION_LIMIT_MESSAGE}`);
 });
 
 await test('unreadable browser metadata is deferred to actual server inspection', () => {

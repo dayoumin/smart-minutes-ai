@@ -1,9 +1,12 @@
 import json
+import copy
 import logging
 import os
 import re
+from collections.abc import Callable
 from config_normalization import is_local_summary_model_path
-from generation_gateway import classify_generation_exception, failure_for_code, generate_ollama_text
+from generation_gateway import classify_generation_exception, failure_for_code, generate_ollama_text, generation_response_schema
+from pipeline.summary_evidence import InvalidNotes, summarize_with_evidence
 
 
 EMPTY_SUMMARY = {
@@ -26,6 +29,19 @@ SUMMARY_MAX_REDUCTION_ROUNDS = 8
 SUMMARY_MAX_GENERATION_CALLS = 128  # Includes the one allowed empty-shape retry.
 GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
 MAX_CONTEXT_GLOSSARY_ENTRIES = 80
+ATTRIBUTION_RULES = """Attribution rules for every field, including title and topics:
+- Speaker labels identify who spoke, not who a remark describes.
+- Attribute an opinion, trait, action or intention to a named person only when the source clearly identifies that person as its subject. A nearby name, adjacent remark or shared speaker is not enough.
+- When the subject is unclear, keep the remark separate using neutral wording without assigning a name, and explain the unresolved subject in needs_check.
+- Preserve explicitly named or otherwise unambiguous subjects. Do not remove supported names or turn uncertain statements into confirmed facts.
+- When combining partial summaries, preserve their needs_check uncertainties; an omitted subject must not be inferred or resolved by merging.
+"""
+
+
+def _summary_diagnostic(callback, event: str, **data) -> None:
+    # Explicit opt-in only. Never send source text or model responses to app logs.
+    if callback is not None:
+        callback(copy.deepcopy({"event": event, **data}))
 
 
 def _reject_generic_single_topic(sections: list[dict]) -> list[dict]:
@@ -231,12 +247,7 @@ Write all JSON values in Korean unless a source term must remain in English.
 Do not invent facts. If the transcript is too short or unclear, put that in needs_check.
 {recovery}
 
-Attribution rules for every field, including title and topics:
-- Speaker labels identify who spoke, not who a remark describes.
-- Attribute an opinion, trait, action or intention to a named person only when the source clearly identifies that person as its subject. A nearby name, adjacent remark or shared speaker is not enough.
-- When the subject is unclear, keep the remark separate using neutral wording without assigning a name, and explain the unresolved subject in needs_check.
-- Preserve explicitly named or otherwise unambiguous subjects. Do not remove supported names or turn uncertain statements into confirmed facts.
-- When combining partial summaries, preserve their needs_check uncertainties; an omitted subject must not be inferred or resolved by merging.
+{ATTRIBUTION_RULES}
 
 Required JSON schema:
 {schema}
@@ -273,6 +284,7 @@ def _generate_summary_once(
     retry_prompt: str,
     stage: str,
     generate_text,
+    diagnostic_callback=None,
 ) -> dict:
     attempt_uncertainties: list[str] = []
     for attempt, current_prompt in enumerate((prompt, retry_prompt), start=1):
@@ -280,7 +292,10 @@ def _generate_summary_once(
             "Summary request stage=%s attempt=%s input_chars=%s",
             stage, attempt, len(current_prompt),
         )
+        _summary_diagnostic(diagnostic_callback, "request", stage=stage, attempt=attempt, prompt=current_prompt)
         response_text = generate_text(model_name, current_prompt)
+        # Emit before parsing, including malformed JSON that cannot be adopted.
+        _summary_diagnostic(diagnostic_callback, "raw_response", stage=stage, attempt=attempt, response=response_text)
         parsed = _parse_llm_json(response_text)
         normalized = {}
         if isinstance(parsed, dict):
@@ -309,47 +324,8 @@ def _generate_summary_once(
             for concern in attempt_uncertainties:
                 if concern not in normalized["needs_check"]:
                     normalized["needs_check"].append(concern)
+            _summary_diagnostic(diagnostic_callback, "accepted", stage=stage, attempt=attempt, summary=normalized)
             return normalized
-    raise failure_for_code("invalid_model_response")
-
-
-def _merge_summary_partials(partials: list[dict], generate_summary, remember_uncertainties) -> dict:
-    current = partials
-    for round_index in range(SUMMARY_MAX_REDUCTION_ROUNDS):
-        if len(current) == 1:
-            return current[0]
-        groups: list[list[dict]] = []
-        bodies: list[str] = []
-        for index, summary in enumerate(current, start=1):
-            # Omit only empty fields, never source entries or non-empty text.
-            item = f"부분 {index}: " + json.dumps(
-                {key: value for key, value in summary.items() if value},
-                ensure_ascii=False, separators=(",", ":"),
-            )
-            if len(item) > SUMMARY_MERGE_CHARS:
-                logging.info("Summary reduction rejected reason=oversized_item chars=%s limit=%s", len(item), SUMMARY_MERGE_CHARS)
-                raise failure_for_code("invalid_model_response")
-            if not groups or len(bodies[-1]) + 1 + len(item) > SUMMARY_MERGE_CHARS:
-                groups.append([summary])
-                bodies.append(item)
-            else:
-                groups[-1].append(summary)
-                bodies[-1] += "\n" + item
-        if len(groups) >= len(current):
-            logging.info("Summary reduction rejected reason=no_progress items=%s", len(current))
-            raise failure_for_code("invalid_model_response")
-        reduced = []
-        for index, (group, body) in enumerate(zip(groups, bodies), start=1):
-            if len(group) == 1:
-                reduced.append(group[0])
-                continue
-            merged = generate_summary(body, stage=f"merge-{round_index + 1}-{index}", merging_partials=True)
-            remember_uncertainties(merged)
-            reduced.append(merged)
-        current = reduced
-    if len(current) == 1:
-        return current[0]
-    logging.info("Summary reduction rejected reason=round_limit items=%s", len(current))
     raise failure_for_code("invalid_model_response")
 
 
@@ -1045,6 +1021,8 @@ def summarize_meeting(
     mode: str = "meeting_minutes",
     api_url: str = "",
     meeting_context: dict | None = None,
+    *,
+    diagnostic_callback: Callable[[dict], None] | None = None,
 ) -> dict:
     transcript_text = ""
     for segment in transcript_segments:
@@ -1088,36 +1066,68 @@ def summarize_meeting(
 
         def generate_summary(source: str, *, stage: str, partial: bool = False, merging_partials: bool = False) -> dict:
             arguments = {"partial": partial, "meeting_context": meeting_context, "merging_partials": merging_partials}
+            _summary_diagnostic(diagnostic_callback, "stage_input", stage=stage, source=source)
             return _generate_summary_once(
                 model_name_or_path,
                 _build_prompt(source, **arguments),
                 retry_prompt=_build_prompt(source, **arguments, compact=True),
                 stage=stage,
                 generate_text=bounded_generate,
+                diagnostic_callback=diagnostic_callback,
             )
 
-        uncertainties: list[str] = []
-
-        def remember_uncertainties(summary: dict) -> None:
-            for value in summary.get("needs_check", []):
-                concern = value.strip()
-                if concern and concern not in uncertainties:
-                    uncertainties.append(concern)
-
         if len(transcript_text) > MAX_DIRECT_SUMMARY_CHARS:
-            partials = []
-            for index, chunk in enumerate(_split_text_for_summary(transcript_text), start=1):
-                partial = generate_summary(chunk, stage=f"partial-{index}", partial=True)
-                remember_uncertainties(partial)
-                partials.append(partial)
-            result = _merge_summary_partials(partials, generate_summary, remember_uncertainties)
+            def structured_request(prompt, *, stage, source, schema, validate, recover=None):
+                _summary_diagnostic(diagnostic_callback, "stage_input", stage=stage, source=source)
+                current_prompt = prompt
+                attempt_concerns = []
+
+                def keep_concerns(adopted):
+                    if attempt_concerns:
+                        values = adopted.setdefault("needs_check", [])
+                        for concern in attempt_concerns:
+                            if concern not in values:
+                                values.append(concern)
+                    return adopted
+
+                for attempt in (1, 2):
+                    logging.info("Summary request stage=%s attempt=%s input_chars=%s", stage, attempt, len(current_prompt))
+                    _summary_diagnostic(diagnostic_callback, "request", stage=stage, attempt=attempt, prompt=current_prompt, response_schema=schema)
+                    with generation_response_schema(schema):
+                        raw = bounded_generate(model_name_or_path, current_prompt)
+                    _summary_diagnostic(diagnostic_callback, "raw_response", stage=stage, attempt=attempt, response=raw)
+                    parsed = _parse_llm_json(raw)
+                    if isinstance(parsed, dict) and isinstance(parsed.get("needs_check"), list):
+                        for concern in parsed["needs_check"]:
+                            if isinstance(concern, str) and concern.strip() and len(concern) <= 600 and concern.strip() not in attempt_concerns:
+                                attempt_concerns.append(concern.strip())
+                    try:
+                        adopted = keep_concerns(validate(parsed))
+                    except InvalidNotes as exc:
+                        reason = str(exc)
+                        # Reasons are fixed validator codes, never model/source text.
+                        logging.info("Summary response stage=%s attempt=%s invalid_contract=%s", stage, attempt, reason)
+                        _summary_diagnostic(diagnostic_callback, "rejected", stage=stage, attempt=attempt, reason=reason)
+                        if attempt == 2 and reason == "coverage_mismatch" and recover is not None:
+                            adopted = keep_concerns(recover(parsed))
+                            _summary_diagnostic(diagnostic_callback, "deterministic_grouping", stage=stage, summary=adopted)
+                            _summary_diagnostic(diagnostic_callback, "accepted", stage=stage, attempt=attempt, summary=adopted, origin="deterministic_grouping")
+                            return adopted
+                        current_prompt = prompt + f"\n이전 응답의 구조 오류: {reason}. 원문과 모든 필수 키/인용/id를 다시 확인해 완전한 JSON을 반환하세요.\n"
+                        continue
+                    _summary_diagnostic(diagnostic_callback, "accepted", stage=stage, attempt=attempt, summary=adopted)
+                    return adopted
+                raise failure_for_code("invalid_model_response")
+
+            result = _normalize_summary(summarize_with_evidence(
+                transcript_text, split_text=_split_text_for_summary, request=structured_request,
+                context=ATTRIBUTION_RULES + _meeting_context_block(meeting_context),
+                merge_chars=SUMMARY_MERGE_CHARS, max_rounds=SUMMARY_MAX_REDUCTION_ROUNDS,
+                diagnostic=lambda event, **data: _summary_diagnostic(diagnostic_callback, event, **data),
+            ))
         else:
             result = generate_summary(transcript_text, stage="direct")
-        # Preserve source and intermediate caveats even if a later merge omits
-        # them. This never resolves an uncertain subject by assigning a name.
-        for concern in uncertainties:
-            if concern not in result["needs_check"]:
-                result["needs_check"].append(concern)
+        _summary_diagnostic(diagnostic_callback, "final", summary=result)
         return result
     except Exception as exc:
         return _generation_failure_summary(exc)

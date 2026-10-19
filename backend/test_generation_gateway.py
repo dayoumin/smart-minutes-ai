@@ -65,6 +65,17 @@ class GenerationGatewayTest(unittest.TestCase):
             generation_gateway._ensure_runtime("gemma4:e4b")
         self.assertEqual(ensure.call_count, 2)
 
+    def test_explicit_http_transport_is_scoped_and_normal_requests_keep_default_transport(self):
+        data = json.dumps({"response": "private diagnostic response"}).encode()
+        with patch.object(generation_gateway, "_ensure_runtime"), \
+                patch.object(generation_gateway.urllib.request, "urlopen", return_value=BytesIO(data)) as default:
+            custom = lambda request, timeout: BytesIO(data)
+            with generation_gateway.generation_http_transport(custom):
+                self.assertEqual(generation_gateway._generate_with_http("model", "private prompt"), "private diagnostic response")
+                default.assert_not_called()
+            self.assertEqual(generation_gateway._generate_with_http("model", "ordinary prompt"), "private diagnostic response")
+            default.assert_called_once()
+
     def test_http_logging_contains_timings_without_content_or_model(self) -> None:
         payload = {
             "response": "PRIVATE RESPONSE", "load_duration": 123,
@@ -84,6 +95,28 @@ class GenerationGatewayTest(unittest.TestCase):
         self.assertIn("eval_duration_ns=789", output)
         for value in ("PRIVATE RESPONSE", "PRIVATE MODEL", "PRIVATE PROMPT"):
             self.assertNotIn(value, output)
+
+    def test_response_schema_is_used_only_inside_scope_and_resets_after_failure(self):
+        formats = []
+
+        def open_request(request, timeout):
+            formats.append(json.loads(request.data)["format"])
+            return BytesIO(json.dumps({"response": "{}"}).encode())
+
+        schema = {"type": "object", "required": ["notes"]}
+        with patch.object(generation_gateway, "_ensure_runtime"), \
+                generation_gateway.generation_http_transport(open_request):
+            with self.assertRaises(RuntimeError):
+                with generation_gateway.generation_response_schema(schema):
+                    generation_gateway._generate_with_http("model", "structured")
+                    raise RuntimeError("stop this operation")
+            generation_gateway._generate_with_http("model", "ordinary")
+        self.assertEqual(formats, [schema, "json"])
+        failure = generation_gateway.failure_for_code("invalid_model_response")
+        with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+            with generation_gateway.generation_response_schema(schema):
+                raise failure
+        self.assertIs(raised.exception, failure)
 
     def test_failed_http_logging_does_not_include_exception_details(self) -> None:
         with (

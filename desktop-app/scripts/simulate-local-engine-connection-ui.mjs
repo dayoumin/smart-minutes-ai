@@ -328,6 +328,8 @@ const verifySummaryReadinessAfterPairing = async browser => {
 // Connected but a required model is missing: the rail must not claim 분석 준비 완료, and 모델 받기 must be there (WR-2).
 const verifyMissingModelsAfterPairing = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  // The first-visit notice is covered by the main flow; this scenario starts from a returning browser.
+  await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
   const sessionToken = 'missing-models-ui-test-session-token';
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));

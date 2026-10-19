@@ -695,4 +695,4 @@ $auditPython = 'D:\Projects\LMO_audio\backend\.venv-desktop\Scripts\python.exe'
 - 확인: 공개 파일(442,772,108 bytes, SHA `dcf08c15…3aec`)의 다운로드는 정상이었다. 설치 파일에서 꺼낸 실제 도우미와 manifest는 이 PC에서 exit 10(정상 확인 단계)이었다.
 - 원인(재현됨): NSIS는 `$PLUGINSDIR`를 `GetTempPathW`(TMP 우선) 아래에 만들지만, 도우미는 결과 JSON·결정 INI를 `tempfile.gettempdir()`(TEMP 우선) 안으로만 허용했다. TMP와 TEMP가 다른 PC에서는 `ValueError`가 발생해 exit 2가 됐다. 배포 도우미로 TMP≠TEMP를 재현하면 exit 2, 같게 하면 exit 10이다.
 - 수정: `local_engine_preflight.user_temp_roots()`가 두 경로를 모두 per-user 임시 위치로 허용한다. NSIS는 `ExecWait` 실행 자체가 실패하면(백신 차단 등) 별도 안내를 보여 주며, 일반 계약 실패 메시지와 구분한다.
-- 남은 일: 수정본은 **아직 다시 빌드하거나 배포하지 않았다**. 이 PC에 `makensis`가 없어 NSIS 컴파일 검증이 필요하다. 다른 helper 호출(cleanup/validate/probe)에도 같은 실행 실패 감지는 아직 없다.
+- 남은 일: 수정본은 **아직 다시 빌드하거나 배포하지 않았다**. 이 PC에 `makensis`가 없어 NSIS 컴파일 검증이 필요하다. 다른 helper 호출(cleanup/validate/tombstone/probe/제거 정리 8곳)의 실행 실패 감지는 `42b455fe`에서 추가했고, 집 PC 확인 항목은 `todo.md` 3C installer 관문에 있다.

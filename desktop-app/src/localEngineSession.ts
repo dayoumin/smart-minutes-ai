@@ -10,12 +10,14 @@ const KNOWN_CAPABILITIES = new Set<LocalEngineCapability>([
 export interface LocalEnginePairingStart {
     pairing_id: string;
     expires_in_seconds: number;
+    mode?: 'browser-connection';
 }
 
 export interface LocalEngineSessionCredential {
     session_token: string;
     expires_at: number;
     capabilities: LocalEngineCapability[];
+    browser_token?: string;
 }
 
 export const parseLocalEnginePairingStart = (
@@ -34,6 +36,7 @@ export const parseLocalEnginePairingStart = (
     return {
         pairing_id: payload.pairing_id,
         expires_in_seconds: Number(payload.expires_in_seconds),
+        ...(payload.mode === 'browser-connection' ? { mode: payload.mode } : {}),
     };
 };
 
@@ -48,6 +51,9 @@ export const parseLocalEngineSessionCredential = (
         || !Number.isFinite(payload.expires_at)
         || !Array.isArray(payload.capabilities)
         || payload.capabilities.some(capability => typeof capability !== 'string')
+        || (payload.browser_token !== undefined && (
+            typeof payload.browser_token !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(payload.browser_token)
+        ))
     ) {
         return null;
     }
@@ -59,6 +65,7 @@ export const parseLocalEngineSessionCredential = (
                 capability as LocalEngineCapability,
             ),
         ),
+        ...(payload.browser_token ? { browser_token: payload.browser_token } : {}),
     };
 };
 

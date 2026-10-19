@@ -131,11 +131,11 @@ export const getLocalEngineConnectionView = ({
         });
     }
 
-    if (pairingPhase === 'starting' || pairingPhase === 'completing') {
+    if (pairingPhase === 'starting' || pairingPhase === 'completing' || pairingPhase === 'awaiting-approval') {
         return view({
             scene: 'pairing',
             tone: 'info',
-            title: pairingPhase === 'completing' ? '연결 확인 중' : '연결 준비 중',
+            title: '연결 확인 중',
             message: null,
             primaryAction: null,
             primaryLabel: null,
@@ -168,7 +168,7 @@ export const getLocalEngineConnectionView = ({
             scene: 'pairing-required',
             tone: 'error',
             title: '연결을 완료하지 못했습니다',
-            message: '새 코드를 받아 다시 시도해 주세요.',
+            message: '바로록 연결이 실행 중인지 확인한 뒤 다시 연결해 주세요.',
             primaryAction: snapshot.transport === 'reachable' ? 'pair' : 'probe',
             primaryLabel: snapshot.transport === 'reachable' ? '다시 연결' : '다시 확인',
             primaryDisabled: false,
@@ -200,7 +200,7 @@ export const getLocalEngineConnectionView = ({
             scene: 'pairing-required',
             tone: 'info',
             title: '이 브라우저를 연결해 주세요',
-            message: '일회성 코드로 한 번 연결합니다.',
+            message: '바로록 연결을 실행하면 자동으로 연결됩니다.',
             primaryAction: 'pair',
             primaryLabel: '연결 시작',
             primaryDisabled: false,

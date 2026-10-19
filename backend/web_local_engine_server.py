@@ -22,11 +22,10 @@ from local_engine_preflight import (
 from local_engine_security import PRODUCT_ID
 from ollama_utils import stop_embedded_ollama_server
 from web_local_engine_runtime import (
-    PAIRING_ARM_TTL_SECONDS,
     WindowsNamedEvent,
     WindowsNamedMutex,
     apply_web_local_engine_environment,
-    arm_pairing_helper,
+    approve_browser_connection,
     build_web_local_engine_environment,
     engine_stop_event_name,
     load_web_local_engine_settings,
@@ -36,7 +35,6 @@ from web_local_engine_runtime import (
     prepare_web_local_engine_data,
     resolve_web_local_engine_layout,
     signal_engine_stop,
-    show_windows_message,
     validate_production_web_origin,
     windows_named_mutex_exists,
 )
@@ -181,25 +179,8 @@ def main(argv: list[str] | None = None) -> int:
         frozen=frozen,
     )
 
-    if args.pair:
-        layout.runtime_dir.mkdir(parents=True, exist_ok=True)
-        if not windows_named_mutex_exists(pairing_mutex_name(layout)):
-            show_windows_message(
-                "바로록 연결",
-                "로컬 엔진이 실행 중이지 않습니다. 로컬 엔진을 먼저 실행한 뒤 다시 시도해 주세요.",
-            )
-            return 3
-        arm_pairing_helper(layout, origin=origin)
-        shown = show_windows_message(
-            "바로록 연결 준비",
-            f"{origin}\n\n웹 화면으로 돌아가 연결을 눌러주세요. "
-            f"연결 준비는 {PAIRING_ARM_TTL_SECONDS // 60}분 동안만 유지됩니다.",
-        )
-        if not shown:
-            layout.pairing_arm_path.unlink(missing_ok=True)
-            return 2
-        return 0
-
+    # --pair remains an alias for older installed shortcuts. Starting the engine
+    # is sufficient: the configured web app connects without a code or dialog.
     default_config = args.default_config or str(layout.defaults_dir / "config.json")
     prepare_web_local_engine_data(layout, default_config_path=default_config)
     # Windows app virtualization can resolve a newly created data root differently.
@@ -221,10 +202,17 @@ def main(argv: list[str] | None = None) -> int:
     stop_watcher: threading.Thread | None = None
     try:
         stop_event.create()
-        from main import LOCAL_ENGINE_PAIRING, app
+        from main import LOCAL_ENGINE_PAIRING, LOCAL_ENGINE_BROWSER_APPROVAL, app
 
         if stop_event.wait(timeout_seconds=0):
             return 0
+
+        try:
+            LOCAL_ENGINE_BROWSER_APPROVAL.configure(
+                layout.config_dir / "browser-approvals.json", origin, approve_browser_connection,
+            )
+        except (OSError, ValueError):
+            logging.error("Saved browser approvals could not be loaded")
 
         LOCAL_ENGINE_PAIRING.code_presenter = make_pairing_code_presenter(
             layout,

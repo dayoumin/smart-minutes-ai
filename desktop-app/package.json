@@ -26,6 +26,7 @@
     "test:local-engine-connection-ui": "node scripts/simulate-local-engine-connection-ui.mjs",
     "test:runtime-boundary": "node --experimental-strip-types scripts/test-runtime-boundary.mjs",
     "test:auth-recovery": "node --experimental-strip-types scripts/test-auth-recovery.mjs",
+    "test:browser-approval": "node --experimental-strip-types scripts/test-browser-approval.mjs",
     "test:api-auth-boundary": "node --experimental-strip-types scripts/test-api-auth-boundary.mjs",
     "test:api-error": "node --experimental-strip-types scripts/test-api-error.mjs",
     "test:export-consistency": "node scripts/test-export-consistency.mjs",

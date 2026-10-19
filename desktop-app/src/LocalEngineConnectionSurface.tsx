@@ -217,7 +217,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
         : undefined;
     const hasHelp = !['intro', 'checking', 'pairing', 'connected'].includes(view.scene);
     // With 문제 해결 present, the install warning moves into its help so the row stays short.
-    const statusMessage = [view.message, hasHelp ? undefined : testInstallerNotice].filter(Boolean).join(' ');
+    const statusMessage = [pairingState.phase === 'error' ? pairingState.reason || view.message : view.message, hasHelp ? undefined : testInstallerNotice].filter(Boolean).join(' ');
 
     return (
         <div className={`local-engine-connection local-engine-connection-${view.tone}`} data-scene={view.scene}>
@@ -293,7 +293,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
 
             {showHelp && (
                 <div id="local-engine-help" className="local-engine-help">
-                    Windows 시작 메뉴에서 바로록 연결을 실행하세요. 회사 PC에서 차단되면 관리자에게 허용을 요청하세요.{testInstallerNotice && ` ${testInstallerNotice}`}
+                    Windows 시작 메뉴에서 바로록 연결을 실행하세요. Chrome에서는 이 사이트의 ‘기기에 있는 앱’을 허용한 뒤 새로고침해 주세요. 회사 정책으로 차단되면 관리자에게 문의하세요.{testInstallerNotice && ` ${testInstallerNotice}`}
                 </div>
             )}
 

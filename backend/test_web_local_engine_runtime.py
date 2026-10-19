@@ -14,6 +14,7 @@ from web_local_engine_runtime import (
     WindowsNamedMutex,
     apply_web_local_engine_environment,
     arm_pairing_helper,
+    approve_browser_connection,
     build_web_local_engine_environment,
     consume_pairing_helper_arm,
     dispatch_windows_message,
@@ -32,6 +33,13 @@ from web_local_engine_runtime import (
 
 
 class WebLocalEngineRuntimeTest(unittest.TestCase):
+    def test_installed_browser_connection_needs_no_additional_native_dialog(self):
+        with patch('web_local_engine_runtime.ctypes.WinDLL', create=True) as library:
+            self.assertTrue(approve_browser_connection('https://minutes.example'))
+            library.assert_not_called()
+        with self.assertRaises(ValueError):
+            approve_browser_connection('http://minutes.example')
+
     def _layout(self, root: Path):
         return resolve_web_local_engine_layout(
             local_app_data=root,
@@ -351,6 +359,7 @@ class WebLocalEngineRuntimeTest(unittest.TestCase):
 
             backend = types.ModuleType("main")
             backend.LOCAL_ENGINE_PAIRING = types.SimpleNamespace()
+            backend.LOCAL_ENGINE_BROWSER_APPROVAL = types.SimpleNamespace(configure=lambda *args: None)
             backend.app = object()
             with (
                 patch("web_local_engine_server._resolve_startup_layout", side_effect=resolve_after_creation) as resolve,

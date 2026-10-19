@@ -37,6 +37,7 @@ export interface LocalEngineProbePayload {
     capabilities: string[];
     auth_state: string;
     pairing_available: boolean;
+    pairing_mode?: 'browser-connection';
     update_required: boolean;
 }
 

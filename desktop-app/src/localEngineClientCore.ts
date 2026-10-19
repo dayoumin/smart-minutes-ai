@@ -18,7 +18,7 @@ export interface LocalEngineRequestInit extends RequestInit {
 
 export interface LocalEngineClient {
     probe: (init?: LocalEngineRequestInit) => Promise<Response>;
-    pair: (path: '/api/pair/start' | '/api/pair/complete', init?: LocalEngineRequestInit) => Promise<Response>;
+    pair: (path: '/api/pair/start' | '/api/pair/complete' | '/api/pair/restore' | '/api/pair/forget', init?: LocalEngineRequestInit) => Promise<Response>;
     session: (
         path: '/api/session/renew' | '/api/session/revoke',
         sessionToken: string,

@@ -524,3 +524,9 @@ def make_pairing_code_presenter(
         )
 
     return present
+
+
+def approve_browser_connection(origin: str) -> bool:
+    """Installation authorizes the configured web app; no additional native prompt."""
+    validate_production_web_origin(origin)
+    return True

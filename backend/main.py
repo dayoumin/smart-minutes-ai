@@ -25,7 +25,7 @@ from xml.etree import ElementTree
 
 from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, Response, StreamingResponse
+from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from config_normalization import (
@@ -54,6 +54,7 @@ from local_engine_security import (
     build_probe_payload,
     configured_exact_origins,
 )
+from local_engine_browser_approval import BrowserApprovalCoordinator
 from job_checkpoints import (
     CorruptCheckpointError,
     atomic_write_json,
@@ -108,6 +109,7 @@ app = FastAPI(title="NIFS AI Meeting API")
 ANALYSIS_JOBS = AnalysisJobRegistry()
 GENERATION_STATUS_LOCK = threading.RLock()
 LOCAL_ENGINE_SESSION_STORE = LocalEngineSessionStore()
+LOCAL_ENGINE_BROWSER_APPROVAL = BrowserApprovalCoordinator(LOCAL_ENGINE_SESSION_STORE)
 LOCAL_ENGINE_PAIRING = LocalEnginePairingCoordinator(
     session_store=LOCAL_ENGINE_SESSION_STORE,
 )
@@ -769,12 +771,17 @@ def get_analysis_stall_timeout_seconds(last_progress: dict) -> int:
 
 @app.get("/api/probe")
 async def local_engine_probe() -> dict:
-    return build_probe_payload(pairing_available=LOCAL_ENGINE_PAIRING.available)
+    payload = build_probe_payload(pairing_available=LOCAL_ENGINE_BROWSER_APPROVAL.available or LOCAL_ENGINE_PAIRING.available)
+    if LOCAL_ENGINE_BROWSER_APPROVAL.available:
+        payload["pairing_mode"] = "browser-connection"
+    return payload
 
 
 @app.post("/api/pair/start")
-async def start_local_engine_pairing(request: Request) -> dict:
+async def start_local_engine_pairing(request: Request, payload: dict = Body(default={})) -> dict:
     try:
+        if payload.get("mode") == "browser-connection":
+            return LOCAL_ENGINE_BROWSER_APPROVAL.start(request.headers.get("origin", ""), str(payload.get("browser_token") or ""))
         return LOCAL_ENGINE_PAIRING.start(origin=request.headers.get("origin", ""))
     except PairingUnavailableError as exc:
         raise HTTPException(status_code=503, detail="pairing helper unavailable") from exc
@@ -784,11 +791,21 @@ async def start_local_engine_pairing(request: Request) -> dict:
             detail="pairing temporarily unavailable",
             headers={"Retry-After": "60"},
         ) from exc
+    except PairingRejectedError as exc:
+        raise HTTPException(status_code=403, detail="browser approval rejected") from exc
 
 
 @app.post("/api/pair/complete")
 async def complete_local_engine_pairing(request: Request, payload: dict = Body(...)) -> dict:
     pairing_id = str(payload.get("pairing_id") or "").strip()
+    if payload.get("mode") == "browser-connection":
+        try:
+            result = LOCAL_ENGINE_BROWSER_APPROVAL.complete(pairing_id, request.headers.get("origin", ""))
+            return result if result is not None else JSONResponse({"pending": True}, status_code=202)
+        except PairingRejectedError as exc:
+            raise HTTPException(status_code=403, detail="browser approval rejected or expired") from exc
+        except (OSError, PairingUnavailableError) as exc:
+            raise HTTPException(status_code=503, detail="browser approval unavailable") from exc
     code = str(payload.get("code") or "").strip()
     if not pairing_id or not code:
         raise HTTPException(status_code=400, detail="pairing information required")
@@ -807,6 +824,27 @@ async def complete_local_engine_pairing(request: Request, payload: dict = Body(.
         "expires_at": grant.expires_at,
         "capabilities": sorted(grant.capabilities),
     }
+
+
+@app.post("/api/pair/restore")
+async def restore_local_engine_browser(request: Request, payload: dict = Body(...)) -> dict:
+    try:
+        return LOCAL_ENGINE_BROWSER_APPROVAL.restore(str(payload.get("browser_token") or ""), request.headers.get("origin", ""))
+    except PairingRejectedError as exc:
+        raise HTTPException(status_code=401, detail="browser approval no longer valid") from exc
+    except PairingUnavailableError as exc:
+        raise HTTPException(status_code=503, detail="browser approval unavailable") from exc
+
+
+@app.post("/api/pair/forget")
+async def forget_local_engine_browser(request: Request, payload: dict = Body(...)) -> dict:
+    try:
+        LOCAL_ENGINE_BROWSER_APPROVAL.revoke(str(payload.get("browser_token") or ""), request.headers.get("origin", ""))
+        return {"revoked": True}
+    except PairingRejectedError as exc:
+        raise HTTPException(status_code=401, detail="browser approval no longer valid") from exc
+    except (OSError, PairingUnavailableError) as exc:
+        raise HTTPException(status_code=503, detail="browser approval could not be removed") from exc
 
 
 @app.post("/api/session/renew")

@@ -25,6 +25,8 @@ PUBLIC_PROBE_ROUTE = ("GET", "/api/probe")
 PUBLIC_PAIRING_ROUTES = frozenset({
     ("POST", "/api/pair/start"),
     ("POST", "/api/pair/complete"),
+    ("POST", "/api/pair/restore"),
+    ("POST", "/api/pair/forget"),
 })
 LOCAL_ENGINE_CAPABILITIES = frozenset({
     "analysis",
@@ -106,6 +108,7 @@ class SessionGrant:
     origin: str
     capabilities: frozenset[str]
     expires_at: float
+    browser_id: str | None = None
 
 
 class LocalEngineSessionStore:
@@ -125,6 +128,7 @@ class LocalEngineSessionStore:
         *,
         origin: str,
         capabilities: Iterable[str],
+        browser_id: str | None = None,
         now: float | None = None,
     ) -> tuple[str, SessionGrant]:
         normalized_origin = parse_exact_origins(origin, include_development_defaults=False)[0]
@@ -136,6 +140,7 @@ class LocalEngineSessionStore:
                 str(item) for item in capabilities if str(item) in LOCAL_ENGINE_CAPABILITIES
             ),
             expires_at=issued_at + self._ttl_seconds,
+            browser_id=browser_id,
         )
         with self._lock:
             self._grants[self._token_digest(token)] = grant
@@ -167,6 +172,10 @@ class LocalEngineSessionStore:
         with self._lock:
             self._grants.pop(self._token_digest(token), None)
 
+    def revoke_browser(self, browser_id: str) -> None:
+        with self._lock:
+            self._grants = {key: grant for key, grant in self._grants.items() if grant.browser_id != browser_id}
+
     def revoke_if_valid(
         self,
         token: str,
@@ -197,6 +206,7 @@ class LocalEngineSessionStore:
             return self.issue(
                 origin=grant.origin,
                 capabilities=grant.capabilities,
+                browser_id=grant.browser_id,
                 now=checked_at,
             )
 
@@ -216,6 +226,7 @@ class LocalEngineSessionStore:
                 origin=grant.origin,
                 capabilities=grant.capabilities,
                 expires_at=checked_at + self._ttl_seconds,
+                browser_id=grant.browser_id,
             )
             self._grants[self._token_digest(token)] = refreshed
             return refreshed

@@ -145,10 +145,10 @@ const verifyDefaultWriterGuidance = async browser => {
         }
         if (path === '/api/pair/start') {
           assert.equal(scenario, 'authorization', 'anonymous development recovery must not require pairing');
-          return json({ pairing_id: 'writer-guidance-pairing', expires_in_seconds: 120 });
+          return json({ mode: 'browser-connection', pairing_id: 'writer-guidance-pairing', expires_in_seconds: 120 });
         }
         if (path === '/api/pair/complete') {
-          assert.deepEqual(route.request().postDataJSON(), { pairing_id: 'writer-guidance-pairing', code: '123456' });
+          assert.deepEqual(route.request().postDataJSON(), { mode: 'browser-connection', pairing_id: 'writer-guidance-pairing' });
           return json({ session_token: token, expires_at: Math.floor(Date.now() / 1000) + 300,
             capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] });
         }
@@ -191,9 +191,7 @@ const verifyDefaultWriterGuidance = async browser => {
           assert.equal(await analyze.isEnabled(), true, 'a recovered anonymous API is usable without reloading');
         } else {
           await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
-          const dialog = page.getByRole('dialog', { name: '이 브라우저 연결', exact: true });
-          await dialog.getByLabel('연결 코드', { exact: true }).fill('123456');
-          await dialog.getByRole('button', { name: '연결', exact: true }).click();
+          assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
           await rail.getByText('연결됨', { exact: true }).waitFor();
           assert.equal(await rail.getByText('분석 준비 완료', { exact: true }).count(), 0);
           assert.equal(await analyze.isDisabled(), true, 'model readiness must complete after pairing');
@@ -226,6 +224,7 @@ const verifyDefaultWriterGuidance = async browser => {
 
 const verifySummaryReadinessAfterPairing = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(15000);
   // The first-visit notice is covered by the main flow; this scenario starts from a returning browser.
   await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
   const sessionToken = 'summary-readiness-ui-test-session-token';
@@ -265,9 +264,9 @@ const verifySummaryReadinessAfterPairing = async browser => {
       capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
       auth_state: 'pairing-required', pairing_available: true, update_required: false,
     });
-    if (path === '/api/pair/start') return json({ pairing_id: 'summary-readiness-pairing', expires_in_seconds: 120 });
+    if (path === '/api/pair/start') return json({ mode: 'browser-connection', pairing_id: 'summary-readiness-pairing', expires_in_seconds: 120 });
     if (path === '/api/pair/complete') {
-      assert.deepEqual(route.request().postDataJSON(), { pairing_id: 'summary-readiness-pairing', code: '123456' });
+      assert.deepEqual(route.request().postDataJSON(), { mode: 'browser-connection', pairing_id: 'summary-readiness-pairing' });
       return json({ session_token: sessionToken, expires_at: Math.floor(Date.now() / 1000) + 300,
         capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] });
     }
@@ -298,11 +297,8 @@ const verifySummaryReadinessAfterPairing = async browser => {
     assert.equal(await summaryButton.isDisabled(), true, 'a skipped summary cannot start while the model status is unauthenticated');
     await page.getByRole('button', { name: '새 회의록', exact: true }).click();
     const rail = page.locator('.local-engine-connection');
-    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: '이 브라우저 연결', exact: true });
-    await dialog.getByRole('textbox', { name: '연결 코드', exact: true }).fill('123456');
-    await dialog.getByRole('button', { name: '연결', exact: true }).click();
+    assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     await rail.getByText('분석 준비 완료', { exact: true }).waitFor();
     await row.locator('button[title]').filter({ hasText: record.title }).click();
     await detail.getByRole('tab', { name: '기록 정리', exact: true }).click();
@@ -328,6 +324,7 @@ const verifySummaryReadinessAfterPairing = async browser => {
 // Connected but a required model is missing: the rail must not claim 분석 준비 완료, and 모델 받기 must be there (WR-2).
 const verifyMissingModelsAfterPairing = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(15000);
   // The first-visit notice is covered by the main flow; this scenario starts from a returning browser.
   await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
   const sessionToken = 'missing-models-ui-test-session-token';
@@ -351,7 +348,7 @@ const verifyMissingModelsAfterPairing = async browser => {
       capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
       auth_state: 'pairing-required', pairing_available: true, update_required: false,
     });
-    if (path === '/api/pair/start') return json({ pairing_id: 'missing-models-pairing', expires_in_seconds: 120 });
+    if (path === '/api/pair/start') return json({ mode: 'browser-connection', pairing_id: 'missing-models-pairing', expires_in_seconds: 120 });
     if (path === '/api/pair/complete') {
       return json({ session_token: sessionToken, expires_at: Math.floor(Date.now() / 1000) + 300,
         capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] });
@@ -364,11 +361,8 @@ const verifyMissingModelsAfterPairing = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
     const rail = page.locator('.local-engine-connection');
-    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
-    const dialog = page.getByRole('dialog', { name: '이 브라우저 연결', exact: true });
-    await dialog.getByRole('textbox', { name: '연결 코드', exact: true }).fill('123456');
-    await dialog.getByRole('button', { name: '연결', exact: true }).click();
+    assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     await rail.getByText('연결됨', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await rail.getByText('분석 준비 완료', { exact: true }).count(), 0, 'connected is not ready while a required model is missing');
     const actionBar = page.locator('.writer-action-bar');
@@ -387,12 +381,65 @@ const verifyMissingModelsAfterPairing = async browser => {
   }
 };
 
+const verifyAutomaticEngineConnection = async browser => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(15000);
+  await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
+  let starts = 0;
+  let restores = 0;
+  let browserToken;
+  const grant = { session_token: 'automatic-connection-test-session-token',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] };
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (path === '/api/probe') return json({ product_id: 'barorok-local-engine', engine_version: 'test',
+      api_contract_version: 1, capabilities: grant.capabilities, auth_state: 'pairing-required',
+      pairing_available: true, pairing_mode: 'browser-connection', update_required: false });
+    if (path === '/api/pair/start') {
+      starts += 1;
+      const payload = route.request().postDataJSON();
+      assert.equal(payload.mode, 'browser-connection');
+      browserToken = payload.browser_token;
+      return json({ mode: 'browser-connection', pairing_id: 'automatic-connection-challenge', expires_in_seconds: 120 });
+    }
+    if (path === '/api/pair/complete') return json(grant);
+    if (path === '/api/pair/restore') {
+      restores += 1;
+      assert.equal(route.request().postDataJSON().browser_token, browserToken);
+      return json(grant);
+    }
+    if (path === '/api/models/status') return route.request().headers().authorization === `Bearer ${grant.session_token}`
+      ? json({ ready: true, models: [], errors: [] }) : json({}, 401);
+    if (path === '/api/health') return json({ ok: true });
+    if (path === '/api/settings') return json({});
+    if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+    return json({}, 404);
+  });
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    const rail = page.locator('.local-engine-connection');
+    await rail.getByText('분석 준비 완료', { exact: true }).waitFor();
+    assert.equal(starts, 1);
+    assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
+    assert.equal(await page.getByRole('dialog', { name: '이 브라우저 연결' }).count(), 0);
+    await page.reload({ waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await rail.getByText('분석 준비 완료', { exact: true }).waitFor();
+    assert.equal(starts, 1, 'reload restores the same browser instead of creating another connection');
+    assert.ok(restores > 0);
+    console.log('ok - installed engine connects automatically and survives reload without code or confirmation');
+  } finally { await page.close(); }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
   let page = null;
   let probeMode = 'unreachable';
   let pairingStartCount = 0;
+  let nativeDecision = 'pending';
+  let rememberedBrowserToken;
   let authRecoveryMode = 'off';
   let renewalRequests = 0;
   let recoveryApiRequests = 0;
@@ -400,6 +447,10 @@ const run = async () => {
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'automatic') {
+      await verifyAutomaticEngineConnection(browser);
+      return;
+    }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'writer-guidance') {
       await verifyDefaultWriterGuidance(browser);
       return;
@@ -413,6 +464,7 @@ const run = async () => {
       return;
     }
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+    page.setDefaultTimeout(15000);
 
     await page.route('**/api/probe', route => {
       if (probeMode === 'unreachable') {
@@ -434,22 +486,27 @@ const run = async () => {
     });
     await page.route('**/api/pair/start', route => {
       pairingStartCount += 1;
+      const payload = route.request().postDataJSON();
+      assert.equal(payload.mode, 'browser-connection');
+      assert.match(payload.browser_token, /^[A-Za-z0-9_-]{43}$/);
+      rememberedBrowserToken = payload.browser_token;
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ pairing_id: `pairing-id-for-ui-test-${pairingStartCount}`, expires_in_seconds: 120 }),
+        body: JSON.stringify({ mode: 'browser-connection', pairing_id: `pairing-id-for-ui-test-${pairingStartCount}`, expires_in_seconds: 120 }),
       });
     });
     await page.route('**/api/pair/complete', async route => {
       const payload = route.request().postDataJSON();
-      if (payload.code === '654321') {
+      assert.equal(payload.mode, 'browser-connection');
+      assert.equal(payload.code, undefined);
+      if (nativeDecision !== 'approved') {
         return route.fulfill({
-          status: 400,
+          status: nativeDecision === 'pending' ? 202 : 403,
           contentType: 'application/json',
-          body: JSON.stringify({ detail: 'expired pairing challenge' }),
+          body: JSON.stringify({ status: nativeDecision }),
         });
       }
-      assert.equal(payload.code, '123456');
       assert.equal(payload.pairing_id, 'pairing-id-for-ui-test-2');
       return route.fulfill({
         status: 200,
@@ -459,6 +516,19 @@ const run = async () => {
           expires_at: Math.floor(Date.now() / 1000) + 300,
           capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'],
         }),
+      });
+    });
+    await page.route('**/api/pair/forget', route => route.fulfill({
+      status: 200, contentType: 'application/json', body: JSON.stringify({ revoked: true }),
+    }));
+    await page.route('**/api/pair/restore', route => {
+      assert.equal(route.request().postDataJSON().browser_token, rememberedBrowserToken);
+      return route.fulfill({
+        status: authRecoveryMode === 'expired' ? 401 : 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ session_token: 'restored-session-token-for-ui-test-long-enough',
+          expires_at: Math.floor(Date.now() / 1000) + 300,
+          capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] }),
       });
     });
     const authRejection = route => route.fulfill({
@@ -551,45 +621,15 @@ const run = async () => {
     await rail.getByText('이 브라우저를 연결해 주세요').waitFor({ state: 'visible' });
     await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
 
-    const dialog = page.getByRole('dialog', { name: '이 브라우저 연결' });
-    await dialog.waitFor({ state: 'visible' });
-    const pairingCodeInput = dialog.getByRole('textbox', { name: '연결 코드', exact: true });
-    await pairingCodeInput.waitFor({ state: 'visible' });
-    await page.waitForFunction(() => document.activeElement?.id === 'local-engine-pairing-code');
-    assert.equal(await pairingCodeInput.evaluate(element => document.activeElement === element), true);
-    await pairingCodeInput.fill('77');
-    await page.keyboard.press('Escape');
-    await dialog.waitFor({ state: 'hidden' });
-    const codeTrigger = rail.getByRole('button', { name: '코드 입력', exact: true });
-    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '코드 입력');
-    assert.equal(await codeTrigger.evaluate(element => document.activeElement === element), true);
-    await codeTrigger.click();
-    await dialog.waitFor({ state: 'visible' });
-    assert.equal(await pairingCodeInput.inputValue(), '', 'closing the dialog must clear the one-time code');
-    await page.waitForFunction(() => document.activeElement?.id === 'local-engine-pairing-code');
-    await pairingCodeInput.press('Shift+Tab');
-    const closeButton = dialog.getByRole('button', { name: '연결 코드 입력 닫기' });
-    assert.equal(await closeButton.evaluate(element => document.activeElement === element), true);
-    await closeButton.press('Shift+Tab');
-    const connectButton = dialog.getByRole('button', { name: '연결', exact: true });
-    assert.equal(await connectButton.evaluate(element => document.activeElement === element), true);
-    await connectButton.press('Tab');
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '연결 코드 입력 닫기');
-    assert.equal(await closeButton.evaluate(element => document.activeElement === element), true);
-    await pairingCodeInput.fill('123');
-    await connectButton.click();
-    await dialog.getByText('숫자 6~8자리를 입력해 주세요.').waitFor({ state: 'visible' });
-    await pairingCodeInput.fill('654321');
-    await connectButton.click();
-    await dialog.waitFor({ state: 'hidden' });
+    await rail.getByText('연결 확인 중', { exact: true }).waitFor();
+    assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
+    nativeDecision = 'denied';
     await rail.getByText('연결을 완료하지 못했습니다').waitFor({ state: 'visible' });
     await rail.getByRole('button', { name: '다시 연결', exact: true }).click();
-    await dialog.waitFor({ state: 'visible' });
-    assert.equal(pairingStartCount, 2, 'a rejected challenge must be replaced with a fresh pairing start');
-    await pairingCodeInput.fill('123456');
-    await connectButton.click();
+    nativeDecision = 'approved';
 
     await rail.getByText('분석 준비 완료').waitFor({ state: 'visible' });
+    assert.equal(pairingStartCount, 2, 'a rejected request must be replaced with a fresh connection');
     assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '연결 상태 보존 회의');
     assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '연결 전 입력 보존 확인');
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
@@ -631,6 +671,7 @@ const run = async () => {
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
     await verifySummaryReadinessAfterPairing(browser);
     await verifyMissingModelsAfterPairing(browser);
+    await verifyAutomaticEngineConnection(browser);
     console.log('ok - local engine connection UI and auth recovery simulation');
   } catch (error) {
     console.error(error);

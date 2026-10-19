@@ -72,7 +72,7 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         coordinator.probe()
     ), [coordinator]);
     const startPairing = useCallback(() => (
-        coordinator.startPairing()
+        coordinator.startBrowserApproval()
     ), [coordinator]);
     const completePairing = useCallback((pairingId: string, code: string) => (
         coordinator.completePairing(pairingId, code)
@@ -94,9 +94,20 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         const unregisterActivity = registerLocalEngineProtectedActivity(
             (authorization, signal) => coordinator.beginProtectedActivity(authorization, signal),
         );
+        let checking = false;
+        const reconnect = () => {
+            if (checking || !coordinator.shouldReconnectBrowser()) return;
+            checking = true;
+            void coordinator.probe().catch(() => undefined).finally(() => { checking = false; });
+        };
+        reconnect();
+        const reconnectTimer = window.setInterval(reconnect, 10000);
+        window.addEventListener('focus', reconnect);
         return () => {
             unregister();
             unregisterActivity();
+            window.clearInterval(reconnectTimer);
+            window.removeEventListener('focus', reconnect);
             coordinator.dispose();
         };
     }, [coordinator, environment.kind]);
@@ -106,11 +117,12 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
             if (localEngineSessionCredentials.current()) return;
             setSnapshot(previous => applyLocalEngineAuthorization(previous, 'expired'));
             setPairingState({ phase: 'expired', challenge: null });
+            void coordinator.restoreRememberedBrowser();
         };
         const interval = window.setInterval(synchronizeExpiration, 1000);
         synchronizeExpiration();
         return () => window.clearInterval(interval);
-    }, [environment.kind, snapshot.authorization]);
+    }, [coordinator, environment.kind, snapshot.authorization]);
     const value = useMemo(() => ({
         snapshot,
         beginTransportCheck,

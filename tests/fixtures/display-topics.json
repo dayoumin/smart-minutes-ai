@@ -1,0 +1,58 @@
+[
+  {
+    "name": "Korean section titles take precedence and keep their first spelling",
+    "summary": {
+      "topics": ["기존 키워드"],
+      "topic_sections": [
+        {"topic": " 예산 검토 ", "summary": "첫 본문 보존"},
+        {"topic": "일정", "summary": "둘째 본문 보존"},
+        {"topic": "예산 검토", "summary": "중복 제목의 본문도 보존"}
+      ]
+    },
+    "expected": ["예산 검토", "일정"]
+  },
+  {
+    "name": "ASCII case duplicates use the first title and preserve internal spaces",
+    "summary": {"topics": [" Budget ", "BUDGET", "budget", "Plan A", "Plan  A"], "topic_sections": []},
+    "expected": ["Budget", "Plan A", "Plan  A"]
+  },
+  {
+    "name": "Blank section titles fall back to summary topics",
+    "summary": {"topics": [" 예산 ", "예산", "일정", ""], "topic_sections": [{"topic": " \t\n"}, {"topic": ""}]},
+    "expected": ["예산", "일정"]
+  },
+  {
+    "name": "German sharp s and ligatures remain distinct from expanded spellings",
+    "summary": {
+      "topics": [],
+      "topic_sections": [
+        {"topic": "Maße", "summary": "치수 본문 보존"},
+        {"topic": "Masse", "summary": "질량 본문 보존"},
+        {"topic": "MAẞE", "summary": "대문자 제목의 본문 보존"},
+        {"topic": "ﬃ", "summary": "합자 본문 보존"},
+        {"topic": "ffi", "summary": "일반 철자 본문 보존"}
+      ]
+    },
+    "expected": ["Maße", "Masse", "ﬃ", "ffi"]
+  },
+  {
+    "name": "Case comparison is independent of browser locale",
+    "summary": {"topics": ["I", "i", "İ", "i̇", "ı"], "topic_sections": []},
+    "expected": ["I", "İ", "ı"]
+  },
+  {
+    "name": "Unicode lowercase keeps contextual sigma and distinct normalized spellings",
+    "summary": {"topics": ["ΟΣ", "ος", "οσ", "É", "é", "é"], "topic_sections": []},
+    "expected": ["ΟΣ", "οσ", "É", "é"]
+  },
+  {
+    "name": "Both runtimes use JavaScript trim whitespace including BOM",
+    "summary": {"topics": ["\ufeff예산\ufeff", "예산", "\u0085일정\u0085", "일정"], "topic_sections": []},
+    "expected": ["예산", "\u0085일정\u0085", "일정"]
+  },
+  {
+    "name": "An empty summary has no display topics",
+    "summary": {"topics": [], "topic_sections": []},
+    "expected": []
+  }
+]

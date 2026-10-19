@@ -25,6 +25,38 @@ runInNewContext(ts.transpileModule(builders.map(node => node.getText(tree)).join
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports, getDisplayTopics: generationExports.getDisplayTopics });
 const { buildFallbackText, buildExportPayload } = exports;
+const displayTopicCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/display-topics.json', import.meta.url), 'utf8'));
+for (const fixture of displayTopicCases) {
+  await test(`shared display topics and local TXT: ${fixture.name}`, () => {
+    const meeting = {
+      id: 'topic-fixture', title: '주제 검증', date: '2026-10-20', summary: '요약',
+      topics: fixture.summary.topics, topicSections: fixture.summary.topic_sections,
+    };
+    const before = JSON.stringify(meeting);
+    assert.deepEqual(Array.from(generationExports.getDisplayTopics(meeting.topics, meeting.topicSections)), fixture.expected);
+    for (const scope of ['organized', 'full']) {
+      const text = buildFallbackText(meeting, scope);
+      const lines = text.split('\n');
+      const start = lines.indexOf('[주요 주제]');
+      if (fixture.expected.length) {
+        assert.notEqual(start, -1);
+        const topicLines = lines.slice(start + 1);
+        const end = topicLines.findIndex(line => !line.startsWith('- '));
+        assert.deepEqual(topicLines.slice(0, end < 0 ? undefined : end), fixture.expected.map(topic => `- ${topic}`));
+      } else {
+        assert.equal(start, -1);
+      }
+      for (const section of meeting.topicSections) {
+        if (section.summary) assert.ok(text.includes(section.summary));
+      }
+    }
+    assert.equal(JSON.stringify(meeting), before, 'Display deduplication must not rewrite stored topics or section bodies');
+  });
+}
+await test('display topics ignore malformed section titles and fall back to valid keywords', () => {
+  const summary = { topics: [3, null, ' 예산 '], topicSections: [null, 'invalid', { topic: 123 }, { topic: {} }, { topic: null }] };
+  assert.deepEqual(Array.from(generationExports.getDisplayTopics(summary.topics, summary.topicSections)), ['예산']);
+});
 const repositorySource = readFileSync(new URL('../src/meetingRepository.ts', import.meta.url), 'utf8');
 const repositoryTree = ts.createSourceFile('meetingRepository.ts', repositorySource, ts.ScriptTarget.Latest, true);
 const normalizer = repositoryTree.statements.find(node => ts.isVariableStatement(node)

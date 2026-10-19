@@ -17,7 +17,8 @@ export interface TopicSectionShape {
 /**
  * Topics shown as "주요 주제" on screen and in exports. Topic section titles supersede summary
  * keywords (the backend appends them to `topics`, so merging both repeats near-identical items).
- * Mirrors backend `pipeline.summary_display.get_display_topics`.
+ * Trim ends, then compare Unicode lowercase without locale-specific or case-fold expansion.
+ * Keep the first spelling and all source data. Mirrors backend `pipeline.summary_display.get_display_topics`.
  */
 export const getDisplayTopics = (
     topics: readonly unknown[] | undefined,
@@ -29,7 +30,7 @@ export const getDisplayTopics = (
     const source = sectionTopics.length ? sectionTopics : (topics ?? []).map(clean).filter(Boolean);
     const seen = new Set<string>();
     return source.filter(topic => {
-        const key = topic.toLocaleLowerCase();
+        const key = topic.toLowerCase();
         if (seen.has(key)) return false;
         seen.add(key);
         return true;

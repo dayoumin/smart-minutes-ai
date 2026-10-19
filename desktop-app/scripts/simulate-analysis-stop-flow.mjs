@@ -8,6 +8,19 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
+
+const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
+// Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
+const openProcessingHelp = async page => {
+  await page.locator('.writer-file-privacy-note').getByRole('button', { name: '처리 방식', exact: true }).click();
+  const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
+  await help.waitFor({ state: 'visible', timeout: 10000 });
+  return help;
+};
+const closeProcessingHelp = async (page, help) => {
+  await page.keyboard.press('Escape');
+  await help.waitFor({ state: 'hidden', timeout: 10000 });
+};
 const shouldStartServer = !process.env.APP_URL;
 
 const waitForApp = async (url, timeoutMs = 30000) => {
@@ -368,7 +381,9 @@ const runScenario = async (
     await assertProjectPage(page);
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
     assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일 *', '회의 정보']);
-    await page.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    const processingHelp = await openProcessingHelp(page);
+    await processingHelp.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await closeProcessingHelp(page, processingHelp);
     const titleInput = page.getByLabel('회의 제목 *');
     await page.getByLabel('회의 목적 *').fill('분석 중 중지와 취소 동작 확인');
     const fileChooserPromise = page.waitForEvent('filechooser');

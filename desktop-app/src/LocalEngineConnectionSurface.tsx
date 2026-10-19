@@ -232,21 +232,6 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
                 <span className="local-engine-connection-copy">
                     <span className="local-engine-connection-heading">
                         <strong>{view.title}</strong>
-                        {view.scene === 'intro' && (
-                            <span className="local-engine-info-tip">
-                                <button
-                                    type="button"
-                                    className="local-engine-info-trigger"
-                                    aria-label="로컬 분석 안내"
-                                    aria-describedby="local-engine-info-tooltip"
-                                >
-                                    <CircleHelp size={14} aria-hidden="true" />
-                                </button>
-                                <span id="local-engine-info-tooltip" role="tooltip" className="local-engine-info-tooltip">
-                                    음성 파일과 회의록은 이 PC에서 처리됩니다.
-                                </span>
-                            </span>
-                        )}
                     </span>
                     {statusMessage && <span>{statusMessage}</span>}
                 </span>

@@ -707,7 +707,8 @@ const captures = [
     id: 'B6', viewport: { width: 1280, height: 560 }, note: '낮은 창 + 이어서 할 분석', routes: { drafts: remoteDraftStatuses }, ...withDrafts([stoppedDraft(), failedDraft()]),
     steps: async page => { await seedAndReload(page); await page.getByRole('button', { name: /이어서 할 분석/ }).first().click(); await page.waitForTimeout(400); },
   },
-  { id: 'C1', path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 연결 화면 (연결 없음)', steps: async page => { await page.waitForTimeout(4000); } },
+  { id: 'C0', path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 첫 방문 처리 방식 안내', steps: async page => { await page.getByRole('dialog').waitFor(); await page.waitForTimeout(400); } },
+  { id: 'C1', path: '?view=minutes&localEngineConnection=1', routes: { engineDown: true }, note: '웹 연결 화면 (연결 없음)', init: () => window.localStorage.setItem('localProcessingIntroSeen', '1'), steps: async page => { await page.waitForTimeout(4000); } },
   { id: 'F1', path: '?view=archive', note: '기록 찾기 (개발용 진입)', steps: async page => { await seedAndReload(page); } },
 ];
 

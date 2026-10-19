@@ -47,6 +47,9 @@ import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
 import type { LocalEngineProbePayload } from './localEngineConnection';
 import { LocalEngineConnectionSurface } from './LocalEngineConnectionSurface';
+import { LocalProcessingNotice, type LocalProcessingNoticeMode } from './LocalProcessingNotice';
+import { hasSeenLocalProcessingIntro } from './localProcessingIntro';
+import { getRuntimeEnvironment } from './runtimeEnvironment';
 import { toUserFacingAnalysisError } from './apiError';
 
 const ANALYSIS_MODE = import.meta.env.VITE_ANALYSIS_MODE ?? 'real';
@@ -499,6 +502,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport, probeLocalEngine } = useLocalEngineConnection();
     const [webConnectionRecoveryStarted, setWebConnectionRecoveryStarted] = useState(false);
     const [connectionCheckRequired, setConnectionCheckRequired] = useState(false);
+    // The web build explains local processing once per browser before the user installs the engine.
+    const [localProcessingNotice, setLocalProcessingNotice] = useState<LocalProcessingNoticeMode | null>(() => (
+        LOCAL_ENGINE_CONNECTION_UI_ENABLED
+        && getRuntimeEnvironment().kind === 'web-local-engine'
+        && !hasSeenLocalProcessingIntro()
+            ? 'intro'
+            : null
+    ));
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => toLocalDateTimeInputValue());
     const [initialDateValue, setInitialDateValue] = useState(date);
@@ -2374,7 +2385,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         : preserveExtractedAudio === true
             ? '회의록과 분석용 음성을 이 PC에만 보관합니다.'
             // Before (or without) an engine answer the local-only promise still holds; the exact wording follows the setting.
-            : '음성 파일은 이 PC에서만 처리하고, 회의록은 이 PC에만 보관합니다.';
+            : '회의록은 이 PC에만 보관합니다.';
 
     const currentStatusMessage = statusMessage || getFallbackAnalysisMessage(analysisPhase, progressPercent);
     const transcriptProgressPercent = getTranscriptReadyProgressPercent(
@@ -2407,6 +2418,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     tone={operationToast.tone}
                     closeLabel="작업 알림 닫기"
                     onClose={() => setOperationToast(null)}
+                />
+            )}
+            {localProcessingNotice && (
+                <LocalProcessingNotice
+                    key={localProcessingNotice}
+                    mode={localProcessingNotice}
+                    runtime={localEngineConnection.runtime}
+                    storageMessage={filePrivacyMessage}
+                    onClose={() => setLocalProcessingNotice(null)}
                 />
             )}
             <div className="writer-header">
@@ -2552,12 +2572,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     )}
                     <div className="writer-file-support">
                     <div className="writer-file-privacy-slot">
-                        {filePrivacyMessage && (
-                            <div className="writer-file-privacy-note">
-                                <ShieldCheck size={15} aria-hidden="true" />
-                                <span>{filePrivacyMessage}</span>
-                            </div>
-                        )}
+                        <div className="writer-file-privacy-note">
+                            <ShieldCheck size={15} aria-hidden="true" />
+                            <span>음성·영상과 대화록은 이 PC에서 처리합니다.</span>
+                            <button
+                                type="button"
+                                className="writer-file-privacy-link"
+                                aria-haspopup="dialog"
+                                onClick={() => setLocalProcessingNotice('help')}
+                            >
+                                처리 방식
+                            </button>
+                        </div>
                     </div>
                     {selectedFileGuidance && (
                         <div className="detail-inline-note">

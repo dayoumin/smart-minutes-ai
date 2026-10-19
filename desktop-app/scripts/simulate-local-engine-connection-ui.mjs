@@ -159,6 +159,7 @@ const verifyDefaultWriterGuidance = async browser => {
       });
       await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
       await page.getByLabel('회의 제목 *').fill(`안내 상태 ${scenario}`);
+      assert.equal(await page.getByRole('dialog', { name: '회의 내용은 내 PC에서 처리합니다' }).count(), 0, 'the first-visit notice is only for the connection build');
       await page.getByLabel('회의 목적 *').fill('입력과 파일을 보존하며 다음 동작 확인');
       await page.setInputFiles('#meeting-file-input', { name: 'guidance.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('guidance fixture') });
       const analyze = page.locator('.writer-start-button');
@@ -225,6 +226,8 @@ const verifyDefaultWriterGuidance = async browser => {
 
 const verifySummaryReadinessAfterPairing = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  // The first-visit notice is covered by the main flow; this scenario starts from a returning browser.
+  await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
   const sessionToken = 'summary-readiness-ui-test-session-token';
   const record = {
     id: 'summary-readiness-after-pairing',
@@ -431,15 +434,38 @@ const run = async () => {
     }));
 
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    const introTitle = '회의 내용은 내 PC에서 처리합니다';
+    const intro = page.getByRole('dialog', { name: introTitle });
+    await intro.waitFor({ state: 'visible' });
+    assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'opening the notice is not yet a confirmation');
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '시작하기');
+    await intro.getByText('이를 위해 처음 한 번 ‘바로록 연결’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.', { exact: true }).waitFor();
+    const introFootnote = intro.getByText('웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.', { exact: true });
+    assert.equal(await introFootnote.count(), 1);
+    assert.equal(await intro.locator('#local-processing-details').count(), 0, 'first visit keeps the details folded');
+    const detailsToggle = intro.getByRole('button', { name: '처리 방식 자세히 보기', exact: true });
+    assert.equal(await detailsToggle.getAttribute('aria-expanded'), 'false');
+    await detailsToggle.click();
+    await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
+    const foldToggle = intro.getByRole('button', { name: '간단히 보기', exact: true });
+    assert.equal(await foldToggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(await introFootnote.count(), 0, 'the internet row replaces the footnote while details are open');
+    await intro.locator('dd').getByText('웹사이트를 열 때와 바로록 연결·분석 모델을 받을 때 사용합니다.', { exact: false }).waitFor();
+    const introBox = await intro.boundingBox();
+    assert.ok(introBox && introBox.y >= 0 && introBox.y + introBox.height <= 900, 'expanded notice must fit in the window');
+    await intro.getByRole('button', { name: '시작하기', exact: true }).click();
+    await intro.waitFor({ state: 'hidden' });
+    assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), '1', 'closing the notice is remembered in this browser');
+    await page.reload({ waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
     const rail = page.locator('.local-engine-connection');
     await rail.getByText('이 PC에서 분석합니다').waitFor({ state: 'visible' });
+    assert.equal(await page.getByRole('dialog', { name: introTitle }).count(), 0, 'the first-visit notice must not repeat in the same browser');
     const analyzeButton = page.getByRole('button', { name: '분석 시작', exact: true });
     assert.equal(await analyzeButton.isDisabled(), true);
     assert.equal(await analyzeButton.evaluate(element => element.classList.contains('writer-start-button-connection-pending')), true);
-    const infoTrigger = rail.getByRole('button', { name: '로컬 분석 안내' });
-    await infoTrigger.hover();
-    await page.waitForFunction(() => getComputedStyle(document.querySelector('#local-engine-info-tooltip')).opacity === '1');
-    assert.equal(await page.locator('#local-engine-info-tooltip').evaluate(element => getComputedStyle(element).opacity), '1');
+    // The writer states local processing once, beside the file picker, instead of repeating it in the connection rail.
+    assert.equal(await page.getByText('음성·영상과 대화록은 이 PC에서 처리합니다.', { exact: true }).count(), 1);
+    assert.equal(await rail.getByRole('button', { name: '로컬 분석 안내' }).count(), 0);
 
     await page.getByLabel('회의 제목 *').fill('연결 상태 보존 회의');
     await page.getByLabel('회의 목적 *').fill('연결 전 입력 보존 확인');

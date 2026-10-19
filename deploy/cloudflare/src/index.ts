@@ -23,6 +23,12 @@ export default {
         if (request.method !== 'GET' && request.method !== 'HEAD') {
             return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
         }
+        if (pathname === release.previousDownloadPath || release.previousDownloadPaths.includes(pathname)) {
+            return new Response(null, {
+                status: 307,
+                headers: { Location: release.downloadPath, 'Cache-Control': 'no-store' },
+            });
+        }
         if (pathname !== release.downloadPath && pathname !== '/downloads/engine-beta.json') {
             return new Response('Not found', { status: 404 });
         }

@@ -33,6 +33,16 @@ assert.equal(await (await call('/')).text(), 'app');
 assert.equal((await call('/downloads/unknown.exe')).status, 404);
 assert.equal((await call(release.downloadPath, { method: 'POST' })).status, 405);
 assert.equal(calls, 0);
+for (const previous of new Set([release.previousDownloadPath, ...release.previousDownloadPaths])) {
+    for (const method of ['GET', 'HEAD']) {
+        const redirect = await call(previous, { method });
+        assert.equal(redirect.status, 307);
+        assert.equal(redirect.headers.get('location'), release.downloadPath);
+        assert.equal(redirect.headers.get('cache-control'), 'no-store');
+    }
+    assert.equal((await call(previous, { method: 'PUT', body: 'denied' })).status, 405);
+}
+assert.equal(calls, 0);
 const full = await call(release.downloadPath);
 assert.equal(full.status, 200);
 assert.equal(full.headers.get('content-length'), '32');

@@ -2,6 +2,9 @@
 
 ## 0. 문서 운영 원칙
 
+- 2026-10-20 자동 연결 웹/설치형 엔진은 같은 소스 기준으로 함께 제공한다. 새 엔진의 `--pair`는 시작 별칭이며 이전 숫자 코드 웹의 준비 절차와 호환된다고 안내하지 않는다. `PYINSTALLER_CONFIG_DIR=D:\Projects\audio\.cache\pyinstaller`를 사용한 전용 웹 엔진 빌드는 중간 산출물 삭제 권한 오류 시 실제 설치 엔진과 경로가 다른지 먼저 확인한다. 실행 중인 사용자 엔진을 빌드 캐시로 오인해 종료하지 않는다.
+  - 0.1.8 실제 current-user 업데이트 exit0, 기존 데이터 보존·재시작 복원/해제, 비공개 R2 전체 read-back SHA와 운영 웹6파일 SHA·이전 링크2개를 확인했다. 운영 Chrome의 무코드 자동 연결·reload 후 `분석 준비 완료`까지 통과했다. 임시 업로드 Worker/로컬 인증은 정리했고 사용자 모델·회의록은 전송하지 않았다. 근거 `.tmp/browser-connection-20261020`, 자세한 현재 범위/남은 QA는 followup-plan과 기존 release QA 표를 따른다.
+
 - 이 파일을 portable release, sidecar packaging, build venv, deploy folder 검증의 단일 상세 원본으로 둔다.
 - `AGENTS.md`에는 이 파일을 먼저 읽으라는 짧은 운영 규칙만 남기고, venv 복구 절차나 pip cache 우회처럼 긴 해결 절차를 중복 기록하지 않는다.
 - 새 빌드 시행착오, 재발 방지책, 검증 명령은 이 파일의 날짜 섹션에 추가한다.
@@ -396,3 +399,11 @@ backend\.venv-desktop\Scripts\python.exe -c "import importlib.util; required=['P
 - 종료 후 `Get-Process`로 얻은 관측 객체의 `engineExitCode:null`을 성공 0으로 바꾸지 않는다. 요청 helper의 exit code, 본체 소멸 시간, 포트·mutex 해제, 소유 경로/부모 관계를 확인한 하위 프로세스 잔류, 파일 보존을 각각 기록한다. 종료 전후 저장 증거 파일 hash 일치도 종료 후 브라우저 IndexedDB 재열기나 전체 프로세스 정리의 증거를 대신하지 않는다.
 - r3의 Windows Job 기반 소유 프로세스 정리는 집중 25개·독립 검토와 실제 모델 적재 뒤 4개 프로세스 전체 소멸(0.328초)을 통과했다. `0.1.3-qa-20261018` frozen 기본 smoke·설치 파일 제작까지 완료한 뒤 사용자가 잠시 멈추도록 요청했다. 새 설치본의 두 표본 처리·종료/재시작은 미실행이므로 설치형 종료 P2를 완료 처리하지 않는다. `.tmp/remaining-fixes-20261018-r3/user-pause-state.json`과 계획 6.6의 r3 후속을 따른다.
 - 생성 산출물의 `Remove-Item`·`Move-Item`이 파일별 처리로 수분 지연될 때는 실행 중인 해당 빌드의 정확한 PID·명령·자식 유무를 확인하고 중지/복원 계획을 먼저 알린다. 실제로 이 세션의 빌드 27628과 이동 명령 35688만 중지한 뒤, 전용 `barorok-local-engine`의 dist/work 두 폴더를 절대 경로·재분석 지점·기존 대상 검증 후 같은 D 볼륨의 QA 보관 폴더로 `[IO.Directory]::Move`해 0.73초에 정리했다. 사용자 데이터·다른 sidecar 대상은 이동하지 않았으며 원래 작업 폴더·환경·origin·버전·빌드 명령을 복구했다. 상세 보관 경로는 `build-cleanup-relocation.json`, 이전 로그는 `frozen-build-cleanup-first.log`에 남긴다. r3 패키징 보조 프로세스 종료 지연 경고는 PyInstaller 자체 정리 후 빌드가 계속돼 최종 성공한 별도 도구 경고이며, 제품 엔진 종료 성공으로 확대하지 않는다.
+
+### 2026-10-20 웹 연결용 설치 도우미만 수정할 때
+
+- 설치 전 `설치 전 점검 결과를 확인하지 못했습니다`는 도우미의 결과 계약 실패이며 엔진 실행/브라우저 연결 실패와 별도다. `TMP≠TEMP` 회귀는 이전/수정 frozen 도우미를 같은 manifest로 비교하고 JSON·INI 생성과 exit10을 확인한다. 실행 실패 안내와도 구분한다.
+- 기존 공식 NSIS3.13은 `.tmp/installed-https-audit-20261018/tools/nsis-3.13/makensis.exe`에 보존돼 있다. PATH 부재만으로 컴파일러 미설치라고 판단하지 않는다. `/INPUTCHARSET UTF8`을 유지하고 컴파일 경고도 기록한다.
+- 엔진 본체 변경이 없는 수정은 동일 공개 payload의 closed manifest/hash를 먼저 검증한 뒤 helper/NSIS만 재빌드할 수 있다. 새 installer revision·파일 SHA와 기존 engineVersion을 별도로 명시한다. 원래 설치 파일과 사용자 모델/결과를 보존한다.
+- 다른 세션의 로컬 `.tmp/cloudflare-web/dist`가 운영 자산과 다를 수 있다. 다운로드만 수정할 때는 현재 공개6개 자산을 별도 폴더에 받아 hash를 기록하고, 그 폴더를 지정한 배포 설정으로 검사한다. 미커밋 UI를 함께 빌드/배포하지 않는다. 이전 받기 링크는 고정된 같은 origin의 새 다운로드로 연결하고 캐시하지 않는다.
+- 이번 원인·실물 설치·배포 상태는 `docs/web-local-engine-followup-plan.md`의 `2026-10-20 수정 설치 파일 실물 재검증`과 기존 release QA 표를 따른다.

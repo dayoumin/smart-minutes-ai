@@ -1,5 +1,15 @@
 # Frontend Simulation Testing
 
+## Installed engine automatic connection — 2026-10-20
+
+`test:browser-approval` checks automatic discovery, reload/restart recovery, explicit disconnect,
+late completion cancellation, and blocked-storage revocation with the real coordinator.
+`test:local-engine-connection-ui` now uses the `browser-connection` protocol without a code dialog.
+For the automatic first connection/reload case alone, set `LOCAL_ENGINE_UI_SCENARIO=automatic`.
+The mock engine advertises `pairing_mode=browser-connection`; no user confirmation is simulated.
+Use the existing `D:\Projects\audio\.cache\ms-playwright` cache. These are UI/API mocks;
+actual installed-engine/public HTTPS/browser permission evidence remains a separate release check.
+
 ## Purpose
 
 Use the `desktop-app/scripts/simulate-*.mjs` scripts to verify frontend state transitions that are awkward to cover with manual clicking alone, especially:

@@ -5,6 +5,7 @@
   - 확인 1 완료(2026-10-19): 병합(`7eb3906`) 뒤 깨끗한 worktree에서 `test:new-record-home-flow` 6개 장면(도움말 한 줄 높이·포커스 복귀·설정 없을 때 보관 문장 포함), `test:analysis-stop-flow` 전체 15개, `test:resume-draft-flow`·`test:audio-extract-ui`·`test:audio-back-navigation`·`test:local-engine-connection-ui` 전체가 통과했다. 새 폴더의 첫 실행은 진입 시간 초과로 두 번 실패했고 단독 재실행에서 통과했다.
   - 확인 2 완료(2026-10-19): `capture-ui-audit.mjs C0,C0@800,C1,W1,W1@800`(C0@800 장면 추가)로 안내창 버튼 배치와 업로드 영역 아래 한 줄이 1280·800px에서 한 줄로 유지됨을 확인했다. 안내창 본문이 낱말 중간에서 줄바꿈되어 `.local-processing-dialog`에 `word-break: keep-all`을 넣었다.
   - 남은 확인 3: 배포 HTTPS 웹과 설치한 바로록 연결에서 실제 분석 중 네트워크를 확인한다. 음성·대화록 요청이 `127.0.0.1` 엔진으로만 가야 문구와 동작이 일치한다.
+    - 재시도(2026-10-19): 설치 엔진을 명시적 `LOCALAPPDATA`와 기존 QA `TEMP/TMP`로 실행해 PID14328·`/api/probe`200·버전0.1.5를 확인했다. 실행 권한 문제는 이번 호출에서 해소됐다. 운영 HTTPS는 이전 UI이며 연결 확인 뒤 Windows 브라우저 제어 도구가 현재 URL 식별 실패로 중단했다. 실제 분석/Network 증거는 여전히 미확보다. 검사 소유 엔진만 `--stop` exit0으로 종료했고 PID 소멸·17863 미응답을 확인했다. 같은 브라우저 제어 경로의 URL 식별 문제가 반복되므로 다음 재개는 도구 복구 또는 사람이 직접 DevTools Network 기록을 제공하는 경로로 진행한다. 설치본 재설치·보안 설정 변경은 하지 않는다.
   - 확인 4 완료(2026-10-19): 병합 뒤 코드·문서 agent 검토의 P1(연결 시뮬레이션의 첫 방문 안내 가림)과 문서 P2를 `ae52146`에서 반영했다.
 - [ ] 2026-10-17 A4 실제 모델 검사 환경 복구와 짧은 WAV·영상 재검증
   - 2026-10-18 배포 준비 재점검: 이후 격리 산출물에서 30초 WAV 실제 STT 15개 구간·15초 MP4 2개 구간 및 두 작업의 참석자 구분 완료를 확인했다. 아래 결과 0건은 17일 시도 기록이다. 확인 시 요약은 WAV `generating`·영상 `skipped`로 완료 미검증이며 저장/재열기·파일 최신 내용과 설치/frozen/HTTPS 관문은 유지한다. 최신 근거·집중 검사 90개 및 웹 검사 결과는 원본 계획 6.6의 `웹 + 설치형 로컬 엔진 배포 준비 재점검`을 따른다.
@@ -63,9 +64,10 @@
 - [x] 2026-10-17 [P2] 모델 준비 완료 후 설정 닫기의 키보드 초점 복귀
   - 기존 opener가 표시·활성 상태면 우선 복귀하고, 준비 완료로 사라지면 열었던 작성 영역 안의 파일 선택/분석 시작으로 복귀한다. 숨긴 Writer·파일 input·비활성 대상은 제외한다. 상태: 수정·mock 브라우저 회귀·독립 agent 검토 완료, 마지막 확인 2026-10-17.
   - 확인: 미준비/준비 완료/파일 없음, Escape 닫기와 제목·목적·File 보존, 준비 후 시작 활성화 통과. 원본 home 4장면도 격리 환경에서 통과해 이전 환경 차단을 해소했다. 실제 보조기술 출시는 기존 위험 표의 별도 관문이다.
-- [ ] 2026-10-17 [P2] 화면·내보내기의 주요 주제 중복 판정 통일
+- [x] 2026-10-17 [P2] 화면·내보내기의 주요 주제 중복 판정 통일
   - 재현: 유효한 제목 `Maße`, `Masse`는 frontend `getDisplayTopics`에서 2개, backend `get_display_topics`와 MD/전체 TXT 주요 주제에서 1개다. `toLocaleLowerCase()`와 `casefold()` 차이이며 본문·원본 데이터는 유지된다. 근거는 위 6.6의 최근 변경 재검증 실행 결과다. 마지막 확인: 2026-10-17.
   - 후속 범위: 제품의 중복 기준을 양쪽에서 일치시키고 한국어·ASCII·Unicode·빈 제목 fallback의 동일 fixture로 화면/로컬 TXT/backend 주요 주제 목록을 비교한다. 종료 조건은 목록 일치, section 본문·원본 보존, 기존 범위별 내보내기 회귀 통과다. 현재 한국어 대표 흐름을 막지는 않으며 점검 단계에서 제품 코드는 수정하지 않았다.
+  - 완료(2026-10-20, 소스 기준): frontend는 지역 설정에 의존하지 않는 `toLowerCase()`, backend는 `lower()`와 JavaScript와 같은 앞뒤 공백 기준으로 통일했다. `Maße`/`Masse`·합자/일반 철자는 별개로 유지하고, 비문자 제목은 화면과 동일하게 제외한다. 첫 제목 표기·순서·원본 및 모든 주제 본문은 보존한다. `tests/fixtures/display-topics.json`의 공통 8개 사례로 화면 helper·로컬 organized/full TXT·backend organized/full MD/TXT/DOCX/HWPX 목록과 본문·입력 불변을 검사했다. `corepack pnpm --dir desktop-app test:export-consistency` 18개, `backend\.venv-desktop\Scripts\python.exe -X utf8 -m unittest backend.test_summary_display` 8개, `corepack pnpm --dir desktop-app typecheck`, 변경 frontend 2개 ESLint, `git diff --check` 통과. 독립 agent의 계약/회귀 검토에서 잔여 finding 없음. 설치본 제작·공개 웹 반영·실제 Word/한컴 렌더 검사는 수행하지 않았으며 다른 세션의 설치/네트워크 검증과 분리한다.
 - [x] 2026-10-18 [P2] 설치 엔진의 요약 모델 목록 오판 복구
   - 최종 확인(2026-10-18): 0.1.5 실제 설치 상태·binary SHA·origin/auth·기존 데이터 보존 확인. 준비 완료 뒤 같은 영상 기록의 요약 재시도 성공, 음성 기록은 기존 요약/검토표시3개 보존, 두 기록 reload 및 내보내기8개·독립 데이터/다운로드 검토 통과. 실모델 종료와 재시작 뒤 두 기록 재열기도 통과했다. 0.1.5에서 STT/화자 구분을 다시 수행한 것은 아니며, 같은 0.1.4 결과와 동일 native473개/FFmpeg·관련 소스 증거를 재사용했다. 0.1.4의 409 발생 경로를 사후 확정하지는 않지만 새 lookup 경로와 해당 영상 재시도는 통과했다. 아래 내용은 진행 이력이며 첫 기동503/긴 대기는 다음 별도 P2다.
   - 실제 0.1.4·공개 HTTPS에서 WAV는 요약·저장·재열기·내보내기 4개까지 통과했으나 MP4는 STT/참석자 구분 뒤 요약 `model_missing` 409. 같은 자체 Ollama의 tags API는 약 0.05초, list CLI는 12.876초였고 제품은 CLI를 5초에 중단해 빈 목록으로 처리한다. 직접 HTTP 목록 조회 수정·집중 7개 검사·실제 API 0.07초 통과, 독립 검토와 새 frozen 설치본 재검증 진행 중. 종료 조건: 실제 공개 사이트에서 두 표본의 요약·저장/재열기·8개 내보내기, 모델 보존, 종료/재시작 증거 확인. 영상 오류의 정확한 원인은 재검증까지 보류. 상세는 `docs/web-local-engine-followup-plan.md` 11절.

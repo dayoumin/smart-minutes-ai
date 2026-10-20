@@ -259,8 +259,8 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
                     <a
                         className="btn btn-outline local-engine-secondary-action"
                         href={installerUrl}
-                        aria-label="바로록 설치 파일 받기"
-                        title="바로록 설치 파일 받기"
+                        aria-label={`${LOCAL_ENGINE_NAME} 설치 파일 받기`}
+                        title={`${LOCAL_ENGINE_NAME} 설치 파일 받기`}
                     >
                         <Download size={15} aria-hidden="true" />
                         {view.secondaryLabel}

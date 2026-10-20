@@ -573,7 +573,9 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     await page.goto(`${PUBLIC_TEST_ORIGIN}${url.pathname}${url.search}`, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     const rail = statusRowOf(page);
     const status = statusOf(page);
-    await status.getByText('연결 확인 후 Chrome이 물으면 ‘허용’을 눌러 주세요.', { exact: true }).waitFor();
+    // domcontentloaded returns before a cold Vite has served the app's modules through the route.
+    await status.getByText('연결 확인 후 Chrome이 물으면 ‘허용’을 눌러 주세요.', { exact: true })
+      .waitFor({ timeout: PAGE_GOTO_TIMEOUT_MS });
     await status.getByText(`${withJosa(LOCAL_ENGINE_NAME, '이/가')} 필요합니다`, { exact: true }).waitFor();
     assert.equal(await rowState(page), 'intro', 'an undecided permission is not shown as a failure');
     assert.doesNotMatch(await rail.innerText(), /자동/, 'the first visit does not promise an automatic connection');

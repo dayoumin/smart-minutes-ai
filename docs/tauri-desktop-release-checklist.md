@@ -4,6 +4,7 @@
 
 - 2026-10-20 자동 연결 웹/설치형 엔진은 같은 소스 기준으로 함께 제공한다. 새 엔진의 `--pair`는 시작 별칭이며 이전 숫자 코드 웹의 준비 절차와 호환된다고 안내하지 않는다. `PYINSTALLER_CONFIG_DIR=D:\Projects\audio\.cache\pyinstaller`를 사용한 전용 웹 엔진 빌드는 중간 산출물 삭제 권한 오류 시 실제 설치 엔진과 경로가 다른지 먼저 확인한다. 실행 중인 사용자 엔진을 빌드 캐시로 오인해 종료하지 않는다.
   - 0.1.8 실제 current-user 업데이트 exit0, 기존 데이터 보존·재시작 복원/해제, 비공개 R2 전체 read-back SHA와 운영 웹6파일 SHA·이전 링크2개를 확인했다. 운영 Chrome의 무코드 자동 연결·reload 후 `분석 준비 완료`까지 통과했다. 임시 업로드 Worker/로컬 인증은 정리했고 사용자 모델·회의록은 전송하지 않았다. 근거 `.tmp/browser-connection-20261020`, 자세한 현재 범위/남은 QA는 followup-plan과 기존 release QA 표를 따른다.
+  - 0.1.9는 새 엔진·helper·NSIS 설치 파일을 만들고0.1.8 위 실제 업데이트45.36초/exit0·설치 payload4957파일 해시·기존 데이터 불변·재시작 복원/해제를 확인했다. 설치 helper의 `--result-json`/`--decision-ini`는 TEMP 내부의 아직 없는 파일이어야 한다. 전용 QA 폴더를 TEMP/TMP로 지정하고 GUI 실행 파일은 Python `subprocess.run` 등으로 종료를 기다린다. 실행 중인 자기 엔진만 경고인 exit10을 저장 공간 미확정으로 해석하지 않는다. helper 빌드의 `build/web-local-engine-installer-preflight-helper`는 생성물이며 커밋하지 않는다. 근거 `.tmp/release-019-20261020`, 공개 반영/잔여 관문은 followup-plan과 release QA 표를 따른다.
 
 - 이 파일을 portable release, sidecar packaging, build venv, deploy folder 검증의 단일 상세 원본으로 둔다.
 - `AGENTS.md`에는 이 파일을 먼저 읽으라는 짧은 운영 규칙만 남기고, venv 복구 절차나 pip cache 우회처럼 긴 해결 절차를 중복 기록하지 않는다.

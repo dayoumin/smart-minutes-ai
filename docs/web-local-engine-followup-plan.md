@@ -10,6 +10,14 @@
 
 ## 1. 제품 결정
 
+### 2026-10-20 0.1.9 새 설치본과 운영 웹 갱신
+
+- 실행 코드 기준 `ad7cb53`에서 운영 Origin용 엔진 `0.1.9-beta-20261020`을 새로 빌드했다. 웹은 같은 커밋의 `git archive HEAD desktop-app configs`로 만들었으며 다른 작업의 미커밋 Sidebar/CSS/font 변경을 포함하지 않는다. 설치 파일은 NSIS3.13으로 새 preflight helper와 함께 생성했다. EXE `442838807`bytes, SHA256 `c29823454971472cbbf110651b7c3151a2af2eccbbab3937fc45d16116de273a`; unsigned/testRelease 상태를 유지한다.
+- 이 PC에서 실행 중인0.1.8 위 실제 업데이트는45.36초/exit0이었다. 강제 종료 없이 새버전 probe, 설치 payload4957파일 전수 해시, exact Origin 자동 연결·보호 health200/무인증401·타Origin403, 실제 재시작 후 복원·명시적 해제 후401을 확인했다. 설정·회의록·DB198관측 경로의 SHA와 모델146관측 경로의 크기는 불변이다(physical/가상화 중복 경로 포함). 새 엔진은 실행 상태로 남겼다. 새 설치·제거 후 재설치를 이 업데이트 검사로 대체하지 않는다.
+- 설치된 helper의 모델·작업 임시 공간·결과 공간 점검은 모두pass이며 unknown이 없다. 실행 중인 자기 엔진에 대한 fixed-port 경고만 남는다(exit10, `stop_local_engine_and_retry`). 따라서 이 결과를 엔진 종료 상태의 전체 preflight exit0으로 기록하지 않는다. 시작 메뉴의 `음성 분석 시작/종료/제거`, `LMO 회의록 연결`도 확인했다. 근거 `.tmp/release-019-20261020/{source-state.json,installer-manifest.json,installed-verification.json,preflight-verification.json,web-build-manifest.json}`.
+- 공개 반영 완료: 다운로드 정보 커밋 `c5f0cc6`, 운영 Worker version `09a485ac-a9a0-45d7-9335-22d0fa7fd62c`. 설치 파일 전체 R2 read-back SHA 일치 후 웹을 배포했고 공개 웹6파일 SHA, installer metadata/HEAD/Range/416/405/404, 이전0.1.5 원본·installerfix·0.1.8 링크3개의307/no-store를 확인했다. 격리 Chromium의 제어된 LNA 허용 상태에서 실제 설치 엔진019의 probe/보호 health/models200, 첫 자동 연결과 reload 복원, 화면 `연결됨`·활성 `분석 시작`을 확인했다. 첫 QA 실행은 옛 문구 `분석 준비 완료`를 기다려 실패했으나 화면/응답은 정상이었고 현재 문구로 검사만 고쳐 통과했다. 제품 소스 변경은 없다. 사람 권한창·Edge/조직 정책 검증으로 확대하지 않는다.
+- 임시 업로드 Worker `barorok-upload-019-20261020`와 로컬 `.dev.vars`는 삭제했다. 공개 브라우저 시험은 자동 복원 등록 파일만 정상 갱신했으며 그2관측 경로를 제외한 기존196경로 SHA·모델146경로 크기는 최종 검사에서도 불변이다. 사용자 모델·회의록은 전송하지 않았다. 전체 증거는 같은 QA 폴더의 `final-audit.json`, `uploader/upload-result.json`, `public-verification.json`, `browser-verification.json`과 `production-connected.png`/`production-restored.png`다. 릴리스 관문의 상태·필요 증거·종료 조건은 기존 release QA 표에 갱신했다.
+
 ### 2026-10-20 설치 후 연결 안 됨: 브라우저 권한과 확장의 Origin 변경
 
 - 증상: 설치 후 '연결 확인'을 눌러도 화면 변화가 없음. 공개 웹에서 재현하면 실패 요청이 수 ms 만에 끝나 '연결 확인 중'이 보이지 않고 같은 실패 문구로 돌아간다.

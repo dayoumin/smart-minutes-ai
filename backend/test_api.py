@@ -5355,6 +5355,92 @@ class AnalyzeApiTest(unittest.TestCase):
 
                 shutil.rmtree(chunk_dir)
 
+    def test_delete_outputs_keeps_failed_cleanup_discoverable_and_retryable(self) -> None:
+        for failure in ("checkpoint", "export", "result"):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root:
+                output_dir = Path(root) / "outputs"
+                temp_dir = Path(root) / "temp"
+                job_id = "cleanup-retry"
+                audio = temp_dir / "jobs" / job_id / "audio" / "source.wav"
+                audio.parent.mkdir(parents=True)
+                audio.write_bytes(b"retained audio")
+                output_dir.mkdir()
+                result = output_dir / f"{job_id}_result.json"
+                result.write_text("{}", encoding="utf-8")
+                export = output_dir / f"{job_id}_transcript.txt"
+                export.write_text("transcript", encoding="utf-8")
+                config = {"paths": {"output_dir": str(output_dir), "temp_dir": str(temp_dir)}}
+                remove = main.os.remove
+                rmtree = main.shutil.rmtree
+
+                def remove_file(path):
+                    if Path(path) == (export if failure == "export" else result) and failure != "checkpoint":
+                        raise PermissionError("locked test artifact")
+                    return remove(path)
+
+                def remove_tree(path, *args, **kwargs):
+                    if failure == "checkpoint" and Path(path) == temp_dir / "jobs" / job_id:
+                        raise PermissionError("locked test audio")
+                    return rmtree(path, *args, **kwargs)
+
+                with patch("main.load_config", return_value=config):
+                    with patch("main.os.remove", side_effect=remove_file), patch("main.shutil.rmtree", side_effect=remove_tree):
+                        response = self.client.delete(f"/api/outputs/{job_id}")
+                    self.assertEqual(response.status_code, 500, response.text)
+                    self.assertEqual(response.json()["detail"], "output_delete_failed")
+                    self.assertTrue(result.exists(), "the completed marker must survive partial deletion")
+                    stored = self.client.get("/api/stored-analyses").json()["analyses"]
+                    self.assertEqual([item["job_id"] for item in stored], [job_id])
+                    if failure == "checkpoint":
+                        self.assertTrue(audio.exists())
+                    retried = self.client.delete(f"/api/outputs/{job_id}")
+                    self.assertEqual(retried.status_code, 200, retried.text)
+                    self.assertEqual(self.client.get("/api/stored-analyses").json(), {"analyses": []})
+                    self.assertFalse(result.exists())
+                    self.assertFalse(audio.exists())
+                    self.assertFalse(export.exists())
+
+    @unittest.skipUnless(os.name == "nt", "requires Windows file sharing semantics")
+    def test_delete_outputs_recovers_after_a_real_windows_audio_lock(self) -> None:
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, wintypes.LPVOID,
+                                      wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+        kernel.CreateFileW.restype = wintypes.HANDLE
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        with tempfile.TemporaryDirectory() as root:
+            output_dir = Path(root) / "outputs"
+            temp_dir = Path(root) / "temp"
+            job_id = "cleanup-windows-lock"
+            audio = temp_dir / "jobs" / job_id / "audio" / "source.wav"
+            audio.parent.mkdir(parents=True)
+            audio.write_bytes(b"locked synthetic audio")
+            output_dir.mkdir()
+            result = output_dir / f"{job_id}_result.json"
+            result.write_text("{}", encoding="utf-8")
+            config = {"paths": {"output_dir": str(output_dir), "temp_dir": str(temp_dir)}}
+            # Allow reads/writes but deny FILE_SHARE_DELETE until this handle is closed.
+            handle = kernel.CreateFileW(str(audio), 0x80000000, 0x1 | 0x2, None, 3, 0, None)
+            self.assertNotEqual(handle, wintypes.HANDLE(-1).value, ctypes.get_last_error())
+            with patch("main.load_config", return_value=config):
+                try:
+                    response = self.client.delete(f"/api/outputs/{job_id}")
+                    self.assertEqual(response.status_code, 500, response.text)
+                    self.assertTrue(audio.exists())
+                    self.assertTrue(result.exists())
+                    stored = self.client.get("/api/stored-analyses").json()["analyses"]
+                    self.assertEqual([item["job_id"] for item in stored], [job_id])
+                finally:
+                    self.assertTrue(kernel.CloseHandle(handle))
+                retried = self.client.delete(f"/api/outputs/{job_id}")
+                self.assertEqual(retried.status_code, 200, retried.text)
+                self.assertFalse(audio.exists())
+                self.assertFalse(result.exists())
+                self.assertEqual(self.client.get("/api/stored-analyses").json(), {"analyses": []})
+
     def test_stored_analyses_lists_completed_jobs_newest_first_with_their_size(self) -> None:
         with tempfile.TemporaryDirectory() as output_dir, tempfile.TemporaryDirectory() as temp_dir:
             def write(directory: str, name: str, size: int) -> str:

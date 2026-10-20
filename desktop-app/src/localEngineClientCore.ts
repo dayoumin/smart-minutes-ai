@@ -59,6 +59,35 @@ const awaitWithAbort = async <T>(promise: Promise<T>, signal: AbortSignal): Prom
     });
 };
 
+// Handshake responses are finite JSON. Read them inside the request's deadline;
+// returning after headers would leave the caller's response.json() unbounded.
+const bufferJsonResponse = async (response: Response, signal: AbortSignal): Promise<Response> => {
+    if (!response.body) return response;
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let length = 0;
+    let complete = false;
+    try {
+        while (true) {
+            const part = await awaitWithAbort(reader.read(), signal);
+            if (part.done) { complete = true; break; }
+            chunks.push(part.value);
+            length += part.value.length;
+        }
+        const bytes = new Uint8Array(length);
+        let offset = 0;
+        for (const chunk of chunks) { bytes.set(chunk, offset); offset += chunk.length; }
+        const buffered = new Response(bytes, { status: response.status, statusText: response.statusText, headers: response.headers });
+        Object.defineProperties(buffered, {
+            url: { value: response.url }, redirected: { value: response.redirected }, type: { value: response.type },
+        });
+        return buffered;
+    } finally {
+        if (!complete) void reader.cancel().catch(() => {});
+        reader.releaseLock();
+    }
+};
+
 const resolveEngineApiUrl = (path: string, baseUrl: string): URL => {
     if (!/^\/api(?:\/|$)/.test(path)) {
         throw new TypeError('Local engine requests require a relative /api path.');
@@ -131,11 +160,12 @@ export const createLocalEngineClient = (
         init: LocalEngineRequestInit,
         includeRuntimeHeaders: boolean,
         explicitSessionToken = '',
+        finiteJson = false,
     ): Promise<Response> => {
         const { timeoutMs, userInitiated = false, signal: callerSignal, ...requestInit } = init;
         const controller = new AbortController();
         const handleCallerAbort = () => controller.abort();
-        const timeout = timeoutMs
+        let timeout = timeoutMs
             ? globalThis.setTimeout(() => controller.abort(), timeoutMs)
             : null;
         let finishActivity: (() => void) | undefined;
@@ -182,12 +212,19 @@ export const createLocalEngineClient = (
                 // Observe caller abort for the activity without changing fetch's existing abort lifetime.
                 finishActivity = dependencies.beginProtectedActivity?.(runtimeAuthorization, callerSignal ?? controller.signal);
             }
-            const fetchRequest = (requestHeaders: Headers) => awaitWithAbort(dependencies.fetch(target, {
-                ...requestInit,
-                body: snapshot.body,
-                headers: requestHeaders,
-                signal: controller.signal,
-            }), controller.signal);
+            const fetchRequest = async (requestHeaders: Headers) => {
+                const response = await awaitWithAbort(dependencies.fetch(target, {
+                    ...requestInit,
+                    body: snapshot.body,
+                    headers: requestHeaders,
+                    signal: controller.signal,
+                }), controller.signal);
+                if (!finiteJson || !response.body) return response;
+                // A user permission prompt may hold probe headers indefinitely.
+                // Once headers arrive, its JSON body still has a finite deadline.
+                if (timeout === null) timeout = globalThis.setTimeout(() => controller.abort(), 15000);
+                return await bufferJsonResponse(response, controller.signal);
+            };
             const response = await fetchRequest(outgoingHeaders);
             if (
                 !recoverAuthorization || !isAuthorizationRejection(response)
@@ -227,10 +264,10 @@ export const createLocalEngineClient = (
     );
 
     return {
-        probe: (init = {}) => execute('/api/probe', init, false),
+        probe: (init = {}) => execute('/api/probe', init, false, '', true),
         reach: (init = {}) => execute('/api/probe', { ...init, mode: 'no-cors', credentials: 'omit' }, false),
-        pair: (path, init = {}) => execute(path, init, false),
-        session: (path, sessionToken, init = {}) => execute(path, init, false, sessionToken),
+        pair: (path, init = {}) => execute(path, init, false, '', true),
+        session: (path, sessionToken, init = {}) => execute(path, init, false, sessionToken, true),
         request,
         stream: request,
         download: request,

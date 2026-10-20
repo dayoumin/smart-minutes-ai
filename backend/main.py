@@ -2804,15 +2804,6 @@ def _delete_job_artifacts(job_id: str) -> list[str]:
     temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
     deleted: list[str] = []
 
-    if os.path.isdir(output_dir):
-        for name in os.listdir(output_dir):
-            if not _artifact_belongs_to_job(name, job_id):
-                continue
-            file_path = os.path.abspath(os.path.join(output_dir, name))
-            if file_path.startswith(output_dir + os.sep) and os.path.isfile(file_path):
-                os.remove(file_path)
-                deleted.append(os.path.basename(file_path))
-
     if os.path.isdir(temp_dir):
         for name in os.listdir(temp_dir):
             if not _artifact_belongs_to_job(name, job_id):
@@ -2828,8 +2819,20 @@ def _delete_job_artifacts(job_id: str) -> list[str]:
 
     checkpoint_root = os.path.join(temp_dir, "jobs", job_id)
     if os.path.isdir(checkpoint_root):
-        shutil.rmtree(checkpoint_root, ignore_errors=True)
+        shutil.rmtree(checkpoint_root)
         deleted.append(os.path.join("jobs", job_id))
+
+    # Keep the completed-result marker until every other artifact is gone. The
+    # cleanup list uses it to find jobs again after a locked file/partial deletion.
+    if os.path.isdir(output_dir):
+        names = sorted(os.listdir(output_dir), key=lambda name: name == f"{job_id}_result.json")
+        for name in names:
+            if not _artifact_belongs_to_job(name, job_id):
+                continue
+            file_path = os.path.abspath(os.path.join(output_dir, name))
+            if file_path.startswith(output_dir + os.sep) and os.path.isfile(file_path):
+                os.remove(file_path)
+                deleted.append(os.path.basename(file_path))
 
     return deleted
 
@@ -2881,7 +2884,10 @@ def _raise_if_active_analysis_job(job_id: str) -> None:
 async def delete_outputs(job_id: str) -> dict:
     job_id = _validate_job_id(job_id)
     _raise_if_active_analysis_job(job_id)
-    return {"job_id": job_id, "deleted": _delete_job_artifacts(job_id)}
+    try:
+        return {"job_id": job_id, "deleted": _delete_job_artifacts(job_id)}
+    except OSError as error:
+        raise HTTPException(status_code=500, detail="output_delete_failed") from error
 
 
 def _path_size_bytes(path: str) -> int:

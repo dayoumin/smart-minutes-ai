@@ -24,7 +24,7 @@ const fixture = (respond, saved = storage(), probe = { pairing_available: true }
             const path = new URL(input).pathname;
             const body = init.body ? JSON.parse(init.body) : null;
             calls.push({ path, body, authorization: new Headers(init.headers).get('Authorization'), signal: init.signal });
-            if (path === '/api/probe') return reply(probe);
+            if (path === '/api/probe') return typeof probe === 'function' ? probe() : reply(probe);
             if (path === '/api/pair/forget') return reply({ revoked: true });
             return respond(path, body);
         },
@@ -229,3 +229,93 @@ for (const { stage, expiresIn, timeoutMs } of [
         assert.equal(timeouts.pending(), 0);
     });
 }
+
+for (const { stage, expiresIn, timeoutMs } of [
+    { stage: 'probe', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'restore', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'start', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'complete', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'complete', expiresIn: 2, timeoutMs: 2000 },
+]) {
+    test(`an unfinished ${stage} JSON body expires after ${timeoutMs}ms and can reconnect`, async context => {
+        const timeouts = requestTimeouts(context);
+        let stall = true;
+        let bodyRead;
+        const reading = new Promise(resolve => { bodyRead = resolve; });
+        let cancelled = false;
+        const stalledReply = () => new Response(new ReadableStream({
+            pull(controller) {
+                controller.enqueue(new TextEncoder().encode('{'));
+                bodyRead();
+                return new Promise(() => {});
+            },
+            cancel() { cancelled = true; },
+        }, { highWaterMark: 0 }));
+        const probe = () => stall && stage === 'probe' ? stalledReply()
+            : reply({ pairing_available: true, pairing_mode: 'browser-connection' });
+        const f = fixture(path => {
+            if (stall && path === `/api/pair/${stage}`) return stalledReply();
+            return path === '/api/pair/start'
+                ? reply({ ...challenge(), expires_in_seconds: expiresIn }) : reply(grant());
+        }, storage(), probe);
+        if (stage === 'restore') f.browser.replace('b'.repeat(43));
+        const operation = stage === 'probe' ? f.coordinator.probe() : f.coordinator.startBrowserApproval();
+        const rejected = assert.rejects(operation);
+        await reading;
+        timeouts.expireOnly(timeoutMs);
+        await rejected;
+        assert.equal(cancelled, true, 'a timed out JSON read cancels its response body');
+        assert.equal(f.credentials.current(), null);
+        assert.equal(f.coordinator.shouldReconnectBrowser(), true);
+        assert.equal(timeouts.pending(), 0);
+        if (stage === 'restore') assert.equal(f.browser.current(), 'b'.repeat(43));
+        stall = false;
+        await f.coordinator.probe();
+        assert.ok(f.credentials.current(), 'a later attempt completes the connection');
+        assert.equal(timeouts.pending(), 0);
+    });
+}
+
+test('probe may wait for a permission prompt but bounds its body after headers', async context => {
+    const timeouts = requestTimeouts(context);
+    let sendHeaders;
+    let bodyRead;
+    const reading = new Promise(resolve => { bodyRead = resolve; });
+    const client = createLocalEngineClient({
+        resolveBaseUrl: async () => 'http://127.0.0.1:17863', resolveRequestHeaders: async () => ({}),
+        fetch: async () => new Promise(resolve => { sendHeaders = resolve; }),
+    });
+    const pending = client.probe({ userInitiated: true });
+    const rejected = assert.rejects(pending, error => error.name === 'AbortError');
+    while (!sendHeaders) await Promise.resolve();
+    assert.equal(timeouts.pending(), 0, 'the browser permission prompt has no request deadline');
+    sendHeaders(new Response(new ReadableStream({
+        pull() { bodyRead(); return new Promise(() => {}); },
+    }, { highWaterMark: 0 })));
+    await reading;
+    timeouts.expireOnly(15000);
+    await rejected;
+    assert.equal(timeouts.pending(), 0);
+});
+
+test('caller cancellation stops a handshake body without limiting ordinary SSE reads', async () => {
+    let cancelled = false;
+    const client = createLocalEngineClient({
+        resolveBaseUrl: async () => 'http://127.0.0.1:17863', resolveRequestHeaders: async () => ({}),
+        fetch: async () => new Response(new ReadableStream({
+            cancel() { cancelled = true; },
+        }, { highWaterMark: 0 })),
+    });
+    const controller = new AbortController();
+    const pending = client.pair('/api/pair/restore', { signal: controller.signal, timeoutMs: 15000 });
+    const rejected = assert.rejects(pending, error => error.name === 'AbortError');
+    await new Promise(resolve => setImmediate(resolve));
+    controller.abort();
+    await rejected;
+    assert.equal(cancelled, true);
+    cancelled = false;
+    const response = await client.stream('/api/analyze', { method: 'POST' });
+    assert.equal(response.status, 200, 'an ordinary SSE response returns without waiting for its body');
+    assert.equal(cancelled, false);
+    await response.body.cancel();
+});

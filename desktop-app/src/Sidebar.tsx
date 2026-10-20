@@ -158,6 +158,9 @@ const focusSidebarFallback = (createButton: HTMLButtonElement | null, sidebar: H
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const [folders, setFolders] = useState<MeetingFolder[]>([]);
+    const [folderLoadFailed, setFolderLoadFailed] = useState(false);
+    const [isLoadingFolders, setIsLoadingFolders] = useState(false);
+    const folderLoadSequence = useRef(0);
     const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
     const [showFolderForm, setShowFolderForm] = useState(false);
     const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null);
@@ -222,16 +225,22 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     };
 
     const loadFolders = async () => {
+        const sequence = ++folderLoadSequence.current;
+        setIsLoadingFolders(true);
         try {
             const data = await getAllMeetingFolders();
+            if (sequence !== folderLoadSequence.current) return;
             setFolders(sortMeetingFolders(data));
+            setFolderLoadFailed(false);
             const pendingFocusId = pendingFolderMenuFocusRef.current;
             pendingFolderMenuFocusRef.current = null;
             if (pendingFocusId) {
                 window.requestAnimationFrame(() => folderMenuTriggerRefs.current.get(pendingFocusId)?.focus());
             }
         } catch {
-            setFolders([]);
+            if (sequence === folderLoadSequence.current) setFolderLoadFailed(true);
+        } finally {
+            if (sequence === folderLoadSequence.current) setIsLoadingFolders(false);
         }
     };
 
@@ -239,10 +248,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         void loadRecords();
         void loadFolders();
         window.addEventListener('focus', loadRecords);
+        window.addEventListener('focus', loadFolders);
         window.addEventListener('meetings:updated', loadRecords);
         window.addEventListener('meetings:updated', loadFolders);
         return () => {
             window.removeEventListener('focus', loadRecords);
+            window.removeEventListener('focus', loadFolders);
             window.removeEventListener('meetings:updated', loadRecords);
             window.removeEventListener('meetings:updated', loadFolders);
         };
@@ -757,6 +768,20 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                         <FolderPlus size={15} aria-hidden="true" />
                     </button>
                 </div>
+                {folderLoadFailed && (
+                    <div className="px-2.5 py-2 text-xs text-muted-foreground" role="status">
+                        <p>폴더를 불러오지 못했습니다.</p>
+                        <button
+                            type="button"
+                            className="mt-1 text-primary underline underline-offset-2 disabled:opacity-50"
+                            aria-label="폴더 다시 불러오기"
+                            disabled={isLoadingFolders}
+                            onClick={() => void loadFolders()}
+                        >
+                            {isLoadingFolders ? '불러오는 중…' : '다시 불러오기'}
+                        </button>
+                    </div>
+                )}
                 {folders.length > 0 && (
                     <div className="sidebar-folder-list" aria-label="폴더" aria-busy={isReorderingFolders}>
                         {folders.map(folder => {

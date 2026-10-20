@@ -952,15 +952,16 @@ const FAILURE_CAUSES = [
     message: '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
     primary: '다시 확인',
   },
-  {
-    name: 'transcript-saved',
+  ...[false, true].map(gpuSelected => ({
+    name: gpuSelected ? 'transcript-saved-gpu' : 'transcript-saved',
+    gpuSelected,
     events: [
       { event: 'progress', data: { type: 'progress', progress: 70, status: 'diarizing', message: '참석자 구분 중', transcript_ready: true } },
       errorEvent('CUDA failed with error out of memory', 'insufficient_memory'),
     ],
     message: '대화록은 저장했습니다. 메모리가 부족해 참석자 구분을 마치지 못했습니다.',
     primary: '결과 보기',
-  },
+  })),
 ];
 
 const runFailureCauseScenarios = async (browser, fixture) => {
@@ -1033,7 +1034,7 @@ const runFailureCauseScenarios = async (browser, fixture) => {
         await page.waitForTimeout(1500);
         assert.equal(await failurePanel.getByText(scenario.message, { exact: true }).isVisible(), true, 'focus keeps the failure card');
       }
-      if (scenario.name === 'transcript-saved') {
+      if (scenario.name.startsWith('transcript-saved')) {
         assert.equal(await failurePanel.getByRole('button', { name: '다시 시도' }).count(), 0, 'with the transcript saved, rerunning the analysis is not offered');
         await firstAction.click();
         await page.locator('.meeting-detail-title').getByText(meetingTitle, { exact: true }).waitFor({ timeout: 10000 });

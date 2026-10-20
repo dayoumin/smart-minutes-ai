@@ -3010,7 +3010,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             </div>
                             <div className="min-w-0 flex-1">
                                 <div className="writer-analysis-result-message break-words">
-                                    {failedOnGpuMemory ? 'GPU 메모리가 부족해 분석을 마치지 못했습니다.' : errorMessage}
+                                    {failedOnGpuMemory && failureAction !== 'open-result' ? 'GPU 메모리가 부족해 분석을 마치지 못했습니다.' : errorMessage}
                                 </div>
                                 {failureAction === 'device' && failedOnGpuMemory && (
                                     <p className="mt-1 text-sm text-muted-foreground">분석 장치를 CPU로 바꾸면 GPU 메모리와 상관없이 분석할 수 있습니다. CPU는 더 오래 걸릴 수 있습니다.</p>

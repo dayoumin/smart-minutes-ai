@@ -116,24 +116,28 @@ for (const connectionStarted of [false, true]) {
   });
   assert.equal(permissionView.scene, 'browser-blocked');
   assert.equal(permissionView.title, '브라우저가 연결을 막고 있습니다');
-  assert.match(permissionView.message, /‘기기에 있는 앱’을 허용/);
-  assert.doesNotMatch(permissionView.message, /확장 프로그램/);
+  assert.equal(permissionView.message, '사이트 정보에서 ‘기기에 있는 앱’을 허용해 주세요.');
+  assert.match(permissionView.help, /주소창 왼쪽/, 'help says where the site information is');
+  assert.match(permissionView.help, /새로고침/);
+  assert.doesNotMatch(`${permissionView.message} ${permissionView.help}`, /확장 프로그램/);
   const responseView = getLocalEngineConnectionView({
     snapshot: responseBlocked, pairingPhase: 'idle', connectionStarted, installerAvailable: true,
   });
   assert.equal(responseView.scene, 'browser-blocked');
-  assert.match(responseView.message, /응답은 왔지만/, 'the user is told something on this PC answered');
-  assert.match(responseView.message, /확장 프로그램/);
-  assert.match(responseView.message, /다시 설치/, 'an older install that does not list this site is also possible');
-  assert.doesNotMatch(responseView.message, /기기에 있는 앱/, 'the permission is already allowed in this case');
+  assert.equal(responseView.message, '요청을 바꾸는 확장 프로그램을 꺼 주세요.');
+  assert.match(responseView.help, /확장 프로그램을 끈 뒤 새로고침/);
+  assert.match(responseView.help, /다시 설치/, 'an older install that does not list this site is also possible');
+  assert.doesNotMatch(`${responseView.message} ${responseView.help}`, /기기에 있는 앱/, 'the permission is already allowed in this case');
   assert.equal(permissionView.secondaryAction, null, 'reinstalling cannot fix a denied permission');
   assert.equal(responseView.secondaryAction, 'download');
   assert.equal(getLocalEngineConnectionView({
     snapshot: responseBlocked, pairingPhase: 'idle', connectionStarted, installerAvailable: false,
   }).secondaryAction, null, 'no download link without a configured installer');
   for (const blockedView of [permissionView, responseView]) {
-    assert.ok(!blockedView.message.includes(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행`), 'starting the engine again cannot fix a browser block');
+    assert.ok(!`${blockedView.message} ${blockedView.help}`.includes(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행`), 'starting the engine again cannot fix a browser block');
     assert.equal(blockedView.primaryAction, 'probe');
+    assert.equal(blockedView.primaryLabel, '다시 확인');
+    assert.equal(blockedView.tone, 'warning');
     assert.equal(blockedView.busy, false);
   }
 }
@@ -168,16 +172,13 @@ const introWithHint = getLocalEngineConnectionView({
   snapshot: awaitingPermission, pairingPhase: 'idle', connectionStarted: false, installerAvailable: true,
 });
 assert.equal(introWithHint.scene, 'intro', 'not a failure before the user has done anything');
-assert.equal(introWithHint.tone, 'neutral');
-assert.match(introWithHint.message, /‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요/);
-assert.ok(introWithHint.message.includes(`처음이면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 받아 설치하세요`));
+assert.equal(introWithHint.tone, 'info');
+assert.equal(introWithHint.title, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 필요합니다`);
+assert.equal(introWithHint.message, '연결 확인 후 Chrome이 물으면 ‘허용’을 눌러 주세요.');
 assert.equal(introWithHint.primaryAction, 'probe');
 assert.equal(introWithHint.secondaryAction, 'download');
-assert.doesNotMatch(getLocalEngineConnectionView({
-  snapshot: awaitingPermission, pairingPhase: 'idle', connectionStarted: false, installerAvailable: false,
-}).message, /설치하세요/);
 const plainIntro = getLocalEngineConnectionView({ snapshot: initial, pairingPhase: 'idle', connectionStarted: false, installerAvailable: true });
-assert.doesNotMatch(plainIntro.message, /기기에 있는 앱/, 'no permission talk once the browser has decided');
+assert.equal(plainIntro.message, '설치했다면 연결 확인을 눌러 주세요.', 'no permission talk once the browser has decided');
 const checkingWithPrompt = getLocalEngineConnectionView({
   snapshot: { ...awaitingPermission, transport: 'checking', blockedBy: undefined },
   pairingPhase: 'idle', connectionStarted: true, permissionPromptPending: true,
@@ -194,8 +195,8 @@ const undecidedAfterCheck = getLocalEngineConnectionView({
   snapshot: awaitingPermission, pairingPhase: 'idle', connectionStarted: true, installerAvailable: true,
 });
 assert.equal(undecidedAfterCheck.scene, 'unreachable');
-assert.ok(undecidedAfterCheck.message.startsWith(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요. `));
-assert.match(undecidedAfterCheck.message, /‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요\.$/);
+assert.equal(undecidedAfterCheck.message, `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하고, Chrome이 물으면 ‘허용’을 눌러 주세요.`);
+assert.match(undecidedAfterCheck.help, /‘기기에 있는 앱’을 물으면 ‘허용’을 누르세요/);
 assert.equal(undecidedAfterCheck.secondaryAction, 'download', 'a first-time user without the engine keeps the install path');
 assert.equal(undecidedAfterCheck.primaryAction, 'probe');
 const heldBackground = getLocalEngineConnectionView({
@@ -205,7 +206,7 @@ assert.equal(heldBackground.scene, 'unreachable', 'a held background re-check do
 assert.equal(heldBackground.busy, false);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...initial, transport: 'unreachable' }, pairingPhase: 'idle', connectionStarted: true,
-}).message, `설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`, 'a decided permission keeps the plain message');
+}).message, `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인해 주세요.`, 'a decided permission keeps the plain message');
 
 // Coordinator: a failed probe asks the browser, then whether the engine answered at all.
 const credentials = { current: () => null, replace: () => true, clear: () => {}, requestHeaders: () => ({}) };

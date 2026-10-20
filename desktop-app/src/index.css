@@ -398,6 +398,16 @@
 
   .btn-ghost:hover { background-color: var(--surface-action-hover-bg); }
 
+  /* Disabled but still focusable (aria-disabled), so pressing it can point to the reason. */
+  .btn[aria-disabled="true"],
+  .btn[aria-disabled="true"]:hover {
+    border: 1px solid var(--border-default);
+    background-color: var(--color-neutral-100);
+    color: var(--text-muted);
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
   .icon-button {
     @apply inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[var(--radius-btn)] p-0 text-muted-foreground transition-colors;
   }
@@ -1548,10 +1558,6 @@
     @apply flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end;
   }
 
-  .writer-action-bar-connection {
-    @apply sm:items-stretch sm:justify-between;
-  }
-
   .writer-primary-actions {
     @apply flex shrink-0 items-center justify-end gap-2;
   }
@@ -1579,10 +1585,6 @@
 
   .writer-start-button {
     @apply min-w-28 px-5 font-semibold;
-  }
-
-  .writer-start-button-connection-pending {
-    background: var(--color-neutral-500);
   }
 
   .writer-analysis-blocked-note {
@@ -1715,96 +1717,135 @@
     }
   }
 
-  .local-engine-connection {
-    --local-engine-tone: var(--status-neutral-progress);
-    --local-engine-tone-soft: var(--status-neutral-bg);
-    @apply grid min-w-0 flex-1 items-center gap-x-4 gap-y-2 border px-4 py-3;
+  /* Web connection build: one status line, the buttons that fix its step, then 분석 시작 (design.md 동작 줄 v2). */
+  .writer-action-row {
+    @apply grid items-start gap-x-4 gap-y-2;
     grid-template-columns: minmax(0, 1fr) auto;
-    border-color: color-mix(in srgb, var(--local-engine-tone) 24%, var(--border-default));
-    border-radius: var(--radius-card);
-    background: color-mix(in srgb, var(--local-engine-tone-soft) 64%, var(--color-neutral-0));
+    grid-template-areas:
+      "status actions"
+      "help help";
+  }
+
+  .writer-status-line {
+    --writer-status-tone: var(--status-info-progress);
+    @apply grid min-w-0 gap-x-2;
+    grid-area: status;
+    /* icon | title | ? | rest: the ? follows the title while the message runs the full width. */
+    grid-template-columns: 1rem minmax(0, max-content) 1.5rem minmax(0, 1fr);
+    grid-template-rows: auto auto;
+    align-content: center;
+    min-height: 2.5rem;
+  }
+
+  .writer-status-warning {
+    --writer-status-tone: var(--status-warning-progress);
+  }
+
+  .writer-status-error {
+    --writer-status-tone: var(--status-error-progress);
+  }
+
+  .writer-status-success {
+    --writer-status-tone: var(--status-success-progress);
+  }
+
+  .writer-status-busy {
+    --writer-status-tone: var(--text-muted);
+  }
+
+  .writer-status {
+    display: grid;
+    grid-column: 1 / -1;
+    grid-row: 1 / -1;
+    grid-template-columns: subgrid;
+    grid-template-rows: subgrid;
+    min-width: 0;
+    border-radius: var(--radius-btn);
+  }
+
+  .writer-status:focus {
+    outline: none;
+  }
+
+  .writer-status:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+  }
+
+  .writer-status-icon {
+    @apply inline-flex h-5 items-center;
+    grid-column: 1;
+    grid-row: 1;
+    color: var(--writer-status-tone);
+  }
+
+  .writer-status-title {
+    @apply text-sm font-semibold leading-5;
+    grid-column: 2;
+    grid-row: 1;
+    color: var(--text-default);
+    word-break: keep-all;
+  }
+
+  .writer-status-message {
+    @apply text-[13px] leading-5;
+    grid-column: 2 / -1;
+    grid-row: 2;
+    color: var(--text-muted);
+    word-break: keep-all;
+  }
+
+  /* Nothing blocked: a quiet 연결됨 only. */
+  .writer-action-row[data-stage="ready"] .writer-status-title {
+    @apply text-[13px] font-normal;
+    color: var(--text-muted);
+  }
+
+  .writer-status-help-toggle {
+    @apply inline-flex h-6 w-6 items-center justify-center p-0;
+    grid-column: 3;
+    grid-row: 1;
+    /* A 24px target drawn over the 20px title line, so the line does not grow. */
+    margin-block: -0.125rem;
+    border: 0;
+    border-radius: var(--radius-btn);
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .writer-status-help-toggle:hover,
+  .writer-status-help-toggle[aria-expanded="true"] {
+    background: var(--surface-action-hover-bg);
     color: var(--text-default);
   }
 
-  .local-engine-connection-info {
-    --local-engine-tone: var(--status-info-progress);
-    --local-engine-tone-soft: var(--status-info-bg);
+  .writer-status-help-toggle:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 1px;
   }
 
-  .local-engine-connection-warning {
-    --local-engine-tone: var(--status-warning-progress);
-    --local-engine-tone-soft: var(--status-warning-bg);
-  }
-
-  .local-engine-connection-error {
-    --local-engine-tone: var(--status-error-progress);
-    --local-engine-tone-soft: var(--status-error-bg);
-  }
-
-  .local-engine-connection-success {
-    --local-engine-tone: var(--status-success-progress);
-    --local-engine-tone-soft: var(--status-success-bg);
-  }
-
-  .local-engine-connection-status {
-    @apply flex min-w-0 items-start gap-3;
-  }
-
-  .local-engine-connection-icon {
-    @apply mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center;
+  .writer-status-help {
+    @apply px-3 py-2 text-[13px] leading-5;
+    grid-area: help;
+    border: 1px solid var(--border-default);
     border-radius: var(--radius-btn);
-    background: color-mix(in srgb, var(--local-engine-tone) 12%, transparent);
-    color: var(--local-engine-tone);
-  }
-
-  .local-engine-connection-copy {
-    @apply flex min-w-0 flex-col gap-0.5;
-  }
-
-  .local-engine-connection-heading {
-    @apply flex min-w-0 items-center gap-1.5;
-  }
-
-  .local-engine-connection-copy strong {
-    @apply text-sm font-semibold;
-  }
-
-  .local-engine-connection-copy span {
-    @apply text-xs leading-5;
-    word-break: keep-all;
+    background: var(--color-neutral-50);
     color: var(--text-muted);
+    word-break: keep-all;
+  }
+
+  .writer-status-help[hidden] {
+    display: none;
+  }
+
+  .writer-action-buttons {
+    @apply flex items-start justify-end gap-2;
+    grid-area: actions;
   }
 
   .local-engine-pairing-dialog:focus-visible {
     outline: 2px solid var(--focus-ring-color);
     outline-offset: 2px;
-  }
-
-  .local-engine-connection-status:focus {
-    outline: none;
-  }
-
-  .local-engine-connection-actions {
-    @apply grid shrink-0 items-center justify-end gap-1.5;
-    grid-auto-columns: max-content;
-    grid-auto-flow: column;
-  }
-
-  .local-engine-connection-actions .btn {
-    @apply h-8 justify-center gap-1.5 px-2 text-xs;
-    white-space: nowrap;
-  }
-
-  .local-engine-help-action {
-    color: var(--text-muted);
-  }
-
-  .local-engine-help {
-    @apply text-xs leading-5;
-    grid-column: 1 / -1;
-    padding-top: 0.5rem;
-    border-top: 1px solid color-mix(in srgb, var(--local-engine-tone) 18%, transparent);
-    color: var(--text-muted);
   }
 
   .local-engine-pairing-backdrop {
@@ -1928,18 +1969,13 @@
     @apply mt-4 text-xs leading-5 text-muted-foreground;
   }
 
-  @container writer (max-width: 40rem) {
-    .writer-action-bar-connection {
-      flex-direction: column;
-      align-items: stretch;
-    }
-
-    .local-engine-connection {
+  @container writer (max-width: 39.99rem) {
+    .writer-action-row {
       grid-template-columns: minmax(0, 1fr);
-    }
-
-    .local-engine-connection-actions {
-      justify-content: flex-start;
+      grid-template-areas:
+        "status"
+        "help"
+        "actions";
     }
   }
 

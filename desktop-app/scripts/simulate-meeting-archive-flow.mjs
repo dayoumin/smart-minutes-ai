@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
 const shouldStartServer = !process.env.APP_URL;
 
 const waitForApp = async (url, timeoutMs = 30000) => {
@@ -21,18 +22,31 @@ const waitForApp = async (url, timeoutMs = 30000) => {
   throw new Error(`Timed out waiting for ${url}`);
 };
 
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
+
 const startServer = async () => {
-  if (!shouldStartServer) return null;
-  try {
-    await waitForApp(APP_URL, 1000);
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start a server only when the configured port is unused.
   }
   const url = new URL(APP_URL);
+  url.port = String(await getAvailablePort(url.hostname));
+  APP_URL = url.toString();
   const child = spawn(
     process.env.ComSpec ?? 'cmd.exe',
-    ['/d', '/s', '/c', `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5173'}`],
+    ['/d', '/s', '/c', `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`],
     {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
       env: { ...process.env, BROWSER: 'none' },

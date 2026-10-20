@@ -48,6 +48,8 @@ For the broader user-facing scenario matrix across file length, file type, stop/
 - `corepack pnpm --dir desktop-app test:writer-model-readiness`
 - `corepack pnpm --dir desktop-app test:topic-generation-ui`
 
+Without `APP_URL`, browser simulations start this checkout's Vite on a free port and stop it afterwards, so a server from another worktree on 5173 is never tested by mistake; set `APP_URL` only to reuse a server started from this checkout (`test:audio-playback` always needs it).
+
 ## Backend API contract integration
 
 Run `backend/.venv-desktop/Scripts/python.exe -B -X utf8 -m unittest backend.test_authenticated_web_flow`

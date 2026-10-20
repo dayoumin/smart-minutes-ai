@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
 const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
 // Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
@@ -61,18 +62,30 @@ const stopServer = async (child) => {
   ]);
 };
 
-const startServer = async () => {
-  if (!shouldStartServer) return null;
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
 
-  try {
-    await waitForApp(APP_URL, 1000);
+const startServer = async () => {
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start local Vite server.
   }
 
   const url = new URL(APP_URL);
-  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5173'}`;
+  url.port = String(await getAvailablePort(url.hostname));
+  APP_URL = url.toString();
+  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`;
   const child = process.platform === 'win32'
     ? spawn(
       process.env.ComSpec ?? 'cmd.exe',
@@ -86,7 +99,7 @@ const startServer = async () => {
     )
     : spawn(
       'corepack',
-      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port || '5173'],
+      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port, '--strictPort', '--configLoader', 'runner'],
       {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, BROWSER: 'none' },

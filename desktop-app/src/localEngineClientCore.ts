@@ -4,6 +4,8 @@ export interface LocalEngineClientDependencies {
     fetch: typeof fetch;
     captureAuthorizationRecovery?: (authorization: string) => (() => Promise<LocalEngineAuthorizationRecovery | null>) | null;
     beginProtectedActivity?: (authorization: string, signal?: AbortSignal) => () => void;
+    /** Runs before every request; throwing keeps the request from leaving the browser. */
+    beforeRequest?: (options: { userInitiated: boolean }) => Promise<void>;
 }
 
 export interface LocalEngineAuthorizationRecovery {
@@ -14,10 +16,14 @@ export interface LocalEngineAuthorizationRecovery {
 
 export interface LocalEngineRequestInit extends RequestInit {
     timeoutMs?: number;
+    /** The user asked for this request, so the browser may show its permission prompt. */
+    userInitiated?: boolean;
 }
 
 export interface LocalEngineClient {
     probe: (init?: LocalEngineRequestInit) => Promise<Response>;
+    /** Resolves when the engine answered at all, without reading the (opaque) response. */
+    reach: (init?: LocalEngineRequestInit) => Promise<Response>;
     pair: (path: '/api/pair/start' | '/api/pair/complete' | '/api/pair/restore' | '/api/pair/forget', init?: LocalEngineRequestInit) => Promise<Response>;
     session: (
         path: '/api/session/renew' | '/api/session/revoke',
@@ -126,7 +132,7 @@ export const createLocalEngineClient = (
         includeRuntimeHeaders: boolean,
         explicitSessionToken = '',
     ): Promise<Response> => {
-        const { timeoutMs, signal: callerSignal, ...requestInit } = init;
+        const { timeoutMs, userInitiated = false, signal: callerSignal, ...requestInit } = init;
         const controller = new AbortController();
         const handleCallerAbort = () => controller.abort();
         const timeout = timeoutMs
@@ -147,6 +153,9 @@ export const createLocalEngineClient = (
         }
 
         try {
+            if (dependencies.beforeRequest) {
+                await awaitWithAbort(dependencies.beforeRequest({ userInitiated }), controller.signal);
+            }
             const baseUrl = await awaitWithAbort(
                 dependencies.resolveBaseUrl(controller.signal),
                 controller.signal,
@@ -219,6 +228,7 @@ export const createLocalEngineClient = (
 
     return {
         probe: (init = {}) => execute('/api/probe', init, false),
+        reach: (init = {}) => execute('/api/probe', { ...init, mode: 'no-cors', credentials: 'omit' }, false),
         pair: (path, init = {}) => execute(path, init, false),
         session: (path, sessionToken, init = {}) => execute(path, init, false, sessionToken),
         request,

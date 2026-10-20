@@ -3,15 +3,22 @@ import { LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
 import { createBrowserApprovalToken, LocalEngineBrowserCredentialStore } from './localEngineBrowserCredential.ts';
 import type {
     LocalEngineAuthorizationState,
+    LocalEngineBlockedCause,
     LocalEngineCapability,
     LocalEngineProbePayload,
     LocalEngineTransportState,
 } from './localEngineConnection';
+// Explicit extension: the Node test scripts load this module without a bundler.
+import { LocalEnginePermissionPromptDeferredError } from './localEngineBrowserAccess.ts';
+import type { LocalEngineBrowserAccessState } from './localEngineBrowserAccess';
 import type {
     LocalEnginePairingStart,
     LocalEngineSessionCredential,
     LocalEngineSessionCredentialStore,
 } from './localEngineSession';
+
+// Short: a stopped engine refuses at once, and a slow answer must not hold the failure screen.
+const REACH_CHECK_TIMEOUT_MS = 3000;
 
 export type LocalEnginePairingPhase =
     | 'idle'
@@ -31,7 +38,9 @@ export interface LocalEnginePairingState {
 }
 
 export interface LocalEngineConnectionCoordinatorCallbacks {
-    onTransport: (transport: LocalEngineTransportState) => void;
+    onTransport: (transport: LocalEngineTransportState, detail?: { blockedBy?: LocalEngineBlockedCause }) => void;
+    /** Asked after a probe gets no response, to separate a browser block from a stopped engine. */
+    browserAccessState?: () => Promise<LocalEngineBrowserAccessState>;
     onProbe: (probe: LocalEngineProbePayload) => void;
     onAuthorization: (
         authorization: LocalEngineAuthorizationState,
@@ -99,6 +108,7 @@ export class LocalEngineConnectionCoordinator {
     private approvalAbort: AbortController | null = null;
     private readonly browserCredentials: LocalEngineBrowserCredentialStore;
     private explicitlyDisconnected = false;
+    private userProbesInFlight = 0;
 
     constructor(
         client: LocalEngineClient,
@@ -163,11 +173,23 @@ export class LocalEngineConnectionCoordinator {
         return true;
     }
 
-    async probe(): Promise<LocalEngineProbePayload | null> {
+    async probe({ userInitiated = false }: { userInitiated?: boolean } = {}): Promise<LocalEngineProbePayload | null> {
+        // A background re-check would supersede the user's check while Chrome's prompt is open,
+        // so the user's allow would land on a stale operation and skip pairing.
+        if (!userInitiated && this.userProbesInFlight > 0) return null;
+        if (userInitiated) this.userProbesInFlight += 1;
+        try {
+            return await this.runProbe(userInitiated);
+        } finally {
+            if (userInitiated) this.userProbesInFlight -= 1;
+        }
+    }
+
+    private async runProbe(userInitiated: boolean): Promise<LocalEngineProbePayload | null> {
         const operationId = this.beginTransportOperation();
         this.callbacks.onTransport('checking');
         try {
-            const response = await this.client.probe({ cache: 'no-store' });
+            const response = await this.client.probe({ cache: 'no-store', userInitiated });
             if (!response.ok) throw await responseError(response, 'probe');
             const parsed = this.parsers.probe(await response.json());
             if (!parsed) {
@@ -184,13 +206,37 @@ export class LocalEngineConnectionCoordinator {
             }
             return parsed;
         } catch (error) {
-            if (this.isLatestTransport(operationId)) {
-                this.callbacks.onTransport(
-                    error instanceof LocalEngineConnectionRequestError ? 'error' : 'unreachable',
-                );
+            if (error instanceof LocalEngineConnectionRequestError) {
+                if (this.isLatestTransport(operationId)) this.callbacks.onTransport('error');
+                throw error;
             }
-            if (error instanceof LocalEngineConnectionRequestError) throw error;
+            if (this.isLatestTransport(operationId)) {
+                const blockedBy = error instanceof LocalEnginePermissionPromptDeferredError
+                    ? 'permission-prompt'
+                    : await this.diagnoseUnreachable();
+                if (this.isLatestTransport(operationId)) {
+                    this.callbacks.onTransport('unreachable', { blockedBy });
+                }
+            }
             throw new LocalEngineConnectionRequestError('unreachable', '로컬 엔진에 연결할 수 없습니다.');
+        }
+    }
+
+    // A failed fetch looks the same whether the engine is stopped or the browser refused it.
+    private async diagnoseUnreachable(): Promise<LocalEngineBlockedCause | undefined> {
+        const access = await this.callbacks.browserAccessState?.().catch(() => 'unsupported' as const) ?? 'unsupported';
+        if (access === 'denied') return 'browser-permission';
+        // Still undecided after a request: either the prompt was closed, or nothing answered
+        // and Chrome never asked (Chrome 155 fails a closed port in ms without a prompt).
+        // Another request here would raise (or re-raise) the prompt, so classify without one.
+        if (access === 'prompt') return 'permission-prompt';
+        try {
+            // A no-cors request still completes against a running engine when only the
+            // readable response was refused, so it separates that from a stopped engine.
+            await this.client.reach({ cache: 'no-store', timeoutMs: REACH_CHECK_TIMEOUT_MS });
+            return 'response-blocked';
+        } catch {
+            return undefined;
         }
     }
 

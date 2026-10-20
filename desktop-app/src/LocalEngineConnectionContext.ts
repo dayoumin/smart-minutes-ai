@@ -10,7 +10,8 @@ export interface LocalEngineConnectionContextValue {
     beginTransportCheck: () => number;
     reportTransport: (checkId: number, transport: LocalEngineTransportState) => void;
     pairingState: LocalEnginePairingState;
-    probeLocalEngine: () => Promise<LocalEngineProbePayload | null>;
+    /** userInitiated: the user pressed a check button, so the browser may ask for access now. */
+    probeLocalEngine: (options?: { userInitiated?: boolean }) => Promise<LocalEngineProbePayload | null>;
     startPairing: () => Promise<LocalEnginePairingStart | null>;
     completePairing: (pairingId: string, code: string) => Promise<boolean>;
     resetPairing: (reason?: string) => void;

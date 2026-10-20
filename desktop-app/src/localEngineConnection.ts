@@ -28,7 +28,17 @@ export interface LocalEngineConnectionSnapshot {
     updateRequired: boolean;
     checkedAt: number | null;
     reason?: string;
+    /** Why an unreachable engine is not the engine's fault, when the browser lets us tell. */
+    blockedBy?: LocalEngineBlockedCause;
 }
+
+/**
+ * - browser-permission: the browser denied this site access to apps on this PC.
+ * - permission-prompt: the browser has not been allowed yet; it asks on the user's next check.
+ * - response-blocked: the engine answered but the browser refused the response,
+ *   e.g. an extension rewrote the request's Origin so CORS no longer matched.
+ */
+export type LocalEngineBlockedCause = 'browser-permission' | 'permission-prompt' | 'response-blocked';
 
 export interface LocalEngineProbePayload {
     product_id: string;
@@ -65,10 +75,15 @@ export const updateLocalEngineTransport = (
     previous: LocalEngineConnectionSnapshot,
     transport: LocalEngineTransportState,
     checkedAt = Date.now(),
+    blockedBy?: LocalEngineBlockedCause,
 ): LocalEngineConnectionSnapshot => ({
         ...previous,
         transport,
         checkedAt,
+        // A background re-check keeps the known block so its guidance does not flicker away.
+        blockedBy: transport === 'checking'
+            ? previous.blockedBy
+            : transport === 'unreachable' ? blockedBy : undefined,
     });
 
 export const parseLocalEngineProbe = (value: unknown): LocalEngineProbePayload | null => {
@@ -115,6 +130,7 @@ export const applyLocalEngineProbe = (
         capabilities: compatible ? capabilities : new Set(),
         updateRequired: payload.update_required,
         checkedAt,
+        blockedBy: undefined,
         reason: compatible ? undefined : '지원하지 않는 로컬 엔진 API 버전입니다.',
     };
 };

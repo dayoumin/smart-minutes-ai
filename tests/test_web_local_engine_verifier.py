@@ -52,9 +52,32 @@ class WebLocalEngineVerifierTest(unittest.TestCase):
             "distributionReady": False,
             "signed": False,
             "bind": "127.0.0.1:17863",
+            "storageRequirements": {
+                "models": {"requiredBytes": 30, "recommendedBytes": 40},
+                "analysisTemp": {"requiredBytes": 10, "recommendedBytes": 20},
+                "results": {"requiredBytes": 5, "recommendedBytes": 6},
+            },
             "payloadFiles": payload,
         }), encoding="utf-8")
         return artifact
+
+    def test_manifest_requires_post_install_storage_requirements(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact = self._write_artifact(Path(temp_dir))
+            manifest_path = artifact / "poc-manifest.json"
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+            _manifest, snapshot = verifier.verify_manifest(artifact)
+            self.assertEqual(len(snapshot), 3)
+
+            missing = {key: value for key, value in manifest.items() if key != "storageRequirements"}
+            manifest_path.write_text(json.dumps(missing), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "does not declare post-install storage requirements"):
+                verifier.verify_manifest(artifact)
+
+            manifest["storageRequirements"]["results"] = {"requiredBytes": 6, "recommendedBytes": 5}
+            manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "storage requirements are invalid"):
+                verifier.verify_manifest(artifact)
 
     def test_manifest_is_closed_world_and_rejects_unlisted_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

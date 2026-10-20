@@ -2,10 +2,19 @@ param(
     [string]$Python = "backend\.venv-desktop\Scripts\python.exe",
     [string]$Makensis = "makensis.exe",
     [string]$ArtifactDir = "releases\web-local-engine-poc",
-    [string]$OutputDir = "releases\web-local-engine-installer-poc"
+    [string]$OutputDir = "releases\web-local-engine-installer-poc",
+    # Brand shown in installer text (Start menu connect shortcut, publisher).
+    # Built from code points because Windows PowerShell 5.1 reads this BOM-less
+    # script as ANSI; the default spells the current brand.
+    [string]$BrandName = (-join [char[]](0xBC14, 0xB85C, 0xB85D))
 )
 
 $ErrorActionPreference = "Stop"
+
+# The brand becomes part of a Start menu file name and NSIS strings.
+if ($BrandName -notmatch '^[\p{L}\p{N}][\p{L}\p{N} _-]{0,38}[\p{L}\p{N}]$|^[\p{L}\p{N}]$') {
+    throw "BrandName must be 1-40 letters, digits, spaces, hyphens or underscores."
+}
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ExpectedArtifactDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "releases\web-local-engine-poc"))

@@ -20,6 +20,9 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+from web_local_engine_installer_preflight import storage_requirements_from_manifest  # noqa: E402
+
 
 ENGINE_EXE_NAME = "barorok-local-engine-x86_64-pc-windows-msvc.exe"
 # Window titles carry the product display name, which is written only in configs/brand.json.
@@ -485,6 +488,13 @@ def verify_manifest(artifact: Path) -> tuple[dict[str, object], dict[str, tuple[
         fail("The PoC manifest must remain unsigned and non-distributable")
     if manifest.get("bind") != "127.0.0.1:17863":
         fail("The PoC manifest does not declare the fixed loopback listener")
+    try:
+        storage = storage_requirements_from_manifest(manifest)
+    except ValueError:
+        fail("The PoC manifest storage requirements are invalid")
+    if any(item.required_bytes is None for item in storage.values()):
+        # Without these sizes every installer run asks the user to confirm.
+        fail("The PoC manifest does not declare post-install storage requirements")
     artifact_root = artifact.resolve()
     for candidate in artifact_root.rglob("*"):
         attributes = getattr(candidate.lstat(), "st_file_attributes", 0)

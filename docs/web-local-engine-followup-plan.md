@@ -177,6 +177,8 @@ pairing/session 최소 PoC를 먼저 통과한다.
   byte 요구량과 결과 action을 소비하는 current-user installer 소스, Start Menu 동작,
   same-volume stage·rollback과 선언 파일 기반 정리 계약까지 작성하고 좁은 테스트를
   통과했다. 모델·temp·results 권장량은 추측하지 않고 후속 실측 전까지 `unknown`으로 둔다.
+  2026-10-20부터는 release build가 이 세 값을 manifest에 기록한다(아래
+  `설치 전 점검: 모델·작업 공간 크기와 표시 이름 — 2026-10-20`).
 - 모델 제외 frozen payload도 Python 분석 runtime과 native dependency 때문에 현재
   1,117,850,125 bytes(4,887 files, 약 1.04 GiB)다. 회사 PC에서는 이를 다시 build하거나
   설치하지 않았으며, 실제 helper/NSIS compile과 fresh install·update·중단 복구·uninstall
@@ -736,3 +738,22 @@ $auditPython = 'D:\Projects\LMO_audio\backend\.venv-desktop\Scripts\python.exe'
 - 사용자의 새 설치 오류: 첨부 `실행 중인 로컬 엔진을 정리하지 못했습니다`는 현재 PC에서 새 파일 설치 중 발생한 것으로 사용자에게 확인했다. 당시 바로록 엔진은 검사 소유29876 하나·17863 listener였고 설치/점검 helper 프로세스는 이미 없었다. 이 문구의 소스 위치는 NSIS `PreflightAttempts > 10`이며 실행 중 엔진 종료/재점검 반복 한도다. 당시 installer의 실제 helper exit·실행 컨텍스트/data root는 확보하지 못해 경로 불일치를 확정 원인으로 쓰지 않는다. 로그상 검사 엔진은 사용자의 설치 시도 동안 계속 응답했고 종료 요청 로그는 없었다.
 - 복구 조치: 검사 소유PID29876/EXE 경로를 확인하고 시작 때와 같은 환경의 `--stop`을 보냈다. 07:00:20 KST stop 요청/서버 정상 종료, helper exit0·본체 소멸·17863 해제를 확인했으며 강제 종료/사용자 데이터 삭제는 없다. 사용자에게 새 설치 파일 재실행과 설치 뒤 Windows 시작 메뉴 `바로록 연결`을 안내했다. 이후 사용자 설치 엔진을 검사 엔진으로 간주해 임의 종료하지 않는다. `stop-before-user-install.json`에 근거를 남겼다.
 - 실제 사용자 다운로드의 전체 검증: `C:\Users\MS\Downloads\Barorok-Local-Engine-Setup-0.1.5-beta-20261020-installerfix.exe`는06:57:51 KST·442773726bytes·전체SHA `4003d59a5b50c11be5674d1cfa9a6be2806afd87d1ab20cccb28c2384ad2266e`로 공개파일/실제 설치 후보와 일치했다(`user-download-verification.json`). 앞의 ‘새 Chrome 다운로드 저장은 반복하지 않았다’는 검사 자동화의 이력이며 사용자 실제 다운로드는 이제 별도 확인됐다. 실행 중 엔진 자동 종료 업데이트·사용자 재설치/시작 메뉴 연결·실분석 완료는 여전히 검증 전이다. 이 컴퓨터 결과를 회사 PC의 설치/보안 정책 증거로 확대하지 않는다.
+
+### 설치 전 점검: 모델·작업 공간 크기와 표시 이름 — 2026-10-20
+
+- 증상: 공개 `0.1.8-beta-20261020` 설치 파일을 정상 PC에 설치하면 점검 결과 중 `installer_model_space`·`installer_analysis_temp_space`·`installer_results_space`가 `unknown`/`space_requirement_unavailable`이었다. 어떤 release script도 이 세 역할의 크기를 manifest에 쓰지 않아 도우미가 exit10을 내고, NSIS가 모든 사용자에게 "권장값은 아직 확정되지 않았습니다" Yes/No를 띄웠다.
+- 사용자 결정 1: 필요한 정보를 채운다. `scripts/build_web_local_engine_poc.ps1`이 `backend/web_local_engine_storage_requirements.py`의 결과를 `poc-manifest.json`의 `storageRequirements`(`models`/`analysisTemp`/`results`, 각 `requiredBytes`·`recommendedBytes`·`basis`)에 넣는다. 도우미는 이 블록을 엄격히 검증하고, 블록이 없는 이전 manifest만 기존처럼 `unknown`으로 둔다. `verify_web_local_engine_poc.py`(설치 파일 빌드 전 `--manifest-only` 포함)는 블록이 없거나 잘못되면 실패한다.
+- 값과 근거(모두 사용자 데이터 볼륨 `%LOCALAPPDATA%\Barorok\LocalEngine` 기준):
+
+  | 역할 | 필요(required) | 통과 기준(recommended) | 근거 |
+  | --- | --- | --- | --- |
+  | 모델 | 11,185,989,538 B (10.42 GiB) | 12,210,001,824 B (11.37 GiB) | 필요 = 음성 인식 large-v3 3,090,839,274(`main.MODEL_DOWNLOAD_EXPECTED_BYTES`) + 참석자 구분 33,695,880(11개 파일, `model-download-distribution-evaluation.md`) + 기본 요약 모델 `gemma4:e2b` 4,587,156,505(2026-10-19 실측) + 설치된 요약 프로그램 3,474,297,879(이 개발 PC의 Ollama 설치 폴더 실측). 통과 기준 = 요약 프로그램을 푸는 순간의 최고치(앞 두 모델 + 압축 파일 1,600,000,000(`OLLAMA_RUNTIME_EXPECTED_BYTES`, 실제 v0.30.6 zip 1,456,569,673) + 푼 사본 2개) + 다운로드 여유 512 MiB |
+  | 분석 임시 | 1,764,941,824 B (1.64 GiB) | 2,916,941,824 B (2.72 GiB) | 분석 직전 점검과 같은 식(원본 + 16 kHz mono WAV×2 + 1 GiB)을 최대 길이 7,200초에 적용. 필요는 16 kHz mono PCM 원본, 통과 기준은 48 kHz stereo PCM16 WAV 녹음(1,382,400,000 B) |
+  | 결과 | 268,435,456 B (256 MiB) | 1,073,741,824 B (1 GiB) | 필요 = 분석 직전 결과 폴더 여유 점검(`ANALYSIS_OUTPUT_STORAGE_SAFETY_BYTES`). 통과 기준 = 1 GiB(2026-10-19 120분 결과 2,757,163 B 기준 약 290건 추가) |
+
+- 세 역할이 같은 볼륨이면 설치 payload를 뺀 여유가 합계 13,219,366,818 B(12.31 GiB) 미만일 때 `space_insufficient_for_future_readiness`, 16,200,685,472 B(15.09 GiB) 미만일 때 `space_below_recommended` 경고다. 이 개발 PC의 C: 여유 약 109 GB는 통과한다. 기본 요약 모델이 바뀌면 `test_sources_still_match_backend_constants`가 실패하므로 새 모델 크기를 다시 재고 값을 고친다. E4B(약 6.58 GB)를 고른 사용자는 이 값보다 더 필요하다.
+- 업그레이드: 이미 받은 모델·요약 프로그램(`models`, `runtime` 폴더의 일반 파일 바이트, junction 등 재분석 지점은 제외·최대 100,000항목)과 소유 marker가 있는 기존 설치 폴더 크기는 다시 필요하지 않으므로 모델·임시·결과 점검에서 뺀다(`measured.reused_bytes`). 설치·staging 차단 점검은 그대로 전체 payload를 센다. 정리·검증·실행 probe는 `storageRequirements`를 읽지 않아, 다른 버전의 블록 때문에 소유 확인이 실패하지 않는다.
+- 경고 문구: 도우미가 결정 INI에 `free_space_gb`(통과 기준까지 모자란 양, GiB 올림)와 `free_space_drive`(예: `C:`)를 ASCII로 남기고, NSIS가 "음성 분석 프로그램이 쓸 모델과 회의 분석 작업 파일을 저장할 공간이 부족합니다. C: 드라이브에서 약 N GB를 비워 주세요. 설치는 지금 계속하고, 회의를 분석하기 전에 비워도 됩니다."로 묻는다. 그 밖의 확인 질문(임시 파일 정리 지연, 공간 조회 실패)은 `권장값` 대신 "저장 공간 확인이나 임시 파일 정리 중 일부를 마치지 못했습니다"로 묻는다.
+- 사용자 결정 2(같은 날 수정): 설치 프로그램의 표시 이름은 브랜드 없이 `음성 분석`이다. 브랜드는 언제든 바뀔 수 있어 이름에 넣지 않는다. 바뀐 것은 `PRODUCT_NAME`(설치 창·앱 목록 이름), 시작 메뉴 폴더 `음성 분석`, 바로가기 `음성 분석 시작`·`음성 분석 종료`, `로컬 엔진`이 들어간 MessageBox 9개(문장 안에서는 `음성 분석 프로그램`)다. 브랜드가 필요한 곳(연결 바로가기, 앱 목록 게시자)은 `!define BRAND_NAME` 하나만 쓰고, `build_web_local_engine_installer_poc.ps1 -BrandName`이 `/DBRAND_NAME`으로 넘긴다(기본값은 현재 브랜드, PowerShell 5.1 인코딩 때문에 문자 코드로 만든다). NSIS에는 브랜드 문자열이 없고, 옛 release가 만든 시작 메뉴 폴더·바로가기 이름만 그대로 적혀 있다. "바로록이 소유하지 않은 파일" 문구는 "이 설치 프로그램이 만들지 않은 파일"로 바꿨다. `PRODUCT_KEY`(`BarorokLocalEngine`), 설치 폴더 `Programs\Barorok\LocalEngine`, 엔진 exe, mutex, 설치 marker는 그대로라 업그레이드가 이전 설치를 찾는다. 설치·제거 모두 옛 `바로록 로컬 엔진` 시작 메뉴 폴더의 바로가기 4개를 지우고 빈 폴더만 지운다.
+- 연결 바로가기는 `<브랜드> 연결`(현재 `바로록 연결`)이다. 웹 문구가 "Windows 시작 메뉴에서 바로록 연결을 실행하세요"이고, 브랜드를 상수로 모으면 웹 문구와 바로가기가 같은 값을 따른다. `--pair`는 시작과 같은 동작이다. 브랜드가 바뀐 뒤 설치하면 `음성 분석` 폴더의 `* 연결.lnk`를 먼저 지워 옛 브랜드 바로가기가 남지 않는다. 설치 파일 이름 `Barorok-Local-Engine-Setup-*.exe`는 다운로드 경로와 묶여 있어 바꾸지 않았다.
+- 검증: backend 52개 중 50개 통과. 실패 2개(`test_main_source_smoke_uses_isolated_targets_and_leaves_no_canary`, `test_main_accepts_nsis_plugins_dir_when_tmp_and_temp_differ`)는 실제 17863 포트를 보는 기존 검사이며, 이 PC에서 설치된 엔진(PID 42632)이 실행 중이라 수정 전 HEAD에서도 같은 `stop_local_engine_and_retry`로 실패한다. packaging·verifier 18개 통과(Windows PowerShell 5.1에서 manifest 정수 왕복 포함). 이 PC의 NSIS 3.11(`%LOCALAPPDATA%\tauri\nsis-3.11`)로 임시 입력을 써서 컴파일만 확인했다(오류 0, 기존 미사용 label 경고 3개). 독립 검토의 업그레이드 이중 계산 지적은 위처럼 반영했다. junction으로 모델 폴더를 다른 드라이브에 둔 경우 안내 드라이브 글자는 `LOCALAPPDATA` 기준이고, 설치된 요약 프로그램 크기는 고정한 v0.30.6 압축 해제 크기가 아니라 실측 대용값이다. 설치 파일 재빌드·새 설치/업그레이드/제거 실물 확인은 아직 하지 않았다.

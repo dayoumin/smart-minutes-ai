@@ -407,3 +407,9 @@ backend\.venv-desktop\Scripts\python.exe -c "import importlib.util; required=['P
 - 엔진 본체 변경이 없는 수정은 동일 공개 payload의 closed manifest/hash를 먼저 검증한 뒤 helper/NSIS만 재빌드할 수 있다. 새 installer revision·파일 SHA와 기존 engineVersion을 별도로 명시한다. 원래 설치 파일과 사용자 모델/결과를 보존한다.
 - 다른 세션의 로컬 `.tmp/cloudflare-web/dist`가 운영 자산과 다를 수 있다. 다운로드만 수정할 때는 현재 공개6개 자산을 별도 폴더에 받아 hash를 기록하고, 그 폴더를 지정한 배포 설정으로 검사한다. 미커밋 UI를 함께 빌드/배포하지 않는다. 이전 받기 링크는 고정된 같은 origin의 새 다운로드로 연결하고 캐시하지 않는다.
 - 이번 원인·실물 설치·배포 상태는 `docs/web-local-engine-followup-plan.md`의 `2026-10-20 수정 설치 파일 실물 재검증`과 기존 release QA 표를 따른다.
+
+### 2026-10-20 웹 연결용 설치 파일의 공간 점검 값과 표시 이름
+
+- `poc-manifest.json`에는 `storageRequirements`(모델·분석 임시·결과의 `requiredBytes`/`recommendedBytes`)가 있어야 한다. 없으면 정상 PC에서도 설치 중 확인 질문이 뜬다. `build_web_local_engine_poc.ps1`이 `backend/web_local_engine_storage_requirements.py`로 채우고, 설치 파일 빌드 전 `verify_web_local_engine_poc.py --manifest-only`가 누락·오류를 막는다. 이전 payload를 재사용해 helper/NSIS만 다시 묶을 때는 그 manifest에 블록이 없으므로 payload부터 다시 만든다.
+- 값의 근거와 바꿀 때 함께 고칠 곳은 `docs/web-local-engine-followup-plan.md`의 `설치 전 점검: 모델·작업 공간 크기와 표시 이름 — 2026-10-20`을 따른다.
+- 설치 프로그램 표시 이름은 브랜드 없는 `음성 분석`이고, 브랜드는 `-BrandName`→`/DBRAND_NAME`으로만 들어간다(NSIS에 브랜드를 직접 쓰지 않는다). `PRODUCT_KEY`·설치 폴더·엔진 exe 이름은 업그레이드 식별자라 바꾸지 않는다. 새 설치 확인 때 시작 메뉴에 `음성 분석` 폴더(음성 분석 시작·`<브랜드> 연결`·음성 분석 종료·제거)만 남고 옛 `바로록 로컬 엔진` 폴더가 사라졌는지, 앱 목록 이름과 게시자가 맞는지 함께 본다.

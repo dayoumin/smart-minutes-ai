@@ -28,6 +28,7 @@ from local_engine_preflight import (
     windows_machine_code_to_architecture,
     write_preflight_json,
 )
+from web_local_engine_storage_requirements import storage_requirements
 
 
 GIB = 1024 * 1024 * 1024
@@ -273,6 +274,114 @@ class LocalEnginePreflightTest(unittest.TestCase):
             checks["installer_model_space"]["measured"]["aggregate_required_bytes"],
             45,
         )
+
+    def test_release_storage_requirements_pass_healthy_volume_and_warn_low_volume(self) -> None:
+        derived = storage_requirements()
+        install_bytes = 300 * 1024 * 1024
+        requirements = {
+            "install": StorageRequirement(install_bytes, install_bytes),
+            "staging": StorageRequirement(install_bytes, install_bytes),
+            "models": StorageRequirement(
+                derived["models"]["requiredBytes"],
+                derived["models"]["recommendedBytes"],
+            ),
+            "analysis_temp": StorageRequirement(
+                derived["analysisTemp"]["requiredBytes"],
+                derived["analysisTemp"]["recommendedBytes"],
+            ),
+            "results": StorageRequirement(
+                derived["results"]["requiredBytes"],
+                derived["results"]["recommendedBytes"],
+            ),
+        }
+        future_checks = (
+            "installer_model_space",
+            "installer_analysis_temp_space",
+            "installer_results_space",
+        )
+        cases = (
+            (64 * 1024 ** 3, "pass", "space_sufficient"),
+            (install_bytes + 16_200_685_472, "pass", "space_sufficient"),
+            (install_bytes + 16_200_685_471, "warning", "space_below_recommended"),
+            (install_bytes + 13_219_366_817, "warning", "space_insufficient_for_future_readiness"),
+        )
+        for available, status, reason in cases:
+            with self.subTest(available=available):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    payload = self._collect_installer(
+                        Path(temp_dir),
+                        available=available,
+                        requirements=requirements,
+                    )
+                checks = {check["check_id"]: check for check in payload["checks"]}
+                self.assertEqual(payload["overall_status"], status)
+                self.assertEqual(checks["installer_install_space"]["status"], "pass")
+                for check_id in future_checks:
+                    self.assertEqual(checks[check_id]["status"], status)
+                    self.assertEqual(checks[check_id]["reason_code"], reason)
+                    self.assertEqual(checks[check_id]["measured"]["aggregate_required_bytes"], 13_219_366_818)
+                    self.assertEqual(checks[check_id]["measured"]["aggregate_recommended_bytes"], 16_200_685_472)
+                    self.assertEqual(
+                        checks[check_id]["measured"]["available_after_install_bytes"],
+                        available - install_bytes,
+                    )
+                self.assertNotIn("unknown", {check["status"] for check in payload["checks"]})
+
+    def test_upgrade_credits_existing_install_and_downloaded_models(self) -> None:
+        derived = storage_requirements()
+        install_bytes = 300 * 1024 * 1024
+        requirements = {
+            "install": StorageRequirement(install_bytes, install_bytes),
+            "staging": StorageRequirement(install_bytes, install_bytes),
+            "models": StorageRequirement(
+                derived["models"]["requiredBytes"],
+                derived["models"]["recommendedBytes"],
+            ),
+            "analysis_temp": StorageRequirement(
+                derived["analysisTemp"]["requiredBytes"],
+                derived["analysisTemp"]["recommendedBytes"],
+            ),
+            "results": StorageRequirement(
+                derived["results"]["requiredBytes"],
+                derived["results"]["recommendedBytes"],
+            ),
+        }
+        # 5 GiB free with every model already downloaded and the same release installed.
+        available = 5 * 1024 ** 3
+        reusable = {"install": install_bytes, "models": 11_185_989_538}
+        with tempfile.TemporaryDirectory() as temp_dir:
+            fresh = self._collect_installer(Path(temp_dir), available=available, requirements=requirements)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            payload = collect_installer_target_preflight(
+                self._installer_paths(Path(temp_dir)),
+                requirements,
+                request_generation=7,
+                clock=lambda: 1234,
+                run_id_factory=lambda: "run-installer",
+                volume_reader=lambda _path: VolumeSpace("shared-volume", available),
+                write_cleanup_reader=lambda _targets: WriteCleanupProbe("pass", "pass", 1, 1),
+                port_reader=lambda: PortInspection("available"),
+                reusable_bytes=reusable,
+            )
+        fresh_checks = {check["check_id"]: check for check in fresh["checks"]}
+        checks = {check["check_id"]: check for check in payload["checks"]}
+        self.assertEqual(fresh_checks["installer_model_space"]["status"], "warning")
+        self.assertEqual(fresh_checks["installer_model_space"]["measured"]["reused_bytes"], 0)
+        self.assertEqual(payload["overall_status"], "pass")
+        for check_id in ("installer_model_space", "installer_analysis_temp_space", "installer_results_space"):
+            measured = checks[check_id]["measured"]
+            self.assertEqual(checks[check_id]["status"], "pass")
+            # Only analysis temp + results + the 512 MiB-plus model headroom remain.
+            self.assertEqual(measured["aggregate_required_bytes"], 1_764_941_824 + 268_435_456)
+            self.assertEqual(
+                measured["aggregate_recommended_bytes"],
+                (12_210_001_824 - 11_185_989_538) + 2_916_941_824 + 1_073_741_824,
+            )
+            self.assertEqual(measured["available_after_install_bytes"], available)
+            self.assertEqual(measured["reused_bytes"], install_bytes + 11_185_989_538)
+        # The blocking install/staging checks still count the full staged payload.
+        self.assertEqual(checks["installer_install_space"]["measured"]["aggregate_required_bytes"], 2 * install_bytes)
+        self.assertNotIn("reused_bytes", checks["installer_install_space"]["measured"])
 
     def test_missing_requirement_is_unknown_instead_of_guessing(self) -> None:
         requirements = self._requirements(models=None)

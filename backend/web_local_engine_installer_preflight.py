@@ -5,6 +5,7 @@ import errno
 import http.client
 import json
 import os
+import re
 import stat
 import time
 from dataclasses import dataclass
@@ -59,6 +60,18 @@ EXPECTED_CHECK_IDS = (
     "installer_local_app_data_cleanup",
     "installer_fixed_port",
 )
+STORAGE_CHECK_IDS = set(EXPECTED_CHECK_IDS[:5])
+# Manifest keys written by web_local_engine_storage_requirements.py for the
+# roles the program fills after install.
+MANIFEST_STORAGE_ROLES = {
+    "models": "models",
+    "analysisTemp": "analysis_temp",
+    "results": "results",
+}
+MAX_MANIFEST_STORAGE_BYTES = 1024 ** 4
+GIB = 1024 ** 3
+MAX_REUSABLE_SCAN_ENTRIES = 100_000
+REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 CRITICAL_CHECK_IDS = {
     "installer_install_space",
     "installer_staging_space",
@@ -83,6 +96,7 @@ class InstallerDecision:
     decision: str
     primary_action: str
     exit_code: int
+    free_space_bytes: int | None = None
 
 
 def _read_json_object(path: Path, *, maximum_bytes: int, label: str) -> dict:
@@ -108,8 +122,41 @@ def _validated_payload_path(value: object) -> str:
     return str(path)
 
 
+def storage_requirements_from_manifest(
+    manifest: Mapping[str, object],
+) -> dict[str, StorageRequirement]:
+    raw = manifest.get("storageRequirements")
+    if raw is None:
+        # Manifests from earlier releases carry no post-install sizes; their
+        # checks stay advisory unknown instead of guessing.
+        return {role: StorageRequirement(None, None) for role in MANIFEST_STORAGE_ROLES.values()}
+    if not isinstance(raw, dict) or set(raw) != set(MANIFEST_STORAGE_ROLES):
+        raise ValueError("Artifact storage requirements are invalid")
+    requirements: dict[str, StorageRequirement] = {}
+    for key, role in MANIFEST_STORAGE_ROLES.items():
+        entry = raw[key]
+        if not isinstance(entry, dict):
+            raise ValueError("Artifact storage requirements are invalid")
+        values = (entry.get("requiredBytes"), entry.get("recommendedBytes"))
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value <= 0
+            or value > MAX_MANIFEST_STORAGE_BYTES
+            for value in values
+        ):
+            raise ValueError("Artifact storage requirements are invalid")
+        required, recommended = values
+        if recommended < required:
+            raise ValueError("Artifact storage requirements are invalid")
+        requirements[role] = StorageRequirement(required, recommended)
+    return requirements
+
+
 def requirements_from_artifact_manifest(
     manifest_path: str | os.PathLike[str],
+    *,
+    include_storage: bool = True,
 ) -> dict[str, StorageRequirement]:
     resolved_manifest_path = Path(manifest_path).expanduser().resolve()
     manifest = _read_json_object(
@@ -173,11 +220,14 @@ def requirements_from_artifact_manifest(
         # Transactional install/update keeps one complete staged payload before
         # swapping the current-user install tree.
         "staging": payload_requirement,
-        # Official model and analysis working-set sizes require real-device
-        # evidence. Unknown is advisory for these future-readiness roles.
-        "models": StorageRequirement(None, None),
-        "analysis_temp": StorageRequirement(None, None),
-        "results": StorageRequirement(None, None),
+        # Models, analysis temp and results are filled after install; their
+        # sizes come from the release build (see storageRequirements). Cleanup
+        # and probes skip them so an older or newer block never blocks cleanup.
+        **(
+            storage_requirements_from_manifest(manifest)
+            if include_storage
+            else {role: StorageRequirement(None, None) for role in MANIFEST_STORAGE_ROLES.values()}
+        ),
     }
 
 
@@ -292,7 +342,36 @@ def evaluate_installer_preflight(
         decision=decision,
         primary_action=primary_action,
         exit_code=INSTALLER_DECISION_EXIT_CODES[decision],
+        free_space_bytes=(
+            _free_space_shortfall(candidates)
+            if primary_action == "free_space_and_retry"
+            else None
+        ),
     )
+
+
+def _free_space_shortfall(checks: list[Mapping[str, object]]) -> int | None:
+    # Space to free so every low-space storage check passes on a re-run.
+    shortfalls: list[int] = []
+    for check in checks:
+        if (
+            check.get("check_id") not in STORAGE_CHECK_IDS
+            or check.get("action_code") != "free_space_and_retry"
+        ):
+            continue
+        measured = check["measured"]
+        target = measured.get("aggregate_recommended_bytes")
+        available = measured.get("available_after_install_bytes")
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in (target, available)):
+            continue
+        if target > available:
+            shortfalls.append(target - available)
+    return max(shortfalls) if shortfalls else None
+
+
+def _storage_drive(local_app_data: Path) -> str | None:
+    drive = PureWindowsPath(str(local_app_data)).drive
+    return drive.upper() if re.fullmatch(r"[A-Za-z]:", drive) else None
 
 
 def write_installer_decision(
@@ -301,18 +380,27 @@ def write_installer_decision(
     *,
     request_generation: int,
     temp_root: str | os.PathLike[str] | None = None,
+    storage_drive: str | None = None,
 ) -> None:
     output_path = Path(path).expanduser().resolve()
     if not is_inside_user_temp(output_path, temp_root=temp_root):
         raise ValueError("Installer decision must stay inside the user temporary directory")
     if not output_path.parent.is_dir():
         raise ValueError("Installer decision parent is unavailable")
-    content = (
+    text = (
         "[preflight]\r\n"
         f"decision={decision.decision}\r\n"
         f"primary_action={decision.primary_action}\r\n"
         f"request_generation={request_generation}\r\n"
-    ).encode("utf-8")
+    )
+    if decision.free_space_bytes:
+        # NSIS reads this INI with the ANSI/UTF-16 profile API, so keep values
+        # ASCII. Whole GiB rounded up matches what Explorer shows as "GB".
+        free_space_gb = (decision.free_space_bytes + GIB - 1) // GIB
+        text += f"free_space_gb={free_space_gb}\r\n"
+        if storage_drive and re.fullmatch(r"[A-Z]:", storage_drive):
+            text += f"free_space_drive={storage_drive}\r\n"
+    content = text.encode("utf-8")
     descriptor = os.open(output_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     try:
         with os.fdopen(descriptor, "wb", closefd=False) as handle:
@@ -353,6 +441,45 @@ def _layout_paths(local_app_data: Path) -> InstallerTargetPaths:
         results=data / "results",
         write_targets=(install, data),
     )
+
+
+def _existing_tree_bytes(root: Path, *, max_entries: int = MAX_REUSABLE_SCAN_ENTRIES) -> int:
+    # Regular-file bytes already under root. Reparse points are skipped so a
+    # junction to another drive is never credited; a failed or oversized scan
+    # credits only what was counted, which keeps the estimate conservative.
+    total = 0
+    seen = 0
+    try:
+        if not root.is_dir() or _has_reparse_attribute(root):
+            return 0
+        pending = [root]
+        while pending:
+            with os.scandir(pending.pop()) as entries:
+                for entry in entries:
+                    seen += 1
+                    if seen > max_entries:
+                        return total
+                    info = entry.stat(follow_symlinks=False)
+                    if getattr(info, "st_file_attributes", 0) & REPARSE_POINT_ATTRIBUTE:
+                        continue
+                    if stat.S_ISDIR(info.st_mode):
+                        pending.append(Path(entry.path))
+                    elif stat.S_ISREG(info.st_mode):
+                        total += info.st_size
+    except OSError:
+        return total
+    return total
+
+
+def _reusable_bytes(paths: InstallerTargetPaths) -> dict[str, int]:
+    data_root = paths.models.parent
+    install_owned = (paths.install / INSTALL_MARKER_NAME).is_file()
+    return {
+        # An owned earlier install is replaced in place by the new payload.
+        "install": _existing_tree_bytes(paths.install) if install_owned else 0,
+        # Downloaded models and the summary program are kept across upgrades.
+        "models": _existing_tree_bytes(paths.models) + _existing_tree_bytes(data_root / "runtime"),
+    }
 
 
 def _mutex_name(data_root: Path) -> str:
@@ -499,7 +626,7 @@ def cleanup_owned_install_tree(
     ):
         raise ValueError("Cleanup ownership marker is invalid")
 
-    requirements_from_artifact_manifest(manifest_path)
+    requirements_from_artifact_manifest(manifest_path, include_storage=False)
     resolved_manifest_path = Path(manifest_path).expanduser().resolve()
     manifest_restore_bytes = resolved_manifest_path.read_bytes()
     manifest = _read_json_object(
@@ -765,7 +892,7 @@ def main(argv: list[str] | None = None) -> int:
         local_app_data = Path(local_app_data_value).expanduser().resolve()
         paths = _layout_paths(local_app_data)
         if args.probe_running_engine:
-            requirements_from_artifact_manifest(args.manifest)
+            requirements_from_artifact_manifest(args.manifest, include_storage=False)
             manifest = _read_json_object(
                 Path(args.manifest).expanduser().resolve(),
                 maximum_bytes=MAX_MANIFEST_BYTES,
@@ -814,6 +941,7 @@ def main(argv: list[str] | None = None) -> int:
                 expected_product_id=PRODUCT_ID,
                 own_engine_marker=lambda: _windows_named_mutex_exists(_mutex_name(paths.models.parent)),
             ),
+            reusable_bytes=_reusable_bytes(paths),
         )
         write_preflight_json(args.result_json, payload)
         decision = evaluate_installer_preflight(
@@ -824,6 +952,7 @@ def main(argv: list[str] | None = None) -> int:
             args.decision_ini,
             decision,
             request_generation=args.request_generation,
+            storage_drive=_storage_drive(local_app_data),
         )
         return decision.exit_code
     except Exception:

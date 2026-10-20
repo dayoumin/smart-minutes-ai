@@ -102,6 +102,20 @@ finally {
     $ffmpegProbe.Dispose()
 }
 
+# Post-install storage the installer preflight checks (models, analysis temp,
+# results). The derivation lives in the backend so it follows backend limits.
+$storageRequirementsJson = & $PythonCommand (Join-Path $BackendDir "web_local_engine_storage_requirements.py")
+if ($LASTEXITCODE -ne 0) {
+    throw "Storage requirement derivation failed."
+}
+$StorageRequirements = ($storageRequirementsJson -join "`n") | ConvertFrom-Json
+foreach ($role in @("models", "analysisTemp", "results")) {
+    $entry = $StorageRequirements.$role
+    if ($null -eq $entry -or [int64]$entry.requiredBytes -le 0 -or [int64]$entry.recommendedBytes -lt [int64]$entry.requiredBytes) {
+        throw "Storage requirement derivation returned an invalid $role entry."
+    }
+}
+
 if (Test-Path -LiteralPath $ResolvedOutputDir) {
     $resolvedExisting = (Resolve-Path -LiteralPath $ResolvedOutputDir).Path
     if (-not $resolvedExisting.Equals($ExpectedOutputRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -179,6 +193,7 @@ $manifest = [ordered]@{
     userDataRoot = "%LOCALAPPDATA%\Barorok\LocalEngine"
     preservedUserData = @("config", "models", "database", "results", "logs")
     excludedFromPayload = @("models", "database", "results", "temp", "logs", "security secrets")
+    storageRequirements = $StorageRequirements
     signed = $false
     distributionReady = $false
     payloadFiles = @($payloadFiles)

@@ -9,10 +9,10 @@ let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
 
-const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
+const PROCESSING_HELP_TITLE = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
 // Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
 const openProcessingHelp = async page => {
-  await page.locator('.writer-file-privacy-note').getByRole('button', { name: '처리 방식', exact: true }).click();
+  await page.locator('.writer-local-promise').getByRole('button', { name: '처리 방식', exact: true }).click();
   const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
   await help.waitFor({ state: 'visible', timeout: 10000 });
   return help;
@@ -194,21 +194,25 @@ const run = async () => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
-    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일 *', '회의 정보']);
-    await page.locator('.writer-file-privacy-note').getByText('음성·영상과 대화록은 이 PC에서 처리합니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일', '회의 정보']);
+    await page.locator('.writer-local-promise').getByText('회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', { exact: true }).waitFor({ timeout: 10000 });
     let processingHelp = await openProcessingHelp(page);
     await processingHelp.getByText('회의록과 분석용 음성을 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
     await closeProcessingHelp(page, processingHelp);
     const desktopLayout = await page.evaluate(() => {
       const dropZone = document.querySelector('.file-drop-zone')?.getBoundingClientRect();
-      const support = document.querySelector('.writer-file-support')?.getBoundingClientRect();
+      const supportElement = document.querySelector('.writer-file-support');
+      const support = supportElement?.getBoundingClientRect();
       return {
         dropZoneLeft: dropZone?.left ?? 0,
         supportLeft: support?.left ?? 0,
+        supportShown: supportElement ? getComputedStyle(supportElement).display !== 'none' : false,
         horizontalOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       };
     });
-    assert.ok(Math.abs(desktopLayout.dropZoneLeft - desktopLayout.supportLeft) <= 2, 'file guidance should stay aligned with the upload control on desktop');
+    // Before a file is chosen nothing sits under the upload area (the local promise is under the title), so the slot collapses.
+    assert.equal(desktopLayout.supportShown, false, 'the file guidance slot stays collapsed until there is guidance to show');
+    assert.ok(desktopLayout.dropZoneLeft > 0, 'the upload control must be laid out on desktop');
     assert.ok(desktopLayout.horizontalOverflow <= 2, 'desktop writer should not overflow horizontally');
 
     await page.setViewportSize({ width: 800, height: 720 });

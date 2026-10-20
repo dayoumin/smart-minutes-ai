@@ -482,7 +482,7 @@ const createFixture = async () => {
 
 const fillWriter = async page => {
   await page.setInputFiles('#meeting-file-input', fixture.path);
-  await page.getByLabel('회의 목적 *').fill('3분기 조사 결과 공유와 4분기 조사 계획 확정');
+  await page.getByLabel('회의 목적', { exact: true }).fill('3분기 조사 결과 공유와 4분기 조사 계획 확정');
   await page.waitForTimeout(300);
 };
 

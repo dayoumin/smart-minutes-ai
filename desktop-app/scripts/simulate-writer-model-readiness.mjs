@@ -337,13 +337,13 @@ const run = async () => {
       'missing models should be shown as guidance, not an error banner',
     );
 
-    await page.getByLabel('회의 목적 *').fill('모델 미준비 상태에서 시작 차단 확인');
+    await page.getByLabel('회의 목적', { exact: true }).fill('모델 미준비 상태에서 시작 차단 확인');
     await page.setInputFiles('#meeting-file-input', {
       name: '준비 상태 확인.mp3',
       mimeType: 'audio/mpeg',
       buffer: Buffer.from('readiness fixture'),
     });
-    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '준비 상태 확인');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '준비 상태 확인');
     const actionBar = page.locator('.writer-action-bar');
     const blockedStartButton = actionBar.getByRole('button', { name: '준비 필요', exact: true });
     await blockedStartButton.waitFor({ timeout: 10000 });
@@ -372,8 +372,8 @@ const run = async () => {
     };
     await prepareModel();
     await page.waitForFunction(() => document.activeElement?.classList.contains('writer-start-button'));
-    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '준비 상태 확인');
-    assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '모델 미준비 상태에서 시작 차단 확인');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '준비 상태 확인');
+    assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '모델 미준비 상태에서 시작 차단 확인');
     assert.equal(await page.locator('#meeting-file-input').evaluate(input => input.files?.[0]?.name), '준비 상태 확인.mp3');
     assert.equal(await actionBar.getByRole('button', { name: '분석 시작', exact: true }).isEnabled(), true);
 

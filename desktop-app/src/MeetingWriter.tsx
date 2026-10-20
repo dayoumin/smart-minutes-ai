@@ -6,7 +6,7 @@ import {
 import type { AnalyzeResult } from './analysisMeetingPersistence';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, Download, FileAudio, FolderOpen, Loader2, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, Download, FileAudio, FolderOpen, Info, Loader2, ChevronUp, Plus, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -47,6 +47,9 @@ import {
     DEFAULT_REPORT_TEMPLATE_ID,
     getContextTemplateById,
     getReportTemplateById,
+    buildMeetingKeyTermsGlossaries,
+    getMeetingKeyTerms,
+    normalizeMeetingKeyTerms,
 } from './meetingKnowledge';
 import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from './analysisJobRuntime';
 import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisResumeState';
@@ -59,6 +62,7 @@ import { useLocalEngineConnectionControls } from './useLocalEngineConnectionCont
 import { WriterActionRow } from './WriterActionRow';
 import { selectWriterStatusRow, type WriterStatusAction } from './writerStatusRow';
 import { LocalProcessingNotice, type LocalProcessingNoticeMode } from './LocalProcessingNotice';
+import { LocalProcessingFlow } from './LocalProcessingFlow';
 import { hasSeenLocalProcessingIntro } from './localProcessingIntro';
 import { getRuntimeEnvironment } from './runtimeEnvironment';
 
@@ -88,6 +92,16 @@ const LOCAL_ENGINE_CONNECTION_UI_ENABLED = import.meta.env.VITE_LOCAL_ENGINE_CON
         && new URLSearchParams(window.location.search).get('localEngineConnection') === '1');
 const getNowMs = (): number => Date.now();
 const REQUIRED_FIELDS_ERROR_PREFIX = '필수 항목을 확인해 주세요';
+// Whether 참석자·주요 용어 stays open for the next meeting; folded by default so the form keeps its height.
+const OPTIONAL_INFO_OPEN_STORAGE_KEY = 'writerOptionalInfoOpen';
+const readOptionalInfoOpen = (): boolean => {
+    try {
+        return window.localStorage.getItem(OPTIONAL_INFO_OPEN_STORAGE_KEY) === '1';
+    } catch {
+        return false;
+    }
+};
+const countParticipantNames = (value: string): number => value.split(/[,\n]/).map(name => name.trim()).filter(Boolean).length;
 // datetime-local expects local wall-clock time; toISOString() would be UTC (9 hours early in KST).
 const toLocalDateTimeInputValue = (value: Date = new Date()): string => {
     const pad = (part: number) => String(part).padStart(2, '0');
@@ -585,6 +599,37 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [date, setDate] = useState(() => toLocalDateTimeInputValue());
     const [initialDateValue, setInitialDateValue] = useState(date);
     const [meetingPurpose, setMeetingPurpose] = useState('');
+    const [participants, setParticipants] = useState('');
+    const [keyTerms, setKeyTerms] = useState<string[]>([]);
+    const [keyTermDraft, setKeyTermDraft] = useState('');
+    const [optionalInfoOpen, setOptionalInfoOpen] = useState(readOptionalInfoOpen);
+    const keyTermInputRef = useRef<HTMLInputElement>(null);
+    // A term typed but not yet turned into a chip still counts when the analysis starts.
+    const submittedKeyTerms = useMemo(() => normalizeMeetingKeyTerms([...keyTerms, keyTermDraft]), [keyTermDraft, keyTerms]);
+    const keyTermGlossaries = useMemo(() => buildMeetingKeyTermsGlossaries(submittedKeyTerms), [submittedKeyTerms]);
+    const participantCount = countParticipantNames(participants);
+    const optionalInfoSummary = [
+        participantCount > 0 ? `참석자 ${participantCount}명` : '',
+        submittedKeyTerms.length > 0 ? `용어 ${submittedKeyTerms.length}개` : '',
+    ].filter(Boolean).join(' · ');
+    const toggleOptionalInfo = () => {
+        setOptionalInfoOpen(current => {
+            const next = !current;
+            try {
+                window.localStorage.setItem(OPTIONAL_INFO_OPEN_STORAGE_KEY, next ? '1' : '0');
+            } catch {
+                // The open state still holds for this visit.
+            }
+            return next;
+        });
+    };
+    const addKeyTerms = (values: string[]) => {
+        setKeyTerms(current => normalizeMeetingKeyTerms([...current, ...values]));
+    };
+    const commitKeyTermDraft = () => {
+        if (keyTermDraft.trim()) addKeyTerms([keyTermDraft]);
+        setKeyTermDraft('');
+    };
     const [selectedReportTemplateId, setSelectedReportTemplateId] = useState(DEFAULT_REPORT_TEMPLATE_ID);
     const [file, setFile] = useState<File | null>(null);
     const [isFileDragActive, setIsFileDragActive] = useState(false);
@@ -741,11 +786,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const hasDraftableInput = useMemo(() => (
         Boolean(title.trim())
         || Boolean(meetingPurpose.trim())
+        || Boolean(participants.trim())
+        || keyTerms.length > 0
+        || Boolean(keyTermDraft.trim())
         || selectedReportTemplateId !== DEFAULT_REPORT_TEMPLATE_ID
         || Boolean(file)
         || Boolean(selectedResumeDraftId)
         || date !== initialDateValue
-    ), [date, file, initialDateValue, meetingPurpose, selectedReportTemplateId, selectedResumeDraftId, title]);
+    ), [date, file, initialDateValue, keyTermDraft, keyTerms.length, meetingPurpose, participants, selectedReportTemplateId, selectedResumeDraftId, title]);
     const hasWriterCloseRisk = isAnalyzing || isExtractingAudio || hasDraftableInput;
 
     useEffect(() => {
@@ -1265,10 +1313,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             jobId,
             title: title.trim(),
             date,
-            participants: '',
+            participants: participants.trim(),
             meetingPurpose: meetingPurpose.trim(),
             selectedReportTemplateId: selectedReportTemplate.id,
             reportTemplate: selectedReportTemplate,
+            termGlossaries: keyTermGlossaries,
             sourceFilename: file.name,
             sourceSize: file.size,
             sourceLastModified: file.lastModified,
@@ -1328,6 +1377,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setTitle(draft.title);
         setDate(draft.date);
         setMeetingPurpose(draft.meetingPurpose || draft.participants || '');
+        // Older drafts kept the purpose in participants; only a draft with its own purpose has real names there.
+        setParticipants(draft.meetingPurpose ? draft.participants || '' : '');
+        setKeyTerms(getMeetingKeyTerms(draft.termGlossaries));
+        setKeyTermDraft('');
         setSelectedReportTemplateId(draft.selectedReportTemplateId || DEFAULT_REPORT_TEMPLATE_ID);
         setSelectedResumeDraftId(draft.jobId);
         if (canResumeDraft(draft)) {
@@ -1864,7 +1917,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const formData = new FormData();
             formData.append('title', title.trim());
             formData.append('date', date);
-            formData.append('participants', '');
+            formData.append('participants', participants.trim());
             formData.append('meeting_purpose', meetingPurpose.trim());
             formData.append('selected_report_template_id', selectedReportTemplate.id);
             formData.append('report_template', JSON.stringify(selectedReportTemplate));
@@ -1872,7 +1925,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             formData.append('selected_context_template_id', DEFAULT_CONTEXT_TEMPLATE_ID);
             formData.append('context_template', JSON.stringify(defaultContextTemplate));
             formData.append('selected_term_glossary_ids', '[]');
-            formData.append('term_glossaries', '[]');
+            formData.append('term_glossaries', JSON.stringify(keyTermGlossaries));
             formData.append('mode', ANALYSIS_MODE);
             formData.append('job_id', analysisJobId);
             formData.append('file', file as File);
@@ -1922,7 +1975,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     id: analysisJobId,
                     date: date.replace('T', ' '),
                     title: title.trim(),
-                    participants: '',
+                    participants: participants.trim(),
                     meetingPurpose: meetingPurpose.trim(),
                     selectedReportTemplateId: partialData.selectedReportTemplateId
                         || partialData.selected_report_template_id
@@ -2080,7 +2133,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 id: analysisJobId,
                 date: date.replace('T', ' '),
                 title: title.trim(),
-                participants: '',
+                participants: participants.trim(),
                 meetingPurpose: meetingPurpose.trim(),
                 selectedReportTemplateId: finalData.selectedReportTemplateId
                     || finalData.selected_report_template_id
@@ -2198,6 +2251,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             autoDerivedTitleRef.current = null;
             setTitle('');
             setMeetingPurpose('');
+            setParticipants('');
+            setKeyTerms([]);
+            setKeyTermDraft('');
             setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
             const nextInitialDate = toLocalDateTimeInputValue();
             setInitialDateValue(nextInitialDate);
@@ -2591,6 +2647,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         autoDerivedTitleRef.current = null;
         setTitle('');
         setMeetingPurpose('');
+        setParticipants('');
+        setKeyTerms([]);
+        setKeyTermDraft('');
         setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
         const nextInitialDate = toLocalDateTimeInputValue();
         setInitialDateValue(nextInitialDate);
@@ -2742,10 +2801,28 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     onClose={() => setLocalProcessingNotice(null)}
                 />
             )}
-            <div className="writer-header">
+            <div className={`writer-header ${showInputForm ? 'writer-header-promise' : ''}`}>
                 <div>
                     <h2 className="page-title">{writerHeading}</h2>
+                    {/* The product promise, said where people decide whether to hand over a work file. */}
+                    {showInputForm && (
+                        <p className="writer-local-promise">
+                            <ShieldCheck size={18} aria-hidden="true" />
+                            <span>회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다</span>
+                            <button
+                                type="button"
+                                className="writer-local-promise-help"
+                                aria-label="처리 방식"
+                                title="처리 방식"
+                                aria-haspopup="dialog"
+                                onClick={() => setLocalProcessingNotice('help')}
+                            >
+                                <Info size={16} aria-hidden="true" />
+                            </button>
+                        </p>
+                    )}
                 </div>
+                {showInputForm && <LocalProcessingFlow />}
             </div>
 
             <div className="writer-panel">
@@ -2780,7 +2857,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 {showInputForm && (<div className="writer-input-grid">
                 <section className="writer-section">
                     <div className="writer-section-heading">
-                        <h3>{resumeSelectionActive ? '같은 영상·음성 파일 선택 *' : '영상·음성 파일 *'}</h3>
+                        <h3>{resumeSelectionActive ? '같은 영상·음성 파일 선택' : '영상·음성 파일'}</h3>
                     </div>
                     <input
                         type="file"
@@ -2884,20 +2961,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         </div>
                     )}
                     <div className="writer-file-support">
-                    <div className="writer-file-privacy-slot">
-                        <div className="writer-file-privacy-note">
-                            <ShieldCheck size={15} aria-hidden="true" />
-                            <span>음성·영상과 대화록은 이 PC에서 처리합니다.</span>
-                            <button
-                                type="button"
-                                className="writer-file-privacy-link"
-                                aria-haspopup="dialog"
-                                onClick={() => setLocalProcessingNotice('help')}
-                            >
-                                처리 방식
-                            </button>
-                        </div>
-                    </div>
                     {selectedFileGuidance && (
                         <div className="detail-inline-note">
                             {selectedFileGuidance}
@@ -2970,12 +3033,26 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
                 <div className="writer-info-column">
                     <section className="writer-section writer-info-section">
-                    <div className="writer-section-heading">
+                    <div className="writer-section-heading writer-section-heading-split">
                         <h3>회의 정보</h3>
+                        {/* Optional inputs fold beside the heading so the form keeps its height until someone wants them. */}
+                        <button
+                            type="button"
+                            className="writer-optional-toggle"
+                            aria-expanded={optionalInfoOpen}
+                            aria-controls="writer-optional-fields"
+                            onClick={toggleOptionalInfo}
+                        >
+                            {optionalInfoOpen ? <ChevronUp size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+                            <span>
+                                {optionalInfoOpen ? '참석자·주요 용어 접기' : optionalInfoSummary || '참석자·주요 용어'}
+                                {!optionalInfoOpen && !optionalInfoSummary && <>{' '}<span className="writer-optional-mark">(선택)</span></>}
+                            </span>
+                        </button>
                     </div>
                     <div className="writer-field-grid">
                         <div className="writer-field writer-field-wide">
-                            <label htmlFor="meeting-title">회의 제목 *</label>
+                            <label htmlFor="meeting-title">회의 제목</label>
                             <Input
                                 id="meeting-title"
                                 required
@@ -2992,12 +3069,72 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             />
                         </div>
                         <div className="writer-field">
-                            <label htmlFor="meeting-date">일시 *</label>
+                            <label htmlFor="meeting-date">일시</label>
                             <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={hasAttemptedStart && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                         <div className="writer-field">
-                            <label htmlFor="meeting-purpose">회의 목적 *</label>
+                            <label htmlFor="meeting-purpose">회의 목적</label>
                             <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={hasAttemptedStart && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                        </div>
+                        <div id="writer-optional-fields" className="writer-optional-fields" hidden={!optionalInfoOpen}>
+                            <div className="writer-field">
+                                <label htmlFor="meeting-participants">참석자 <span className="writer-optional-mark">(선택)</span></label>
+                                <Input
+                                    id="meeting-participants"
+                                    value={participants}
+                                    onChange={event => setParticipants(event.target.value)}
+                                    placeholder="예: 김수산, 이자원, 박해양"
+                                    maxLength={300}
+                                    disabled={isAnalyzing}
+                                />
+                            </div>
+                            <div className="writer-field">
+                                <label htmlFor="meeting-key-terms">주요 용어 <span className="writer-optional-mark">(선택)</span></label>
+                                <div className={`input-field writer-term-input ${isAnalyzing ? 'writer-term-input-disabled' : ''}`}>
+                                    {keyTerms.map(term => (
+                                        <span key={term} className="writer-term-chip">
+                                            {term}
+                                            <button
+                                                type="button"
+                                                aria-label={`${term} 용어 삭제`}
+                                                onClick={() => {
+                                                    setKeyTerms(current => current.filter(item => item !== term));
+                                                    // The chip and its button go away; keep the keyboard in the term box.
+                                                    keyTermInputRef.current?.focus();
+                                                }}
+                                                disabled={isAnalyzing}
+                                            >
+                                                <X size={12} aria-hidden="true" />
+                                            </button>
+                                        </span>
+                                    ))}
+                                    <input
+                                        ref={keyTermInputRef}
+                                        id="meeting-key-terms"
+                                        value={keyTermDraft}
+                                        onChange={event => {
+                                            const parts = event.target.value.split(/[,\n]/);
+                                            const rest = parts.pop() ?? '';
+                                            if (parts.length > 0) addKeyTerms(parts);
+                                            setKeyTermDraft(rest);
+                                        }}
+                                        onKeyDown={event => {
+                                            // Korean input composes syllables; Enter during composition only finishes the syllable.
+                                            if (event.nativeEvent.isComposing) return;
+                                            if (event.key === 'Enter') {
+                                                event.preventDefault();
+                                                commitKeyTermDraft();
+                                            } else if (event.key === 'Backspace' && !keyTermDraft && keyTerms.length > 0) {
+                                                event.preventDefault();
+                                                setKeyTerms(current => current.slice(0, -1));
+                                            }
+                                        }}
+                                        onBlur={commitKeyTermDraft}
+                                        placeholder={keyTerms.length > 0 ? '' : '예: 연근해 자원조사, 수산과학원'}
+                                        disabled={isAnalyzing}
+                                    />
+                                </div>
+                            </div>
                         </div>
                     </div>
                     </section>
@@ -3303,6 +3440,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             </div>
                         </div>
                     )}
+                    {/* Last row of the card, always present while it runs, so the promise holds without shifting the card. */}
+                    <p className="writer-analysis-local-note">
+                        <ShieldCheck size={15} aria-hidden="true" />
+                        <span>이 PC에서 분석하고 있습니다. 회의 파일과 대화록은 밖으로 나가지 않습니다.</span>
+                    </p>
                     </>
                     )}
                 </div>

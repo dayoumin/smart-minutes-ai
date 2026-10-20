@@ -30,6 +30,7 @@ import {
     DEFAULT_REPORT_TEMPLATE_ID,
     getContextTemplateById,
     getTermGlossariesByIds,
+    keepMeetingKeyTermsGlossary,
     getReportTemplateById,
     listContextTemplates,
     listReportTemplates,
@@ -1522,7 +1523,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 selectedContextTemplateId: template.id,
                 contextTemplate: template,
                 selectedTermGlossaryIds,
-                termGlossaries: getTermGlossariesByIds(selectedTermGlossaryIds),
+                termGlossaries: [
+                    ...getTermGlossariesByIds(selectedTermGlossaryIds),
+                    ...keepMeetingKeyTermsGlossary(currentMeeting.termGlossaries),
+                ],
                 transcriptEditMeta: contextChanged
                     ? {
                         ...(currentMeeting.transcriptEditMeta ?? {}),
@@ -1742,11 +1746,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 const restoredTemplate = saveContextTemplate(target.template);
                 setContextTemplates(listContextTemplates());
                 const selectedTermGlossaryIds = restoredTemplate.termGlossaryIds ?? [];
-                await updateSelectedMeeting(() => ({
+                await updateSelectedMeeting(currentMeeting => ({
                     selectedContextTemplateId: restoredTemplate.id,
                     contextTemplate: restoredTemplate,
                     selectedTermGlossaryIds,
-                    termGlossaries: getTermGlossariesByIds(selectedTermGlossaryIds),
+                    termGlossaries: [
+                        ...getTermGlossariesByIds(selectedTermGlossaryIds),
+                        ...keepMeetingKeyTermsGlossary(currentMeeting.termGlossaries),
+                    ],
                     transcriptEditMeta: target.transcriptEditMeta,
                 }), target.meetingId);
                 showOperationToast('정리 맥락을 복원했습니다.', 'success');

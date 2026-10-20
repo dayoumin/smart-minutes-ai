@@ -10,10 +10,10 @@ import { chromium } from 'playwright';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
-const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
+const PROCESSING_HELP_TITLE = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
 // Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
 const openProcessingHelp = async page => {
-  await page.locator('.writer-file-privacy-note').getByRole('button', { name: '처리 방식', exact: true }).click();
+  await page.locator('.writer-local-promise').getByRole('button', { name: '처리 방식', exact: true }).click();
   const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
   await help.waitFor({ state: 'visible', timeout: 10000 });
   return help;
@@ -279,8 +279,8 @@ const runWriterLayoutScenario = async (browser) => {
     await startButton.click();
     await page.getByText(/필수 항목을 확인해 주세요/).waitFor({ timeout: 10000 });
     await page.locator('#writer-form-error').waitFor({ timeout: 10000 });
-    assert.equal(await page.getByLabel('회의 제목 *').getAttribute('aria-invalid'), 'true');
-    assert.equal(await page.getByLabel('회의 목적 *').getAttribute('aria-invalid'), 'true');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).getAttribute('aria-invalid'), 'true');
+    assert.equal(await page.getByLabel('회의 목적', { exact: true }).getAttribute('aria-invalid'), 'true');
     const requiredFileButton = page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ });
     assert.equal(await requiredFileButton.getAttribute('aria-invalid'), 'true');
     assert.equal(await requiredFileButton.getAttribute('aria-describedby'), 'writer-form-error');
@@ -378,8 +378,8 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await waitForSettingsQuiet(1);
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
-    await page.getByLabel('회의 제목 *').fill('최신 설정 확인');
-    await page.getByLabel('회의 목적 *').fill('분석 시작 직전 설정 재조회');
+    await page.getByLabel('회의 제목', { exact: true }).fill('최신 설정 확인');
+    await page.getByLabel('회의 목적', { exact: true }).fill('분석 시작 직전 설정 재조회');
     const preloadHelp = await openProcessingHelp(page);
     await preloadHelp.locator('#local-processing-details').waitFor({ timeout: 10000 });
     assert.equal(await preloadHelp.getByText(startPrivacyMessage, { exact: true }).count(), 0, 'analysis-start privacy guidance should not appear before the start request');
@@ -469,8 +469,8 @@ const runPartialRecordFailureScenario = async (browser, fixtureUpload) => {
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
-    await page.getByLabel('회의 제목 *').fill('중간 저장 실패 테스트');
-    await page.getByLabel('회의 목적 *').fill('참석자 구분 실패 후 대화록 보존 확인');
+    await page.getByLabel('회의 제목', { exact: true }).fill('중간 저장 실패 테스트');
+    await page.getByLabel('회의 목적', { exact: true }).fill('참석자 구분 실패 후 대화록 보존 확인');
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
 
@@ -1323,7 +1323,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     assert.equal(await page.getByText('이어하기-전-선택.mp3', { exact: true }).count(), 0);
     await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
     await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
-    await page.getByText('같은 영상·음성 파일 선택 *').waitFor({ timeout: 10000 });
+    await page.getByText('같은 영상·음성 파일 선택', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
@@ -1861,8 +1861,8 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
   try {
     await waitForApp(APP_URL);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByLabel('회의 제목 *').fill('suppressed resume candidate');
-    await page.getByLabel('회의 목적 *').fill('재개 후보 숨김 동작을 확인');
+    await page.getByLabel('회의 제목', { exact: true }).fill('suppressed resume candidate');
+    await page.getByLabel('회의 목적', { exact: true }).fill('재개 후보 숨김 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
@@ -1923,8 +1923,8 @@ const runSuppressedActiveCandidateBlocksFreshStartScenario = async (browser, fix
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByLabel('회의 제목 *').fill('suppressed active candidate');
-    await page.getByLabel('회의 목적 *').fill('진행 중 후보는 억제와 무관하게 차단');
+    await page.getByLabel('회의 제목', { exact: true }).fill('suppressed active candidate');
+    await page.getByLabel('회의 목적', { exact: true }).fill('진행 중 후보는 억제와 무관하게 차단');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByText('같은 파일의 분석이 이미 진행 중입니다. 완료되거나 취소된 뒤 다시 시도해 주세요.').waitFor({ timeout: 10000 });

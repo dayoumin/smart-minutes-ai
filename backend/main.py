@@ -5783,6 +5783,7 @@ def _meeting_context_from_result_data(result_data: dict) -> dict:
     return {
         "title": summary.get("title", ""),
         "date": result_data.get("created_at", ""),
+        "participants": result_data.get("participants", ""),
         "meeting_purpose": result_data.get("meeting_purpose", ""),
         "selected_report_template_id": result_data.get("selected_report_template_id", "standard-minutes"),
         "report_template": result_data.get("report_template", {}),
@@ -7294,6 +7295,7 @@ def process_audio_pipeline(
         "source_file": (meeting_context or {}).get("source_filename") or os.path.basename(input_file),
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
+        "participants": (meeting_context or {}).get("participants", ""),
         "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
         "selected_report_template_id": (meeting_context or {}).get("selected_report_template_id", "standard-minutes"),
         "report_template": (meeting_context or {}).get("report_template", {}),
@@ -7502,6 +7504,7 @@ def process_audio_pipeline(
         "source_file": (meeting_context or {}).get("source_filename") or os.path.basename(input_file),
         "created_at": datetime.now().isoformat(),
         "language": config["stt"]["language"],
+        "participants": (meeting_context or {}).get("participants", ""),
         "meeting_purpose": (meeting_context or {}).get("meeting_purpose", ""),
         "selected_report_template_id": (meeting_context or {}).get("selected_report_template_id", "standard-minutes"),
         "report_template": (meeting_context or {}).get("report_template", {}),

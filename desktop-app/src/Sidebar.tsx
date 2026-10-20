@@ -19,6 +19,7 @@ import {
     updateMeetingPinned,
 } from './meetingRepository';
 import { localEngineClient } from './localEngineClient';
+import { isTauriRuntime } from './apiBase';
 import { ProgressBar } from './components/common';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
@@ -667,7 +668,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(record.jobId)}`, {
                 method: 'DELETE',
             }).catch(() => null);
-            if (response && !response.ok && response.status !== 404) {
+            // No answer means the engine's copy of the analysis is still there; deleting only the browser record
+            // would leave it behind, so keep the record until the engine can delete both.
+            if (!response) {
+                window.alert(isTauriRuntime()
+                    ? '분석 기능에 연결하지 못해 회의록을 삭제하지 않았습니다. 앱을 다시 실행한 뒤 다시 삭제해 주세요.'
+                    : '바로록 연결이 실행 중일 때만 회의록을 삭제할 수 있습니다. 바로록 연결을 실행한 뒤 다시 삭제해 주세요.');
+                return;
+            }
+            if (!response.ok && response.status !== 404) {
                 const detail = await response.json().catch(() => null) as { detail?: string } | null;
                 const message = response.status === 409 && detail?.detail === 'analysis_job_active'
                     ? '아직 분석이 진행 중인 회의록입니다. 분석을 중단한 뒤 삭제해 주세요.'

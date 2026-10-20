@@ -41,6 +41,9 @@ const API_ERROR_MESSAGES: Record<string, string> = {
     generation_cancelled: '정리를 취소했습니다. 기존 결과는 보존되었습니다.',
     generation_disabled: '정리 기능이 꺼져 있습니다. 설정에서 정리 기능을 켠 뒤 다시 시도해 주세요.',
     generation_internal_error: '정리 중 내부 오류가 발생했습니다. 기존 대화록과 정리 결과는 보존되었습니다. 다시 시도해 주세요.',
+    // Meeting text stays on this PC: the engine refuses cloud models and an Ollama address on another computer.
+    summary_model_not_local: '클라우드 요약 모델은 회의 내용을 외부 서버로 보내므로 사용할 수 없습니다. 설정에서 이 PC에서 실행하는 요약 모델을 선택해 주세요.',
+    summary_runtime_not_local: '요약 프로그램(Ollama)이 이 PC가 아닌 다른 컴퓨터에 연결되도록 설정되어 있어 정리하지 않았습니다. 회의 내용은 보내지 않았습니다. 시스템 환경 변수 OLLAMA_HOST를 지운 뒤 PC를 다시 시작해 주세요.',
 };
 
 const mapApiErrorDetail = (detail: string): string | undefined => {

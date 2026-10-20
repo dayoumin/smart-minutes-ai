@@ -84,8 +84,10 @@ from ollama_utils import (
     find_ollama_executable,
     get_local_ollama_runtime_dir,
     get_portable_ollama_runtime_dir,
+    is_cloud_ollama_model,
     is_embedded_ollama_running,
     ollama_executable_available,
+    ollama_host_is_local,
     ollama_subprocess_env,
     probe_ollama_server,
     using_embedded_ollama,
@@ -954,7 +956,7 @@ async def update_settings(payload: dict = Body(...)) -> dict:
                     raise HTTPException(status_code=400, detail="summary.provider must be ollama")
                 target["provider"] = provider
             if "model" in summary:
-                model = _validate_ollama_model_name(str(summary["model"]))
+                model = _validate_local_summary_model_name(str(summary["model"]))
                 target["model"] = model
                 add_summary_user_model(config, model)
 
@@ -1137,6 +1139,17 @@ def _validate_ollama_model_name(model_name: str) -> str:
         raise HTTPException(status_code=400, detail="model must be a valid Ollama model name")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:/-]{0,127}", model_name):
         raise HTTPException(status_code=400, detail="model must be a valid Ollama model name")
+    return model_name
+
+
+def _validate_local_summary_model_name(model_name: str) -> str:
+    """A model to use or download for summaries; cloud models would send meeting text to ollama.com.
+
+    Removing or checking a model keeps the plain validator, so a cloud model added earlier can still be removed.
+    """
+    model_name = _validate_ollama_model_name(model_name)
+    if is_cloud_ollama_model(model_name):
+        raise HTTPException(status_code=400, detail="summary_model_not_local")
     return model_name
 
 
@@ -2357,7 +2370,7 @@ def _start_ollama_pull(model_name: str) -> dict:
 
 @app.post("/api/models/ollama/pull")
 async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
-    model_name = _validate_ollama_model_name(str((payload or {}).get("model") or ""))
+    model_name = _validate_local_summary_model_name(str((payload or {}).get("model") or ""))
     if not _ollama_executable_available():
         return _set_ollama_pull_status(
             model_name,
@@ -2433,7 +2446,7 @@ async def get_model_download_status(key: str) -> dict:
 async def delete_ollama_model(model: str, delete_files: bool = False, replacement_model: str = "") -> dict:
     model_name = _validate_ollama_model_name(model)
     if delete_files:
-        replacement = _validate_ollama_model_name(replacement_model) if replacement_model else ""
+        replacement = _validate_local_summary_model_name(replacement_model) if replacement_model else ""
         return _remove_ollama_model(model_name, replacement)
     return _forget_summary_model(model_name)
 
@@ -3097,7 +3110,12 @@ def _summary_model_readiness(
             "reason": "model_missing",
         }
 
-    if not ollama_executable_available():
+    # Refused before any start or lookup: generation would refuse these anyway, after the whole analysis.
+    if is_cloud_ollama_model(model_name_or_path):
+        reason = "summary_model_not_local"
+    elif not ollama_host_is_local():
+        reason = "summary_runtime_not_local"
+    elif not ollama_executable_available():
         reason = "runtime_missing"
     elif not (
         wait_for_ollama_preparation(timeout_seconds=preparation_timeout_seconds)
@@ -3110,12 +3128,15 @@ def _summary_model_readiness(
             reason = "runtime_preparing"
         else:
             model_name_or_path = _resolve_summary_model(config, ollama_models=inventory.models)
-            if model_name_or_path in {normalize_summary_model_name(model) for model in inventory.models}:
+            if model_name_or_path in {normalize_summary_model_name(model) for model in inventory.remote_models}:
+                reason = "summary_model_not_local"
+            elif model_name_or_path in {normalize_summary_model_name(model) for model in inventory.models}:
                 return {
                     "ready": True, "status": "ready", "message": "",
                     "model": model_name_or_path, "runtime_prepared": True,
                 }
-            reason = "model_missing"
+            else:
+                reason = "model_missing"
     return {
         "ready": False,
         "status": "skipped",

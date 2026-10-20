@@ -849,6 +849,138 @@ class AnalyzeApiTest(unittest.TestCase):
         user_models = response.json()["summary"]["user_models"]
         self.assertIn("llama3.2:3b", {option["model"] for option in user_models})
 
+    def test_update_settings_rejects_cloud_summary_model_without_saving(self) -> None:
+        config_ref = main.normalize_app_config({
+            "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
+            "paths": {},
+        })
+        before = copy.deepcopy(config_ref)
+
+        for cloud_model in ("gpt-oss:120b-cloud", "glm-4.6:cloud"):
+            with (
+                self.subTest(model=cloud_model),
+                patch("main.load_config", return_value=config_ref),
+                patch("main.save_config") as save_config,
+            ):
+                response = self.client.patch("/api/settings", json={"summary": {"model": cloud_model}})
+
+            self.assertEqual(response.status_code, 400)
+            self.assertEqual(response.json()["detail"], "summary_model_not_local")
+            save_config.assert_not_called()
+        self.assertEqual(config_ref, before)
+        self.assertEqual(config_ref["summary"]["model"], "gemma4:e2b")
+        self.assertNotIn("gpt-oss:120b-cloud", {option["model"] for option in config_ref["summary"].get("user_models", [])})
+
+    def test_start_ollama_pull_rejects_cloud_model_before_pulling(self) -> None:
+        with (
+            patch.object(main, "_ollama_executable_available", return_value=True),
+            patch.object(main, "_remember_summary_model") as remember_model,
+            patch.object(main, "_start_ollama_pull") as start_pull,
+        ):
+            response = self.client.post("/api/models/ollama/pull", json={"model": "gpt-oss:120b-cloud"})
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "summary_model_not_local")
+        remember_model.assert_not_called()
+        start_pull.assert_not_called()
+
+    def test_cloud_model_added_earlier_can_still_be_forgotten(self) -> None:
+        # Removal keeps the plain name check, so the refusal never traps a cloud model in the list.
+        self.assertEqual(main._validate_ollama_model_name("gpt-oss:120b-cloud"), "gpt-oss:120b-cloud")
+        with patch.object(main, "_forget_summary_model", return_value={"ok": True}) as forget:
+            response = self.client.delete("/api/models/ollama/model", params={"model": "gpt-oss:120b-cloud"})
+
+        self.assertEqual(response.status_code, 200, response.text)
+        forget.assert_called_once_with("gpt-oss:120b-cloud")
+
+    def test_model_status_never_offers_cloud_models_as_installed(self) -> None:
+        config = main.normalize_app_config({
+            "summary": {"enabled": True, "provider": "ollama", "model": "gemma4:e2b"},
+            "paths": {},
+        })
+        inventory = model_manager.OllamaModelInventory(True, ("gemma4:e2b", "gpt-oss:120b-cloud", "glm-4.6:cloud"))
+
+        with patch("model_manager.read_ollama_model_inventory", return_value=inventory):
+            status = get_model_status(main.BASE_DIR, config)
+
+        llm_model = next(model for model in status["models"] if model["key"] == "llm")
+        self.assertEqual(llm_model["installed_model"], "gemma4:e2b")
+        self.assertEqual(llm_model["installed_models"], ["gemma4:e2b"])
+
+    def test_model_status_hides_local_looking_alias_of_a_remote_model(self) -> None:
+        config = main.normalize_app_config({
+            "summary": {"enabled": True, "provider": "ollama", "model": "notes:latest"},
+            "paths": {},
+        })
+        inventory = model_manager.OllamaModelInventory(True, ("gemma4:e2b", "notes:latest"), ("notes:latest",))
+
+        with patch("model_manager.read_ollama_model_inventory", return_value=inventory):
+            status = get_model_status(main.BASE_DIR, config)
+
+        llm_model = next(model for model in status["models"] if model["key"] == "llm")
+        self.assertFalse(llm_model["installed"])
+        self.assertNotIn("notes:latest", llm_model["installed_models"])
+        self.assertIn("gemma4:e2b", llm_model["installed_models"])
+
+    def test_summary_readiness_refuses_models_and_hosts_off_this_pc_up_front(self) -> None:
+        local_inventory = model_manager.OllamaModelInventory(True, ("gemma4:e2b",))
+        cases = [
+            ("gpt-oss:120b-cloud", True, local_inventory, "summary_model_not_local"),
+            ("notes:latest", True, model_manager.OllamaModelInventory(True, ("notes:latest",), ("notes:latest",)), "summary_model_not_local"),
+            ("gemma4:e2b", False, local_inventory, "summary_runtime_not_local"),
+        ]
+        for model, host_is_local, inventory, reason in cases:
+            config = main.normalize_app_config({"summary": {"enabled": True, "model": model}, "paths": {}})
+            with (
+                self.subTest(model=model, host_is_local=host_is_local),
+                patch.object(main, "ollama_host_is_local", return_value=host_is_local),
+                patch.object(main, "ollama_executable_available", return_value=True),
+                patch.object(main, "wait_for_ollama_preparation", return_value=True) as prepare,
+                patch.object(main, "read_ollama_model_inventory", return_value=inventory),
+            ):
+                readiness = main._summary_model_readiness(config)
+
+            self.assertFalse(readiness["ready"])
+            self.assertEqual(readiness["reason"], reason)
+            self.assertEqual(readiness["message"], main.failure_for_code(reason).user_message)
+            if reason == "summary_runtime_not_local" or model.endswith("-cloud"):
+                prepare.assert_not_called()
+
+        config = main.normalize_app_config({"summary": {"enabled": True, "model": "gemma4:e2b"}, "paths": {}})
+        with (
+            patch.object(main, "ollama_host_is_local", return_value=True),
+            patch.object(main, "ollama_executable_available", return_value=True),
+            patch.object(main, "wait_for_ollama_preparation", return_value=True),
+            patch.object(main, "read_ollama_model_inventory", return_value=local_inventory),
+        ):
+            self.assertTrue(main._summary_model_readiness(config)["ready"])
+
+    def test_model_delete_refuses_cloud_replacement(self) -> None:
+        with patch.object(main, "_remove_ollama_model") as remove_model:
+            response = self.client.delete(
+                "/api/models/ollama/model",
+                params={"model": "gemma4:e4b", "delete_files": "true", "replacement_model": "gpt-oss:120b-cloud"},
+            )
+
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.json()["detail"], "summary_model_not_local")
+        remove_model.assert_not_called()
+
+    def test_model_status_treats_configured_cloud_model_as_not_ready(self) -> None:
+        config = main.normalize_app_config({
+            "summary": {"enabled": True, "provider": "ollama", "model": "gpt-oss:120b-cloud"},
+            "paths": {},
+        })
+        inventory = model_manager.OllamaModelInventory(True, ("gpt-oss:120b-cloud",))
+
+        with patch("model_manager.read_ollama_model_inventory", return_value=inventory):
+            status = get_model_status(main.BASE_DIR, config)
+
+        llm_model = next(model for model in status["models"] if model["key"] == "llm")
+        self.assertFalse(llm_model["installed"])
+        self.assertEqual(llm_model["installed_model"], "")
+        self.assertEqual(llm_model["installed_models"], [])
+
     def test_normalize_app_config_migrates_legacy_gemma4_short_tags(self) -> None:
         config = main.normalize_app_config({
             "summary": {

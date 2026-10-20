@@ -21,6 +21,20 @@ class OllamaModelListTest(unittest.TestCase):
         request.assert_called_once_with("http://127.0.0.1:12281/api/tags", timeout=5)
         subprocess_start.assert_not_called()
 
+    def test_inventory_marks_models_that_run_on_another_computer(self):
+        payload = {"models": [
+            {"name": "gemma4:e2b"},
+            {"name": "gpt-oss:120b-cloud", "remote_model": "gpt-oss:120b", "remote_host": "https://ollama.com:443"},
+            {"name": "notes:latest", "remote_host": "https://ollama.com:443"},
+            {"name": "glm-4.6:cloud"},
+            {"name": "llama3.2:3b", "remote_host": ""},
+        ]}
+        with patch.object(model_manager.urllib.request, "urlopen", return_value=BytesIO(json.dumps(payload).encode())):
+            inventory = model_manager.read_ollama_model_inventory(server_prepared=True)
+        self.assertTrue(inventory.complete)
+        self.assertEqual(inventory.models, ("gemma4:e2b", "gpt-oss:120b-cloud", "notes:latest", "glm-4.6:cloud", "llama3.2:3b"))
+        self.assertEqual(inventory.remote_models, ("gpt-oss:120b-cloud", "notes:latest", "glm-4.6:cloud"))
+
     def test_passive_lookup_reads_running_server_without_starting_it(self):
         with (
             patch.object(model_manager, "probe_ollama_server", return_value=True),

@@ -584,6 +584,40 @@ const verifyAutomaticEngineConnection = async browser => {
   } finally { await page.close(); }
 };
 
+const verifyIntroDismissals = async browser => {
+  // Escape and a click on the dim area close the first-visit notice like 시작하기 does, and count as read.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  await page.route('**/api/**', route => route.abort('connectionrefused'));
+  const intro = page.getByRole('dialog', { name: '회의 내용은 내 PC에서 처리합니다' });
+  const seen = () => page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen'));
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await intro.waitFor({ state: 'visible' });
+    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '시작하기');
+    assert.equal(await seen(), null);
+    await page.keyboard.press('Escape');
+    await intro.waitFor({ state: 'hidden' });
+    assert.equal(await seen(), '1', 'Escape counts as having read the notice');
+
+    await page.evaluate(() => window.localStorage.removeItem('localProcessingIntroSeen'));
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await intro.waitFor({ state: 'visible' });
+    assert.equal(await seen(), null);
+    // A click inside the dialog is not a backdrop click.
+    await intro.getByRole('heading', { name: '회의 내용은 내 PC에서 처리합니다' }).click();
+    assert.equal(await intro.isVisible(), true, 'a click inside the notice keeps it open');
+    assert.equal(await seen(), null);
+    await page.mouse.click(8, 8);
+    await intro.waitFor({ state: 'hidden' });
+    assert.equal(await seen(), '1', 'a backdrop click counts as having read the notice');
+    console.log('ok - first-visit notice is remembered after Escape or a backdrop click');
+  } finally {
+    await context.close();
+  }
+};
+
 const run = async () => {
   let server = null;
   let browser = null;
@@ -621,6 +655,10 @@ const run = async () => {
     }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'missing-models') {
       await verifyMissingModelsAfterPairing(browser);
+      return;
+    }
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'intro-dismissal') {
+      await verifyIntroDismissals(browser);
       return;
     }
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -741,14 +779,26 @@ const run = async () => {
     assert.equal(await intro.locator('#local-processing-details').count(), 0, 'first visit keeps the details folded');
     const detailsToggle = intro.getByRole('button', { name: '처리 방식 자세히 보기', exact: true });
     assert.equal(await detailsToggle.getAttribute('aria-expanded'), 'false');
+    // Focus that left the dialog comes back on Tab: forward to the first button, backward to the last.
+    const activeText = () => page.evaluate(() => document.activeElement?.textContent?.trim());
+    const blurActive = () => page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+    await blurActive();
+    await page.keyboard.press('Tab');
+    assert.equal(await activeText(), '처리 방식 자세히 보기', 'Tab from outside the notice returns to its first button');
+    await blurActive();
+    await page.keyboard.press('Shift+Tab');
+    assert.equal(await activeText(), '시작하기', 'Shift+Tab from outside the notice returns to its last button');
     await detailsToggle.click();
     await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
     const foldToggle = intro.getByRole('button', { name: '간단히 보기', exact: true });
     assert.equal(await foldToggle.getAttribute('aria-expanded'), 'true');
     assert.equal(await introFootnote.count(), 0, 'the internet row replaces the footnote while details are open');
     await intro.locator('dd').getByText('웹사이트를 열 때와 바로록 연결·분석 모델을 받을 때 사용합니다.', { exact: false }).waitFor();
-    const introBox = await intro.boundingBox();
-    assert.ok(introBox && introBox.y >= 0 && introBox.y + introBox.height <= 900, 'expanded notice must fit in the window');
+    // The dialog's height is capped to the window, so its box always fits; content that does not fit scrolls inside it.
+    await page.setViewportSize({ width: 1280, height: 720 });
+    const introOverflow = await intro.evaluate(element => element.scrollHeight - element.clientHeight);
+    assert.ok(introOverflow <= 0, `expanded notice must show everything without scrolling at 1280x720 (overflow ${introOverflow}px)`);
+    await page.setViewportSize({ width: 1280, height: 900 });
     await intro.getByRole('button', { name: '시작하기', exact: true }).click();
     await intro.waitFor({ state: 'hidden' });
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), '1', 'closing the notice is remembered in this browser');
@@ -832,6 +882,7 @@ const run = async () => {
     await verifySummaryReadinessAfterPairing(browser);
     await verifyMissingModelsAfterPairing(browser);
     await verifyAutomaticEngineConnection(browser);
+    await verifyIntroDismissals(browser);
     console.log('ok - local engine connection UI and auth recovery simulation');
   } catch (error) {
     console.error(error);

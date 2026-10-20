@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   EngineError,
+  parseApiErrorBody,
   describeAnalysisError,
   toUserFacingAnalysisError,
   toUserFacingError,
@@ -91,4 +92,20 @@ await test('other actions lead with what failed and add the cause next step', ()
   // Our own Korean messages are already user sentences.
   assert.equal(toUserFacingError(new Error('저장된 음성 파일을 찾지 못했습니다.'), failed), '저장된 음성 파일을 찾지 못했습니다.');
   assert.equal(toUserFacingError(undefined, failed), failed);
+});
+
+await test('local-only summary refusals keep their own Korean sentence', () => {
+  const fallback = '사용할 요약 모델을 저장하지 못했습니다. 다시 시도해 주세요.';
+  // Settings and model downloads answer a cloud model with a plain detail code.
+  const cloud = parseApiErrorBody('{"detail":"summary_model_not_local"}', fallback);
+  assert.equal(cloud.message, '클라우드 요약 모델은 회의 내용을 외부 서버로 보내므로 사용할 수 없습니다. 설정에서 이 PC에서 실행하는 요약 모델을 선택해 주세요.');
+  assert.notEqual(cloud.message, fallback);
+  // Generation answers with the structured detail; an Ollama address on another computer names the setting to fix.
+  const remote = parseApiErrorBody(JSON.stringify({ detail: {
+    code: 'summary_runtime_not_local', message: 'ignored', retryable: false, user_action: 'open_settings', generation_kind: 'summary',
+  } }), fallback);
+  assert.equal(remote.code, 'summary_runtime_not_local');
+  assert.equal(remote.retryable, false);
+  assert.match(remote.message, /OLLAMA_HOST/);
+  assert.doesNotMatch(remote.message, /ignored/);
 });

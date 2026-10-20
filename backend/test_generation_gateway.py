@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -13,6 +14,7 @@ if BACKEND_DIR not in sys.path:
     sys.path.insert(0, BACKEND_DIR)
 
 import generation_gateway
+from model_manager import OllamaModelInventory
 
 
 class GenerationGatewayTest(unittest.TestCase):
@@ -76,6 +78,8 @@ class GenerationGatewayTest(unittest.TestCase):
         with (
             patch.object(generation_gateway, "ollama_executable_available", return_value=True),
             patch.object(generation_gateway, "ensure_ollama_server_running", return_value=True) as ensure,
+            patch.object(generation_gateway, "read_ollama_model_inventory",
+                         return_value=OllamaModelInventory(True, ("gemma4:e4b", "another:model"))),
         ):
             with generation_gateway.prepared_ollama_runtime("gemma4:e4b"):
                 generation_gateway._ensure_runtime("gemma4:e4b")
@@ -212,6 +216,92 @@ class GenerationGatewayTest(unittest.TestCase):
             with self.assertRaises(generation_gateway.GenerationFailure) as raised:
                 generation_gateway.generate_ollama_text("gemma4:e4b", "prompt")
         self.assertEqual(raised.exception.code, "request_timeout")
+
+    def test_cloud_model_is_refused_before_any_request(self) -> None:
+        for cloud_model in ("gpt-oss:120b-cloud", "glm-4.6:cloud", "Kimi-K2:1T-CLOUD"):
+            with (
+                self.subTest(model=cloud_model),
+                patch.object(generation_gateway, "ollama_host_is_local", return_value=True),
+                patch.object(generation_gateway, "_generate_with_http") as http_generate,
+                patch.object(generation_gateway, "_generate_with_cli") as cli_generate,
+            ):
+                with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                    generation_gateway.generate_ollama_text(cloud_model, "private meeting text")
+
+            self.assertEqual(raised.exception.code, "summary_model_not_local")
+            self.assertFalse(raised.exception.retryable)
+            self.assertEqual(raised.exception.user_action, "open_settings")
+            self.assertEqual(raised.exception.http_status, 409)
+            self.assertNotIn("private meeting text", raised.exception.user_message)
+            http_generate.assert_not_called()
+            cli_generate.assert_not_called()
+
+    def test_ollama_address_on_another_computer_is_refused_before_any_request(self) -> None:
+        with (
+            patch.dict(os.environ, {"OLLAMA_HOST": "http://192.168.0.20:11434"}),
+            patch("ollama_utils.using_embedded_ollama", return_value=False),
+            patch.object(generation_gateway, "_generate_with_http") as http_generate,
+            patch.object(generation_gateway, "_generate_with_cli") as cli_generate,
+            patch.object(generation_gateway.urllib.request, "urlopen") as urlopen,
+        ):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway.generate_ollama_text("gemma4:e2b", "private meeting text")
+
+        self.assertEqual(raised.exception.code, "summary_runtime_not_local")
+        self.assertFalse(raised.exception.retryable)
+        self.assertIn("OLLAMA_HOST", raised.exception.user_message)
+        self.assertNotIn("192.168.0.20", raised.exception.user_message)
+        http_generate.assert_not_called()
+        cli_generate.assert_not_called()
+        urlopen.assert_not_called()
+
+    def test_local_looking_alias_of_a_remote_model_is_refused_before_generating(self) -> None:
+        inventory = OllamaModelInventory(True, ("gemma4:e2b", "notes:latest"), ("notes:latest",))
+        with (
+            patch.object(generation_gateway, "ollama_executable_available", return_value=True),
+            patch.object(generation_gateway, "ensure_ollama_server_running", return_value=True),
+            patch.object(generation_gateway, "read_ollama_model_inventory", return_value=inventory),
+            patch.object(generation_gateway.urllib.request, "urlopen") as urlopen,
+            patch.object(generation_gateway, "run_hidden") as cli_run,
+        ):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway.generate_ollama_text("notes", "private meeting text")
+            self.assertEqual(raised.exception.code, "summary_model_not_local")
+            urlopen.assert_not_called()
+            cli_run.assert_not_called()
+            # The local model in the same list still passes the check.
+            generation_gateway._ensure_runtime("gemma4:e2b")
+
+    def test_unreadable_model_list_does_not_count_as_local(self) -> None:
+        with (
+            patch.object(generation_gateway, "ollama_executable_available", return_value=True),
+            patch.object(generation_gateway, "ensure_ollama_server_running", return_value=True),
+            patch.object(generation_gateway, "read_ollama_model_inventory",
+                         return_value=OllamaModelInventory(False)),
+        ):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway._ensure_runtime("gemma4:e2b")
+        self.assertEqual(raised.exception.code, "server_unreachable")
+
+    def test_local_model_on_this_pc_still_generates(self) -> None:
+        for host in ("127.0.0.1:11434", "localhost:11434", "0.0.0.0"):
+            with (
+                self.subTest(host=host),
+                patch.dict(os.environ, {"OLLAMA_HOST": host}),
+                patch("ollama_utils.using_embedded_ollama", return_value=False),
+                patch.object(generation_gateway, "_generate_with_http", return_value='{"summary":"ok"}') as http_generate,
+            ):
+                self.assertEqual(generation_gateway.generate_ollama_text("gemma4:e2b", "prompt"), '{"summary":"ok"}')
+            http_generate.assert_called_once_with("gemma4:e2b", "prompt")
+
+    def test_refusal_codes_survive_saved_generation_errors(self) -> None:
+        internal_message = generation_gateway.GENERATION_ERROR_MESSAGES["generation_internal_error"]
+        for code in ("summary_model_not_local", "summary_runtime_not_local"):
+            with self.subTest(code=code):
+                failure = generation_gateway.failure_for_code(code)
+                self.assertEqual(failure.code, code)
+                self.assertEqual(failure.as_detail("summary")["code"], code)
+                self.assertNotEqual(failure.user_message, internal_message)
 
     def test_connection_refused_can_use_cli_once(self) -> None:
         with (

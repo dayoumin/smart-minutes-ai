@@ -175,25 +175,51 @@ const verifyDefaultWriterGuidance = async browser => {
       await page.getByLabel('회의 목적', { exact: true }).fill('입력과 파일을 보존하며 다음 동작 확인');
       await page.setInputFiles('#meeting-file-input', { name: 'guidance.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('guidance fixture') });
       const analyze = page.locator('.writer-start-button');
+      const rowText = async () => ({
+        state: await rowState(page),
+        title: (await statusOf(page).locator('.writer-status-title').allInnerTexts())[0] ?? '',
+        message: (await statusOf(page).locator('.writer-status-message').allInnerTexts())[0] ?? null,
+        buttons: await statusRowOf(page).locator('.writer-action-buttons > :is(button, a):not(.writer-start-button)').allInnerTexts(),
+      });
+      // The development UI has the same status row without the connection step: ready says nothing (no 연결됨).
+      const emptyReadyRow = { state: 'ready', title: '', message: null, buttons: [] };
       if (scenario === 'anonymous') {
-        await page.waitForFunction(() => !document.querySelector('.writer-start-button')?.disabled);
+        await page.waitForFunction(() => {
+          const button = document.querySelector('.writer-start-button');
+          return Boolean(button && button.getAttribute('aria-disabled') !== 'true');
+        });
         assert.equal(await analyze.isEnabled(), true);
         // The provider's background reconnect may probe; the writer must not start connecting.
         assert.equal(pairStartCount, 0, 'a working anonymous development API keeps its existing flow');
-        assert.equal(await statusRowOf(page).count(), 0, 'the development UI keeps its own action bar');
-        assert.equal(await statusOf(page).count(), 0);
+        assert.deepEqual(await rowText(), emptyReadyRow);
+        assert.equal(await page.getByText('연결됨', { exact: true }).count(), 0, 'no connection step, so no 연결됨');
+        assert.equal(await analyze.getAttribute('aria-describedby'), 'writer-local-engine-requirement');
       } else {
         if (scenario === 'outage-recovery') {
-          await page.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor();
+          await page.locator('.writer-action-row[data-state="readiness-checking"]').waitFor();
+          assert.equal((await rowText()).title, '분석 준비 확인 중');
           assert.ok(healthCount > 0);
           await page.clock.runFor(47_000);
-          await page.getByText('분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.', { exact: true }).waitFor();
+          // The development UI speaks as the web app: the engine's web name, 다시 확인, and `?` for the rest.
+          await page.locator('.writer-action-row[data-state="no-response"]').waitFor();
+          assert.deepEqual(await rowText(), {
+            state: 'no-response',
+            title: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`,
+            message: '잠시 뒤 다시 확인해 주세요.',
+            buttons: ['다시 확인'],
+          });
+          assert.equal(await statusRowOf(page).getByRole('button', { name: '문제 해결 도움말' }).count(), 1);
         } else {
-          await page.locator('#writer-readiness-hint').getByText('연결 상태를 확인해야 분석을 시작할 수 있습니다.', { exact: true }).waitFor();
+          await page.locator('.writer-action-row[data-state="connection-check-required"]').waitFor();
+          assert.deepEqual(await rowText(), {
+            state: 'connection-check-required', title: '연결 상태를 확인해야 합니다', message: '연결 확인을 눌러 주세요.', buttons: ['연결 확인'],
+          });
           assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0);
         }
+        assert.equal(await page.locator('.status-banner, .writer-action-bar').count(), 0, 'no banner or old action bar');
+        assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).count(), 0);
         assert.equal(await analyze.isDisabled(), true);
-        await page.locator('.writer-action-bar').getByRole('button', { name: '연결 확인', exact: true }).click();
+        await statusRowOf(page).getByRole('button', { name: scenario === 'outage-recovery' ? '다시 확인' : '연결 확인', exact: true }).click();
         // Recovery hands the row to the connection status line until the anonymous API answers again.
         const rail = statusRowOf(page);
         if (scenario === 'outage-recovery') {
@@ -206,7 +232,9 @@ const verifyDefaultWriterGuidance = async browser => {
           assert.equal(await rail.locator('a[href=""]').count(), 0);
           healthUp = true;
           await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-          await rail.waitFor({ state: 'hidden' });
+          // Back to the development UI's own row once the anonymous API answers.
+          await page.waitForFunction(() => document.querySelector('.writer-action-row')?.getAttribute('data-state') === 'ready');
+          assert.deepEqual(await rowText(), emptyReadyRow);
           assert.equal(await analyze.isEnabled(), true, 'a recovered anonymous API is usable without reloading');
         } else {
           await rail.getByRole('button', { name: '연결 시작', exact: true }).click();

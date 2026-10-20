@@ -6,7 +6,7 @@ import {
 import type { AnalyzeResult } from './analysisMeetingPersistence';
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, CheckCircle2, CircleHelp, Download, FileAudio, FolderOpen, Info, Loader2, ChevronUp, Plus, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Info, Loader2, ChevronUp, Plus, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -96,7 +96,6 @@ const LOCAL_ENGINE_CONNECTION_UI_ENABLED = import.meta.env.VITE_LOCAL_ENGINE_CON
         && typeof window !== 'undefined'
         && new URLSearchParams(window.location.search).get('localEngineConnection') === '1');
 const getNowMs = (): number => Date.now();
-const REQUIRED_FIELDS_ERROR_PREFIX = '필수 항목을 확인해 주세요';
 // Whether 참석자·주요 용어 stays open for the next meeting; folded by default so the form keeps its height.
 const OPTIONAL_INFO_OPEN_STORAGE_KEY = 'writerOptionalInfoOpen';
 const readOptionalInfoOpen = (): boolean => {
@@ -668,11 +667,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const errorMessage = (!isAnalyzing && fileDurationLimitError) || storedErrorMessage;
     const [preserveExtractedAudio, setPreserveExtractedAudio] = useState<boolean | null>(null);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState<boolean | null>(null);
-    const [readinessState, setReadinessState] = useState<ReadinessState>('checking');
+    // Without a real engine (mock analysis) there is nothing to check, so the form starts ready.
+    const [readinessState, setReadinessState] = useState<ReadinessState>(ANALYSIS_MODE === 'real' ? 'checking' : 'ready');
     const [readinessMessage, setReadinessMessage] = useState('');
-    // True once the load-time readiness loop gave up without reaching the analysis engine.
-    const [readinessTimedOut, setReadinessTimedOut] = useState(false);
-    // Web connection build: 분석 준비 확인 중 went 45s without an answer from the engine (응답하지 않습니다).
+    // The readiness check went 45s without an answer from the engine: 응답하지 않습니다 on the web,
+    // 아직 준비되지 않았습니다 in the desktop app (whose first round starts when the app opens).
     const [readinessNoResponse, setReadinessNoResponse] = useState(false);
     // Restarts that 45s count: a readiness loop starting, an answer from the engine, or the user's 다시 확인.
     const [readinessRound, setReadinessRound] = useState(0);
@@ -702,9 +701,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     );
     const localEngineConnectionRequired = (LOCAL_ENGINE_CONNECTION_UI_ENABLED || webConnectionRecoveryStarted)
         && localEngineConnection.runtime === 'web-local-engine';
-    // A background re-check (window focus, a draft update) marks the drafts as syncing for a moment. The web
-    // connection build's status row keeps the last settled answer through it instead of flashing 이어하기 불가;
-    // the engine still checks the draft when the analysis starts.
+    // A background re-check (window focus, a draft update) marks the drafts as syncing for a moment. The status
+    // row keeps the last settled answer through it instead of flashing 이어하기 불가; the engine still checks the
+    // draft when the analysis starts.
     const [settledResumeSync, setSettledResumeSync] = useState<AnalysisResumeSyncStatus>(
         resumeSnapshot.syncStatus === 'syncing' ? 'idle' : resumeSnapshot.syncStatus,
     );
@@ -712,10 +711,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setSettledResumeSync(resumeSnapshot.syncStatus);
     }
     const resumeCheckSnapshot = useMemo(() => (
-        localEngineConnectionRequired && resumeSnapshot.syncStatus === 'syncing'
+        resumeSnapshot.syncStatus === 'syncing'
             ? { ...resumeSnapshot, syncStatus: settledResumeSync }
             : resumeSnapshot
-    ), [localEngineConnectionRequired, resumeSnapshot, settledResumeSync]);
+    ), [resumeSnapshot, settledResumeSync]);
     const canResumeDraft = React.useCallback(
         (draft: AnalysisResumeDraft) => isActionableResumeDraft(draft, resumeCheckSnapshot),
         [resumeCheckSnapshot],
@@ -914,7 +913,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             await writeFrontendLog(`readiness health status=${healthResponse.status} ok=${healthResponse.ok}`);
             if (superseded()) return { state: 'checking', message: '' };
             healthReachable = true;
-            setReadinessTimedOut(false);
             if (transportCheckId !== null) {
                 reportTransport(transportCheckId, transportFromHealthEvidence(true));
             }
@@ -933,7 +931,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
             if (superseded()) return { state: 'checking', message: '' };
             // The engine answered, even if it is not ready yet.
-            if (localEngineConnectionRequired) setReadinessRound(round => round + 1);
+            setReadinessRound(round => round + 1);
             if (modelsResponse.status === 401 || modelsResponse.status === 403) {
                 setConnectionCheckRequired(!isTauriRuntime());
                 const message = '연결 상태를 확인해야 분석을 시작할 수 있습니다.';
@@ -1007,7 +1005,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             // Only the newest loop keeps polling; focus and settings events start a fresh one.
             const loopId = readinessLoopRef.current + 1;
             readinessLoopRef.current = loopId;
-            if (localEngineConnectionRequired) setReadinessRound(round => round + 1);
+            setReadinessRound(round => round + 1);
             const superseded = () => cancelled || loopId !== readinessLoopRef.current;
             const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
             let finalCheckDone = false;
@@ -1041,7 +1039,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 }
                 if (pastDeadline) {
                     if (check.state === 'error') return;
-                    if (check.state === 'server-waiting' && !check.reachable) setReadinessTimedOut(true);
                     finalCheckDone = true;
                 }
                 await sleep(pastDeadline ? READINESS_SLOW_POLL_MS : BACKEND_READY_INTERVAL_MS);
@@ -1076,7 +1073,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         if (!file) fields.push('영상·음성 파일');
         return fields;
     }, [date, file, meetingPurpose, title]);
-    // The web connection build lists them in screen order, and 분석 시작 focuses the first empty one.
+    // The status row lists them in screen order, and 분석 시작 focuses the first empty one.
     const missingRequiredInputs = useMemo(() => {
         const inputs: Array<{ label: string; focusId: string }> = [];
         if (!file) inputs.push({ label: '영상·음성 파일', focusId: 'meeting-file-drop' });
@@ -1127,10 +1124,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const resumeSelectionActive = Boolean(selectedResumeDraft);
     const resumeAwaitingFile = Boolean(selectedResumeDraft && !file);
     const selectedResumeDraftUnavailable = Boolean(selectedResumeDraft && !canResumeDraft(selectedResumeDraft));
-    const resumeReady = Boolean(selectedResumeDraft && file && !resumeDraftFileMismatch && !selectedResumeDraftUnavailable);
-    const hasBlockingReadinessIssue = readinessState === 'missing-models' || readinessState === 'error';
-    // Not connected (yet): the engine has not answered, or answered but is still starting up.
-    const engineNotConnected = readinessState === 'server-waiting' && !localEngineConnectionRequired;
+    const desktopApp = isTauriRuntime();
 
     const recheckDevelopmentReadiness = async (probe: LocalEngineProbePayload) => {
         // A recovered anonymous dev API may have no pairing helper. It must actually accept
@@ -1143,16 +1137,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
     };
 
-    // Web connection build: the status row beside 분석 시작 names the first blocked step and its fix.
+    // The status row beside 분석 시작 names the first blocked step and its fix. Its connection step (and these
+    // controls' state) is the web connection build's; the desktop app and the development UI start at readiness.
     const connectionControls = useLocalEngineConnectionControls({
         connectionRequested: webConnectionRecoveryStarted || engineRecheckStarted,
         checkRequested: webConnectionCheckPending,
         onProbeCompleted: webConnectionRecoveryStarted ? recheckDevelopmentReadiness : undefined,
     });
     const { setShowHelp: setStatusHelpOpen } = connectionControls;
-    // 45s of 분석 준비 확인 중 without an answer turns the row into 응답하지 않습니다 (design.md 동작 줄 v2).
-    // Only while connected, so a reconnect starts again from the plain check.
-    const watchReadinessResponse = localEngineConnectionRequired && connectionControls.view.analysisReady
+    // 45s of checking without an answer turns the row into a warning (design.md 동작 줄 v2). With a connection
+    // step, only while connected, so a reconnect starts again from the plain check.
+    const watchReadinessResponse = (!localEngineConnectionRequired || connectionControls.view.analysisReady)
         && (readinessState === 'checking' || readinessState === 'server-waiting');
     useEffect(() => {
         if (!watchReadinessResponse) {
@@ -1164,7 +1159,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     }, [readinessRound, watchReadinessResponse]);
     const writerStatusRef = useRef<HTMLDivElement | null>(null);
     const writerStatusRow = selectWriterStatusRow({
-        connection: connectionControls.view,
+        connection: localEngineConnectionRequired ? connectionControls.view : null,
+        desktopApp,
+        canOpenTroubleshooting: Boolean(onOpenTroubleshooting),
+        // Only the development UI asks for this; the web connection build's connection step handles a refusal.
+        connectionCheckRequired: connectionCheckRequired && !localEngineConnectionRequired,
         readinessState,
         readinessMessage,
         readinessNoResponse,
@@ -1190,9 +1189,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         },
     });
     // Empty required fields point at the list of what is left (#writer-form-error) only while it is on screen.
-    const requiredFieldsDescribed = localEngineConnectionRequired
-        ? writerStatusRow.state === 'required-fields'
-        : hasAttemptedStart;
+    const requiredFieldsDescribed = writerStatusRow.state === 'required-fields';
     // Help explains one state; a new state starts folded.
     useEffect(() => {
         setStatusHelpOpen(false);
@@ -1201,12 +1198,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     // it instead of falling to the page. Checks started by the page itself (load, reconnect) leave focus alone.
     const statusFocusRequestedRef = useRef(false);
     useEffect(() => {
-        if (!localEngineConnectionRequired || !writerStatusRow.busy || !statusFocusRequestedRef.current) return;
+        if (!writerStatusRow.busy || !statusFocusRequestedRef.current) return;
         statusFocusRequestedRef.current = false;
         const active = document.activeElement;
         if (active && active !== document.body) return;
         writerStatusRef.current?.focus({ preventScroll: true });
-    }, [localEngineConnectionRequired, writerStatusRow.busy, writerStatusRow.state]);
+    }, [writerStatusRow.busy, writerStatusRow.state]);
     // The same for an input-step fix (다른 파일 선택, 상태 확인): once its step clears, the pressed button goes away
     // with it, and focus moves to the line that now says what is next.
     const inputFixFocusRequestedRef = useRef(false);
@@ -1224,64 +1221,18 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         || selectedResumeDraftUnavailable
         || resumeDraftFileMismatch
         || Boolean(fileDurationLimitError)
-        || hasBlockingReadinessIssue
-        || engineNotConnected
+        || readinessState !== 'ready'
         || (localEngineConnectionRequired && !localEngineAnalysisReady)
-        || (localEngineConnectionRequired && readinessState !== 'ready')
-        || (localEngineConnectionRequired && writerStatusRow.blocksStart)
+        || writerStatusRow.blocksStart
         || analysisStartBlocked;
-    const engineUnreachable = readinessTimedOut && engineNotConnected;
-    // From the first failed check until the 45s notice: one quiet line, so 분석 시작 is never silently unusable.
-    const showEngineCheckingLine = !isAnalyzing && ((engineNotConnected && !readinessTimedOut)
-        || (localEngineConnectionRequired && localEngineAnalysisReady
-            && !hasBlockingReadinessIssue && readinessState !== 'ready'));
-    // The required-field error is shown in the action row (beside 분석 시작) instead of a banner below the fold.
-    // Live list of what is still missing after a start attempt; it disappears as soon as the fields are filled.
-    const formErrorInline = hasAttemptedStart && missingFields.length > 0 && !localEngineConnectionRequired && !isAnalyzing;
-    // In connection mode the connection surface owns connecting; once connected, model readiness speaks here too.
-    const showReadinessHint = !isAnalyzing && (localEngineConnectionRequired
-        ? localEngineAnalysisReady && hasBlockingReadinessIssue
-        : hasBlockingReadinessIssue || engineUnreachable);
-    // ready=false can also mean an unusable device or a status error; only offer 모델 받기 when a required model is really missing.
-    const requiredModelsAbsent = readinessState === 'missing-models' && missingRequiredModels.length > 0;
-    const modelsMissing = requiredModelsAbsent && missingRequiredModels.some(model => model.downloadable);
-    // Required models Settings cannot download: reinstalling is the fix, so the row states the cause without a button.
-    const modelsNeedReinstall = requiredModelsAbsent && !modelsMissing;
-    // Only the diarization model is missing and it is required by 참석자 구분까지 이어서 실행: turning that off is the fix.
-    const diarizationSettingBlocks = modelsNeedReinstall && modelsPayload?.diarization_generate_during_analysis === true
-        && missingRequiredModels.every(model => model.key === 'diarization');
-    // GPU selected but unusable (all models present): switching 분석 장치 to CPU is the fix, not a restart.
-    const gpuUnavailable = readinessState === 'missing-models' && !requiredModelsAbsent
-        && modelsPayload?.selected_stt_device === 'cuda' && modelsPayload?.stt_device_status?.gpu_usable === false;
-    // Where the hint's button leads: missing models -> Settings > 모델; otherwise 문제 해결 (desktop) / 다시 확인 (web).
-    const readinessAction: 'models' | 'device' | 'diarization' | 'troubleshoot' | 'recheck' | 'connect' | null = !showReadinessHint
-        || (modelsNeedReinstall && !(diarizationSettingBlocks && onOpenAnalysisSettings))
-        ? null
-        : !isTauriRuntime() && !localEngineConnectionRequired && (engineUnreachable || connectionCheckRequired)
-            ? 'connect'
-        : diarizationSettingBlocks && onOpenAnalysisSettings
-            ? 'diarization'
-        : gpuUnavailable && onOpenAnalysisSettings
-            ? 'device'
-        : modelsMissing && onOpenSettings
-            ? 'models'
-            : isTauriRuntime() && onOpenTroubleshooting && !localEngineConnectionRequired ? 'troubleshoot' : 'recheck';
-    const startButtonDescription = [
-        analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
-        formErrorInline ? 'writer-form-error' : '',
-        showReadinessHint ? 'writer-readiness-hint' : '',
-        showEngineCheckingLine ? 'writer-engine-checking' : '',
-    ].filter(Boolean).join(' ') || undefined;
-
-    // Title and tone follow the actual cause: a GPU or status problem is not a missing model.
-    const readinessBannerTone = modelsMissing ? 'info' : 'error';
-    const readinessBannerTitle = modelsMissing ? '준비할 모델' : '분석을 시작할 수 없습니다';
 
     const handleCheckWebConnection = async () => {
         // Hand ownership to the coordinator before probing; old anonymous checks must not undo pairing.
         readinessLoopRef.current += 1;
         setReadinessState('checking');
         setReadinessMessage('');
+        // The development UI's 다시 확인 replaces 응답하지 않습니다 with the check, as the web one does.
+        setReadinessNoResponse(false);
         statusFocusRequestedRef.current = true;
         setWebConnectionRecoveryStarted(true);
         setWebConnectionCheckPending(true);
@@ -1347,7 +1298,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         return false;
     };
 
-    // Re-check the engine from the not-connected hint without raising status banners.
+    // 다시 확인 from a readiness error: one strict check, without raising status banners.
     const handleRecheckEngine = async () => {
         setIsRecheckingEngine(true);
         try {
@@ -1355,6 +1306,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             if (check.state === 'ready') {
                 setErrorMessage('');
                 setAnalysisPhase('idle');
+            } else if (check.state === 'server-waiting' && !localEngineConnectionRequired) {
+                // No answer, and the loop that ended in the error is gone: start it again, so the desktop app's
+                // warning (whose only button is 문제 해결) clears by itself once the engine answers. The web
+                // connection build's warning has its own 다시 확인 for this.
+                setReadinessLoopKey(key => key + 1);
             }
         } finally {
             setIsRecheckingEngine(false);
@@ -1375,20 +1331,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             // A refused check hands the row to the connection step, which explains it.
         }
         if (recheckId === engineRecheckRef.current) setReadinessLoopKey(key => key + 1);
-    };
-
-    const handleRefreshReadiness = async () => {
-        setStatusMessage('분석 환경을 확인하고 있습니다.');
-        const check = await refreshReadiness();
-        if (check.state === 'ready') {
-            setErrorMessage('');
-            setStatusMessage('');
-            setAnalysisPhase('idle');
-            return;
-        }
-
-        // The readiness banner already shows check.message; a second error banner would repeat it.
-        setStatusMessage('');
     };
 
     const saveResumeDraft = (
@@ -1486,15 +1428,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             unsuppressResumeCandidateKey(getResumeDraftKey(draft));
         }
         setCompletionNotice(null);
-        // The web connection build's status row says this itself (이전 분석을 이어서 진행할 수 없습니다).
-        setErrorMessage(canResumeDraft(draft) || localEngineConnectionRequired ? '' : getResumeStartErrorMessage(draft));
+        // The status row says this itself (이전 분석을 이어서 진행할 수 없습니다).
+        setErrorMessage('');
         setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
         setRawStatusMessage(draft.lastMessage || '');
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
         updateAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
-    }, [canResumeDraft, clearSelectedFileState, localEngineConnectionRequired, updateAnalysisEtaSeconds]);
+    }, [canResumeDraft, clearSelectedFileState, updateAnalysisEtaSeconds]);
 
     const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
     const resumeDraftSelectionRequestId = resumeDraftSelectionRequest?.requestId;
@@ -1807,14 +1749,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setProgress(0);
             setStatusMessage('');
             setCompletionNotice(null);
-            if (localEngineConnectionRequired) {
-                // The status row lists what is left; the keyboard starts at the first empty field on screen.
-                setErrorMessage('');
-                const firstMissing = missingRequiredInputs[0];
-                if (firstMissing) document.getElementById(firstMissing.focusId)?.focus();
-            } else {
-                setErrorMessage(`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`);
-            }
+            // The status row lists what is left; the keyboard starts at the first empty field on screen.
+            setErrorMessage('');
+            const firstMissing = missingRequiredInputs[0];
+            if (firstMissing) document.getElementById(firstMissing.focusId)?.focus();
             return;
         }
 
@@ -2650,19 +2588,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }, 5_000);
     };
 
-    const buttonLabel = (() => {
-        if (selectedResumeDraftActive) return '진행 중';
-        if (matchingActiveDraft) return '진행 중';
-        if (selectedResumeDraftUnavailable) return '이어하기 불가';
-        if (resumeSelectionActive && !resumeReady) return '같은 파일 선택';
-        if (hasBlockingReadinessIssue) return '준비 필요';
-        if (resumeReady) return '이어하기';
-        return '분석 시작';
-    })();
-
-    // Web connection build: 분석 시작 stays focusable while blocked (aria-disabled); pressing it then
-    // moves focus to the status row that says why. Empty required fields alone do not block it.
-    const handleConnectionStartClick = () => {
+    // 분석 시작 stays focusable while blocked (aria-disabled); pressing it then moves focus to the status row
+    // that says why. Empty required fields alone do not block it.
+    const handleStartClick = () => {
         if (startButtonOperationallyDisabled) {
             if (writerStatusRow.blocksStart) writerStatusRef.current?.focus();
             return;
@@ -2685,7 +2613,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             case 'recheck-engine':
                 // The warning gives way to the check, and focus follows to the line that reports it.
                 statusFocusRequestedRef.current = true;
-                void handleRecheckUnresponsiveEngine();
+                // The development UI has no connection step yet: its check hands the row to that step.
+                void (localEngineConnectionRequired ? handleRecheckUnresponsiveEngine() : handleCheckWebConnection());
+                return;
+            case 'troubleshoot':
+                onOpenTroubleshooting?.();
                 return;
             case 'choose-file':
                 inputFixFocusRequestedRef.current = true;
@@ -2883,14 +2815,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     : '새 회의록';
 
     const showInputForm = !showAnalysisPanel && !completionNotice;
-    // Errors under the form. The web connection build names input problems (required fields, file length,
-    // resume) in the status row, so only the rest (an unsupported file, a failed draft delete) stays here.
-    const bannerSource = localEngineConnectionRequired ? storedErrorMessage : errorMessage;
+    // Errors under the form. The status row names input problems (required fields, file length, resume), so
+    // only the rest (an unsupported file, a failed draft delete) stays here.
     const formBannerMessage = showAnalysisFailure
-        || bannerSource.startsWith(REQUIRED_FIELDS_ERROR_PREFIX)
-        || (localEngineConnectionRequired && bannerSource === fileDurationLimitError)
+        || storedErrorMessage === fileDurationLimitError
         ? ''
-        : bannerSource;
+        : storedErrorMessage;
 
     return (
         <div className="writer-shell" data-settings-focus-scope>
@@ -3077,23 +3007,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             {selectedFileGuidance}
                         </div>
                     )}
-                    {/* The web connection build says these in the status row beside 분석 시작. */}
-                    {selectedResumeDraft && !localEngineConnectionRequired && (
-                        <div id="writer-resume-note" className={`text-xs ${resumeDraftFileMismatch || selectedResumeDraftUnavailable ? 'text-destructive' : 'text-muted-foreground'}`}>
-                            {selectedResumeDraftUnavailable
-                                ? getResumeStartErrorMessage(selectedResumeDraft)
-                                : resumeAwaitingFile
-                                ? `${selectedResumeDraft.sourceFilename} 파일을 다시 선택해 주세요.`
-                                : resumeDraftFileMismatch
-                                    ? `선택한 파일이 다릅니다. ${selectedResumeDraft.sourceFilename} 파일을 다시 선택해 주세요.`
-                            : '같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.'}
-                        </div>
-                    )}
-                    {matchingActiveDraft && !isAnalyzing && !localEngineConnectionRequired && (
-                        <div id="writer-same-file-note" className="text-xs text-muted-foreground">
-                            같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
-                        </div>
-                    )}
+                    {/* Resume and same-file notes are said in the status row beside 분석 시작. */}
                     {SHOW_AUDIO_EXTRACT_TOOL && !resumeSelectionActive && !isAnalyzing && (
                         <div className="writer-file-tools">
                             <Button
@@ -3251,7 +3165,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     </div>
                     </section>
                 </div>
-                    {localEngineConnectionRequired ? (
                     <WriterActionRow
                         row={writerStatusRow}
                         statusRef={writerStatusRef}
@@ -3265,7 +3178,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     >
                         <Button
                             className="writer-start-button"
-                            onClick={handleConnectionStartClick}
+                            onClick={handleStartClick}
                             aria-disabled={startButtonOperationallyDisabled || undefined}
                             aria-describedby="writer-local-engine-requirement"
                             data-incomplete={missingFields.length > 0 ? 'true' : undefined}
@@ -3275,87 +3188,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             {isAnalyzing ? '분석 중' : resumeSelectionActive ? '이어하기' : '분석 시작'}
                         </Button>
                     </WriterActionRow>
-                    ) : (
-                    <div className="writer-action-bar" aria-live="polite" aria-busy={isAnalyzing}>
-                        {(formErrorInline || showReadinessHint || showEngineCheckingLine) && (
-                            <div className="writer-action-notes">
-                        {formErrorInline && (
-                            <p id="writer-form-error" className="writer-action-hint writer-action-hint-error">
-                                {`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`}
-                            </p>
-                        )}
-                        {showEngineCheckingLine && (
-                            <p id="writer-engine-checking" className="writer-action-hint">
-                                <Loader2 size={13} className="mr-1.5 inline-block animate-spin align-[-2px] motion-reduce:animate-none" aria-hidden="true" />
-                                {isTauriRuntime() ? '분석 기능 준비 중'
-                                    : localEngineConnectionRequired ? '분석 준비 확인 중' : `${LOCAL_ENGINE_NAME} 확인 중`}
-                            </p>
-                        )}
-                        {showReadinessHint && (
-                            <p id="writer-readiness-hint" className="writer-action-hint">
-                                {engineUnreachable
-                                    ? isTauriRuntime()
-                                        ? DESKTOP_ENGINE_NOT_READY_MESSAGE
-                                        : '분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.'
-                                    : connectionCheckRequired
-                                        ? '연결 상태를 확인해야 분석을 시작할 수 있습니다.'
-                                    : modelsMissing
-                                        ? '분석에 필요한 모델이 아직 없습니다. 모델을 받으면 바로 시작할 수 있습니다.'
-                                        : modelsNeedReinstall
-                                            ? diarizationSettingBlocks
-                                                ? '참석자 구분 모델이 없습니다. 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.'
-                                                : '필요한 모델이 없어 분석을 시작할 수 없습니다.'
-                                            : gpuUnavailable
-                                                ? 'GPU를 쓸 수 없습니다. 분석 장치를 CPU로 바꾸면 바로 시작할 수 있습니다.'
-                                                : '분석 환경을 확인해야 합니다. 아래 안내를 확인하세요.'}
-                            </p>
-                        )}
-                            </div>
-                        )}
-                        {readinessAction === 'models' && (
-                            <Button variant="outline" className="writer-hint-action" onClick={onOpenSettings}>
-                                <Download size={15} aria-hidden="true" />
-                                모델 받기
-                            </Button>
-                        )}
-                        {readinessAction === 'device' && (
-                            <Button variant="outline" className="writer-hint-action" onClick={() => onOpenAnalysisSettings?.('device')}>
-                                <Settings size={15} aria-hidden="true" />
-                                분석 장치 설정
-                            </Button>
-                        )}
-                        {readinessAction === 'diarization' && (
-                            <Button variant="outline" className="writer-hint-action" onClick={() => onOpenAnalysisSettings?.('diarization')}>
-                                <Settings size={15} aria-hidden="true" />
-                                참석자 구분 설정
-                            </Button>
-                        )}
-                        {readinessAction === 'troubleshoot' && (
-                            <Button variant="outline" className="writer-hint-action" onClick={onOpenTroubleshooting}>
-                                <Settings size={15} aria-hidden="true" />
-                                문제 해결
-                            </Button>
-                        )}
-                        {readinessAction === 'recheck' && (
-                            <Button variant="outline" className="writer-hint-action" onClick={() => void handleRecheckEngine()} disabled={isRecheckingEngine}>
-                                <RefreshCw size={15} className={isRecheckingEngine ? 'animate-spin' : ''} aria-hidden="true" />
-                                {isRecheckingEngine ? '확인 중' : '다시 확인'}
-                            </Button>
-                        )}
-                        {readinessAction === 'connect' && (
-                            <Button variant="outline" className="writer-hint-action" onClick={() => void handleCheckWebConnection()}>
-                                <RefreshCw size={15} aria-hidden="true" />
-                                연결 확인
-                            </Button>
-                        )}
-                        <div className="writer-primary-actions">
-                            <Button className="writer-start-button" onClick={handleStartAnalysis} disabled={startButtonOperationallyDisabled} aria-describedby={startButtonDescription} data-incomplete={missingFields.length > 0 ? 'true' : undefined} data-settings-focus-fallback>
-                                {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
-                                {isAnalyzing ? '분석 중' : buttonLabel}
-                            </Button>
-                        </div>
-                    </div>
-                    )}
                     {localEngineConnectionRequired && connectionControls.codeDialogOpen && (
                         <LocalEngineCodeDialog onClose={connectionControls.closeCodeDialog} />
                     )}
@@ -3608,7 +3440,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 )}
             </div>
 
-            {analysisStartBlocked && (localEngineConnectionRequired && showInputForm
+            {analysisStartBlocked && (showInputForm
                 // The status row says this beside 분석 시작; this copy only names the reason for the
                 // recovery card's disabled 이어서 분석 (aria-describedby), so it is neither shown nor announced.
                 ? <span id="writer-analysis-start-blocked" className="sr-only">{analysisStartBlockedReason}</span>
@@ -3618,36 +3450,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     </p>
                 ))}
 
-            {/* The web connection build says this in the status row beside 분석 시작 instead. */}
-            {hasBlockingReadinessIssue && !localEngineConnectionRequired && (
-                <StatusBanner tone={readinessBannerTone}>
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                        <div className="flex gap-2">
-                            <AlertCircle size={18} />
-                            <div>
-                                <div className="font-semibold">{readinessBannerTitle}</div>
-                                <div className="mt-1">
-                                    {gpuUnavailable
-                                        ? '이 PC에서 GPU 가속을 쓸 수 있는 환경이 아직 준비되지 않았습니다. 설정에서 분석 장치를 CPU로 바꾸면 분석할 수 있습니다.'
-                                        : readinessMessage}
-                                </div>
-                            </div>
-                        </div>
-                        {/* The way forward (모델 받기 / 문제 해결 / 다시 확인) sits beside 분석 시작; only add a recheck here when it is not already there. */}
-                        {readinessAction !== 'recheck' && (
-                            <div className="flex shrink-0 gap-2">
-                                <Button variant="outline" className="status-action-button" onClick={() => void handleRefreshReadiness()} disabled={isAnalyzing}>
-                                    <RefreshCw size={15} aria-hidden="true" />
-                                    다시 확인
-                                </Button>
-                            </div>
-                        )}
-                    </div>
-                </StatusBanner>
-            )}
-
             {formBannerMessage && (
-                <StatusBanner id={localEngineConnectionRequired ? undefined : 'writer-form-error'} tone="error">
+                <StatusBanner tone="error">
                     {formBannerMessage}
                 </StatusBanner>
             )}

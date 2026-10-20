@@ -882,7 +882,10 @@ const runAdmissionScenario = async (browser, fixture, action, { terminalFirst = 
       await page.locator('#meeting-purpose').fill('인수 전 중지 검사');
     }
     await page.setInputFiles('#meeting-file-input', fixture.path);
-    await page.waitForFunction(() => !document.querySelector('.writer-start-button')?.disabled);
+    await page.waitForFunction(() => {
+      const button = document.querySelector('.writer-start-button');
+      return Boolean(button && button.getAttribute('aria-disabled') !== 'true');
+    });
     const beforeDrafts = await readLocalStorageJson(page, 'analysisResumeDrafts') ?? [];
     const beforeMeetings = await readMeetings();
     await page.locator('.writer-start-button').click();
@@ -1171,7 +1174,7 @@ const runPreparationStopScenario = async (browser, fixture) => {
   }
 };
 
-// Until the engine answers, a quiet line says why 분석 시작 is off, long before the 45s notice (WR-7).
+// Until the engine answers, the status line says why 분석 시작 is off, long before the 45s notice (WR-7).
 const runEngineCheckingScenario = async (browser, fixture) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
@@ -1186,18 +1189,21 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await assertProjectPage(page);
     await page.getByLabel('회의 목적', { exact: true }).fill('연결 확인 중 줄 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
-    const checkingLine = page.locator('#writer-engine-checking');
-    await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });
+    const row = page.locator('.writer-action-row');
+    const checkingLine = page.locator('.writer-action-row[data-state="readiness-checking"]');
+    await checkingLine.waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '분석 준비 확인 중');
     const startButton = page.getByRole('button', { name: '분석 시작' });
-    assert.equal(await startButton.isDisabled(), true, '분석 시작 waits for the engine');
-    assert.match(await startButton.getAttribute('aria-describedby') ?? '', /writer-engine-checking/, 'the disabled button says why');
-    assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 'no recovery button before the 45s notice');
+    assert.equal(await startButton.getAttribute('aria-disabled'), 'true', '분석 시작 waits for the engine');
+    assert.equal(await startButton.getAttribute('aria-describedby'), 'writer-local-engine-requirement', 'the blocked button says why');
+    assert.equal(await row.getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 'no recovery button before the 45s notice');
 
     engineUp = true;
     await checkingLine.waitFor({ state: 'detached', timeout: 5000 });
+    assert.equal(await row.getAttribute('data-state'), 'ready');
     const startEnabled = () => page.waitForFunction(() => {
       const button = [...document.querySelectorAll('button')].find(element => element.textContent?.trim() === '분석 시작');
-      return Boolean(button && !button.disabled);
+      return Boolean(button && button.getAttribute('aria-disabled') !== 'true');
     }, null, { timeout: 5000 });
     await startEnabled();
 
@@ -1207,7 +1213,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await startButton.click();
     await page.locator('.writer-analysis-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 5000 });
-    await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });
+    await checkingLine.waitFor({ timeout: 5000 });
     engineUp = true;
     await checkingLine.waitFor({ state: 'detached', timeout: 5000 });
     await startEnabled();

@@ -24,7 +24,7 @@ import {
 import { LocalEngineConnectionCoordinator } from '../src/localEngineConnectionCoordinator.ts';
 import { getLocalEngineConnectionView } from '../src/localEngineConnectionView.ts';
 import { selectWriterStatusRow } from '../src/writerStatusRow.ts';
-import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 const web = detectRuntimeEnvironment({
   hostname: 'meetings.example.test',
@@ -392,6 +392,65 @@ const unreachableWithNotice = selectWriterStatusRow(rowInput({ connection: unrea
 assert.equal(unreachableWithNotice.message, unreachableWithInstaller.message, 'with ?, the line stays short');
 assert.ok(unreachableWithNotice.help.endsWith(notice));
 assert.equal(selectWriterStatusRow(rowInput({ connection: checkingView, installerNotice: notice })).message, null, 'no installer warning where no installer is offered');
+// Desktop app and development UI: no connection step. The desktop app calls its engine 분석 기능, offers 문제 해결
+// where the web shows `?`, and is reinstalled whole without a link; with nothing blocked both leave the line empty.
+const desktopRow = overrides => selectWriterStatusRow(rowInput({
+  connection: null, desktopApp: true, canOpenTroubleshooting: true, ...overrides,
+}));
+const devRow = overrides => selectWriterStatusRow(rowInput({ connection: null, ...overrides }));
+const emptyLine = {
+  stage: 'ready', state: 'ready', tone: 'neutral', busy: false, title: '', message: null,
+  messageId: undefined, help: null, actions: [], blocksStart: false,
+};
+assert.deepEqual(rowSummary(desktopRow({})), emptyLine, 'desktop: nothing blocked leaves the line empty, without 연결됨');
+assert.deepEqual(rowSummary(devRow({})), emptyLine, 'development UI: no connection step, so no 연결됨 either');
+const readinessSummary = (state, tone, title, message, actions, extra = {}) => ({
+  stage: 'readiness', state, tone, busy: false, title, message, messageId: undefined, help: null, actions, blocksStart: true, ...extra,
+});
+const troubleshoot = { kind: 'troubleshoot', label: '문제 해결' };
+const recheckReadiness = { kind: 'recheck-readiness', label: '다시 확인' };
+for (const readinessState of ['checking', 'server-waiting']) {
+  assert.deepEqual(rowSummary(desktopRow({ readinessState })),
+    readinessSummary('readiness-checking', 'neutral', '분석 기능 준비 중', null, [], { busy: true }), `desktop ${readinessState}`);
+  assert.deepEqual(rowSummary(desktopRow({ readinessState, readinessNoResponse: true })),
+    readinessSummary('no-response', 'warning', '분석 기능이 아직 준비되지 않았습니다', '첫 실행은 몇 분 걸릴 수 있습니다.', [troubleshoot]),
+    'desktop: 45s without an answer points at 문제 해결, not ?');
+  assert.deepEqual(desktopRow({ readinessState, readinessNoResponse: true, canOpenTroubleshooting: false }).actions, [], 'no button that cannot open 문제 해결');
+  assert.deepEqual(rowSummary(devRow({ readinessState })),
+    readinessSummary('readiness-checking', 'neutral', '분석 준비 확인 중', null, [], { busy: true }), `development UI ${readinessState}`);
+  // The development UI speaks as the web app: same warning, same `?`; its 다시 확인 hands the row to the connection step.
+  assert.deepEqual(rowSummary(devRow({ readinessState, readinessNoResponse: true })), rowSummary(selectWriterStatusRow(rowInput({ readinessState, readinessNoResponse: true }))));
+}
+assert.deepEqual(rowSummary(desktopRow({ readinessState: 'error', readinessMessage: '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.' })),
+  readinessSummary('readiness-error', 'warning', '분석 준비 상태를 확인하지 못했습니다', '잠시 뒤 다시 확인해 주세요.', [troubleshoot, recheckReadiness]),
+  'desktop: 문제 해결 takes the place of ?, and 다시 확인 stays beside 분석 시작');
+assert.deepEqual(rowSummary(desktopRow({ readinessState: 'missing-models', readinessMessage: 'ffmpeg를 찾지 못했습니다.' })),
+  readinessSummary('readiness-blocked', 'warning', '분석을 시작할 수 없습니다', '잠시 뒤 다시 확인해 주세요.', [troubleshoot, recheckReadiness]));
+assert.deepEqual(desktopRow({ readinessState: 'error', canOpenTroubleshooting: false }).actions, [recheckReadiness]);
+assert.deepEqual(rowSummary(desktopRow({ readinessState: 'missing-models', missingModels: [diarizationMissing] })),
+  readinessSummary('models-reinstall', 'error', '필요한 모델이 없어 분석을 시작할 수 없습니다', `${withJosa(BRAND_NAME, '을/를')} 다시 설치해 주세요.`, []),
+  'desktop: the whole app is reinstalled, and there is no installer link to offer');
+assert.deepEqual(rowSummary(devRow({ readinessState: 'missing-models', missingModels: [diarizationMissing], installerAvailable: false })),
+  readinessSummary('models-reinstall', 'error', '필요한 모델이 없어 분석을 시작할 수 없습니다', `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`, []));
+for (const row of [desktopRow, devRow]) {
+  assert.deepEqual(rowSummary(row({ readinessState: 'missing-models', missingModels: [sttMissing] })),
+    rowSummary(selectWriterStatusRow(rowInput({ readinessState: 'missing-models', missingModels: [sttMissing] }))), 'models are the same everywhere');
+  assert.deepEqual(rowSummary(row({ readinessState: 'missing-models', gpuUnavailable: true })), rowSummary(gpuRow));
+  assert.deepEqual(rowSummary(row({ readinessState: 'missing-models', missingModels: [diarizationMissing], diarizationDuringAnalysis: true })), rowSummary(diarizationRow));
+  // The input step is shared too, in the same order.
+  for (const [input, expected] of inputCases) assert.deepEqual(rowSummary(row({ input })), expected, `${expected.state} without a connection step`);
+  assert.equal(row({ input: { missingRequired: ['회의 제목'] } }).messageId, 'writer-form-error');
+  assert.equal(row({ readinessState: 'checking', input: formBlocked }).state, 'readiness-checking', 'readiness comes before the form');
+}
+// Development UI: an engine that refuses the request needs the connection checked, not a re-check.
+assert.deepEqual(rowSummary(devRow({ readinessState: 'error', connectionCheckRequired: true, readinessMessage: '연결 상태를 확인해야 분석을 시작할 수 있습니다.' })),
+  readinessSummary('connection-check-required', 'warning', '연결 상태를 확인해야 합니다', '연결 확인을 눌러 주세요.', [{ kind: 'recheck-engine', label: '연결 확인' }]));
+assert.equal(selectWriterStatusRow(rowInput({ readinessState: 'error', connectionCheckRequired: true })).state, 'readiness-error',
+  'the web connection build keeps its own readiness error (its connection step handles a refusal)');
+assert.equal(devRow({ readinessState: 'ready', connectionCheckRequired: true }).state, 'ready');
+for (const row of [desktopRow({}), desktopRow({ readinessState: 'missing-models', missingModels: [sttMissing] }), devRow({ readinessState: 'error' })]) {
+  assert.doesNotMatch(`${row.title} ${row.message ?? ''}`, /준비 필요|이어하기 불가|연결됨/);
+}
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'checking', updateRequired: true },
   pairingPhase: 'idle',

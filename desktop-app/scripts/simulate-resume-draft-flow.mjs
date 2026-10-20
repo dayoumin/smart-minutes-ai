@@ -202,7 +202,7 @@ const runWriterLayoutScenario = async (browser) => {
         const grid = rect('.writer-input-grid');
         const upload = rect('.writer-input-grid > .writer-section:first-child');
         const info = rect('.writer-info-column');
-        const action = rect('.writer-action-bar');
+        const action = rect('.writer-action-row');
         const title = rect('.writer-shell .page-title');
         const fileButton = rect('.file-drop-zone');
         const startButton = rect('.writer-start-button');
@@ -277,8 +277,11 @@ const runWriterLayoutScenario = async (browser) => {
     await page.getByRole('button', { name: `${droppedFilename} 제거` }).click();
     await page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
     await startButton.click();
-    await page.getByText(/필수 항목을 확인해 주세요/).waitFor({ timeout: 10000 });
+    // The status row beside 분석 시작 lists what is left; no banner under the form repeats it.
+    await page.locator('.writer-action-row[data-state="required-fields"]').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '필수 항목이 비어 있습니다');
     await page.locator('#writer-form-error').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.status-banner').count(), 0, 'no required-field banner');
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).getAttribute('aria-invalid'), 'true');
     assert.equal(await page.getByLabel('회의 목적', { exact: true }).getAttribute('aria-invalid'), 'true');
     const requiredFileButton = page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ });
@@ -1324,14 +1327,19 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
     await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
     await page.getByText('같은 영상·음성 파일 선택', { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByText('resume-draft-target.mp4 파일을 다시 선택해 주세요.').waitFor({ timeout: 10000 });
+    // The status row asks for the draft's own file; no note under the upload area repeats it.
+    await page.locator('.writer-action-row[data-state="resume-choose-file"]').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '이어서 분석할 파일을 선택해 주세요');
+    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-message').innerText(), 'resume-draft-target.mp4');
+    assert.equal(await page.locator('#writer-resume-note').count(), 0);
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
     assert.equal(await page.locator('#report-template').count(), 0);
     assert.equal(await page.locator('label.topic-chip').count(), 0);
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await expectValue(page, '#meeting-title', '중단된 회의');
-    await page.getByText('같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.').waitFor({ timeout: 10000 });
+    await page.locator('.writer-action-row[data-state="ready"]').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.writer-panel').getByRole('button', { name: '이어하기', exact: true }).getAttribute('aria-disabled'), null);
     await page.locator('.writer-panel').getByRole('button', { name: '이어하기', exact: true }).click();
     await page.getByText('이전 음성 인식 진행분 3개 구간을 재사용했습니다.').waitFor({ timeout: 10000 });
     assert.equal(resumeCandidatesCalled, true);
@@ -1868,7 +1876,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
     const completionPanel = page.locator('.writer-panel .writer-completion-panel');
     await completionPanel.waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'the ready command bar must not compete with the completed result');
+    assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the ready command bar must not compete with the completed result');
     await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
     await page.getByText('기록 정리에서 핵심 결과를 확인하세요.', { exact: false }).waitFor({ timeout: 10000 });
     assert.equal(dialogShown, false);
@@ -2044,7 +2052,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByText('대화록을 확인하고 필요한 정리를 실행하세요.', { exact: false }).waitFor({ timeout: 10000 });
     const completionPanel = page.locator('.writer-panel .writer-completion-panel');
     await completionPanel.waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('.writer-panel .writer-action-bar').count(), 0, 'the completed result should stay in the writer action slot');
+    assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the completed result should stay in the writer action slot');
     await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
     assert.equal(dialogShown, false);
     assert.doesNotMatch(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\nfresh-choice-draft-job/);

@@ -435,7 +435,15 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
 
         message_lines = [line for line in installer.splitlines() if 'MessageBox' in line]
         self.assertEqual([line for line in message_lines if '엔진' in line], [])
-        self.assertTrue(any('음성 분석 프로그램의 연결 포트(17863)를 이미 쓰고 있습니다' in line for line in message_lines))
+        self.assertTrue(any(
+            '음성 분석 프로그램의 연결(포트 17863)을 쓰고 있습니다. ${BRAND_NAME} 데스크톱 앱 등' in line
+            for line in message_lines
+        ))
+        self.assertEqual(
+            sum('컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요' in line for line in message_lines),
+            3,
+        )
+        self.assertEqual([line for line in message_lines if '선언되지 않은' in line], [])
         self.assertTrue(any('실행 중인 음성 분석 프로그램을 종료하지 못했습니다' in line for line in message_lines))
         self.assertTrue(any('이전 버전 백업 파일을 정리하지 못했습니다' in line for line in message_lines))
         self.assertTrue(any('이 설치 프로그램이 만들지 않은 파일' in line for line in message_lines))
@@ -455,9 +463,27 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertNotIn('RMDir /r', legacy_macro)
 
         install_shortcuts = installer.split('\nshortcuts:\n', 1)[1].split('Goto install_done', 1)[0]
+        # The old folder goes only after every new shortcut exists.
+        new_uninstall_shortcut = (
+            'CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 제거.lnk" "$INSTDIR\\Uninstall.exe"'
+        )
         self.assertLess(
-            install_shortcuts.index('!insertmacro RemoveLegacyStartMenuEntries'),
             install_shortcuts.index('CreateDirectory "$SMPROGRAMS\\${START_MENU_DIR}"'),
+            install_shortcuts.index(new_uninstall_shortcut),
+        )
+        self.assertLess(
+            install_shortcuts.index(new_uninstall_shortcut),
+            install_shortcuts.index('!insertmacro RemoveLegacyStartMenuEntries'),
+        )
+        # Every fixed shortcut name in the shared folder carries the product name.
+        current_folder_names = [
+            line.split('${START_MENU_DIR}\\', 1)[1].split('"', 1)[0]
+            for line in installer.splitlines()
+            if '${START_MENU_DIR}\\' in line and '.lnk' in line and '$2' not in line
+        ]
+        self.assertEqual(
+            sorted(set(current_folder_names)),
+            sorted({'음성 분석 시작.lnk', '${BRAND_NAME} 연결.lnk', '음성 분석 종료.lnk', '음성 분석 제거.lnk'}),
         )
         # The recorded connect shortcut (maybe from an earlier brand) is removed before
         # the current one is made, and the new name is recorded for the next run.
@@ -491,6 +517,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         )
         self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\${BRAND_NAME} 연결.lnk"', uninstall)
         self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 종료.lnk"', uninstall)
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 제거.lnk"', uninstall)
         self.assertIn('!insertmacro RemoveLegacyStartMenuEntries', uninstall)
         self.assertNotIn('${START_MENU_DIR}\\로컬 엔진', installer)
 
@@ -518,8 +545,21 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
             '$PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비워 주세요.',
             confirm_branch,
         )
-        self.assertIn('음성 분석 프로그램이 쓸 모델과 회의 분석 작업 파일을 저장할 공간이 부족합니다', confirm_branch)
-        self.assertIn('저장 공간 확인이나 임시 파일 정리 중 일부를 마치지 못했습니다', confirm_branch)
+        self.assertEqual(
+            confirm_branch.count('음성 분석에 필요한 모델과 회의 작업 파일을 저장할 공간이 부족합니다'),
+            2,
+        )
+        self.assertEqual(confirm_branch.count('‘아니요’를 누르면 설치를 멈춥니다.'), 2)
+        self.assertIn('설치 전 점검 중 일부를 마치지 못했습니다. 설치는 계속할 수 있고', confirm_branch)
+        self.assertNotIn('저장 공간 확인이나 임시 파일 정리', installer)
+        blocked_branch = installer.split('${ElseIf} $PreflightExit == 20\n', 1)[1].split(
+            '${ElseIf} $PreflightExit == 30', 1
+        )[0]
+        self.assertIn(
+            '$PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비운 뒤 설치 파일을 다시 실행해 주세요.',
+            blocked_branch,
+        )
+        self.assertIn('공간을 확보한 뒤 설치 파일을 다시 실행해 주세요.', blocked_branch)
         self.assertEqual(confirm_branch.count('IDYES preflight_ready'), 3)
         self.assertIn('SetErrorLevel 10\n    Abort', confirm_branch)
 

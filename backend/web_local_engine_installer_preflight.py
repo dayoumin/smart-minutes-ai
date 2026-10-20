@@ -13,6 +13,7 @@ from pathlib import Path, PureWindowsPath
 from typing import Mapping
 
 from local_engine_preflight import (
+    INSTALLER_STORAGE_CHECK_IDS,
     InstallerTargetPaths,
     PortInspection,
     StorageRequirement,
@@ -21,7 +22,7 @@ from local_engine_preflight import (
     is_inside_user_temp,
     write_preflight_json,
 )
-from web_local_engine_storage_requirements import (
+from web_local_engine_download_sizes import (
     DIARIZATION_MODEL_BYTES,
     STT_MODEL_BYTES,
     SUMMARY_MODEL_BYTES,
@@ -66,7 +67,7 @@ EXPECTED_CHECK_IDS = (
     "installer_local_app_data_cleanup",
     "installer_fixed_port",
 )
-STORAGE_CHECK_IDS = set(EXPECTED_CHECK_IDS[:5])
+STORAGE_CHECK_IDS = set(INSTALLER_STORAGE_CHECK_IDS.values())
 # Manifest keys written by web_local_engine_storage_requirements.py for the
 # roles the program fills after install.
 MANIFEST_STORAGE_ROLES = {

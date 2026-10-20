@@ -1,9 +1,11 @@
 import ast
 import functools
 import json
+import modulefinder
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path, PureWindowsPath
@@ -87,6 +89,27 @@ class WebLocalEngineStorageRequirementsTest(unittest.TestCase):
         self.assertEqual(parsed["analysis_temp"].recommended_bytes, 2_916_941_824)
         self.assertEqual(parsed["results"].required_bytes, 268_435_456)
         self.assertNotIn("install", parsed)
+
+
+    def test_frozen_helper_import_graph_leaves_out_media_libraries(self) -> None:
+        backend = Path(__file__).resolve().parent
+
+        def import_graph(script: str) -> modulefinder.ModuleFinder:
+            # PyInstaller follows imports inside functions too; ModuleFinder does the same.
+            finder = modulefinder.ModuleFinder(path=[str(backend), *sys.path], excludes=["av", "numpy"])
+            finder.run_script(str(backend / script))
+            return finder
+
+        storage = import_graph("web_local_engine_storage_requirements.py")
+        helper = import_graph("web_local_engine_installer_preflight.py")
+        # The release-build module does reach the media library, so this check can see it.
+        self.assertIn("media_limits", storage.modules)
+        self.assertIn("av", storage.badmodules)
+        self.assertIn("web_local_engine_download_sizes", helper.modules)
+        self.assertIn("local_engine_preflight", helper.modules)
+        for name in ("av", "numpy", "media_limits", "storage_preflight", "web_local_engine_storage_requirements"):
+            self.assertNotIn(name, helper.modules)
+            self.assertNotIn(name, helper.badmodules)
 
 
 class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
@@ -852,7 +875,7 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
         self,
         root: Path,
         *,
-        available_bytes: int,
+        available_bytes: int | None,
         storage: dict | None,
         prepare=None,
     ) -> tuple[int, list[str], dict]:
@@ -877,7 +900,9 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
                 patch.object(
                     installer_preflight,
                     "collect_installer_target_preflight",
-                    functools.partial(
+                    original_collect
+                    if available_bytes is None
+                    else functools.partial(
                         original_collect,
                         volume_reader=lambda _path: VolumeSpace("c:\\", available_bytes),
                     ),
@@ -901,6 +926,43 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             decision.read_text(encoding="utf-8").splitlines(),
             json.loads(result.read_text(encoding="utf-8")),
         )
+
+    @unittest.skipUnless(os.name == "nt", "Windows source smoke")
+    def test_main_on_the_real_volume_with_a_current_manifest_has_no_unknown_storage(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            install_bytes = requirements_from_artifact_manifest(
+                self._manifest(Path(temp_dir), storage=storage_requirements())
+            )["install"].required_bytes
+        with tempfile.TemporaryDirectory() as temp_dir:
+            exit_code, decision, payload = self._run_main_with_volume(
+                Path(temp_dir),
+                available_bytes=None,
+                storage=storage_requirements(),
+            )
+        checks = {check["check_id"]: check for check in payload["checks"]}
+        future = [checks[check_id] for check_id in (
+            "installer_model_space",
+            "installer_analysis_temp_space",
+            "installer_results_space",
+        )]
+        for check in future:
+            measured = check["measured"]
+            self.assertIn(check["status"], {"pass", "warning"})
+            self.assertEqual(measured["aggregate_required_bytes"], 13_219_366_818)
+            self.assertEqual(measured["aggregate_recommended_bytes"], 16_200_685_472)
+            self.assertEqual(measured["reused_bytes"], 0)
+            self.assertEqual(
+                measured["available_after_install_bytes"],
+                max(0, measured["available_bytes"] - install_bytes),
+            )
+        self.assertNotIn("unknown", {check["status"] for check in payload["checks"]})
+        after_install = future[0]["measured"]["available_after_install_bytes"]
+        if after_install >= 16_200_685_472:
+            self.assertEqual(exit_code, 0)
+            self.assertIn("decision=ready", decision)
+        else:
+            self.assertEqual(exit_code, 10)
+            self.assertIn("primary_action=free_space_and_retry", decision)
 
     @unittest.skipUnless(os.name == "nt", "Windows source smoke")
     def test_main_passes_healthy_pc_and_names_space_to_free_when_low(self) -> None:

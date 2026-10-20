@@ -383,6 +383,33 @@ class LocalEnginePreflightTest(unittest.TestCase):
         self.assertEqual(checks["installer_install_space"]["measured"]["aggregate_required_bytes"], 2 * install_bytes)
         self.assertNotIn("reused_bytes", checks["installer_install_space"]["measured"])
 
+    def test_upgrade_install_credit_covers_only_the_size_already_on_disk(self) -> None:
+        requirements = self._requirements(install=100, staging=100)
+        # New install 100 bytes on a 1000-byte volume: an older, smaller install
+        # leaves 60 bytes still to find; a larger one cannot add free space.
+        for existing, after_install in ((0, 900), (40, 940), (250, 1000)):
+            with self.subTest(existing=existing):
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    payload = collect_installer_target_preflight(
+                        self._installer_paths(Path(temp_dir)),
+                        requirements,
+                        request_generation=7,
+                        clock=lambda: 1234,
+                        run_id_factory=lambda: "run-installer",
+                        volume_reader=lambda _path: VolumeSpace("shared-volume", 1000),
+                        write_cleanup_reader=lambda _targets: WriteCleanupProbe("pass", "pass", 1, 1),
+                        port_reader=lambda: PortInspection("available"),
+                        reusable_bytes={"install": existing},
+                    )
+                checks = {check["check_id"]: check for check in payload["checks"]}
+                model = checks["installer_model_space"]["measured"]
+                self.assertEqual(model["available_after_install_bytes"], after_install)
+                self.assertEqual(model["reused_bytes"], existing)
+                self.assertEqual(model["aggregate_required_bytes"], 45)
+                install = checks["installer_install_space"]["measured"]
+                self.assertEqual(install["available_bytes"], 1000)
+                self.assertEqual(install["aggregate_required_bytes"], 200)
+
     def test_missing_requirement_is_unknown_instead_of_guessing(self) -> None:
         requirements = self._requirements(models=None)
         with tempfile.TemporaryDirectory() as temp_dir:

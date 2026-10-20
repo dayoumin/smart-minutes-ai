@@ -146,7 +146,7 @@ Function StopInstalledEngine
   ${If} $0 != 0
   ${AndIf} $0 != 3
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요."
     Abort
   ${EndIf}
   ${If} $0 == 0
@@ -168,7 +168,7 @@ wait_retry:
   ${EndIf}
   ${If} $0 >= 20
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "음성 분석 프로그램 종료가 완료되지 않았습니다. 잠시 후 다시 시도해 주세요."
+    MessageBox MB_OK|MB_ICONSTOP "음성 분석 프로그램 종료가 완료되지 않았습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요."
     Abort
   ${EndIf}
   Sleep 250
@@ -336,7 +336,7 @@ preflight_retry:
   IntOp $PreflightAttempts $PreflightAttempts + 1
   ${If} $PreflightAttempts > 10
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 종료하지 못했습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요."
     Abort
   ${EndIf}
   Call RunInstallerPreflight
@@ -356,21 +356,28 @@ preflight_retry:
         StrCpy $PreflightFreeSpaceDrive "사용자 폴더가 있는"
       ${EndIf}
       ${If} $PreflightFreeSpaceGb != ""
-        MessageBox MB_YESNO|MB_ICONEXCLAMATION "음성 분석 프로그램이 쓸 모델과 회의 분석 작업 파일을 저장할 공간이 부족합니다.$\r$\n$\r$\n$PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비워 주세요. 설치는 지금 계속하고, 회의를 분석하기 전에 비워도 됩니다.$\r$\n$\r$\n설치를 계속할까요?" IDYES preflight_ready
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION "음성 분석에 필요한 모델과 회의 작업 파일을 저장할 공간이 부족합니다.$\r$\n$\r$\n$PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비워 주세요. 설치는 지금 계속하고, 모델을 받거나 회의를 분석하기 전에 비워도 됩니다.$\r$\n$\r$\n설치를 계속할까요? ‘아니요’를 누르면 설치를 멈춥니다." IDYES preflight_ready
       ${Else}
-        MessageBox MB_YESNO|MB_ICONEXCLAMATION "음성 분석 프로그램이 쓸 모델과 회의 분석 작업 파일을 저장할 공간이 부족합니다.$\r$\n$\r$\n$PreflightFreeSpaceDrive 드라이브에서 쓰지 않는 파일을 정리해 주세요. 설치는 지금 계속하고, 회의를 분석하기 전에 비워도 됩니다.$\r$\n$\r$\n설치를 계속할까요?" IDYES preflight_ready
+        MessageBox MB_YESNO|MB_ICONEXCLAMATION "음성 분석에 필요한 모델과 회의 작업 파일을 저장할 공간이 부족합니다.$\r$\n$\r$\n$PreflightFreeSpaceDrive 드라이브에서 쓰지 않는 파일을 정리해 주세요. 설치는 지금 계속하고, 모델을 받거나 회의를 분석하기 전에 비워도 됩니다.$\r$\n$\r$\n설치를 계속할까요? ‘아니요’를 누르면 설치를 멈춥니다." IDYES preflight_ready
       ${EndIf}
     ${Else}
-      MessageBox MB_YESNO|MB_ICONEXCLAMATION "설치는 계속할 수 있지만 저장 공간 확인이나 임시 파일 정리 중 일부를 마치지 못했습니다. 설치를 계속할까요?" IDYES preflight_ready
+      MessageBox MB_YESNO|MB_ICONEXCLAMATION "설치 전 점검 중 일부를 마치지 못했습니다. 설치는 계속할 수 있고, 저장 공간은 모델을 받거나 회의를 분석할 때 다시 확인합니다.$\r$\n$\r$\n설치를 계속할까요?" IDYES preflight_ready
     ${EndIf}
     SetErrorLevel 10
     Abort
   ${ElseIf} $PreflightExit == 20
     SetErrorLevel 20
     ${If} $PreflightAction == "close_conflicting_app_and_retry"
-      MessageBox MB_OK|MB_ICONSTOP "다른 프로그램이 음성 분석 프로그램의 연결 포트(17863)를 이미 쓰고 있습니다. 그 프로그램을 종료한 뒤 다시 실행해 주세요."
+      MessageBox MB_OK|MB_ICONSTOP "다른 프로그램이 음성 분석 프로그램의 연결(포트 17863)을 쓰고 있습니다. ${BRAND_NAME} 데스크톱 앱 등 열린 프로그램을 닫거나 컴퓨터를 다시 시작한 뒤 다시 실행해 주세요."
     ${ElseIf} $PreflightAction == "free_space_and_retry"
-      MessageBox MB_OK|MB_ICONSTOP "안전한 설치와 복구에 필요한 저장 공간이 부족합니다. 공간을 확보한 뒤 다시 실행해 주세요."
+      ${If} $PreflightFreeSpaceDrive == ""
+        StrCpy $PreflightFreeSpaceDrive "사용자 폴더가 있는"
+      ${EndIf}
+      ${If} $PreflightFreeSpaceGb != ""
+        MessageBox MB_OK|MB_ICONSTOP "설치와 복구에 필요한 저장 공간이 부족합니다. $PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비운 뒤 설치 파일을 다시 실행해 주세요."
+      ${Else}
+        MessageBox MB_OK|MB_ICONSTOP "설치와 복구에 필요한 저장 공간이 부족합니다. 공간을 확보한 뒤 설치 파일을 다시 실행해 주세요."
+      ${EndIf}
     ${Else}
       MessageBox MB_OK|MB_ICONSTOP "설치 폴더에 안전하게 쓰고 정리할 수 없습니다. 폴더 권한을 확인한 뒤 다시 실행해 주세요."
     ${EndIf}
@@ -505,14 +512,17 @@ rollback_cleanup_warning:
   Goto shortcuts
 
 shortcuts:
-  !insertmacro RemoveLegacyStartMenuEntries
   CreateDirectory "$SMPROGRAMS\${START_MENU_DIR}"
   ; The web app tells users to run "<brand> 연결" from the Start menu.
   !insertmacro RemoveRecordedConnectShortcut
+  ; Every fixed name carries the product name, because "음성 분석" is a common
+  ; folder name another program might also use.
   CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 시작.lnk" "$EngineExe"
   CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\${BRAND_NAME} 연결.lnk" "$EngineExe" "--pair"
   CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 종료.lnk" "$EngineExe" "--stop"
-  CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\제거.lnk" "$INSTDIR\Uninstall.exe"
+  CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 제거.lnk" "$INSTDIR\Uninstall.exe"
+  ; Remove the old folder only after the new shortcuts exist.
+  !insertmacro RemoveLegacyStartMenuEntries
   WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayName" "${PRODUCT_NAME}"
   WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayVersion" "${ENGINE_VERSION}"
   WriteRegStr HKCU "${PRODUCT_KEY}" "Publisher" "${BRAND_NAME}"
@@ -664,7 +674,7 @@ remove_program:
   StrCpy $0 "launch_failed"
   ${If} $0 != 0
     SetErrorLevel 20
-    MessageBox MB_OK|MB_ICONSTOP "설치 폴더에 선언되지 않은 파일이 있어 자동으로 삭제하지 않았습니다. 파일을 확인한 뒤 다시 시도해 주세요."
+    MessageBox MB_OK|MB_ICONSTOP "설치 폴더에 이 설치 프로그램이 만들지 않은 파일이 있어 제거를 멈췄습니다. 그 파일을 옮긴 뒤 다시 시도해 주세요."
     Abort
   ${EndIf}
   ClearErrors
@@ -679,7 +689,7 @@ remove_program:
   !insertmacro RemoveRecordedConnectShortcut
   Delete "$SMPROGRAMS\${START_MENU_DIR}\${BRAND_NAME} 연결.lnk"
   Delete "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 종료.lnk"
-  Delete "$SMPROGRAMS\${START_MENU_DIR}\제거.lnk"
+  Delete "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 제거.lnk"
   RMDir "$SMPROGRAMS\${START_MENU_DIR}"
   !insertmacro RemoveLegacyStartMenuEntries
   ClearErrors

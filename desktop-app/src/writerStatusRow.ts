@@ -1,3 +1,4 @@
+import { ANALYSIS_DURATION_LIMIT_MESSAGE, ANALYSIS_DURATION_LIMIT_TITLE } from './analysisMediaLimit.ts';
 import { LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
 import type {
     LocalEngineConnectionAction,
@@ -5,8 +6,8 @@ import type {
 } from './localEngineConnectionView';
 
 // The new-meeting action row in the web connection build: one status line beside 분석 시작 that names
-// the first blocked step (connection → readiness), plus the buttons that fix that step.
-// Analysis-start conditions and required fields join this order in a later slice.
+// the first blocked step (connection → readiness → analysis-start conditions → required fields),
+// plus the buttons that fix that step.
 
 export type WriterStatusActionKind =
     | LocalEngineConnectionAction
@@ -15,7 +16,11 @@ export type WriterStatusActionKind =
     | 'diarization'
     | 'recheck-readiness'
     /** The user's own connection check, then a fresh readiness round. */
-    | 'recheck-engine';
+    | 'recheck-engine'
+    /** Opens the file picker. */
+    | 'choose-file'
+    /** Asks the engine again how the saved analyses stand. */
+    | 'refresh-analysis-status';
 
 export interface WriterStatusAction {
     kind: WriterStatusActionKind;
@@ -24,19 +29,43 @@ export interface WriterStatusAction {
 }
 
 export interface WriterStatusRow {
-    stage: 'connection' | 'readiness' | 'ready';
+    stage: 'connection' | 'readiness' | 'input' | 'ready';
     /** Stable name of the state, exposed as data-state for tests and screenshots. */
     state: string;
     tone: 'neutral' | 'info' | 'warning' | 'error' | 'success';
     busy: boolean;
     title: string;
     message: string | null;
+    /** Set when form fields point at the message with aria-describedby. */
+    messageId?: string;
     help: string | null;
     /** In visual order; the last one sits right beside 분석 시작. */
     actions: WriterStatusAction[];
     /** 분석 시작 stays unavailable while this row explains why. */
     blocksStart: boolean;
 }
+
+/** What the form itself still blocks, checked once the engine is connected and ready. */
+export interface WriterInputState {
+    /**
+     * The selected resume draft cannot continue: its run is still going elsewhere, it already finished
+     * (its result is a saved meeting), or nothing is left to reuse.
+     */
+    resumeUnavailable?: 'running' | 'completed' | 'unavailable' | null;
+    /** The chosen file is already being analyzed by another run. */
+    sameFileRunning?: boolean;
+    /** Another run, or a cancelled one still being cleaned up, holds the engine. */
+    otherAnalysisRunning?: boolean;
+    /** Browser metadata says the chosen file is over the length limit. */
+    fileTooLong?: boolean;
+    /** A resume draft is selected and its file is not chosen yet, or a different file is. */
+    resumeFile?: { sourceFilename: string; problem: 'missing' | 'mismatch' } | null;
+    /** Empty required fields after 분석 시작 was pressed, in screen order; empty while nothing was attempted. */
+    missingRequired?: string[];
+}
+
+/** The required-field list's id; the empty fields point at it with aria-describedby. */
+export const WRITER_REQUIRED_FIELDS_MESSAGE_ID = 'writer-form-error';
 
 export type WriterReadinessState = 'checking' | 'server-waiting' | 'ready' | 'missing-models' | 'error';
 
@@ -64,6 +93,7 @@ export interface SelectWriterStatusRowInput {
     canOpenAnalysisSettings: boolean;
     /** Appended where the installer is offered (test releases warn about Windows security prompts). */
     installerNotice?: string;
+    input?: WriterInputState;
 }
 
 // Short names for the list under 모델을 받아야 분석할 수 있습니다 (음성 인식, 참석자 구분).
@@ -195,10 +225,101 @@ const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow 
     });
 };
 
+const inputRow = (
+    value: Omit<WriterStatusRow, 'stage' | 'busy' | 'help' | 'blocksStart'> & Partial<WriterStatusRow>,
+): WriterStatusRow => ({ stage: 'input', busy: false, help: null, blocksStart: true, ...value });
+
+// Analysis-start conditions, then required fields. A selected draft that cannot continue and the same file
+// already running come first: they are the specific form of another analysis holding the engine.
+const selectInputRow = (state: WriterInputState | undefined): WriterStatusRow | null => {
+    if (!state) return null;
+    const chooseFile: WriterStatusAction = { kind: 'choose-file', label: '다른 파일 선택' };
+    if (state.resumeUnavailable === 'completed') {
+        // Nothing went wrong: the run finished elsewhere and its meeting is saved, so do not suggest analyzing again.
+        return inputRow({
+            state: 'resume-completed',
+            tone: 'info',
+            title: '이 분석은 이미 끝났습니다',
+            message: '결과는 회의록에서 확인해 주세요.',
+            actions: [],
+        });
+    }
+    if (state.resumeUnavailable) {
+        return inputRow({
+            state: 'resume-unavailable',
+            tone: 'error',
+            title: '이전 분석을 이어서 진행할 수 없습니다',
+            message: state.resumeUnavailable === 'running'
+                ? '진행이 끝나거나 중단된 뒤 이어갈 수 있습니다.'
+                : '새 분석으로 시작할 수 있습니다.',
+            actions: [],
+        });
+    }
+    if (state.sameFileRunning) {
+        return inputRow({
+            state: 'same-file-running',
+            tone: 'info',
+            title: '같은 파일 분석이 이미 진행 중입니다',
+            message: '먼저 상태를 확인해 주세요.',
+            actions: [{ kind: 'refresh-analysis-status', label: '상태 확인' }],
+        });
+    }
+    if (state.otherAnalysisRunning) {
+        // The way to the running analysis is the sidebar's 분석 중 card, so there is no button here.
+        return inputRow({
+            state: 'other-analysis',
+            tone: 'info',
+            title: '진행 중인 분석이 있습니다',
+            message: '끝나면 새 회의록을 분석할 수 있습니다.',
+            actions: [],
+        });
+    }
+    if (state.fileTooLong) {
+        return inputRow({
+            state: 'file-too-long',
+            tone: 'warning',
+            title: ANALYSIS_DURATION_LIMIT_TITLE,
+            message: ANALYSIS_DURATION_LIMIT_MESSAGE,
+            actions: [chooseFile],
+        });
+    }
+    if (state.resumeFile?.problem === 'missing') {
+        return inputRow({
+            state: 'resume-choose-file',
+            tone: 'info',
+            title: '이어서 분석할 파일을 선택해 주세요',
+            message: state.resumeFile.sourceFilename,
+            actions: [{ kind: 'choose-file', label: '파일 선택' }],
+        });
+    }
+    if (state.resumeFile?.problem === 'mismatch') {
+        return inputRow({
+            state: 'resume-other-file',
+            tone: 'warning',
+            title: '선택한 파일이 다릅니다',
+            message: `${state.resumeFile.sourceFilename} 파일을 다시 선택해 주세요.`,
+            actions: [chooseFile],
+        });
+    }
+    if (state.missingRequired && state.missingRequired.length > 0) {
+        // Checked when 분석 시작 is pressed, so the button stays available; the list shrinks as fields fill.
+        return inputRow({
+            state: 'required-fields',
+            tone: 'error',
+            title: '필수 항목이 비어 있습니다',
+            message: state.missingRequired.join(', '),
+            messageId: WRITER_REQUIRED_FIELDS_MESSAGE_ID,
+            actions: [],
+            blocksStart: false,
+        });
+    }
+    return null;
+};
+
 export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): WriterStatusRow => {
     const row = !input.connection.analysisReady
         ? connectionRow(input.connection)
-        : selectReadinessRow(input) ?? {
+        : selectReadinessRow(input) ?? selectInputRow(input.input) ?? {
             stage: 'ready',
             state: 'ready',
             tone: 'success',

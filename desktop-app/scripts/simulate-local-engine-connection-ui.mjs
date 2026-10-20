@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import net from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
@@ -834,7 +837,11 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     assert.equal(engineRequests[0], '/api/probe', 'the first request to this PC is the user\'s own check');
     assert.ok(engineRequests.includes('/api/pair/start'));
     console.log('ok - an undecided browser permission waits for 연결 확인 and explains the prompt');
-  } finally { await page.close(); }
+  } finally {
+    // A proxied module still in route.fetch would otherwise fail the run with TargetClosedError and hide the real error.
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await page.close();
+  }
 };
 
 const verifyAutomaticEngineConnection = async browser => {
@@ -887,6 +894,298 @@ const verifyAutomaticEngineConnection = async browser => {
     assert.ok(restores > 0);
     console.log('ok - installed engine connects automatically and survives reload without code or confirmation');
   } finally { await page.close(); }
+};
+
+// Connected and ready: the form's own blocks take the status row in order (design.md 동작 줄 v2 ③) —
+// required fields, file length, another analysis, the same file running, and the resume states.
+const verifyInputStage = async browser => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  page.setDefaultTimeout(15000);
+  const fixtureDir = await mkdtemp(join(tmpdir(), 'lmo-input-stage-'));
+  const samePath = join(fixtureDir, 'same-file.mp4');
+  await writeFile(samePath, Buffer.alloc(32, 7));
+  const sameFile = { name: 'same-file.mp4', size: 32, lastModified: Math.trunc((await stat(samePath)).mtimeMs) };
+  const okFile = { name: 'ok.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('input stage fixture') };
+  const jobId = 'input-stage-job';
+  const errors = [];
+  const analyzeRequests = [];
+  let statusRequests = 0;
+  let remoteDraft = { job_id: jobId, status: 'active', stage: 'transcribing', resume_supported: true, completed_chunk_count: 1 };
+  let holdStatuses = null;
+  let failStatuses = false;
+  page.on('pageerror', error => errors.push(error.message));
+  page.on('dialog', dialog => dialog.accept());
+  await page.addInitScript(() => {
+    window.localStorage.setItem('localProcessingIntroSeen', '1');
+    // Only over.wav reports a length past the 2-hour limit; other files keep the browser's own metadata.
+    const names = new Map();
+    const createObjectUrl = URL.createObjectURL.bind(URL);
+    URL.createObjectURL = blob => {
+      const url = createObjectUrl(blob);
+      names.set(url, blob.name);
+      return url;
+    };
+    const createElement = document.createElement.bind(document);
+    document.createElement = (tag, options) => {
+      const element = createElement(tag, options);
+      if (tag === 'audio' || tag === 'video') {
+        const descriptor = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'src');
+        Object.defineProperty(element, 'src', {
+          set(url) {
+            if (names.get(url) !== 'over.wav') return descriptor.set.call(element, url);
+            Object.defineProperty(element, 'duration', { configurable: true, value: 7200.001 });
+            queueMicrotask(() => element.dispatchEvent(new Event('loadedmetadata')));
+          },
+          get() { return descriptor.get.call(element); },
+        });
+      }
+      return element;
+    };
+  });
+  const grant = { session_token: 'input-stage-test-session-token',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] };
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (path === '/api/probe') return json({ product_id: 'barorok-local-engine', engine_version: 'test',
+      api_contract_version: 1, capabilities: grant.capabilities, auth_state: 'pairing-required',
+      pairing_available: true, pairing_mode: 'browser-connection', update_required: false });
+    if (path === '/api/pair/start') return json({ mode: 'browser-connection', pairing_id: 'input-stage-challenge', expires_in_seconds: 120 });
+    if (path === '/api/pair/complete' || path === '/api/pair/restore') return json(grant);
+    if (path === '/api/models/status') return json({ ready: true, models: [], errors: [] });
+    if (path === '/api/health') return json({ ok: true });
+    if (path === '/api/settings') return json({});
+    if (path === '/api/analyze/draft-statuses') {
+      statusRequests += 1;
+      if (holdStatuses) await holdStatuses.promise;
+      if (failStatuses) return json({ detail: 'draft status check failed' }, 500);
+      const requested = route.request().postDataJSON()?.job_ids ?? [];
+      return json({ drafts: requested.includes(jobId) ? [remoteDraft] : [] });
+    }
+    if (path.startsWith('/api/analyze')) {
+      analyzeRequests.push(path);
+      return json({ detail: 'the input step must not start an analysis' }, 500);
+    }
+    return json({}, 404);
+  });
+  const rail = statusRowOf(page);
+  const status = statusOf(page);
+  const start = rail.locator('.writer-start-button');
+  const waitState = state => page.waitForFunction(
+    expected => document.querySelector('.writer-action-row')?.dataset.state === expected, state,
+  );
+  const expectRow = async (state, title, message) => {
+    await waitState(state);
+    assert.equal(await status.locator('.writer-status-title').innerText(), title, `${state}: title`);
+    assert.equal(await status.locator('.writer-status-message').innerText(), message, `${state}: sub-line`);
+  };
+  const fixButtons = () => rail.locator('.writer-hint-action').allInnerTexts();
+  const activeId = () => page.evaluate(() => document.activeElement?.id ?? '');
+  const pressBlockedStart = async state => {
+    assert.equal(await isAriaDisabled(start), true, `${state}: 분석 시작 is blocked`);
+    assert.equal(await start.evaluate(element => element.hasAttribute('disabled')), false, `${state}: but stays focusable`);
+    await start.focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
+  };
+  const expectNoOldSurfaces = async state => {
+    assert.equal(await page.locator('.status-banner').count(), 0, `${state}: no banner under the form`);
+    assert.equal(await page.locator('[id="writer-form-error"]').count(), state === 'required-fields' ? 1 : 0, `${state}: one list id at most`);
+    assert.equal(await page.locator('#writer-resume-note, #writer-same-file-note, .writer-analysis-blocked-note').count(), 0,
+      `${state}: nothing said again under the upload area or below the form`);
+    assert.equal(await start.getAttribute('aria-describedby'), 'writer-local-engine-requirement', `${state}: one description`);
+    assert.doesNotMatch(await start.innerText(), /준비 필요|이어하기 불가/);
+  };
+  const setDrafts = drafts => page.evaluate(value => {
+    window.localStorage.setItem('analysisResumeDrafts', JSON.stringify(value));
+    window.dispatchEvent(new Event('analysis-resume-drafts:updated'));
+  }, drafts);
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await status.getByText('연결됨', { exact: true }).waitFor();
+    await waitState('ready');
+    assert.equal(await page.locator('#writer-form-error').count(), 0, 'before 분석 시작 nothing is listed');
+    assert.equal(await start.getAttribute('aria-disabled'), null);
+    // In page coordinates: moving focus to a field may scroll the window, which is not the row moving.
+    const startBox = () => start.evaluate(element => {
+      const box = element.getBoundingClientRect();
+      return { x: box.x + window.scrollX, y: box.y + window.scrollY, width: box.width, height: box.height };
+    });
+    const readyBox = await startBox();
+    const rowHeight = async () => Math.round((await rail.boundingBox()).height);
+    assert.equal(await rowHeight(), 40, 'the row is the 40px line, without an empty help row under it');
+
+    // Required fields: 분석 시작 stays available, lists what is left in screen order and goes to the first empty field.
+    await start.click();
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 제목, 회의 목적');
+    assert.equal(await activeId(), 'meeting-file-drop', 'focus moves to the first empty field on screen');
+    assert.equal(await start.getAttribute('aria-disabled'), null, 'empty fields alone do not block 분석 시작');
+    assert.equal(await status.locator('.writer-status-message').getAttribute('id'), 'writer-form-error');
+    assert.equal(await page.locator('#meeting-file-drop').getAttribute('aria-describedby'), 'writer-form-error');
+    assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), 'writer-form-error');
+    assert.equal(await page.locator('#meeting-date').getAttribute('aria-describedby'), null, 'a filled field is not described as missing');
+    assert.equal(await page.getByText('필수 항목을 확인해 주세요', { exact: false }).count(), 0, 'the old error sentence is gone');
+    await expectNoOldSurfaces('required-fields');
+    assert.deepEqual(await startBox(), readyBox, '분석 시작 does not move');
+    assert.equal(await rowHeight(), 40);
+    await page.locator('#meeting-title').fill('입력 단계 확인');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 목적');
+    assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), null);
+    await page.locator('#meeting-purpose').fill('막힌 첫 단계만 말하는지 확인');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일');
+    await page.setInputFiles('#meeting-file-input', okFile);
+    await waitState('ready');
+    assert.equal(await page.locator('#writer-form-error').count(), 0, 'the list disappears once everything is filled');
+    assert.equal(await page.locator('#meeting-purpose').getAttribute('aria-describedby'), null);
+    await page.locator('#meeting-title').fill('');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 제목');
+    await start.click();
+    assert.equal(await activeId(), 'meeting-title', 'with a file chosen, the first empty field is the title');
+    await page.locator('#meeting-title').fill('입력 단계 확인');
+    await waitState('ready');
+
+    // A file over 2 hours: a warning that 다른 파일 선택 fixes; 분석 시작 is blocked and points at the line.
+    await page.setInputFiles('#meeting-file-input', { name: 'over.wav', mimeType: 'audio/wav', buffer: Buffer.alloc(64) });
+    await expectRow('file-too-long', '파일이 2시간을 넘습니다', '2시간 이하의 음성·영상 파일을 선택해 주세요.');
+    assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-warning');
+    assert.deepEqual(await fixButtons(), ['다른 파일 선택']);
+    assert.equal(await page.getByText('선택한 파일은 약', { exact: false }).count(), 0, 'no banner repeats the length');
+    await expectNoOldSurfaces('file-too-long');
+    await pressBlockedStart('file-too-long');
+    // The file card above changed; within the row, 분석 시작 stays on the line's top edge.
+    assert.equal(Math.round((await rail.boundingBox()).y), Math.round((await start.boundingBox()).y));
+    const chooser = page.waitForEvent('filechooser');
+    await rail.getByRole('button', { name: '다른 파일 선택', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await (await chooser).setFiles(okFile);
+    await waitState('ready');
+    assert.equal(await start.getAttribute('aria-disabled'), null);
+    assert.equal(await activeId(), 'writer-local-engine-requirement', 'the pressed fix went away; focus follows to the line, not the page');
+
+    // Another run holds the engine (the sidebar's 분석 중 card leads there, so no button).
+    const draft = {
+      jobId, title: '다른 실행의 회의', date: '2026-10-20T09:30', meetingPurpose: '같은 파일 확인', participants: '',
+      sourceFilename: sameFile.name, sourceSize: sameFile.size, sourceLastModified: sameFile.lastModified,
+      status: 'active', stage: 'transcribing', createdAt: '2026-10-20T09:30:00.000Z', updatedAt: '2026-10-20T09:31:00.000Z',
+      resumeEligible: true, completedChunkCount: 1,
+    };
+    await setDrafts([draft]);
+    await expectRow('other-analysis', '진행 중인 분석이 있습니다', '끝나면 새 회의록을 분석할 수 있습니다.');
+    assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-info');
+    assert.deepEqual(await fixButtons(), []);
+    assert.equal(await page.locator('#writer-analysis-start-blocked.sr-only').count(), 1, 'the reason stays only for the recovery card');
+    await expectNoOldSurfaces('other-analysis');
+    await pressBlockedStart('other-analysis');
+
+    // The same file is already running: 상태 확인 asks the engine again.
+    await page.setInputFiles('#meeting-file-input', samePath);
+    await expectRow('same-file-running', '같은 파일 분석이 이미 진행 중입니다', '먼저 상태를 확인해 주세요.');
+    assert.deepEqual(await fixButtons(), ['상태 확인']);
+    await expectNoOldSurfaces('same-file-running');
+    await pressBlockedStart('same-file-running');
+    // Hold the answer so the check 상태 확인 asked for can be seen: it spins and keeps its focus.
+    let releaseCheck;
+    holdStatuses = { promise: new Promise(resolve => { releaseCheck = resolve; }) };
+    const requestsBefore = statusRequests;
+    remoteDraft = { job_id: jobId, status: 'stopped', stage: 'stopped', resume_supported: true, completed_chunk_count: 2 };
+    const statusCheck = rail.getByRole('button', { name: '상태 확인', exact: true });
+    assert.equal(await statusCheck.locator('svg.animate-spin').count(), 0, 'no spinner before it is pressed');
+    await statusCheck.focus();
+    await page.keyboard.press('Enter');
+    await waitUntil(() => statusRequests > requestsBefore, '상태 확인 asks the engine', 3000);
+    await statusCheck.locator('svg.animate-spin').waitFor();
+    assert.equal(await statusCheck.isEnabled(), true, 'a repeated press only queues one more check');
+    assert.equal(await rowState(page), 'same-file-running', 'still running until the engine answers');
+    holdStatuses = null;
+    releaseCheck();
+    await waitState('ready');
+    assert.equal(await start.getAttribute('aria-disabled'), null, 'a stopped run no longer blocks the same file');
+    // The answer arrives through the draft store, so the focus effect may run just after the row paints.
+    await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement', null, { timeout: 3000 });
+
+    // Resume: choose the file first, then the same file; 분석 시작 reads 이어하기 throughout.
+    await page.locator('.writer-recovery').getByRole('button', { name: '이어서 분석', exact: true }).click();
+    await page.getByRole('heading', { name: '이어하기', exact: true }).waitFor();
+    await expectRow('resume-choose-file', '이어서 분석할 파일을 선택해 주세요', sameFile.name);
+    assert.deepEqual(await fixButtons(), ['파일 선택']);
+    assert.equal(await start.innerText(), '이어하기');
+    await expectNoOldSurfaces('resume-choose-file');
+    await pressBlockedStart('resume-choose-file');
+    await page.setInputFiles('#meeting-file-input', okFile);
+    await expectRow('resume-other-file', '선택한 파일이 다릅니다', `${sameFile.name} 파일을 다시 선택해 주세요.`);
+    assert.deepEqual(await fixButtons(), ['다른 파일 선택']);
+    assert.equal(await start.innerText(), '이어하기');
+    await expectNoOldSurfaces('resume-other-file');
+    await pressBlockedStart('resume-other-file');
+    await page.setInputFiles('#meeting-file-input', samePath);
+    await waitState('ready');
+    assert.equal(await start.innerText(), '이어하기');
+    assert.equal(await start.getAttribute('aria-disabled'), null);
+    assert.equal(await page.getByText('같은 파일을 확인했습니다', { exact: false }).count(), 0, 'no sentence under the upload area');
+
+    // A background re-check keeps the last answer instead of flashing 이어하기 불가.
+    let release;
+    holdStatuses = { promise: new Promise(resolve => { release = resolve; }) };
+    const heldBefore = statusRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitUntil(() => statusRequests > heldBefore, 'a background draft check');
+    await sleep(300);
+    assert.equal(await rowState(page), 'ready', 'still 연결됨 while the drafts are being checked');
+    assert.equal(await start.getAttribute('aria-disabled'), null);
+    holdStatuses = null;
+    release();
+
+    // A failed check is an answer too: the next background check does not flip it to 연결됨 while it runs.
+    failStatuses = true;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expectRow('resume-unavailable', '이전 분석을 이어서 진행할 수 없습니다', '새 분석으로 시작할 수 있습니다.');
+    failStatuses = false;
+    holdStatuses = { promise: new Promise(resolve => { release = resolve; }) };
+    const afterFailure = statusRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitUntil(() => statusRequests > afterFailure, 'a background draft check after a failed one');
+    await sleep(300);
+    assert.equal(await rowState(page), 'resume-unavailable', 'the failed answer holds while the next check runs');
+    holdStatuses = null;
+    release();
+    await waitState('ready');
+
+    // The run turns out to be going elsewhere (another window started it), then to have nothing left to reuse.
+    remoteDraft = { job_id: jobId, status: 'active', stage: 'transcribing', resume_supported: true, completed_chunk_count: 2 };
+    await setDrafts([{ ...draft, status: 'active', completedChunkCount: 2 }]);
+    await expectRow('resume-unavailable', '이전 분석을 이어서 진행할 수 없습니다', '진행이 끝나거나 중단된 뒤 이어갈 수 있습니다.');
+    assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-error');
+    assert.deepEqual(await fixButtons(), [], 'the selected run outranks another analysis and the same file');
+    assert.equal(await start.innerText(), '이어하기');
+    await expectNoOldSurfaces('resume-unavailable');
+    await pressBlockedStart('resume-unavailable');
+    // It finished there and its meeting is saved: nothing to resume, and no hint to analyze it again.
+    await setDrafts([{ ...draft, status: 'completed', stage: 'completed', resumeEligible: false, resumeUnavailableReason: 'completed' }]);
+    await expectRow('resume-completed', '이 분석은 이미 끝났습니다', '결과는 회의록에서 확인해 주세요.');
+    assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-info');
+    assert.equal(await page.getByText('새 분석으로 시작할 수 있습니다.', { exact: true }).count(), 0);
+    assert.deepEqual(await fixButtons(), []);
+    await expectNoOldSurfaces('resume-completed');
+    await pressBlockedStart('resume-completed');
+    remoteDraft = { job_id: jobId, status: 'stopped', stage: 'stopped', resume_supported: false, completed_chunk_count: 0 };
+    await setDrafts([{ ...draft, status: 'stopped', stage: 'stopped', resumeEligible: false, completedChunkCount: 0 }]);
+    await page.waitForFunction(() => document.querySelector('.writer-status-message')?.textContent === '새 분석으로 시작할 수 있습니다.');
+    assert.equal(await rowState(page), 'resume-unavailable');
+    assert.equal(await page.getByText('이전 분석 기록을 이어서 진행할 수 없습니다', { exact: false }).count(), 0, 'no banner repeats it');
+    await expectNoOldSurfaces('resume-unavailable');
+
+    assert.deepEqual(analyzeRequests, [], 'nothing in the input step starts an analysis');
+    assert.deepEqual(errors, []);
+    console.log('ok - the input step speaks in the status row: required fields, file length, other runs and resume');
+  } catch (error) {
+    console.error('input stage body:', (await page.locator('body').innerText()).slice(0, 2000));
+    throw error;
+  } finally {
+    await context.close();
+    await rm(fixtureDir, { recursive: true, force: true });
+  }
 };
 
 const verifyIntroDismissals = async browser => {
@@ -968,6 +1267,10 @@ const run = async () => {
     }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'intro-dismissal') {
       await verifyIntroDismissals(browser);
+      return;
+    }
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'input-stage') {
+      await verifyInputStage(browser);
       return;
     }
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
@@ -1234,6 +1537,7 @@ const run = async () => {
     await verifyReadinessNoResponse(browser);
     await verifyAutomaticEngineConnection(browser);
     await verifyIntroDismissals(browser);
+    await verifyInputStage(browser);
     console.log('ok - local engine connection UI and auth recovery simulation');
   } catch (error) {
     console.error(error);

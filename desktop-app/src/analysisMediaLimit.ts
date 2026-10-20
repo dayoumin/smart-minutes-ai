@@ -1,5 +1,7 @@
 export const MAX_ANALYSIS_DURATION_SECONDS = 2 * 60 * 60;
 export const ANALYSIS_DURATION_LIMIT_MESSAGE = '2시간 이하의 음성·영상 파일을 선택해 주세요.';
+/** The writer's status line title for a file over the limit (web connection build). */
+export const ANALYSIS_DURATION_LIMIT_TITLE = '파일이 2시간을 넘습니다';
 
 // Rounded up so a file just over the limit never reads as "약 2시간".
 const formatOverLimitDuration = (durationSeconds: number): string => {

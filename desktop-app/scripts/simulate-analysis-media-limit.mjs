@@ -93,6 +93,8 @@ const openCase = async (resume = false) => {
         : reply({ detail: { code: 'duration_limit_exceeded', message: limitMessage, max_duration_seconds: 7200, duration_seconds: 7200.25 } }, 413);
     }
     if (url.pathname.startsWith('/api/dev/')) return reply({}, 404);
+    // The connection provider's background reconnect; this development-UI regression runs without an engine.
+    if (url.pathname === '/api/probe') return route.abort('connectionrefused');
     unexpectedApi.push(`${request.method()} ${url.pathname}`);
     return route.abort();
   });

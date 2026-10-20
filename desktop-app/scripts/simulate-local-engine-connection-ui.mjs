@@ -1102,7 +1102,8 @@ const verifyInputStage = async browser => {
     releaseCheck();
     await waitState('ready');
     assert.equal(await start.getAttribute('aria-disabled'), null, 'a stopped run no longer blocks the same file');
-    assert.equal(await activeId(), 'writer-local-engine-requirement');
+    // The answer arrives through the draft store, so the focus effect may run just after the row paints.
+    await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement', null, { timeout: 3000 });
 
     // Resume: choose the file first, then the same file; 분석 시작 reads 이어하기 throughout.
     await page.locator('.writer-recovery').getByRole('button', { name: '이어서 분석', exact: true }).click();

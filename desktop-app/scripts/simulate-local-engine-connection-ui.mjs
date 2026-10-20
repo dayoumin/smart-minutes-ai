@@ -175,25 +175,51 @@ const verifyDefaultWriterGuidance = async browser => {
       await page.getByLabel('회의 목적', { exact: true }).fill('입력과 파일을 보존하며 다음 동작 확인');
       await page.setInputFiles('#meeting-file-input', { name: 'guidance.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('guidance fixture') });
       const analyze = page.locator('.writer-start-button');
+      const rowText = async () => ({
+        state: await rowState(page),
+        title: (await statusOf(page).locator('.writer-status-title').allInnerTexts())[0] ?? '',
+        message: (await statusOf(page).locator('.writer-status-message').allInnerTexts())[0] ?? null,
+        buttons: await statusRowOf(page).locator('.writer-action-buttons > :is(button, a):not(.writer-start-button)').allInnerTexts(),
+      });
+      // The development UI has the same status row without the connection step: ready says nothing (no 연결됨).
+      const emptyReadyRow = { state: 'ready', title: '', message: null, buttons: [] };
       if (scenario === 'anonymous') {
-        await page.waitForFunction(() => !document.querySelector('.writer-start-button')?.disabled);
+        await page.waitForFunction(() => {
+          const button = document.querySelector('.writer-start-button');
+          return Boolean(button && button.getAttribute('aria-disabled') !== 'true');
+        });
         assert.equal(await analyze.isEnabled(), true);
         // The provider's background reconnect may probe; the writer must not start connecting.
         assert.equal(pairStartCount, 0, 'a working anonymous development API keeps its existing flow');
-        assert.equal(await statusRowOf(page).count(), 0, 'the development UI keeps its own action bar');
-        assert.equal(await statusOf(page).count(), 0);
+        assert.deepEqual(await rowText(), emptyReadyRow);
+        assert.equal(await page.getByText('연결됨', { exact: true }).count(), 0, 'no connection step, so no 연결됨');
+        assert.equal(await analyze.getAttribute('aria-describedby'), 'writer-local-engine-requirement');
       } else {
         if (scenario === 'outage-recovery') {
-          await page.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor();
+          await page.locator('.writer-action-row[data-state="readiness-checking"]').waitFor();
+          assert.equal((await rowText()).title, '분석 준비 확인 중');
           assert.ok(healthCount > 0);
           await page.clock.runFor(47_000);
-          await page.getByText('분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.', { exact: true }).waitFor();
+          // The development UI speaks as the web app: the engine's web name, 다시 확인, and `?` for the rest.
+          await page.locator('.writer-action-row[data-state="no-response"]').waitFor();
+          assert.deepEqual(await rowText(), {
+            state: 'no-response',
+            title: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`,
+            message: '잠시 뒤 다시 확인해 주세요.',
+            buttons: ['다시 확인'],
+          });
+          assert.equal(await statusRowOf(page).getByRole('button', { name: '문제 해결 도움말' }).count(), 1);
         } else {
-          await page.locator('#writer-readiness-hint').getByText('연결 상태를 확인해야 분석을 시작할 수 있습니다.', { exact: true }).waitFor();
+          await page.locator('.writer-action-row[data-state="connection-check-required"]').waitFor();
+          assert.deepEqual(await rowText(), {
+            state: 'connection-check-required', title: '연결 상태를 확인해야 합니다', message: '연결 확인을 눌러 주세요.', buttons: ['연결 확인'],
+          });
           assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0);
         }
+        assert.equal(await page.locator('.status-banner, .writer-action-bar').count(), 0, 'no banner or old action bar');
+        assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).count(), 0);
         assert.equal(await analyze.isDisabled(), true);
-        await page.locator('.writer-action-bar').getByRole('button', { name: '연결 확인', exact: true }).click();
+        await statusRowOf(page).getByRole('button', { name: scenario === 'outage-recovery' ? '다시 확인' : '연결 확인', exact: true }).click();
         // Recovery hands the row to the connection status line until the anonymous API answers again.
         const rail = statusRowOf(page);
         if (scenario === 'outage-recovery') {
@@ -206,7 +232,9 @@ const verifyDefaultWriterGuidance = async browser => {
           assert.equal(await rail.locator('a[href=""]').count(), 0);
           healthUp = true;
           await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-          await rail.waitFor({ state: 'hidden' });
+          // Back to the development UI's own row once the anonymous API answers.
+          await page.waitForFunction(() => document.querySelector('.writer-action-row')?.getAttribute('data-state') === 'ready');
+          assert.deepEqual(await rowText(), emptyReadyRow);
           assert.equal(await analyze.isEnabled(), true, 'a recovered anonymous API is usable without reloading');
         } else {
           await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
@@ -694,6 +722,19 @@ const verifyBrowserBlockedConnection = async browser => {
     assert.equal(await page.locator('[role="status"] #writer-status-help, [aria-live] #writer-status-help').count(), 0, 'help is outside the live region');
     assert.equal(await page.locator('.writer-action-row [aria-live]').count(), 0, 'no aria-live over the whole action row');
     assert.equal((await rail.locator('.writer-status-line').boundingBox()).height, lineHeightBefore, 'the 24px ? does not grow the status line');
+    // Below 40rem the buttons sit under the line and the opened help goes under them, so 분석 시작 does not move.
+    await page.setViewportSize({ width: 920, height: 720 });
+    try {
+      const topOf = locator => locator.evaluate(element => Math.round(element.getBoundingClientRect().top));
+      const startTop = await topOf(rail.locator('.writer-start-button'));
+      assert.ok(await topOf(page.locator('#writer-status-help')) > startTop, 'narrow: the help opens under the buttons');
+      await helpToggle.click();
+      assert.equal(await page.locator('#writer-status-help').isVisible(), false);
+      assert.equal(await topOf(rail.locator('.writer-start-button')), startTop, 'narrow: folding ? leaves 분석 시작 in place');
+      await helpToggle.click();
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
 
     // The user allows access but the engine is still not running.
     await page.evaluate(() => { window.__loopbackPermission = 'granted'; });
@@ -998,6 +1039,21 @@ const verifyInputStage = async browser => {
     assert.equal(await start.getAttribute('aria-describedby'), 'writer-local-engine-requirement', `${state}: one description`);
     assert.doesNotMatch(await start.innerText(), /준비 필요|이어하기 불가/);
   };
+  // The first screen at 1280x720 (design.md 새 회의록): 분석 시작 and the whole status line fit without scrolling.
+  const expectFirstScreen = async state => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    try {
+      const box = await page.evaluate(() => {
+        document.querySelector('.barorok-workspace')?.scrollTo(0, 0);
+        window.scrollTo(0, 0);
+        const bottom = selector => Math.round(document.querySelector(selector)?.getBoundingClientRect().bottom ?? Infinity);
+        return { start: bottom('.writer-start-button'), status: bottom('#writer-local-engine-requirement') };
+      });
+      assert.ok(box.start <= 720 && box.status <= 720, `${state}: 분석 시작 and the status line fit 1280x720 (${JSON.stringify(box)})`);
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
+  };
   const setDrafts = drafts => page.evaluate(value => {
     window.localStorage.setItem('analysisResumeDrafts', JSON.stringify(value));
     window.dispatchEvent(new Event('analysis-resume-drafts:updated'));
@@ -1008,6 +1064,7 @@ const verifyInputStage = async browser => {
     await waitState('ready');
     assert.equal(await page.locator('#writer-form-error').count(), 0, 'before 분석 시작 nothing is listed');
     assert.equal(await start.getAttribute('aria-disabled'), null);
+    await expectFirstScreen('ready');
     // In page coordinates: moving focus to a field may scroll the window, which is not the row moving.
     const startBox = () => start.evaluate(element => {
       const box = element.getBoundingClientRect();
@@ -1110,6 +1167,10 @@ const verifyInputStage = async browser => {
     await page.getByRole('heading', { name: '이어하기', exact: true }).waitFor();
     await expectRow('resume-choose-file', '이어서 분석할 파일을 선택해 주세요', sameFile.name);
     assert.deepEqual(await fixButtons(), ['파일 선택']);
+    // No sentence above the form repeats the row; 새 분석 and 삭제 sit on the heading line, so the form keeps its place.
+    assert.equal(await page.getByText('이전 분석 기록을 이어서 진행합니다', { exact: false }).count(), 0);
+    assert.deepEqual(await page.locator('.writer-resume-actions').getByRole('button').allInnerTexts(), ['새 분석', '삭제']);
+    await expectFirstScreen('resume-choose-file');
     assert.equal(await start.innerText(), '이어하기');
     await expectNoOldSurfaces('resume-choose-file');
     await pressBlockedStart('resume-choose-file');

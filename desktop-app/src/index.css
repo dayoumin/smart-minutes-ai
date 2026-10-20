@@ -1640,6 +1640,16 @@
     @apply justify-between;
   }
 
+  /* 새 분석 / 삭제 while resuming: 28px buttons drawn over the 20px heading line, so the upload area does not move. */
+  .writer-resume-actions {
+    @apply flex shrink-0 items-center gap-2;
+  }
+
+  .writer-panel .writer-heading-action {
+    @apply h-7 gap-1.5 px-2.5 text-xs;
+    margin-block: -0.25rem;
+  }
+
   /* 참석자·주요 용어 toggle: a text button on the heading line, so folding never changes the form height. */
   .writer-optional-toggle {
     @apply inline-flex min-h-6 items-center gap-1 rounded-sm p-0 text-[13px] font-medium leading-5;
@@ -1809,33 +1819,8 @@
     @apply flex min-w-0 flex-wrap items-center gap-2;
   }
 
-  .writer-action-bar {
-    @apply flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end;
-  }
-
-  .writer-primary-actions {
-    @apply flex shrink-0 items-center justify-end gap-2;
-  }
-
-  .writer-action-notes {
-    @apply flex min-w-0 flex-1 flex-col gap-1;
-  }
-
-  .writer-action-notes .writer-action-hint {
-    flex: none;
-  }
-
-  .writer-action-hint.writer-action-hint-error {
-    color: var(--status-error-fg);
-  }
-
   .writer-hint-action {
     @apply h-10 shrink-0 px-3 text-xs;
-  }
-
-  .writer-action-hint {
-    @apply m-0 min-w-0 flex-1 text-sm text-muted-foreground sm:text-right;
-    word-break: keep-all;
   }
 
   .writer-start-button {
@@ -1972,7 +1957,7 @@
     }
   }
 
-  /* Web connection build: one status line, the buttons that fix its step, then 분석 시작 (design.md 동작 줄 v2). */
+  /* One status line, the buttons that fix its step, then 분석 시작 (design.md 동작 줄 v2). */
   .writer-action-row {
     /* No row gap: the help row is empty while folded, and a gap would keep 8px under the 40px line. */
     @apply grid items-start gap-x-4 gap-y-0;
@@ -2053,7 +2038,7 @@
     overflow-wrap: anywhere;
   }
 
-  /* Nothing blocked: a quiet 연결됨 only. */
+  /* Nothing blocked: a quiet 연결됨 in the web connection build (the line is empty elsewhere). */
   .writer-action-row[data-stage="ready"] .writer-status-title {
     @apply text-[13px] font-normal;
     color: var(--text-muted);
@@ -2233,12 +2218,13 @@
   }
 
   @container writer (max-width: 39.99rem) {
+    /* Opening ? adds its help under the buttons, so 분석 시작 does not move (the help still follows ? in reading order). */
     .writer-action-row {
       grid-template-columns: minmax(0, 1fr);
       grid-template-areas:
         "status"
-        "help"
-        "actions";
+        "actions"
+        "help";
     }
 
     .writer-action-buttons {

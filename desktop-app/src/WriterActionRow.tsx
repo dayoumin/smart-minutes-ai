@@ -51,6 +51,7 @@ const actionIcon = (action: WriterStatusAction, spinning: boolean) => {
             return <Link2 size={15} aria-hidden="true" />;
         case 'device':
         case 'diarization':
+        case 'troubleshoot':
             return <Settings size={15} aria-hidden="true" />;
         case 'choose-file':
             return <Upload size={15} aria-hidden="true" />;
@@ -59,8 +60,9 @@ const actionIcon = (action: WriterStatusAction, spinning: boolean) => {
     }
 };
 
-// The web connection build's action row: one status line naming the first blocked step, the buttons
-// that fix it, then 분석 시작. The line is the only live region; the `?` help sits outside it.
+// The new-meeting action row: one status line naming the first blocked step, the buttons that fix it,
+// then 분석 시작. The line is the only live region and stays mounted even when it has nothing to say
+// (desktop app and development UI once ready); the `?` help sits outside it.
 export const WriterActionRow: React.FC<WriterActionRowProps> = ({
     row,
     statusRef,
@@ -83,10 +85,14 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
                 aria-atomic="true"
                 tabIndex={-1}
             >
-                <span className="writer-status-icon" aria-hidden="true">
-                    <StatusIcon row={row} />
-                </span>
-                <strong className="writer-status-title">{row.title}</strong>
+                {row.title && (
+                    <>
+                        <span className="writer-status-icon" aria-hidden="true">
+                            <StatusIcon row={row} />
+                        </span>
+                        <strong className="writer-status-title">{row.title}</strong>
+                    </>
+                )}
                 {row.message && <span id={row.messageId} className="writer-status-message">{row.message}</span>}
             </div>
             {row.help && (

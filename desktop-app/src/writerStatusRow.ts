@@ -1,13 +1,14 @@
 import { ANALYSIS_DURATION_LIMIT_MESSAGE, ANALYSIS_DURATION_LIMIT_TITLE } from './analysisMediaLimit.ts';
-import { LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
 import type {
     LocalEngineConnectionAction,
     LocalEngineConnectionViewModel,
 } from './localEngineConnectionView';
 
-// The new-meeting action row in the web connection build: one status line beside 분석 시작 that names
-// the first blocked step (connection → readiness → analysis-start conditions → required fields),
-// plus the buttons that fix that step.
+// The new-meeting action row: one status line beside 분석 시작 that names the first blocked step
+// (connection → readiness → analysis-start conditions → required fields), plus the buttons that fix
+// that step. Only the web connection build has the connection step; the desktop app names its engine
+// 분석 기능 and offers 문제 해결 where the web shows `?`.
 
 export type WriterStatusActionKind =
     | LocalEngineConnectionAction
@@ -17,6 +18,8 @@ export type WriterStatusActionKind =
     | 'recheck-readiness'
     /** The user's own connection check, then a fresh readiness round. */
     | 'recheck-engine'
+    /** Desktop app: Settings > 일반 > 문제 해결, with focus on 재시작. */
+    | 'troubleshoot'
     /** Opens the file picker. */
     | 'choose-file'
     /** Asks the engine again how the saved analyses stand. */
@@ -76,7 +79,14 @@ export interface WriterMissingModel {
 }
 
 export interface SelectWriterStatusRowInput {
-    connection: LocalEngineConnectionViewModel;
+    /** The web connection build's connection step; null where there is none (desktop app, development UI). */
+    connection: LocalEngineConnectionViewModel | null;
+    /** Desktop app copy: 분석 기능, 문제 해결 instead of `?`, and nothing to download for a reinstall. */
+    desktopApp?: boolean;
+    /** Desktop app: 문제 해결 can open Settings at its restart. */
+    canOpenTroubleshooting?: boolean;
+    /** Development UI without the connection step: the engine refused the request until this browser connects. */
+    connectionCheckRequired?: boolean;
     readinessState: WriterReadinessState;
     /** The engine's own reason when readiness could not be confirmed; shown behind `?`. */
     readinessMessage: string;
@@ -136,6 +146,14 @@ const readinessRow = (
     value: Omit<WriterStatusRow, 'stage' | 'busy' | 'help' | 'blocksStart'> & Partial<WriterStatusRow>,
 ): WriterStatusRow => ({ stage: 'readiness', busy: false, help: null, blocksStart: true, ...value });
 
+// The desktop app has no `?`: a block that may outlast its first fix offers 문제 해결 (restart) instead, on the
+// far side of that fix so the fix stays right beside 분석 시작.
+const withTroubleshooting = (row: WriterStatusRow, input: SelectWriterStatusRowInput): WriterStatusRow => {
+    if (!input.desktopApp) return row;
+    const troubleshoot: WriterStatusAction[] = input.canOpenTroubleshooting ? [{ kind: 'troubleshoot', label: '문제 해결' }] : [];
+    return { ...row, help: null, actions: [...troubleshoot, ...row.actions] };
+};
+
 const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow | null => {
     const recheck: WriterStatusAction = { kind: 'recheck-readiness', label: '다시 확인' };
     switch (input.readinessState) {
@@ -143,6 +161,16 @@ const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow 
             return null;
         case 'checking':
         case 'server-waiting':
+            if (input.readinessNoResponse && input.desktopApp) {
+                // The app starts its own engine; a first start can take minutes, and 문제 해결 holds the restart.
+                return readinessRow({
+                    state: 'no-response',
+                    tone: 'warning',
+                    title: '분석 기능이 아직 준비되지 않았습니다',
+                    message: '첫 실행은 몇 분 걸릴 수 있습니다.',
+                    actions: input.canOpenTroubleshooting ? [{ kind: 'troubleshoot', label: '문제 해결' }] : [],
+                });
+            }
             if (input.readinessNoResponse) {
                 return readinessRow({
                     state: 'no-response',
@@ -157,19 +185,30 @@ const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow 
                 state: 'readiness-checking',
                 tone: 'neutral',
                 busy: true,
-                title: '분석 준비 확인 중',
+                title: input.desktopApp ? '분석 기능 준비 중' : '분석 준비 확인 중',
                 message: null,
                 actions: [],
             });
         case 'error':
-            return readinessRow({
+            if (input.connectionCheckRequired && !input.connection) {
+                // Development UI: a re-check gets the same refusal; checking the connection hands the row to the
+                // connection step, as in the web connection build.
+                return readinessRow({
+                    state: 'connection-check-required',
+                    tone: 'warning',
+                    title: '연결 상태를 확인해야 합니다',
+                    message: '연결 확인을 눌러 주세요.',
+                    actions: [{ kind: 'recheck-engine', label: '연결 확인' }],
+                });
+            }
+            return withTroubleshooting(readinessRow({
                 state: 'readiness-error',
                 tone: 'warning',
                 title: '분석 준비 상태를 확인하지 못했습니다',
                 message: '잠시 뒤 다시 확인해 주세요.',
                 help: input.readinessMessage || null,
                 actions: [recheck],
-            });
+            }), input);
         case 'missing-models':
             break;
     }
@@ -197,12 +236,13 @@ const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow 
                 actions: [{ kind: 'diarization', label: '참석자 구분 설정' }],
             });
         }
+        // The web reinstalls the downloaded connection program; the desktop app is reinstalled whole, from no link here.
         return readinessRow({
             state: 'models-reinstall',
             tone: 'error',
             title: '필요한 모델이 없어 분석을 시작할 수 없습니다',
-            message: `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`,
-            actions: input.installerAvailable ? [{ kind: 'download', label: '설치 파일' }] : [],
+            message: `${withJosa(input.desktopApp ? BRAND_NAME : LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`,
+            actions: input.installerAvailable && !input.desktopApp ? [{ kind: 'download', label: '설치 파일' }] : [],
         });
     }
     if (input.gpuUnavailable) {
@@ -215,14 +255,14 @@ const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow 
         });
     }
     // Not ready for a reason the engine only describes in words (its first error).
-    return readinessRow({
+    return withTroubleshooting(readinessRow({
         state: 'readiness-blocked',
         tone: 'warning',
         title: '분석을 시작할 수 없습니다',
         message: '잠시 뒤 다시 확인해 주세요.',
         help: input.readinessMessage || null,
         actions: [recheck],
-    });
+    }), input);
 };
 
 const inputRow = (
@@ -317,9 +357,9 @@ const selectInputRow = (state: WriterInputState | undefined): WriterStatusRow | 
 };
 
 export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): WriterStatusRow => {
-    const row = !input.connection.analysisReady
+    const row = input.connection && !input.connection.analysisReady
         ? connectionRow(input.connection)
-        : selectReadinessRow(input) ?? selectInputRow(input.input) ?? {
+        : selectReadinessRow(input) ?? selectInputRow(input.input) ?? (input.connection ? {
             stage: 'ready',
             state: 'ready',
             tone: 'success',
@@ -329,6 +369,17 @@ export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): Writer
             help: null,
             actions: [],
             blocksStart: false,
-        };
+        } : {
+            // Without a connection step there is nothing to report: the line stays empty but keeps its height.
+            stage: 'ready',
+            state: 'ready',
+            tone: 'neutral',
+            busy: false,
+            title: '',
+            message: null,
+            help: null,
+            actions: [],
+            blocksStart: false,
+        });
     return withInstallerNotice(row, input.installerNotice);
 };

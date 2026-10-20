@@ -102,9 +102,10 @@ const openCase = async (resume = false) => {
   await page.getByRole('heading', { name: '새 회의록', exact: true }).waitFor();
   return { context, page, requests, unexpectedApi, errors };
 };
+// 분석 시작 stays focusable while blocked (aria-disabled), so ready means the status row no longer blocks it.
 const waitEnabled = async page => page.waitForFunction(() => {
   const button = document.querySelector('.writer-start-button');
-  return button && !button.disabled;
+  return button && button.getAttribute('aria-disabled') !== 'true';
 });
 const expectSelectedFile = (page, name) => page.locator('.selected-file-card').getByText(name, { exact: true }).waitFor();
 
@@ -115,8 +116,15 @@ try {
     await page.locator('#meeting-title').fill('입력 보존 확인');
     await page.locator('#meeting-purpose').fill('길이 확인 오류 후 원래 입력 유지');
     await page.setInputFiles('#meeting-file-input', { name: 'over.wav', mimeType: 'audio/wav', buffer: Buffer.alloc(64) });
-    await page.locator('#writer-form-error').filter({ hasText: `선택한 파일은 약 2시간 1분입니다. ${limitMessage}` }).waitFor();
-    assert.equal(await page.locator('.writer-start-button').isDisabled(), true);
+    // The status row beside 분석 시작 names the length limit; no banner under the form repeats it.
+    const status = page.locator('#writer-local-engine-requirement');
+    await page.locator('.writer-action-row[data-state="file-too-long"]').waitFor();
+    assert.equal(await status.locator('.writer-status-title').innerText(), '파일이 2시간을 넘습니다');
+    assert.equal(await status.locator('.writer-status-message').innerText(), limitMessage);
+    assert.equal(await page.locator('.writer-action-row').getByRole('button', { name: '다른 파일 선택', exact: true }).count(), 1);
+    assert.equal(await page.locator('.status-banner').count(), 0, 'no banner repeats the length limit');
+    assert.equal(await page.locator('#writer-form-error').count(), 0);
+    assert.equal(await page.locator('.writer-start-button').getAttribute('aria-disabled'), 'true');
     await expectSelectedFile(page, 'over.wav');
     assert.equal(requests.length, 0);
 

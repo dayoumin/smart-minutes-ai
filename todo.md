@@ -11,6 +11,7 @@
   - 설치 파일을 다시 빌드해 깨끗한 설치와 0.1.8 위 업데이트, 재설치 뒤 시작 메뉴 `LMO 회의록 연결` 확인. 실행 중인 엔진이 교체되므로 다른 세션의 진단이 끝난 뒤 한다. (「공개 설치 점검」, 3C 설치 관문)
   - 설치본에서 요약 프로그램 받기 위치, 받은 뒤 요약, 첫 요약 503 재검증. (「내장 Ollama runtime」, 「요약 엔진 첫 준비 지연」)
   - 코드 서명 인증서 준비. (웹 엔진 MVP)
+  - 다음 포터블 빌드의 데스크톱 실행 파일에서 새 회의록 동작 줄: 앱을 연 직후 `분석 기능 준비 중`, 준비되면 빈 줄과 청록 `분석 시작`, 엔진이 늦으면 45초 뒤 `분석 기능이 아직 준비되지 않았습니다`·`문제 해결`이 `재시작`으로 가는지. (「동작 줄 v2」④)
 - [ ] 다른 PC·회사 PC
   - 다른 PC에 설치 엔진을 깔고 공개 HTTPS로 연결·분석. (「기능 agent 점검」 A5/A6)
   - 외부망·내부망 PC에서 음성 인식 모델 받기·중지, 요약 모델 받기. (「Ollama 기반 정리 기능 상태」 후속)
@@ -28,6 +29,8 @@
   - IndexedDB 롤백 지원 여부. (「LMO 회의록 데스크톱·웹 제품 전환」)
   - 3·5시간 파일 지원 여부, 업무망 모델 배포 방식, 고양이 알림 유지 여부.
   - 「이 브라우저를 연결해 주세요」 보조문(시안 문구 `…실행 중이면 자동으로 연결됩니다`)을 그대로 둘지. (「동작 줄 v2」 P3)
+  - 좁은 데스크톱 창(860×720, 작업면 572px)에서 고치는 버튼과 `분석 시작`이 첫 화면 밖(y 716~756)이다. 좁은 창에도 첫 화면 기준을 둘지. (「동작 줄 v2」④ 통합 점검)
+  - 상태 줄의 안내 아이콘 (i)와 제목 옆 처리 방식 ⓘ 버튼이 같은 모양인 것을 그대로 둘지. (「동작 줄 v2」④ 통합 점검)
 
 # 0. Immediate queue
 - [ ] 2026-10-20 설치 후 웹 연결 안 됨: 브라우저 쪽 원인 안내 반영 후속
@@ -96,7 +99,23 @@
       - 미룬 것(P3): 기록 확인 자체가 실패했을 때(`syncing` 뒤 `error`)도 `이전 분석을 이어서 진행할 수 없습니다`·`새 분석으로 시작할 수 있습니다`이고 다시 확인 버튼이 없다(예전 문장과 같음, 홈 카드는 `다시 확인`). 다른 실행에서 진행 중인 고른 기록은 시안대로 오류색 X(`이어하기 불가` 묶음)인데, 실패한 것은 없으니 안내색과 `상태 확인`이 더 맞을 수 있다(시안 결정이라 사용자 판단). `같은 파일 분석이 이미 진행 중입니다`일 때 상태 줄과 아래 복구 카드에 `상태 확인`이 두 개 보인다(같은 동작). 업로드 영역 드롭존으로 파일을 고른 뒤 포커스가 사라지는 것은 예전부터다.
       - 남은 확인: 실제 Chrome·설치 엔진에서 같은 파일 진행 중·이어하기 흐름(다른 탭이나 새로고침 뒤). 데스크톱·기본 개발 UI는 이 조각에서 바꾸지 않았다(④).
   - ④ 데스크톱·기본 개발 UI: 같은 상태 줄로 옮긴다. `준비 필요` 라벨, 준비 배너, `readinessTimedOut` 의미를 정리한다(`.writer-start-button-connection-pending`은 ①에서 지웠다). 회귀: `test:writer-model-readiness`, `test:analysis-stop-flow`. Tauri 실행 화면도 확인한다.
-  - ⑤ 문서: `docs/design.md` 동작 줄 v2 절의 "구현 전" 표시를 지운다. `docs/frontend-simulation-testing.md`의 Playwright 캐시 경로(`D:\Projects\audio`)를 AGENTS.md(`D:\Projects\LMO_audio\.cache\ms-playwright`)와 맞춘다.
+    - 구현(2026-10-20, worktree `peaceful-gagarin-25713f` 브랜치 `claude/awesome-shannon-31e306`, main 미병합·미푸시): 모든 빌드가 `WriterActionRow`와 `selectWriterStatusRow`를 쓴다. 옛 `.writer-action-bar`(`준비 필요`·`이어하기 불가`·`같은 파일 선택` 라벨, `#writer-readiness-hint`, `#writer-engine-checking`), 준비 배너, `#writer-form-error` 오류 배너, 업로드 아래 `writer-resume-note`·`writer-same-file-note`, 입력 화면의 보이는 `writer-analysis-start-blocked` 문장을 없앴다(분석 실패 화면에서는 그대로). `분석 시작`은 어느 빌드에서나 `aria-disabled`이고 `aria-describedby`는 상태 줄 하나다.
+      - 선택 함수 입력: `connection`은 웹 연결 빌드만(`null`이면 연결 단계 없음), `desktopApp`(Tauri), `canOpenTroubleshooting`, `connectionCheckRequired`(개발 UI만). 데스크톱: `분석 기능 준비 중`, 45초 `분석 기능이 아직 준비되지 않았습니다`·`첫 실행은 몇 분 걸릴 수 있습니다.`·`문제 해결`, 준비 상태 확인 실패·그 밖의 준비 막힘은 `?` 대신 `문제 해결` + `다시 확인`, 다시 설치는 `LMO 회의록을 다시 설치해 주세요.`(버튼 없음), 준비 완료는 빈 줄(40px 유지, 아이콘 없음).
+      - 기본 개발 UI 결정: Tauri가 아니므로 웹 문구(`LMO 회의록 연결`, `?`, `분석 준비 확인 중`)를 따르고, `localEngineConnectionRequired`가 아니라 연결 단계가 없으므로 준비 완료 때 줄을 비운다. 엔진 무응답의 `다시 확인`과 401·403일 때의 새 상태 `연결 상태를 확인해야 합니다`·`연결 확인`은 `handleCheckWebConnection`으로 웹 연결 단계에 넘긴다(예전 `연결 확인` 복구와 같음).
+      - `readinessTimedOut`을 없애고 45초는 모든 빌드에서 `readinessNoResponse`(확인 회차별, 모델 상태 응답·루프 시작 때 새로 셈)로 센다. 확인 중에는 데스크톱·개발 UI도 `분석 시작`을 막는다(예전에도 `server-waiting`에서는 막았고, 첫 응답 전 `checking`에서만 눌러 최대 45초 기다릴 수 있었다). 모의 분석 모드는 처음부터 `ready`다. 배경 기록 확인 중 마지막 판단 유지(`settledResumeSync`)와 고치는 버튼 뒤 포커스도 모든 빌드에 적용했다.
+      - 테스트: `test-runtime-boundary.mjs`에 데스크톱·개발 UI 상태(정확한 제목·보조문·색·버튼, 빈 줄, 입력 단계 동일, `연결됨`·`준비 필요` 없음)를 더했다. `simulate-writer-model-readiness.mjs`는 개발 UI 상태 줄(모델·다시 설치·GPU·참석자 구분·준비 상태 확인 실패의 `?`)로 고치고 Tauri 모의 데스크톱 시나리오(확인 중 → 43초엔 그대로, 47초 `문제 해결` → 설정 창, 모델, 다시 설치, 확인 실패의 `문제 해결`+`다시 확인`, 빈 줄 40px, 필수 항목 목록·첫 빈 칸 포커스, 매 단계 `준비 필요`·배너·옛 줄·`?` 없음)를 더했다. `writer-guidance`(개발 UI 복구), `simulate-analysis-stop-flow`(확인 중 줄), `simulate-analysis-media-limit`(파일 길이), `simulate-resume-draft-flow`(필수 항목·이어하기 파일), `simulate-new-record-home-flow`(다른 분석 진행 중), `capture-ui-audit` W5~W9를 상태 줄 기준으로 바꿨다. `분석 시작`이 DOM `disabled`가 아니게 되어 `!button.disabled`로 기다리던 곳은 `aria-disabled`로 바꿨다.
+      - 검증(Vite 모의 화면·헤드리스 Chromium, Tauri 실행 파일·실제 엔진 아님): typecheck, eslint, `test:runtime-boundary`, `test:writer-model-readiness`, `test:analysis-stop-flow`(전체), `test:resume-draft-flow`, `simulate-analysis-media-limit.mjs`, `test:new-record-home-flow`, `test:settings-backend-restart`(데스크톱 `문제 해결` → `재시작` 포커스, 실제 45초), `test:local-engine-connection-ui` 전체와 `writer-guidance`·`browser-blocked`·`permission-prompt` 통과. 1280×720 Tauri 모의 캡처 6개(확인 중·응답 없음·모델·다시 설치·확인 실패·준비 완료)를 Figma `17:962`와 비교해 같은 구성임을 확인했다. 개발 UI의 `분석 시작` 아래끝은 653px(옛 줄 651px).
+      - 독립 agent 검토(구현·제품 두 관점): P1 없음. 웹 연결 빌드는 바뀐 동작이 없다고 확인했다(모의 분석 모드가 처음부터 `ready`인 것만 다름). 고친 것: 데스크톱 준비 상태 확인 실패에서 누른 `다시 확인`이 답을 못 받으면 루프가 이미 끝나 있어 `분석 기능 준비 중` → 45초 경고(`문제 해결`만)에서 엔진이 살아나도 창 포커스 전까지 풀리지 않던 것(→ 연결 단계가 없는 빌드에서는 루프를 다시 돌림, 시뮬레이션에 이벤트 없이 풀리는 단계를 더했고 수정을 빼면 실패함), 개발 UI `다시 확인`이 `응답하지 않습니다`를 지우지 않던 것, 쓰이지 않는 `REQUIRED_FIELDS_ERROR_PREFIX` 필터, 낡은 주석 두 개, 버튼이 없어도 통과하던 `aria-disabled` 대기 두 곳, design.md의 버튼 개수·원인 표시·45초 첫 회차 설명. 고친 뒤 typecheck·eslint·`test:writer-model-readiness`를 다시 돌려 통과했다.
+      - 미룬 것(P3): 새 회의록을 열 때마다 작성 화면이 다시 마운트되어 데스크톱에서도 `분석 기능 준비 중`과 막힌 `분석 시작`이 잠깐 보인다(웹 연결 빌드와 같음, 줄 높이는 그대로). 마지막 준비 결과를 초기값으로 쓰거나 스피너를 늦게 보이는 방법이 있다. 데스크톱에서는 엔진이 적은 원인(웹의 `?` 내용, 예: 다시 설치 안내)을 상태 줄에서 볼 수 없고 `문제 해결`은 재시작으로 간다. 경고가 뜬 뒤 soft 오류 응답이 이어지면 새 회차에도 경고가 남는다(웹 ②와 같음). 개발 UI `응답하지 않습니다`의 `?`는 Windows 시작 메뉴를 말한다(개발 전용이라 둠). `연결 확인을 눌러 주세요.`는 버튼 이름을 되풀이한다(개발 전용).
+      - 확인하지 않음: Tauri 데스크톱 실행 파일 화면(포터블 빌드가 무거워 하지 않음, 맨 위 「사용자 확인 대기」에 올림), 실제 WebView2의 창 포커스·사이드카 기동 시간, 실제 엔진·배포 웹.
+      - 통합 점검(2026-10-20, main `764f33d9`)에서 넘어와 ④에서 고친 것: 이어하기 화면 업로드 위의 안내 문장(`이전 분석 기록을 이어서 진행합니다…`, `다른 실행에서 진행 중인 분석입니다…`)은 구역 제목·상태 줄과 같은 말이고 업로드 영역을 74px 내려 1280×720에서 `이어하기`가 727px까지 밀렸다. 문장을 모든 빌드에서 빼고 `새 분석`·`삭제`를 `같은 영상·음성 파일 선택` 제목 줄 오른쪽의 28px 테두리 버튼(제목 줄 높이 그대로)으로 옮겼다. 분석 진행·실패 화면에는 두 버튼이 더 이상 보이지 않는다(입력 화면으로 돌아오면 있음). 40rem 미만에서 `?`를 펼치면 버튼 줄이 밀리던 것은 grid 순서를 `status / actions / help`로 바꿔 고쳤다(읽는 순서는 그대로 `?` 뒤). 테스트: `input-stage`에 웹 연결 빌드 1280×720 첫 화면 단언(준비 완료·이어하기 파일 선택에서 `분석 시작`과 상태 줄 아래끝 ≤ 720)과 제목 줄 버튼·문장 없음, `browser-blocked`에 920px에서 `?`를 접고 펴도 `분석 시작`이 그대로인지, `simulate-resume-draft-flow`의 이어하기 단계를 바꿨다.
+      - 통합 점검 미룬 것(P3·테스트 공백):
+        - 다른 분석 진행 중일 때 사이드바 `#sidebar-create-blocked`(role=status), 상태 줄(role=status), 아래 복구 카드가 같은 안내를 한다(보이는 status 2개).
+        - 첫 방문 안내 창이 같은 대상을 「분석에 필요한 파일 다운로드」·「프로그램·모델 다운로드」(데스크톱 문구)·「LMO 회의록 연결·모델 받기」 세 이름으로 부른다.
+        - 연결 실패 `?` 도움말이 보조문을 거의 반복한다(헤드리스 권한 '미정' 문구 기준).
+        - 주요 용어 칩: 30개일 때 Enter·남은 글자가 알림 없이 사라지고, 40자 초과는 잘리며, `1,000톤`처럼 쉼표가 든 용어는 둘로 쪼개진다(`MeetingWriter.tsx`의 `addKeyTerms`·`onChange` 분리, `meetingKnowledge.ts` `normalizeMeetingKeyTerms`).
+        - 테스트 공백: 이어하기 기록 복원 때 참석자·주요 용어가 폼에 되살아나는지, 상세에서 정리 맥락을 바꾸거나 지워도 예약 용어집 `meeting-key-terms`가 남는지, 한글 IME 조합 중 Enter·Backspace(Playwright로는 검증할 수 없어 Windows Chrome 수동 확인).
+  - ⑤ 문서: `docs/design.md` 동작 줄 v2 절의 "구현 전" 표시를 지운다(첫 줄 상태 표시는 ④에서 `①~④ 구현`으로 고쳤다. 절 안에 남은 웹 전용 표현을 정리한다). `docs/frontend-simulation-testing.md`의 Playwright 캐시 경로(`D:\Projects\audio`)를 AGENTS.md(`D:\Projects\LMO_audio\.cache\ms-playwright`)와 맞춘다.
   - 범위 밖: `모델 받는 중` 진행 표시(작성 화면이 받기 진행 데이터를 읽게 되면 다시 판단), 명시적 연결 해제 UI.
 - [x] 2026-10-20 공개 설치 점검 오류 수정본 반영·실제 연결 재확인
   - 2026-10-20 점검: 아래 「추가 설치 오류」·「연결 원인 확인」 줄의 후속(직접 재설치·시작 메뉴 확인, 권한 허용 뒤 실제 연결·분석)은 맨 위 「사용자 확인 대기」로 옮겼다. 그 줄의 `바로록 연결`은 지금 `LMO 회의록 연결`이고, 설치 오류 문구는 `web-local-engine.nsi`의 "실행 중인 음성 분석 프로그램을 종료하지 못했습니다"로 바뀌었다.

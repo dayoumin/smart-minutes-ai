@@ -330,7 +330,10 @@ const runPendingCancellationLockScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     const writerStartButton = page.getByRole('button', { name: '분석 시작', exact: true });
     await writerStartButton.waitFor({ timeout: 10000 });
-    await page.locator('#writer-analysis-start-blocked').waitFor({ timeout: 10000 });
+    // The status row says why; the reason's text stays only as the recovery card's hidden description.
+    await page.locator('.writer-action-row[data-state="other-analysis"]').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '진행 중인 분석이 있습니다');
+    await page.locator('#writer-analysis-start-blocked.sr-only').waitFor({ state: 'attached', timeout: 10000 });
     assert.equal(await writerStartButton.isDisabled(), true);
     assert.equal(await page.locator('.sidebar-create-button').first().isDisabled(), true);
 

@@ -543,9 +543,9 @@ const captures = [
     id: 'W4', note: '빈 칸으로 분석 시작',
     steps: async page => { await ready(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.waitForTimeout(400); },
   },
-  { id: 'W5', note: '모델 없음 (설정에서 받을 수 있음)', routes: { model: { sttInstalled: false, downloadable: true } }, steps: async page => { await ready(page); await page.locator('.status-banner').first().waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
-  { id: 'W6', note: '모델 없음 (받을 수 없음)', routes: { model: { sttInstalled: false, downloadable: false } }, steps: async page => { await ready(page); await page.locator('.status-banner').first().waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
-  { id: 'W7', note: `${LOCAL_ENGINE_NAME} 45초 무응답`, routes: { engineDown: true }, steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).first().waitFor({ timeout: 90000 }); await page.waitForTimeout(300); return { noticeAfterMs: Date.now() - started }; } },
+  { id: 'W5', note: '모델 없음 (설정에서 받을 수 있음)', routes: { model: { sttInstalled: false, downloadable: true } }, steps: async page => { await ready(page); await page.locator('.writer-action-row[data-state="models-missing"]').waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
+  { id: 'W6', note: '모델 없음 (받을 수 없음)', routes: { model: { sttInstalled: false, downloadable: false } }, steps: async page => { await ready(page); await page.locator('.writer-action-row[data-state="models-reinstall"]').waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
+  { id: 'W7', note: `${LOCAL_ENGINE_NAME} 45초 무응답`, routes: { engineDown: true }, steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-row[data-state="no-response"]').waitFor({ timeout: 90000 }); await page.waitForTimeout(300); return { noticeAfterMs: Date.now() - started }; } },
   {
     id: 'W8', note: '이어서 할 분석 + 최근 회의록', routes: { drafts: remoteDraftStatuses }, ...withDrafts([stoppedDraft(), failedDraft()]),
     steps: async page => { await seedAndReload(page); await page.waitForTimeout(800); },
@@ -572,8 +572,8 @@ const captures = [
   },
   // Stage 3 states (audit 4.4): engine check before the 45s notice, failure after the transcript was saved, preparation phase.
   {
-    id: 'W9', note: `${LOCAL_ENGINE_NAME} 확인 중 (45초 전)`, routes: { engineDown: true },
-    steps: async page => { await ready(page); const started = Date.now(); await page.locator('#writer-engine-checking').waitFor({ timeout: 10000 }); await page.waitForTimeout(300); return { checkingLineAfterMs: Date.now() - started }; },
+    id: 'W9', note: '분석 준비 확인 중 (45초 전)', routes: { engineDown: true },
+    steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-row[data-state="readiness-checking"]').waitFor({ timeout: 10000 }); await page.waitForTimeout(300); return { checkingLineAfterMs: Date.now() - started }; },
   },
   {
     id: 'A4', note: '대화록 저장 뒤 실패 (메모리 부족)',

@@ -4,7 +4,29 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
-import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+
+// The development UI's action row (design.md 동작 줄 v2): one status line beside 분석 시작, no banners.
+const rowOf = page => page.locator('.writer-action-row');
+const statusOf = page => page.locator('#writer-local-engine-requirement');
+const waitForRowState = (page, state, timeout = 10000) => page.waitForFunction(
+  expected => document.querySelector('.writer-action-row')?.getAttribute('data-state') === expected, state, { timeout },
+);
+const readRow = async page => ({
+  state: await rowOf(page).getAttribute('data-state'),
+  title: (await statusOf(page).locator('.writer-status-title').allInnerTexts())[0] ?? '',
+  message: (await statusOf(page).locator('.writer-status-message').allInnerTexts())[0] ?? null,
+  buttons: (await rowOf(page).locator('.writer-action-buttons > :is(button, a):not(.writer-start-button)').allInnerTexts()).map(text => text.trim()),
+});
+const startButtonOf = page => page.locator('.writer-start-button');
+const isStartBlocked = async page => (await startButtonOf(page).getAttribute('aria-disabled')) === 'true';
+// None of the old surfaces: no 준비 필요 label, no readiness or form banner, no second hint line.
+const assertNoOldSurfaces = async page => {
+  assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).count(), 0, 'no 준비 필요 label');
+  assert.equal(await page.locator('.status-banner').count(), 0, 'no banner under the form');
+  assert.equal(await page.locator('#writer-readiness-hint, #writer-engine-checking, .writer-action-bar').count(), 0, 'no old action bar lines');
+  assert.equal(await startButtonOf(page).getAttribute('aria-describedby'), 'writer-local-engine-requirement', 'the status line is the only description');
+};
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
@@ -231,12 +253,14 @@ const verifyGpuUnavailable = async (browser) => {
     await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    const actionBar = page.locator('.writer-action-bar');
-    await page.locator('#writer-readiness-hint').getByText('GPU를 쓸 수 없습니다. 분석 장치를 CPU로 바꾸면 바로 시작할 수 있습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    await waitForRowState(page, 'gpu-unavailable');
+    assert.deepEqual(await readRow(page), {
+      state: 'gpu-unavailable', title: 'GPU를 쓸 수 없습니다', message: '분석 장치를 CPU로 바꿔 주세요.', buttons: ['분석 장치 설정'],
+    });
     assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0, 'a GPU problem is not a missing model');
-    assert.equal(await actionBar.getByRole('button', { name: /문제 해결/ }).count(), 0);
     assert.equal(await page.getByText(/CUDA|DLL/).count(), 0, 'the GPU guidance does not show implementation terms');
-    await actionBar.getByRole('button', { name: '분석 장치 설정', exact: true }).click();
+    await assertNoOldSurfaces(page);
+    await rowOf(page).getByRole('button', { name: '분석 장치 설정', exact: true }).click();
     const dialog = page.getByRole('dialog', { name: '설정' });
     await dialog.waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.closest('#settings-analysis-device') !== null, undefined, { timeout: 10000 });
@@ -247,7 +271,8 @@ const verifyGpuUnavailable = async (browser) => {
     assert.equal(gpu.selected, 'cpu', 'switching 분석 장치 should save CPU');
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'detached' });
-    await page.locator('#writer-readiness-hint').waitFor({ state: 'detached', timeout: 15000 });
+    await waitForRowState(page, 'ready', 15000);
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] }, 'the development UI has no 연결됨 line');
     console.log('ok - an unusable GPU points at 분석 장치 and clears after switching to CPU');
   } finally {
     await page.close();
@@ -283,11 +308,13 @@ const verifyDiarizationSettingShortcut = async (browser) => {
     await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    const actionBar = page.locator('.writer-action-bar');
-    await page.locator('#writer-readiness-hint').getByText('참석자 구분 모델이 없습니다. 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.', { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByText('설정에서 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.', { exact: false }).waitFor({ timeout: 10000 });
+    await waitForRowState(page, 'diarization-model-missing');
+    assert.deepEqual(await readRow(page), {
+      state: 'diarization-model-missing', title: '참석자 구분 모델이 없습니다', message: '이어서 실행을 끄면 대화록부터 만들 수 있습니다.', buttons: ['참석자 구분 설정'],
+    });
     assert.equal(await page.getByText('다시 설치', { exact: false }).count(), 0, 'turning one setting off beats reinstalling');
-    await actionBar.getByRole('button', { name: '참석자 구분 설정', exact: true }).click();
+    await assertNoOldSurfaces(page);
+    await rowOf(page).getByRole('button', { name: '참석자 구분 설정', exact: true }).click();
     await page.getByRole('dialog', { name: '설정' }).waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.closest('#settings-analysis-diarization') !== null, undefined, { timeout: 10000 });
     await page.locator('#settings-analysis-diarization input').uncheck();
@@ -296,8 +323,193 @@ const verifyDiarizationSettingShortcut = async (browser) => {
     }
     assert.equal(settings.duringAnalysis, false, 'the setting should be saved off');
     await page.keyboard.press('Escape');
-    await page.locator('#writer-readiness-hint').waitFor({ state: 'detached', timeout: 15000 });
+    await waitForRowState(page, 'ready', 15000);
     console.log('ok - a missing diarization model points at the one setting that unblocks analysis');
+  } finally {
+    await page.close();
+  }
+};
+
+// The desktop app: no connection step, its engine is 분석 기능, 문제 해결 replaces `?`, the reinstall names the app
+// itself without a link, and once nothing is blocked the line is empty (design.md 동작 줄 v2, Figma 17:962).
+const installTauriMock = () => {
+  window.__unexpectedTauriCommands = [];
+  window.__TAURI__ = {
+    core: {
+      invoke: async (command) => {
+        if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
+        if (command === 'get_desktop_action_token') return 'desktop-test-token';
+        if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
+        window.__unexpectedTauriCommands.push(command);
+        return undefined;
+      },
+    },
+  };
+};
+
+const verifyDesktopStatusRow = async (browser) => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
+  const engine = { up: false, models: 'missing' };
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  try {
+    await page.clock.install();
+    await page.addInitScript(installTauriMock);
+    await page.route('**/api/**', route => {
+      const path = new URL(route.request().url()).pathname;
+      const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+      if (path === '/api/health') return engine.up ? json({ ok: true }) : route.abort('connectionrefused');
+      if (path === '/api/models/status') {
+        if (engine.models === 'error') return json({ detail: 'models unavailable' }, 500);
+        const installed = engine.models === 'ready';
+        return json({
+          ready: installed,
+          models: [{ key: 'stt_faster_whisper', label: 'Faster Whisper Large v3', required: true, installed, downloadable: engine.models === 'missing' }],
+          errors: [],
+        });
+      }
+      if (path === '/api/settings') return json({});
+      if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+      return json({ detail: 'not used by this scenario' }, 404);
+    });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await page.getByRole('heading', { name: '새 회의록', exact: true }).waitFor();
+    const assertDesktopSurfaces = async () => {
+      await assertNoOldSurfaces(page);
+      assert.equal(await rowOf(page).getByRole('button', { name: '문제 해결 도움말' }).count(), 0, 'the desktop app has no ?');
+      assert.equal(await page.locator('#writer-status-help').count(), 0);
+    };
+
+    // Right after the app opens: the engine is still starting.
+    await waitForRowState(page, 'readiness-checking');
+    assert.deepEqual(await readRow(page), { state: 'readiness-checking', title: '분석 기능 준비 중', message: null, buttons: [] });
+    assert.equal(await rowOf(page).locator('.writer-status-busy').count(), 1, 'a grey spinner, not a warning');
+    assert.equal(await isStartBlocked(page), true);
+    await assertDesktopSurfaces();
+    // 45s after the app opens without an answer: still starting at 43s, then the warning with 문제 해결.
+    await page.clock.runFor(43_000);
+    assert.equal(await rowOf(page).getAttribute('data-state'), 'readiness-checking', 'no warning before 45s');
+    await page.clock.runFor(4_000);
+    await waitForRowState(page, 'no-response');
+    assert.deepEqual(await readRow(page), {
+      state: 'no-response', title: '분석 기능이 아직 준비되지 않았습니다', message: '첫 실행은 몇 분 걸릴 수 있습니다.', buttons: ['문제 해결'],
+    });
+    assert.equal(await page.getByText(LOCAL_ENGINE_NAME, { exact: false }).count(), 0, 'the desktop app does not name the web connection program');
+    assert.equal(await isStartBlocked(page), true);
+    await assertDesktopSurfaces();
+    await rowOf(page).getByRole('button', { name: '문제 해결', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: '설정' });
+    await settings.waitFor({ state: 'visible', timeout: 10000 });
+    await page.keyboard.press('Escape');
+    await settings.waitFor({ state: 'detached' });
+
+    // The engine answers on the slow check: models it can download come first.
+    engine.up = true;
+    await page.clock.runFor(11_000);
+    await waitForRowState(page, 'models-missing');
+    assert.deepEqual(await readRow(page), {
+      state: 'models-missing', title: '모델을 받아야 분석할 수 있습니다', message: '음성 인식', buttons: ['모델 받기'],
+    });
+    await assertDesktopSurfaces();
+
+    // A model Settings cannot download: the whole app is reinstalled, and there is no link to offer.
+    engine.models = 'reinstall';
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await waitForRowState(page, 'models-reinstall');
+    assert.deepEqual(await readRow(page), {
+      state: 'models-reinstall', title: '필요한 모델이 없어 분석을 시작할 수 없습니다', message: `${withJosa(BRAND_NAME, '을/를')} 다시 설치해 주세요.`, buttons: [],
+    });
+    await assertDesktopSurfaces();
+
+    // Readiness cannot be confirmed: 문제 해결 where the web shows ?, with 다시 확인 beside 분석 시작.
+    engine.models = 'error';
+    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+    await waitForRowState(page, 'readiness-checking');
+    await page.clock.runFor(46_000);
+    await waitForRowState(page, 'readiness-error');
+    assert.deepEqual(await readRow(page), {
+      state: 'readiness-error', title: '분석 준비 상태를 확인하지 못했습니다', message: '잠시 뒤 다시 확인해 주세요.', buttons: ['문제 해결', '다시 확인'],
+    });
+    await assertDesktopSurfaces();
+    // 다시 확인 while the engine is gone: the check keeps running, so the row clears on its own once the engine
+    // answers, without a window focus or settings event (the warning that follows offers only 문제 해결).
+    engine.up = false;
+    await page.evaluate(() => {
+      window.__readinessEvents = 0;
+      window.addEventListener('focus', () => { window.__readinessEvents += 1; });
+      window.addEventListener('analysis:settings-updated', () => { window.__readinessEvents += 1; });
+    });
+    await rowOf(page).getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState(page, 'readiness-checking');
+    engine.up = true;
+    engine.models = 'ready';
+    await page.clock.runFor(3_000);
+
+    // Nothing blocked: the line stays mounted and keeps its 40px, but says nothing (no 연결됨).
+    await waitForRowState(page, 'ready');
+    assert.equal(await page.evaluate(() => window.__readinessEvents), 0, 'the restarted check found the engine by itself');
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] });
+    assert.equal((await statusOf(page).innerText()).trim(), '');
+    assert.equal(await statusOf(page).locator('.writer-status-icon').count(), 0);
+    assert.equal(Math.round((await rowOf(page).boundingBox()).height), 40);
+    assert.equal(await page.getByText('연결됨', { exact: true }).count(), 0);
+    assert.equal(await isStartBlocked(page), false);
+    await assertDesktopSurfaces();
+
+    // Required fields: 분석 시작 stays on; pressing it lists what is left and focuses the first empty field.
+    await startButtonOf(page).click();
+    await waitForRowState(page, 'required-fields');
+    assert.deepEqual(await readRow(page), {
+      state: 'required-fields', title: '필수 항목이 비어 있습니다', message: '영상·음성 파일, 회의 제목, 회의 목적', buttons: [],
+    });
+    await page.waitForFunction(() => document.activeElement?.id === 'meeting-file-drop');
+    assert.equal(await page.locator('#writer-form-error').count(), 1, 'one list, in the status line');
+    assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), 'writer-form-error');
+    await page.locator('#meeting-title').fill('데스크톱 상태 줄');
+    await page.waitForFunction(() => document.querySelector('#writer-form-error')?.textContent === '영상·음성 파일, 회의 목적');
+    assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), null);
+    await assertDesktopSurfaces();
+    assert.deepEqual(await page.evaluate(() => window.__unexpectedTauriCommands), []);
+    assert.deepEqual(errors, []);
+    console.log('ok - desktop status row: 분석 기능 준비 중, 45s 문제 해결, models, reinstall, readiness error, empty when ready, required fields');
+  } finally {
+    await context.close();
+  }
+};
+
+// The development UI speaks as the web app where the desktop app differs: `?` instead of 문제 해결.
+const verifyDevelopmentReadinessError = async (browser) => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  let modelsUp = false;
+  try {
+    await page.clock.install();
+    await page.route('**/api/health', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true }) }));
+    await page.route('**/api/models/status', route => (modelsUp
+      ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ready: true, models: [], errors: [] }) })
+      : route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ detail: 'models unavailable' }) })));
+    await page.route('**/api/settings', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{}' }));
+    await page.route('**/api/dev/asr-benchmarks**', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await waitForRowState(page, 'readiness-checking');
+    assert.equal((await readRow(page)).title, '분석 준비 확인 중');
+    await page.clock.runFor(46_000);
+    await waitForRowState(page, 'readiness-error');
+    assert.deepEqual(await readRow(page), {
+      state: 'readiness-error', title: '분석 준비 상태를 확인하지 못했습니다', message: '잠시 뒤 다시 확인해 주세요.', buttons: ['다시 확인'],
+    });
+    const help = rowOf(page).getByRole('button', { name: '문제 해결 도움말' });
+    assert.equal(await help.getAttribute('aria-expanded'), 'false');
+    await help.click();
+    assert.equal(await page.locator('#writer-status-help').innerText(),
+      `모델 상태를 확인하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행한 뒤 다시 확인해 주세요.`);
+    assert.equal(await rowOf(page).getByRole('button', { name: '문제 해결', exact: true }).count(), 0, '문제 해결 is desktop-only');
+    await assertNoOldSurfaces(page);
+    modelsUp = true;
+    await rowOf(page).getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState(page, 'ready');
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] });
+    console.log('ok - development UI readiness error keeps the web ? and 다시 확인');
   } finally {
     await page.close();
   }
@@ -315,27 +527,15 @@ const run = async () => {
     const state = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
 
-    const infoBanner = page.locator('.status-banner-info').filter({ hasText: '준비할 모델' });
-    await infoBanner.waitFor({ state: 'visible', timeout: 10000 });
-    await infoBanner.getByText('음성 인식 기본 모델', { exact: false }).waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByText('모델 받기를 누르면 설정에서 바로 받을 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    // One way forward: 모델 받기 beside 분석 시작. The banner only adds 다시 확인, no 설정/모델 준비 duplicates.
+    // One way forward: 모델 받기 beside 분석 시작, said in the status line (no banner, no 설정/모델 준비 duplicates).
+    await waitForRowState(page, 'models-missing');
+    assert.deepEqual(await readRow(page), {
+      state: 'models-missing', title: '모델을 받아야 분석할 수 있습니다', message: '음성 인식', buttons: ['모델 받기'],
+    });
     assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 1);
-    assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: '모델 받기', exact: true }).count(), 1, '모델 받기 sits beside 분석 시작');
-    assert.equal(await infoBanner.getByRole('button', { name: '설정', exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: '모델 준비', exact: true }).count(), 0);
-    assert.equal(await infoBanner.getByRole('button', { name: '다시 확인', exact: true }).count(), 1);
     assert.equal(await page.getByText('models 폴더', { exact: false }).count(), 0, 'the writer should not mention the models folder');
-    // 다시 확인 in the banner must not add a second (error) banner repeating the same sentence.
-    await infoBanner.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await page.waitForTimeout(500);
-    assert.equal(await page.getByText('모델 받기를 누르면 설정에서 바로 받을 수 있습니다.').count(), 1, 'the readiness sentence appears once');
-    assert.equal(await page.locator('.status-banner-error').count(), 0, 'rechecking should not raise an error banner');
-    assert.equal(
-      await page.locator('.status-banner-error').filter({ hasText: '음성 인식 모델' }).count(),
-      0,
-      'missing models should be shown as guidance, not an error banner',
-    );
+    await assertNoOldSurfaces(page);
 
     await page.getByLabel('회의 목적', { exact: true }).fill('모델 미준비 상태에서 시작 차단 확인');
     await page.setInputFiles('#meeting-file-input', {
@@ -344,10 +544,14 @@ const run = async () => {
       buffer: Buffer.from('readiness fixture'),
     });
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '준비 상태 확인');
-    const actionBar = page.locator('.writer-action-bar');
-    const blockedStartButton = actionBar.getByRole('button', { name: '준비 필요', exact: true });
-    await blockedStartButton.waitFor({ timeout: 10000 });
-    assert.equal(await blockedStartButton.isDisabled(), true, 'missing required models should disable analysis start');
+    // The button keeps its action name while blocked; pressing it moves focus to the line that says why.
+    assert.equal((await startButtonOf(page).innerText()).trim(), '분석 시작');
+    assert.equal(await isStartBlocked(page), true, 'missing required models block analysis start');
+    // Playwright will not click an aria-disabled button, so press it from the keyboard as people do.
+    await startButtonOf(page).focus();
+    await page.keyboard.press('Enter');
+    await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
+    await assertNoOldSurfaces(page);
 
     await page.getByRole('button', { name: '모델 받기', exact: true }).click();
     const modelsTab = page.getByRole('tab', { name: '모델' });
@@ -366,7 +570,7 @@ const run = async () => {
       await dialog.getByRole('tab', { name: '모델', exact: true }).waitFor();
       state.ready = true;
       await dialog.getByRole('button', { name: '모델 준비 상태 다시 확인', exact: true }).click();
-      await page.waitForFunction(() => document.querySelector('.writer-start-button')?.textContent?.trim() === '분석 시작');
+      await waitForRowState(page, 'ready');
       await page.keyboard.press('Escape');
       await dialog.waitFor({ state: 'detached' });
     };
@@ -375,17 +579,23 @@ const run = async () => {
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '준비 상태 확인');
     assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '모델 미준비 상태에서 시작 차단 확인');
     assert.equal(await page.locator('#meeting-file-input').evaluate(input => input.files?.[0]?.name), '준비 상태 확인.mp3');
-    assert.equal(await actionBar.getByRole('button', { name: '분석 시작', exact: true }).isEnabled(), true);
+    // Ready: the line stays mounted but says nothing (no 연결됨 without a connection step), and 분석 시작 is on.
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] });
+    assert.equal(await statusOf(page).locator('.writer-status-icon').count(), 0, 'no icon on an empty line');
+    assert.equal(Math.round((await rowOf(page).boundingBox()).height), 40, 'the empty line keeps its 40px');
+    assert.equal(await isStartBlocked(page), false);
+    assert.equal(await statusOf(page).getAttribute('role'), 'status');
 
     await page.getByRole('button', { name: '준비 상태 확인.mp3 제거', exact: true }).click();
     state.ready = false;
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    await page.getByRole('button', { name: '준비 필요', exact: true }).waitFor();
+    await waitForRowState(page, 'models-missing');
+    assert.equal(await isStartBlocked(page), true);
     await prepareModel();
     await page.waitForFunction(() => document.activeElement?.classList.contains('file-drop-zone'));
 
-    // A download that finishes while Settings is closed clears the hint on the writer's own slow check: no focus or
-    // settings event is sent, and the hint clears within one slow interval.
+    // A download that finishes while Settings is closed clears the line on the writer's own slow check: no focus or
+    // settings event is sent, and the line clears within one slow interval.
     state.ready = false;
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
     await page.getByRole('button', { name: '모델 받기', exact: true }).waitFor({ timeout: 10000 });
@@ -395,25 +605,30 @@ const run = async () => {
       window.addEventListener('analysis:settings-updated', () => { window.__readinessEvents += 1; });
     });
     state.ready = true;
-    await page.locator('#writer-readiness-hint').waitFor({ state: 'detached', timeout: 20000 });
-    assert.equal(await page.evaluate(() => window.__readinessEvents), 0, 'the slow check cleared the hint without any event');
+    await waitForRowState(page, 'ready', 20000);
+    assert.equal(await page.evaluate(() => window.__readinessEvents), 0, 'the slow check cleared the line without any event');
 
-    // A missing model that Settings cannot download must not point at 모델 받기.
+    // A missing model that Settings cannot download must not point at 모델 받기. The web app's engine is the downloaded
+    // connection program, so that is what gets reinstalled (WR-9); without an installer link there is no button.
     state.ready = false;
     state.downloadable = false;
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    const errorBanner = page.locator('.status-banner-error').filter({ hasText: '분석을 시작할 수 없습니다' });
-    // The web app's engine is the downloaded connection program, so that is what gets reinstalled (WR-9).
-    await errorBanner.getByText(`이 모델은 설정에서 받을 수 없으니 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`, { exact: false }).waitFor({ timeout: 10000 });
-    // The action row states the cause in one sentence and offers no button that cannot fix it.
-    await page.locator('#writer-readiness-hint').getByText('필요한 모델이 없어 분석을 시작할 수 없습니다.', { exact: true }).waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 're-checking cannot install a model Settings cannot download');
+    await waitForRowState(page, 'models-reinstall');
+    assert.deepEqual(await readRow(page), {
+      state: 'models-reinstall',
+      title: '필요한 모델이 없어 분석을 시작할 수 없습니다',
+      message: `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`,
+      buttons: [],
+    }, 're-checking cannot install a model Settings cannot download');
     assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0, 'no 모델 받기 for a model Settings cannot download');
     assert.equal(await page.getByText('모델 받기를 누르면', { exact: false }).count(), 0);
+    await assertNoOldSurfaces(page);
 
     await verifyWebSettingsRecovery(browser);
     await verifyGpuUnavailable(browser);
     await verifyDiarizationSettingShortcut(browser);
+    await verifyDevelopmentReadinessError(browser);
+    await verifyDesktopStatusRow(browser);
     console.log('ok - writer model readiness simulation');
   } catch (error) {
     console.error(error);

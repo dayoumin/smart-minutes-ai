@@ -503,7 +503,9 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     const url = new URL(APP_URL);
     await page.goto(`${PUBLIC_TEST_ORIGIN}${url.pathname}${url.search}`, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     const rail = page.locator('.local-engine-connection');
-    await rail.getByText('‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: false }).waitFor();
+    // domcontentloaded returns before a cold Vite has served the app's modules through the route.
+    await rail.getByText('‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: false })
+      .waitFor({ timeout: PAGE_GOTO_TIMEOUT_MS });
     assert.equal(await rail.getAttribute('data-scene'), 'intro', 'an undecided permission is not shown as a failure');
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await sleep(2500);

@@ -1098,9 +1098,16 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             previous_tempdir = tempfile.tempdir
             try:
                 tempfile.tempdir = str(fake_temp)
-                with patch.dict(
-                    os.environ,
-                    {"TEMP": str(fake_temp), "TMP": str(fake_temp), "LOCALAPPDATA": str(local_app_data)},
+                with (
+                    patch.dict(
+                        os.environ,
+                        {"TEMP": str(fake_temp), "TMP": str(fake_temp), "LOCALAPPDATA": str(local_app_data)},
+                    ),
+                    patch.object(
+                        installer_preflight,
+                        "inspect_fixed_port",
+                        lambda **_kwargs: PortInspection("available"),
+                    ),
                 ):
                     exit_code = main([
                         "--manifest", str(manifest),
@@ -1148,9 +1155,16 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             previous_tempdir = tempfile.tempdir
             try:
                 tempfile.tempdir = str(python_temp)
-                with patch.dict(
-                    os.environ,
-                    {"TEMP": str(python_temp), "TMP": str(nsis_temp), "LOCALAPPDATA": str(local_app_data)},
+                with (
+                    patch.dict(
+                        os.environ,
+                        {"TEMP": str(python_temp), "TMP": str(nsis_temp), "LOCALAPPDATA": str(local_app_data)},
+                    ),
+                    patch.object(
+                        installer_preflight,
+                        "inspect_fixed_port",
+                        lambda **_kwargs: PortInspection("available"),
+                    ),
                 ):
                     exit_code = main([
                         "--manifest", str(manifest),

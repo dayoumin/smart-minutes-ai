@@ -182,7 +182,7 @@ const verifyDefaultWriterGuidance = async browser => {
         await page.locator('.writer-action-bar').getByRole('button', { name: '연결 확인', exact: true }).click();
         const rail = page.locator('.local-engine-connection');
         if (scenario === 'outage-recovery') {
-          await rail.getByText('분석 기능에 연결하지 못했습니다', { exact: true }).waitFor();
+          await rail.getByText('연결하지 못했습니다', { exact: true }).waitFor();
           await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
           assert.equal(await rail.locator('a[href=""]').count(), 0);
           healthUp = true;
@@ -773,7 +773,7 @@ const run = async () => {
 
     await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
-    await rail.getByText('분석 기능에 연결하지 못했습니다').waitFor({ state: 'visible' });
+    await rail.getByText('연결하지 못했습니다').waitFor({ state: 'visible' });
     assert.equal(await rail.getByRole('button', { name: '설치 파일 준비 중', exact: true }).count(), 0);
 
     probeMode = 'reachable';

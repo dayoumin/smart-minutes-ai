@@ -106,7 +106,7 @@ export const getLocalEngineConnectionView = ({
             primaryLabel: '연결 확인',
             primaryDisabled: false,
             secondaryAction: snapshot.blockedBy === 'response-blocked' && installerAvailable ? 'download' : null,
-            secondaryLabel: snapshot.blockedBy === 'response-blocked' && installerAvailable ? '바로록 연결 받기' : null,
+            secondaryLabel: snapshot.blockedBy === 'response-blocked' && installerAvailable ? '설치 파일' : null,
             busy: false,
             analysisReady: false,
         });
@@ -259,7 +259,7 @@ export const getLocalEngineConnectionView = ({
             primaryLabel: '연결 확인',
             primaryDisabled: false,
             secondaryAction: installerAvailable ? 'download' : null,
-            secondaryLabel: installerAvailable ? '바로록 연결 받기' : null,
+            secondaryLabel: installerAvailable ? '설치 파일' : null,
             busy: false,
             analysisReady: false,
         });
@@ -269,7 +269,7 @@ export const getLocalEngineConnectionView = ({
         return view({
             scene: 'unreachable',
             tone: 'warning',
-            title: '분석 기능에 연결하지 못했습니다',
+            title: '연결하지 못했습니다',
             // Undecided permission after a check: the prompt was closed, or nothing answered so
             // Chrome never asked. The page cannot tell which, so it names both fixes.
             message: snapshot.blockedBy === 'permission-prompt'
@@ -279,7 +279,7 @@ export const getLocalEngineConnectionView = ({
             primaryLabel: '연결 확인',
             primaryDisabled: false,
             secondaryAction: installerAvailable ? 'download' : null,
-            secondaryLabel: installerAvailable ? '바로록 연결 받기' : null,
+            secondaryLabel: installerAvailable ? '설치 파일' : null,
             busy: false,
             analysisReady: false,
         });

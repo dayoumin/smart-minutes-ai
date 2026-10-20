@@ -1786,12 +1786,12 @@
 
   .local-engine-connection-actions {
     @apply grid shrink-0 items-center justify-end gap-1.5;
-    grid-auto-columns: minmax(0, 1fr);
+    grid-auto-columns: max-content;
     grid-auto-flow: column;
   }
 
   .local-engine-connection-actions .btn {
-    @apply h-9 justify-center gap-1.5 px-2.5 text-xs;
+    @apply h-8 justify-center gap-1.5 px-2 text-xs;
     white-space: nowrap;
   }
 

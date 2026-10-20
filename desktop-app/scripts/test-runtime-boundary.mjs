@@ -124,7 +124,7 @@ const introWithInstaller = getLocalEngineConnectionView({
   installerAvailable: true,
 });
 assert.equal(introWithInstaller.secondaryAction, 'download', 'a configured installer is offered before the first connection attempt');
-assert.equal(introWithInstaller.secondaryLabel, '바로록 연결 받기');
+assert.equal(introWithInstaller.secondaryLabel, '설치 파일');
 const unreachableWithInstaller = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'unreachable' },
   pairingPhase: 'idle',
@@ -134,7 +134,7 @@ const unreachableWithInstaller = getLocalEngineConnectionView({
 assert.equal(unreachableWithInstaller.primaryAction, 'probe', 'no response does not establish that installation is needed');
 assert.equal(unreachableWithInstaller.primaryLabel, '연결 확인');
 assert.equal(unreachableWithInstaller.secondaryAction, 'download');
-assert.equal(unreachableWithInstaller.secondaryLabel, '바로록 연결 받기');
+assert.equal(unreachableWithInstaller.secondaryLabel, '설치 파일');
 assert.match(unreachableWithInstaller.message, /설치했다면 바로록 연결을 실행/);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },

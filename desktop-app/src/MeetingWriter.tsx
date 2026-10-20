@@ -52,7 +52,12 @@ import {
     normalizeMeetingKeyTerms,
 } from './meetingKnowledge';
 import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from './analysisJobRuntime';
-import { isActionableResumeDraft, useAnalysisResumeSnapshot } from './analysisResumeState';
+import {
+    isActionableResumeDraft,
+    requestAnalysisRecoverySync,
+    useAnalysisResumeSnapshot,
+    type AnalysisResumeSyncStatus,
+} from './analysisResumeState';
 import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
@@ -689,10 +694,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const audioExtractRequestRef = useRef(0);
     const resumeSnapshot = useAnalysisResumeSnapshot();
     const resumeDrafts = resumeSnapshot.drafts;
-    const canResumeDraft = React.useCallback(
-        (draft: AnalysisResumeDraft) => isActionableResumeDraft(draft, resumeSnapshot),
-        [resumeSnapshot],
-    );
     const [selectedResumeDraftId, setSelectedResumeDraftId] = useState<string | null>(null);
     const [deletingResumeDraftIds, setDeletingResumeDraftIds] = useState<Set<string>>(() => new Set());
     const selectedReportTemplate = useMemo(
@@ -701,6 +702,29 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     );
     const localEngineConnectionRequired = (LOCAL_ENGINE_CONNECTION_UI_ENABLED || webConnectionRecoveryStarted)
         && localEngineConnection.runtime === 'web-local-engine';
+    // A background re-check (window focus, a draft update) marks the drafts as syncing for a moment. The web
+    // connection build's status row keeps the last settled answer through it instead of flashing 이어하기 불가;
+    // the engine still checks the draft when the analysis starts.
+    const [settledResumeSync, setSettledResumeSync] = useState<AnalysisResumeSyncStatus>(
+        resumeSnapshot.syncStatus === 'syncing' ? 'idle' : resumeSnapshot.syncStatus,
+    );
+    if (resumeSnapshot.syncStatus !== 'syncing' && resumeSnapshot.syncStatus !== settledResumeSync) {
+        setSettledResumeSync(resumeSnapshot.syncStatus);
+    }
+    const resumeCheckSnapshot = useMemo(() => (
+        localEngineConnectionRequired && resumeSnapshot.syncStatus === 'syncing'
+            ? { ...resumeSnapshot, syncStatus: settledResumeSync }
+            : resumeSnapshot
+    ), [localEngineConnectionRequired, resumeSnapshot, settledResumeSync]);
+    const canResumeDraft = React.useCallback(
+        (draft: AnalysisResumeDraft) => isActionableResumeDraft(draft, resumeCheckSnapshot),
+        [resumeCheckSnapshot],
+    );
+    // 상태 확인 in the status row spins for the check it asked for, not for the background ones.
+    const [analysisStatusRefreshPending, setAnalysisStatusRefreshPending] = useState(false);
+    useEffect(() => {
+        if (analysisStatusRefreshPending && resumeSnapshot.syncStatus !== 'syncing') setAnalysisStatusRefreshPending(false);
+    }, [analysisStatusRefreshPending, resumeSnapshot.syncStatus]);
     const localEngineAnalysisReady = canUseLocalEngineCapability(localEngineConnection, 'analysis')
         && !localEngineConnection.updateRequired;
     const localEngineAuthorizedForReadiness = localEngineConnection.authorization === 'authenticated'
@@ -1052,6 +1076,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         if (!file) fields.push('영상·음성 파일');
         return fields;
     }, [date, file, meetingPurpose, title]);
+    // The web connection build lists them in screen order, and 분석 시작 focuses the first empty one.
+    const missingRequiredInputs = useMemo(() => {
+        const inputs: Array<{ label: string; focusId: string }> = [];
+        if (!file) inputs.push({ label: '영상·음성 파일', focusId: 'meeting-file-drop' });
+        if (!title.trim()) inputs.push({ label: '회의 제목', focusId: 'meeting-title' });
+        if (!date) inputs.push({ label: '일시', focusId: 'meeting-date' });
+        if (!meetingPurpose.trim()) inputs.push({ label: '회의 목적', focusId: 'meeting-purpose' });
+        return inputs;
+    }, [date, file, meetingPurpose, title]);
 
     useEffect(() => {
         if (!onRegisterLeaveGuard) return;
@@ -1142,7 +1175,24 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         canOpenModelSettings: Boolean(onOpenSettings),
         canOpenAnalysisSettings: Boolean(onOpenAnalysisSettings),
         installerNotice: connectionControls.installerNotice,
+        input: {
+            resumeUnavailable: selectedResumeDraftActive ? 'running'
+                : selectedResumeDraft && (selectedResumeDraft.status === 'completed' || selectedResumeDraft.resumeUnavailableReason === 'completed')
+                    ? 'completed'
+                    : selectedResumeDraftUnavailable ? 'unavailable' : null,
+            sameFileRunning: Boolean(matchingActiveDraft) && !isAnalyzing,
+            otherAnalysisRunning: analysisStartBlocked,
+            fileTooLong: Boolean(fileDurationLimitError),
+            resumeFile: selectedResumeDraft && (resumeAwaitingFile || resumeDraftFileMismatch)
+                ? { sourceFilename: selectedResumeDraft.sourceFilename, problem: resumeAwaitingFile ? 'missing' : 'mismatch' }
+                : null,
+            missingRequired: hasAttemptedStart ? missingRequiredInputs.map(input => input.label) : [],
+        },
     });
+    // Empty required fields point at the list of what is left (#writer-form-error) only while it is on screen.
+    const requiredFieldsDescribed = localEngineConnectionRequired
+        ? writerStatusRow.state === 'required-fields'
+        : hasAttemptedStart;
     // Help explains one state; a new state starts folded.
     useEffect(() => {
         setStatusHelpOpen(false);
@@ -1157,6 +1207,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         if (active && active !== document.body) return;
         writerStatusRef.current?.focus({ preventScroll: true });
     }, [localEngineConnectionRequired, writerStatusRow.busy, writerStatusRow.state]);
+    // The same for an input-step fix (다른 파일 선택, 상태 확인): once its step clears, the pressed button goes away
+    // with it, and focus moves to the line that now says what is next.
+    const inputFixFocusRequestedRef = useRef(false);
+    useEffect(() => {
+        if (!inputFixFocusRequestedRef.current) return;
+        inputFixFocusRequestedRef.current = false;
+        const active = document.activeElement;
+        if (active && active !== document.body) return;
+        writerStatusRef.current?.focus({ preventScroll: true });
+    }, [writerStatusRow.state]);
 
     const startButtonOperationallyDisabled = isAnalyzing
         || isExtractingAudio
@@ -1426,14 +1486,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             unsuppressResumeCandidateKey(getResumeDraftKey(draft));
         }
         setCompletionNotice(null);
-        setErrorMessage(canResumeDraft(draft) ? '' : getResumeStartErrorMessage(draft));
+        // The web connection build's status row says this itself (이전 분석을 이어서 진행할 수 없습니다).
+        setErrorMessage(canResumeDraft(draft) || localEngineConnectionRequired ? '' : getResumeStartErrorMessage(draft));
         setStatusMessage(draft.lastMessage ? translateStatusMessage(draft.lastMessage) : '');
         setRawStatusMessage(draft.lastMessage || '');
         setProgress(typeof draft.lastProgress === 'number' ? draft.lastProgress : 0);
         updateAnalysisEtaSeconds(typeof draft.lastEtaSeconds === 'number' ? draft.lastEtaSeconds : null);
         transcriptReadyRef.current = Boolean(draft.transcriptReady);
         setTranscriptReady(Boolean(draft.transcriptReady));
-    }, [canResumeDraft, clearSelectedFileState, updateAnalysisEtaSeconds]);
+    }, [canResumeDraft, clearSelectedFileState, localEngineConnectionRequired, updateAnalysisEtaSeconds]);
 
     const resumeDraftSelectionJobId = resumeDraftSelectionRequest?.jobId;
     const resumeDraftSelectionRequestId = resumeDraftSelectionRequest?.requestId;
@@ -1746,7 +1807,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setProgress(0);
             setStatusMessage('');
             setCompletionNotice(null);
-            setErrorMessage(`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`);
+            if (localEngineConnectionRequired) {
+                // The status row lists what is left; the keyboard starts at the first empty field on screen.
+                setErrorMessage('');
+                const firstMissing = missingRequiredInputs[0];
+                if (firstMissing) document.getElementById(firstMissing.focusId)?.focus();
+            } else {
+                setErrorMessage(`${REQUIRED_FIELDS_ERROR_PREFIX}: ${missingFields.join(', ')}`);
+            }
             return;
         }
 
@@ -2593,33 +2661,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     })();
 
     // Web connection build: 분석 시작 stays focusable while blocked (aria-disabled); pressing it then
-    // moves focus to the status row that says why.
+    // moves focus to the status row that says why. Empty required fields alone do not block it.
     const handleConnectionStartClick = () => {
         if (startButtonOperationallyDisabled) {
-            if (writerStatusRow.blocksStart) {
-                writerStatusRef.current?.focus();
-                return;
-            }
-            // Until the input step joins the status row, these reasons sit beside the file picker.
-            if (matchingActiveDraft) {
-                document.getElementById('writer-same-file-note')?.focus();
-                return;
-            }
-            if (selectedResumeDraftUnavailable || resumeDraftFileMismatch) {
-                document.getElementById('writer-resume-note')?.focus();
-                return;
-            }
-            // Another analysis running and an over-long file announce themselves when pressed.
-            if (!analysisStartBlocked && !fileDurationLimitError) return;
+            if (writerStatusRow.blocksStart) writerStatusRef.current?.focus();
+            return;
         }
         void handleStartAnalysis();
     };
-    const connectionStartDescription = [
-        'writer-local-engine-requirement',
-        analysisStartBlocked ? 'writer-analysis-start-blocked' : '',
-        selectedResumeDraft ? 'writer-resume-note' : '',
-        matchingActiveDraft && !isAnalyzing ? 'writer-same-file-note' : '',
-    ].filter(Boolean).join(' ');
 
     const handleStatusRowAction = (action: WriterStatusAction) => {
         switch (action.kind) {
@@ -2637,6 +2686,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 // The warning gives way to the check, and focus follows to the line that reports it.
                 statusFocusRequestedRef.current = true;
                 void handleRecheckUnresponsiveEngine();
+                return;
+            case 'choose-file':
+                inputFixFocusRequestedRef.current = true;
+                fileInputRef.current?.click();
+                return;
+            case 'refresh-analysis-status':
+                inputFixFocusRequestedRef.current = true;
+                setAnalysisStatusRefreshPending(true);
+                requestAnalysisRecoverySync();
                 return;
             case 'download':
             case 'update':
@@ -2825,6 +2883,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     : '새 회의록';
 
     const showInputForm = !showAnalysisPanel && !completionNotice;
+    // Errors under the form. The web connection build names input problems (required fields, file length,
+    // resume) in the status row, so only the rest (an unsupported file, a failed draft delete) stays here.
+    const bannerSource = localEngineConnectionRequired ? storedErrorMessage : errorMessage;
+    const formBannerMessage = showAnalysisFailure
+        || bannerSource.startsWith(REQUIRED_FIELDS_ERROR_PREFIX)
+        || (localEngineConnectionRequired && bannerSource === fileDurationLimitError)
+        ? ''
+        : bannerSource;
 
     return (
         <div className="writer-shell" data-settings-focus-scope>
@@ -2930,11 +2996,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     />)}
                     {!file ? (
                         <div
+                            id="meeting-file-drop"
                             role="button"
                             tabIndex={isAnalyzing || isExtractingAudio ? -1 : 0}
                             aria-controls="meeting-file-input"
                             aria-invalid={hasAttemptedStart && !file}
-                            aria-describedby={hasAttemptedStart && !file ? 'writer-form-error' : undefined}
+                            aria-describedby={requiredFieldsDescribed && !file ? 'writer-form-error' : undefined}
                             aria-disabled={isAnalyzing || isExtractingAudio}
                             aria-label="필수: 영상 또는 음성 파일 선택"
                             data-settings-focus-fallback
@@ -3010,8 +3077,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             {selectedFileGuidance}
                         </div>
                     )}
-                    {selectedResumeDraft && (
-                        <div id="writer-resume-note" tabIndex={localEngineConnectionRequired ? -1 : undefined} className={`text-xs ${resumeDraftFileMismatch || selectedResumeDraftUnavailable ? 'text-destructive' : 'text-muted-foreground'}`}>
+                    {/* The web connection build says these in the status row beside 분석 시작. */}
+                    {selectedResumeDraft && !localEngineConnectionRequired && (
+                        <div id="writer-resume-note" className={`text-xs ${resumeDraftFileMismatch || selectedResumeDraftUnavailable ? 'text-destructive' : 'text-muted-foreground'}`}>
                             {selectedResumeDraftUnavailable
                                 ? getResumeStartErrorMessage(selectedResumeDraft)
                                 : resumeAwaitingFile
@@ -3021,8 +3089,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             : '같은 파일을 확인했습니다. 이어하기를 시작할 수 있습니다.'}
                         </div>
                     )}
-                    {matchingActiveDraft && !isAnalyzing && (
-                        <div id="writer-same-file-note" tabIndex={localEngineConnectionRequired ? -1 : undefined} className="text-xs text-muted-foreground">
+                    {matchingActiveDraft && !isAnalyzing && !localEngineConnectionRequired && (
+                        <div id="writer-same-file-note" className="text-xs text-muted-foreground">
                             같은 파일 분석이 이미 진행 중입니다. 먼저 상태를 확인해 주세요.
                         </div>
                     )}
@@ -3102,7 +3170,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                                 required
                                 aria-required="true"
                                 aria-invalid={hasAttemptedStart && !title.trim()}
-                                aria-describedby={hasAttemptedStart && !title.trim() ? 'writer-form-error' : undefined}
+                                aria-describedby={requiredFieldsDescribed && !title.trim() ? 'writer-form-error' : undefined}
                                 value={title}
                                 onChange={event => {
                                     autoDerivedTitleRef.current = null;
@@ -3114,11 +3182,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         </div>
                         <div className="writer-field">
                             <label htmlFor="meeting-date">일시</label>
-                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={hasAttemptedStart && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={requiredFieldsDescribed && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                         <div className="writer-field">
                             <label htmlFor="meeting-purpose">회의 목적</label>
-                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={hasAttemptedStart && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={requiredFieldsDescribed && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                         <div id="writer-optional-fields" className="writer-optional-fields" hidden={!optionalInfoOpen}>
                             <div className="writer-field">
@@ -3193,12 +3261,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         installerUrl={connectionControls.installerUrl}
                         updateUrl={connectionControls.updateUrl}
                         recheckingReadiness={isRecheckingEngine}
+                        refreshingAnalysisStatus={analysisStatusRefreshPending}
                     >
                         <Button
                             className="writer-start-button"
                             onClick={handleConnectionStartClick}
                             aria-disabled={startButtonOperationallyDisabled || undefined}
-                            aria-describedby={connectionStartDescription}
+                            aria-describedby="writer-local-engine-requirement"
                             data-incomplete={missingFields.length > 0 ? 'true' : undefined}
                             data-settings-focus-fallback
                         >
@@ -3539,11 +3608,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 )}
             </div>
 
-            {analysisStartBlocked && (
-                <p id="writer-analysis-start-blocked" className="writer-analysis-blocked-note" role="status">
-                    {analysisStartBlockedReason}
-                </p>
-            )}
+            {analysisStartBlocked && (localEngineConnectionRequired && showInputForm
+                // The status row says this beside 분석 시작; this copy only names the reason for the
+                // recovery card's disabled 이어서 분석 (aria-describedby), so it is neither shown nor announced.
+                ? <span id="writer-analysis-start-blocked" className="sr-only">{analysisStartBlockedReason}</span>
+                : (
+                    <p id="writer-analysis-start-blocked" className="writer-analysis-blocked-note" role="status">
+                        {analysisStartBlockedReason}
+                    </p>
+                ))}
 
             {/* The web connection build says this in the status row beside 분석 시작 instead. */}
             {hasBlockingReadinessIssue && !localEngineConnectionRequired && (
@@ -3573,9 +3646,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 </StatusBanner>
             )}
 
-            {errorMessage && !showAnalysisFailure && !(errorMessage.startsWith(REQUIRED_FIELDS_ERROR_PREFIX) && !localEngineConnectionRequired) && (
-                <StatusBanner id="writer-form-error" tone="error">
-                    {errorMessage}
+            {formBannerMessage && (
+                <StatusBanner id={localEngineConnectionRequired ? undefined : 'writer-form-error'} tone="error">
+                    {formBannerMessage}
                 </StatusBanner>
             )}
 

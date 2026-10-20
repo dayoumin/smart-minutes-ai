@@ -9,6 +9,7 @@ import {
     Loader2,
     RefreshCw,
     Settings,
+    Upload,
     XCircle,
 } from 'lucide-react';
 import { LOCAL_ENGINE_NAME } from './brand';
@@ -25,6 +26,8 @@ interface WriterActionRowProps {
     updateUrl?: string;
     /** The readiness re-check is running (its button spins instead of changing its label). */
     recheckingReadiness?: boolean;
+    /** The saved analyses are being checked again (상태 확인 spins the same way). */
+    refreshingAnalysisStatus?: boolean;
     /** 분석 시작, always the last button. */
     children: React.ReactNode;
 }
@@ -49,6 +52,8 @@ const actionIcon = (action: WriterStatusAction, spinning: boolean) => {
         case 'device':
         case 'diarization':
             return <Settings size={15} aria-hidden="true" />;
+        case 'choose-file':
+            return <Upload size={15} aria-hidden="true" />;
         default:
             return <RefreshCw size={15} className={spinning ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />;
     }
@@ -65,6 +70,7 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
     installerUrl,
     updateUrl,
     recheckingReadiness = false,
+    refreshingAnalysisStatus = false,
     children,
 }) => (
     <div className="writer-action-row" data-stage={row.stage} data-state={row.state}>
@@ -81,7 +87,7 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
                     <StatusIcon row={row} />
                 </span>
                 <strong className="writer-status-title">{row.title}</strong>
-                {row.message && <span className="writer-status-message">{row.message}</span>}
+                {row.message && <span id={row.messageId} className="writer-status-message">{row.message}</span>}
             </div>
             {row.help && (
                 <button
@@ -121,14 +127,16 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
                     );
                 }
                 if (action.kind === 'download' || action.kind === 'update') return null;
-                const spinning = action.kind === 'recheck-readiness' && recheckingReadiness;
+                const rechecking = action.kind === 'recheck-readiness' && recheckingReadiness;
+                // A repeated 상태 확인 only queues one more check, so it spins without losing focus.
+                const spinning = rechecking || (action.kind === 'refresh-analysis-status' && refreshingAnalysisStatus);
                 return (
                     <Button
                         key={action.kind}
                         variant="outline"
                         className="writer-hint-action"
                         onClick={() => onAction(action)}
-                        disabled={action.disabled || spinning}
+                        disabled={action.disabled || rechecking}
                     >
                         {actionIcon(action, spinning)}
                         {action.label}

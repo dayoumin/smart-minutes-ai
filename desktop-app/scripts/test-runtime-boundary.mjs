@@ -334,6 +334,57 @@ for (const row of [modelsRow, diarizationRow, reinstallRow, gpuRow, readinessErr
   assert.ok(row.actions.length <= 1, `${row.state}: one fixing button outside the connection step`);
   assert.equal(row.blocksStart, true);
 }
+// Input step: analysis-start conditions, then required fields, once connected and ready.
+const inputStateRow = input => selectWriterStatusRow(rowInput({ input }));
+const rowSummary = row => ({
+  stage: row.stage, state: row.state, tone: row.tone, busy: row.busy, title: row.title, message: row.message,
+  messageId: row.messageId, help: row.help, actions: row.actions, blocksStart: row.blocksStart,
+});
+const inputSummary = (state, tone, title, message, actions, blocksStart = true) => ({
+  stage: 'input', state, tone, busy: false, title, message, messageId: undefined, help: null, actions, blocksStart,
+});
+assert.deepEqual(inputStateRow({}), readyRow, 'nothing blocked in the form leaves 연결됨');
+assert.deepEqual(inputStateRow({ missingRequired: [] }), readyRow, 'before 분석 시작 is pressed, empty fields say nothing');
+const missingTwo = inputStateRow({ missingRequired: ['영상·음성 파일', '회의 목적'] });
+assert.deepEqual(rowSummary(missingTwo), {
+  ...inputSummary('required-fields', 'error', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 목적', [], false),
+  messageId: 'writer-form-error',
+}, 'a list without a period; 분석 시작 stays available');
+assert.equal(inputStateRow({ missingRequired: ['회의 목적'] }).message, '회의 목적', 'the list shrinks as fields fill');
+const resumeFile = { sourceFilename: '주간 운영 회의.m4a' };
+const inputCases = [
+  [{ resumeUnavailable: 'unavailable' }, inputSummary('resume-unavailable', 'error', '이전 분석을 이어서 진행할 수 없습니다', '새 분석으로 시작할 수 있습니다.', [])],
+  [{ resumeUnavailable: 'running' }, inputSummary('resume-unavailable', 'error', '이전 분석을 이어서 진행할 수 없습니다', '진행이 끝나거나 중단된 뒤 이어갈 수 있습니다.', [])],
+  // A run that finished elsewhere is not an error and must not suggest analyzing the file again.
+  [{ resumeUnavailable: 'completed' }, inputSummary('resume-completed', 'info', '이 분석은 이미 끝났습니다', '결과는 회의록에서 확인해 주세요.', [])],
+  [{ sameFileRunning: true }, inputSummary('same-file-running', 'info', '같은 파일 분석이 이미 진행 중입니다', '먼저 상태를 확인해 주세요.', [{ kind: 'refresh-analysis-status', label: '상태 확인' }])],
+  [{ otherAnalysisRunning: true }, inputSummary('other-analysis', 'info', '진행 중인 분석이 있습니다', '끝나면 새 회의록을 분석할 수 있습니다.', [])],
+  [{ fileTooLong: true }, inputSummary('file-too-long', 'warning', '파일이 2시간을 넘습니다', '2시간 이하의 음성·영상 파일을 선택해 주세요.', [{ kind: 'choose-file', label: '다른 파일 선택' }])],
+  [{ resumeFile: { ...resumeFile, problem: 'missing' } }, inputSummary('resume-choose-file', 'info', '이어서 분석할 파일을 선택해 주세요', '주간 운영 회의.m4a', [{ kind: 'choose-file', label: '파일 선택' }])],
+  [{ resumeFile: { ...resumeFile, problem: 'mismatch' } }, inputSummary('resume-other-file', 'warning', '선택한 파일이 다릅니다', '주간 운영 회의.m4a 파일을 다시 선택해 주세요.', [{ kind: 'choose-file', label: '다른 파일 선택' }])],
+];
+for (const [input, expected] of inputCases) {
+  const row = inputStateRow(input);
+  assert.deepEqual(rowSummary(row), expected, expected.state);
+  assert.ok(row.actions.length <= 1, `${row.state}: one fixing button outside the connection step`);
+  assert.doesNotMatch(row.title, /준비 필요|이어하기 불가/);
+}
+// The first blocked step only: each condition gives way to the next once it clears.
+const allBlocked = {
+  resumeUnavailable: 'unavailable', sameFileRunning: true, otherAnalysisRunning: true, fileTooLong: true,
+  resumeFile: { ...resumeFile, problem: 'mismatch' }, missingRequired: ['회의 제목'],
+};
+const order = [];
+for (const key of ['resumeUnavailable', 'sameFileRunning', 'otherAnalysisRunning', 'fileTooLong', 'resumeFile', 'missingRequired']) {
+  order.push(inputStateRow(allBlocked).state);
+  allBlocked[key] = key === 'missingRequired' ? [] : key === 'resumeFile' || key === 'resumeUnavailable' ? null : false;
+}
+assert.deepEqual(order, ['resume-unavailable', 'same-file-running', 'other-analysis', 'file-too-long', 'resume-other-file', 'required-fields']);
+assert.deepEqual(inputStateRow(allBlocked), readyRow, 'with everything cleared the row is 연결됨 again');
+const formBlocked = { otherAnalysisRunning: true, missingRequired: ['회의 제목'] };
+assert.equal(selectWriterStatusRow(rowInput({ connection: unreachableWithInstaller, input: formBlocked })).state, 'unreachable', 'connection comes before the form');
+assert.equal(selectWriterStatusRow(rowInput({ readinessState: 'missing-models', missingModels: [sttMissing], input: formBlocked })).state, 'models-missing', 'readiness comes before the form');
+assert.equal(selectWriterStatusRow(rowInput({ readinessState: 'checking', input: formBlocked })).state, 'readiness-checking');
 const notice = '테스트 설치 파일이라 Windows 보안 경고가 나올 수 있습니다.';
 assert.equal(selectWriterStatusRow(rowInput({ connection: introWithInstaller, installerNotice: notice })).message,
   `${introWithInstaller.message} ${notice}`, 'without ?, the installer warning follows the message');

@@ -1,4 +1,5 @@
 import type { LocalEngineAuthorizationRecovery, LocalEngineClient } from './localEngineClientCore';
+import { LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
 import { createBrowserApprovalToken, LocalEngineBrowserCredentialStore } from './localEngineBrowserCredential.ts';
 import type {
     LocalEngineAuthorizationState,
@@ -292,7 +293,7 @@ export class LocalEngineConnectionCoordinator {
             if (!response.ok) throw await responseError(response, 'pairing');
             const challenge = this.parsers.pairingStart(await response.json());
             if (challenge?.mode !== 'browser-connection') {
-                throw new LocalEngineConnectionRequestError('invalid-response', '바로록 연결 프로그램을 업데이트한 뒤 다시 연결해 주세요.');
+                throw new LocalEngineConnectionRequestError('invalid-response', `${LOCAL_ENGINE_NAME} 프로그램을 업데이트한 뒤 다시 연결해 주세요.`);
             }
             if (!this.isLatestAuthorization(operationId)) return null;
             this.currentChallenge = challenge;
@@ -326,7 +327,7 @@ export class LocalEngineConnectionCoordinator {
             return null;
         } catch (error) {
             if (!this.isLatestAuthorization(operationId)) return null;
-            this.callbacks.onPairingState({ phase: 'error', challenge: null, reason: error instanceof LocalEngineConnectionRequestError ? error.message : '바로록 연결을 확인하지 못했습니다. 연결 프로그램을 실행한 뒤 다시 시도해 주세요.' });
+            this.callbacks.onPairingState({ phase: 'error', challenge: null, reason: error instanceof LocalEngineConnectionRequestError ? error.message : `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 확인하지 못했습니다. 연결 프로그램을 실행한 뒤 다시 시도해 주세요.` });
             throw error;
         } finally {
             if (freshBrowserToken) {

@@ -707,13 +707,29 @@ def _space_check(
     )
 
 
+def _without_reusable_bytes(requirement: StorageRequirement, reusable: int) -> StorageRequirement:
+    return StorageRequirement(
+        None if requirement.required_bytes is None else max(0, requirement.required_bytes - reusable),
+        None if requirement.recommended_bytes is None else max(0, requirement.recommended_bytes - reusable),
+    )
+
+
 def _installer_storage_checks(
     paths: InstallerTargetPaths,
     requirements: Mapping[str, StorageRequirement],
     *,
     checked_at: int,
     volume_reader: Callable[[Path], VolumeSpace],
+    reusable_bytes: Mapping[str, int] | None = None,
 ) -> list[dict[str, object]]:
+    # Bytes an earlier install already left on disk (the install tree, downloaded
+    # models) are kept or replaced in place, so they only reduce what the
+    # post-install roles still need. Blocking install/staging checks stay unchanged.
+    reusable = {
+        role: max(0, int(value))
+        for role, value in (reusable_bytes or {}).items()
+        if role in INSTALLER_STORAGE_ROLES
+    }
     role_paths = {
         "install": paths.install,
         "staging": paths.staging,
@@ -767,6 +783,11 @@ def _installer_storage_checks(
             else [item for item in grouped_roles if item in INSTALLER_FUTURE_STORAGE_ROLES]
         )
         group_requirements = [requirements.get(item, StorageRequirement(None, None)) for item in relevant_roles]
+        if role in INSTALLER_FUTURE_STORAGE_ROLES:
+            group_requirements = [
+                _without_reusable_bytes(item, reusable.get(item_role, 0))
+                for item_role, item in zip(relevant_roles, group_requirements)
+            ]
         if not relevant_roles or any(
             item.required_bytes is None or item.recommended_bytes is None
             for item in group_requirements
@@ -788,7 +809,10 @@ def _installer_storage_checks(
         measured_available = available
         if role in INSTALLER_FUTURE_STORAGE_ROLES:
             persistent_requirements = [
-                requirements.get(item, StorageRequirement(None, None))
+                _without_reusable_bytes(
+                    requirements.get(item, StorageRequirement(None, None)),
+                    reusable.get(item, 0),
+                )
                 for item in grouped_roles
                 if item in INSTALLER_PERSISTENT_STORAGE_ROLES
             ]
@@ -816,6 +840,12 @@ def _installer_storage_checks(
             "aggregate_recommended_bytes": aggregate_recommended,
             "roles": relevant_roles,
         }
+        if role in INSTALLER_FUTURE_STORAGE_ROLES:
+            measured["reused_bytes"] = sum(
+                reusable.get(item, 0)
+                for item in grouped_roles
+                if item in INSTALLER_FUTURE_STORAGE_ROLES or item in INSTALLER_PERSISTENT_STORAGE_ROLES
+            )
         if measured_available < aggregate_required:
             blocked = role in INSTALLER_BLOCKING_STORAGE_ROLES
             checks.append(_space_check(
@@ -863,6 +893,7 @@ def collect_installer_target_preflight(
     volume_reader: Callable[[Path], VolumeSpace] = read_volume_space,
     write_cleanup_reader: Callable[[Sequence[Path]], WriteCleanupProbe] = probe_write_cleanup,
     port_reader: Callable[[], PortInspection],
+    reusable_bytes: Mapping[str, int] | None = None,
 ) -> dict[str, object]:
     checked_at = int(clock())
     checks = _installer_storage_checks(
@@ -870,6 +901,7 @@ def collect_installer_target_preflight(
         requirements,
         checked_at=checked_at,
         volume_reader=volume_reader,
+        reusable_bytes=reusable_bytes,
     )
     access = write_cleanup_reader(paths.write_targets)
     checks.append(_check(

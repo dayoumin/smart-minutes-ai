@@ -46,6 +46,11 @@ $OutputName = "$ExecutableBaseName-$TargetTriple.exe"
 $OutputPath = Join-Path $PackageDestinationDir $OutputName
 $BuildDistDir = Join-Path $BackendDir "dist-sidecar"
 $BuildOutputDir = Join-Path $BuildDistDir "$ExecutableBaseName-$TargetTriple"
+# backend\brand.py reads the product display name from this file inside the bundle.
+$BrandConfigPath = Join-Path $RepoRoot "configs\brand.json"
+if (-not (Test-Path -LiteralPath $BrandConfigPath -PathType Leaf)) {
+    throw "Brand config not found: $BrandConfigPath"
+}
 
 function Resolve-PythonCommand([string]$PythonCommand) {
     if ($PythonCommand -match '[\\/]') {
@@ -196,6 +201,7 @@ try {
         --collect-binaries "lxml" `
         --collect-data "lxml" `
         --hidden-import "unicodedata" `
+        --add-data "${BrandConfigPath}:configs" `
         --distpath $BuildDistDir `
         --workpath (Join-Path $BackendDir "build") `
         --specpath (Join-Path $BackendDir "build") `
@@ -225,6 +231,9 @@ if (-not $lxmlEtree) {
 $unicodeData = Get-ChildItem -LiteralPath (Join-Path $PackageDestinationDir "_internal") -Filter "unicodedata*.pyd" -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $unicodeData) {
     throw "Sidecar build failed: unicodedata was not bundled into _internal."
+}
+if (-not (Test-Path -LiteralPath (Join-Path $PackageDestinationDir "_internal\configs\brand.json") -PathType Leaf)) {
+    throw "Sidecar build failed: configs\brand.json was not bundled into _internal."
 }
 if ((Get-PeSubsystem $OutputPath) -ne 2) {
     throw "Sidecar must be Windows GUI subsystem. Rebuild with PyInstaller --noconsole: $OutputPath"

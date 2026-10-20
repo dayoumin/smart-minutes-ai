@@ -31,6 +31,7 @@ import {
 import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone } from './components/common';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
 import {
     describeAnalysisError,
     EngineError,
@@ -342,9 +343,9 @@ const describeMissingModels = (models: ModelStatus[] = [], diarizationDuringAnal
     if (missing.some(model => model.downloadable)) {
         return `분석을 시작하려면 ${list} 준비가 필요합니다. 모델 받기를 누르면 설정에서 바로 받을 수 있습니다.`;
     }
-    // The web app's engine is the downloaded 바로록 연결; only the desktop app is reinstalled as 바로록 itself.
-    const reinstallTarget = isTauriRuntime() ? '바로록' : '바로록 연결';
-    return `분석을 시작하려면 ${list} 준비가 필요합니다. 이 모델은 설정에서 받을 수 없으니 ${reinstallTarget}을 다시 설치해 주세요.`;
+    // The web app's engine is the downloaded connection program; only the desktop app is reinstalled under the brand itself.
+    const reinstallTarget = isTauriRuntime() ? BRAND_NAME : LOCAL_ENGINE_NAME;
+    return `분석을 시작하려면 ${list} 준비가 필요합니다. 이 모델은 설정에서 받을 수 없으니 ${withJosa(reinstallTarget, '을/를')} 다시 설치해 주세요.`;
 };
 
 const getUserModelLabel = (model: ModelStatus): string => {
@@ -863,7 +864,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     ? '분석 기능을 준비하고 있습니다. 잠시 기다려 주세요.'
                     : isTauriRuntime()
                         ? '모델 상태를 확인하지 못했습니다. 앱을 종료한 뒤 다시 실행해 주세요.'
-                        : '모델 상태를 확인하지 못했습니다. 바로록 연결을 다시 실행한 뒤 다시 확인해 주세요.';
+                        : `모델 상태를 확인하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행한 뒤 다시 확인해 주세요.`;
                 setReadinessState(options.soft ? 'server-waiting' : 'error');
                 setReadinessMessage(message);
                 return { state: options.soft ? 'server-waiting' : 'error', message };
@@ -1137,7 +1138,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
         const message = isTauriRuntime()
             ? DESKTOP_ENGINE_NOT_READY_MESSAGE
-            : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.';
+            : `이 PC의 분석 기능에 연결하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인한 뒤 다시 시도해 주세요.`;
         setAnalysisPhase('error');
         setAnalysisFailure({ cause: 'engine-disconnected', savedMeetingId: null });
         setErrorMessage(message);
@@ -2515,7 +2516,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         try {
             const check = await refreshReadiness();
             if (check.state === 'server-waiting') {
-                showOperationToast('아직 바로록 연결에 닿지 않습니다. 바로록 연결이 실행 중인지 확인해 주세요.', 'warning');
+                showOperationToast(`아직 ${LOCAL_ENGINE_NAME}에 닿지 않습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`, 'warning');
                 return;
             }
             handleReturnToAnalysisInput();
@@ -2921,7 +2922,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                             <p id="writer-engine-checking" className="writer-action-hint">
                                 <Loader2 size={13} className="mr-1.5 inline-block animate-spin align-[-2px] motion-reduce:animate-none" aria-hidden="true" />
                                 {isTauriRuntime() ? '분석 기능 준비 중'
-                                    : localEngineConnectionRequired ? '분석 준비 확인 중' : '바로록 연결 확인 중'}
+                                    : localEngineConnectionRequired ? '분석 준비 확인 중' : `${LOCAL_ENGINE_NAME} 확인 중`}
                             </p>
                         )}
                         {showReadinessHint && (

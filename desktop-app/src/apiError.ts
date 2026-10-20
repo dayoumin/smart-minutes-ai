@@ -1,3 +1,5 @@
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
+
 export interface ApiErrorInfo {
     message: string;
     detail?: string;
@@ -123,7 +125,7 @@ const ANALYSIS_CAUSE_MESSAGES: Record<ActionableCause, string> = {
 // Second sentence after "…하지 못했습니다." on screens where the first sentence already says what failed.
 const NEXT_STEP_BY_CAUSE: Record<ActionableCause, string> = {
     memory: '메모리가 부족하니 다른 프로그램을 닫은 뒤 다시 시도해 주세요.',
-    gpu: 'GPU를 사용하지 못했습니다. 바로록을 다시 실행한 뒤 다시 시도해 주세요.',
+    gpu: `GPU를 사용하지 못했습니다. ${withJosa(BRAND_NAME, '을/를')} 다시 실행한 뒤 다시 시도해 주세요.`,
     'disk-space': '저장 공간을 확보한 뒤 다시 시도해 주세요.',
     'unsupported-file': '재생되는 음성·영상 파일인지 확인해 주세요.',
     timeout: '응답이 늦어 멈췄습니다. 잠시 뒤 다시 시도해 주세요.',
@@ -195,7 +197,7 @@ export const describeAnalysisError = (
             cause,
             message: options.desktopApp
                 ? '분석 기능에 연결하지 못했습니다. 앱을 다시 실행한 뒤 다시 시도해 주세요.'
-                : '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
+                : `이 PC의 분석 기능에 연결하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인한 뒤 다시 시도해 주세요.`,
         };
     }
     if (cause !== 'other') return { cause, message: ANALYSIS_CAUSE_MESSAGES[cause] };
@@ -227,7 +229,7 @@ export const toUserFacingError = (
     const { cause, ownMessage } = classifyError(error);
     if (ownMessage) return ownMessage;
     if (cause === 'engine-disconnected') {
-        return `${failed} ${options.desktopApp ? '앱을 다시 실행한 뒤 다시 시도해 주세요.' : '바로록 연결이 실행 중인지 확인해 주세요.'}`;
+        return `${failed} ${options.desktopApp ? '앱을 다시 실행한 뒤 다시 시도해 주세요.' : `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`}`;
     }
     return cause === 'other' ? failed : `${failed} ${NEXT_STEP_BY_CAUSE[cause]}`;
 };

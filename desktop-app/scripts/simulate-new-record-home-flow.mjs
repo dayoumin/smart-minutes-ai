@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { BRAND_NAME } from '../src/brand.ts';
 
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
@@ -136,7 +137,7 @@ const runEmptyHomeScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.ocean-backdrop, .start-workspace, [data-shell-variant]').count(), 0);
-    assert.equal(await page.getByRole('button', { name: '바로록 첫 화면' }).getAttribute('aria-current'), 'page');
+    assert.equal(await page.getByRole('button', { name: `${BRAND_NAME} 첫 화면` }).getAttribute('aria-current'), 'page');
     // Give the recent-meetings load a moment; an empty store renders no list at all.
     await page.waitForTimeout(300);
     assert.equal(await page.locator('.recent-meetings, .writer-recovery').count(), 0);

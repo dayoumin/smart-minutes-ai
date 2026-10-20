@@ -15,6 +15,7 @@ import {
 import { LocalEngineConnectionCoordinator } from '../src/localEngineConnectionCoordinator.ts';
 import { getLocalEngineConnectionView } from '../src/localEngineConnectionView.ts';
 import { parseLocalEnginePairingStart, parseLocalEngineSessionCredential } from '../src/localEngineSession.ts';
+import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 // Permission lookup: the loopback permission decides, older names are only a fallback.
 const permissionsWith = states => {
@@ -131,7 +132,7 @@ for (const connectionStarted of [false, true]) {
     snapshot: responseBlocked, pairingPhase: 'idle', connectionStarted, installerAvailable: false,
   }).secondaryAction, null, 'no download link without a configured installer');
   for (const blockedView of [permissionView, responseView]) {
-    assert.doesNotMatch(blockedView.message, /바로록 연결을 실행/, 'starting the engine again cannot fix a browser block');
+    assert.ok(!blockedView.message.includes(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행`), 'starting the engine again cannot fix a browser block');
     assert.equal(blockedView.primaryAction, 'probe');
     assert.equal(blockedView.busy, false);
   }
@@ -169,7 +170,7 @@ const introWithHint = getLocalEngineConnectionView({
 assert.equal(introWithHint.scene, 'intro', 'not a failure before the user has done anything');
 assert.equal(introWithHint.tone, 'neutral');
 assert.match(introWithHint.message, /‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요/);
-assert.match(introWithHint.message, /처음이면 바로록 연결을 받아 설치하세요/);
+assert.ok(introWithHint.message.includes(`처음이면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 받아 설치하세요`));
 assert.equal(introWithHint.primaryAction, 'probe');
 assert.equal(introWithHint.secondaryAction, 'download');
 assert.doesNotMatch(getLocalEngineConnectionView({
@@ -193,7 +194,7 @@ const undecidedAfterCheck = getLocalEngineConnectionView({
   snapshot: awaitingPermission, pairingPhase: 'idle', connectionStarted: true, installerAvailable: true,
 });
 assert.equal(undecidedAfterCheck.scene, 'unreachable');
-assert.match(undecidedAfterCheck.message, /^설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요\. /);
+assert.ok(undecidedAfterCheck.message.startsWith(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요. `));
 assert.match(undecidedAfterCheck.message, /‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요\.$/);
 assert.equal(undecidedAfterCheck.secondaryAction, 'download', 'a first-time user without the engine keeps the install path');
 assert.equal(undecidedAfterCheck.primaryAction, 'probe');
@@ -204,7 +205,7 @@ assert.equal(heldBackground.scene, 'unreachable', 'a held background re-check do
 assert.equal(heldBackground.busy, false);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...initial, transport: 'unreachable' }, pairingPhase: 'idle', connectionStarted: true,
-}).message, '설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', 'a decided permission keeps the plain message');
+}).message, `설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`, 'a decided permission keeps the plain message');
 
 // Coordinator: a failed probe asks the browser, then whether the engine answered at all.
 const credentials = { current: () => null, replace: () => true, clear: () => {}, requestHeaders: () => ({}) };

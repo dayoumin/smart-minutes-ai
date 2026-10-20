@@ -5,7 +5,8 @@
   - 미룬 검토 nit: 사용자 '연결 확인' probe에 시간 제한이 없어 응답 없이 멈춘 엔진이면 확인 중이 계속되고 배경 재확인도 멈춘다. 이 동작은 이전부터 있었다. `localEngineClient.ts`의 fetch 래퍼(응답 시 보류 해제, 실패 시 유지)는 직접 테스트가 없다. 엔진이 한 번 응답한 뒤 같은 방문에서 권한을 '묻기'로 되돌리면 배경 요청이 다시 팝업을 띄운다.
 - [ ] 2026-10-20 새 회의록 동작 줄 v2 구현
   - 기준: `docs/design.md`의 「동작 줄 v2」 절, Figma `15-438`(A1 왼쪽). 연결 카드·준비 배너·`준비 필요` 라벨을 상태 줄 하나와 고치는 버튼으로 바꾼다. 웹 연결 빌드부터 하고 데스크톱·기본 개발 UI는 ④에서 옮긴다.
-  - 시작 조건: 위 「설치 후 웹 연결 안 됨」 후속의 미커밋 변경(`LocalEngineConnectionSurface.tsx`, `localEngineConnectionView.ts`, `MeetingWriter.tsx`, `index.css`, 연결 시뮬레이션·테스트)이 커밋된 뒤 시작한다. 같은 파일을 두 작업이 동시에 고치지 않는다.
+  - 시작 조건: 연결 쪽 변경과 브랜드 상수 병합은 `d76d1cdd`까지 커밋되어 충족됐다(2026-10-20 12:40, 작업 트리 깨끗함). 시작할 때 `LocalEngineConnectionSurface.tsx`, `localEngineConnectionView.ts`, `MeetingWriter.tsx`, `index.css`, 연결 시뮬레이션·테스트에 다른 작업의 미커밋 변경이 없는지 다시 확인한다. 같은 파일을 두 작업이 동시에 고치지 않는다.
+  - 이름: 제품·엔진 이름은 문자열로 쓰지 않고 `desktop-app/src/brand.ts`의 `BRAND_NAME`·`LOCAL_ENGINE_NAME`·`withJosa`를 쓴다(design.md v2 절과 Figma의 `LMO 회의록 연결`은 현재 값으로 적은 것). 웹이 설치 프로그램을 `음성 분석`으로 부를지는 design.md 4줄의 별도 결정을 따른다.
   - ① 상태 선택과 상태 줄(웹 연결 빌드):
     - 연결 단계는 `getLocalEngineConnectionView`를 그대로 단일 기준으로 둔다. `connectionStarted`·`manualCheckPending`·`showHelp`는 `LocalEngineConnectionSurface`에서 훅으로 올린다. `MeetingWriter`의 선택 함수 하나가 연결 → 준비 → 분석 시작 조건 → 필수 항목 순서로 상태 하나를 고른다.
     - 지금 있는 복구 동작은 모두 유지한다: `연결 확인`, `설치 파일`, `다시 연결`, `연결 시작`, `업데이트 안내`, `참석자 구분 설정`.

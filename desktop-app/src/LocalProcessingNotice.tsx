@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { ShieldCheck } from 'lucide-react';
-import { LOCAL_ENGINE_NAME, withJosa } from './brand';
+import { Globe, HardDrive, Laptop, ShieldCheck, Trash2 } from 'lucide-react';
+import { LOCAL_ENGINE_NAME } from './brand';
 import { Button } from './components/common';
 import { markLocalProcessingIntroSeen } from './localProcessingIntro';
 import type { RuntimeKind } from './runtimeEnvironment';
@@ -98,43 +98,36 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                     <span className="icon-badge" aria-hidden="true">
                         <ShieldCheck size={20} />
                     </span>
-                    <h3 id="local-processing-title">회의 내용은 내 PC에서 처리합니다</h3>
+                    <h3 id="local-processing-title">회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다</h3>
                 </div>
                 <div id="local-processing-summary" className="local-processing-summary">
-                    <p>음성·영상 파일과 대화록을 외부 AI 서버로 보내지 않고, 이 PC에서 분석하고 요약합니다.</p>
+                    <p>외부 AI 서버 없이 이 PC에서 분석하고 요약합니다.</p>
                     {isWeb && mode === 'intro' && (
                         <p>이를 위해 처음 한 번 ‘{LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.</p>
                     )}
                 </div>
                 {showDetails && (
+                    /* One short line per row; the title already says files and transcripts stay on this PC. */
                     <dl id="local-processing-details" className="local-processing-details">
                         <div>
-                            <dt>처리</dt>
+                            <dt><Laptop size={15} aria-hidden="true" />처리</dt>
+                            <dd>음성 인식, 참석자 구분, 요약까지 모두 이 PC에서 합니다.</dd>
+                        </div>
+                        <div>
+                            <dt><HardDrive size={15} aria-hidden="true" />보관</dt>
+                            <dd>{storageMessage}</dd>
+                        </div>
+                        <div>
+                            <dt><Globe size={15} aria-hidden="true" />인터넷</dt>
                             <dd>
                                 {isWeb
-                                    ? `선택한 파일은 이 PC의 ${withJosa(LOCAL_ENGINE_NAME, '으로/로')}만 전달됩니다. 대화록 작성, 참석자 구분, 회의 요약도 모두 이 PC에서 합니다.`
-                                    : '선택한 파일은 이 PC에서만 분석합니다. 대화록 작성, 참석자 구분, 회의 요약도 모두 이 PC에서 합니다.'}
+                                    ? `웹사이트 접속과 ${LOCAL_ENGINE_NAME}·모델 받기에만 씁니다.`
+                                    : '프로그램·모델 받기에만 씁니다.'}
                             </dd>
                         </div>
                         <div>
-                            <dt>보관</dt>
-                            <dd>
-                                <span>{storageMessage}</span> 설정 &gt; 일반 &gt; 보관에서 바꿀 수 있습니다.
-                            </dd>
-                        </div>
-                        <div>
-                            <dt>인터넷</dt>
-                            <dd>
-                                {isWeb
-                                    ? `웹사이트를 열 때와 ${LOCAL_ENGINE_NAME}·분석 모델을 받을 때 사용합니다. 회의 파일과 대화록은 인터넷으로 보내지 않습니다.`
-                                    : '프로그램과 분석 모델을 받을 때 사용합니다. 회의 파일과 대화록은 인터넷으로 보내지 않습니다.'}
-                            </dd>
-                        </div>
-                        <div>
-                            <dt>삭제</dt>
-                            <dd>
-                                왼쪽 목록의 회의록 메뉴나 설정 &gt; 일반 &gt; 보관의 회의록 정리에서 삭제하면 회의 기록과 분석 결과가 함께 지워집니다. 다운로드 폴더에 저장한 파일은 직접 지워 주세요.
-                            </dd>
+                            <dt><Trash2 size={15} aria-hidden="true" />삭제</dt>
+                            <dd>회의록을 지우면 분석 결과도 지워집니다. 내려받은 파일은 직접 지워 주세요.</dd>
                         </div>
                     </dl>
                 )}

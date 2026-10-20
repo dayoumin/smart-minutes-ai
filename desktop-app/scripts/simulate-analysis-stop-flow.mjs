@@ -11,10 +11,10 @@ import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
-const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
+const PROCESSING_HELP_TITLE = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
 // Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
 const openProcessingHelp = async page => {
-  await page.locator('.writer-file-privacy-note').getByRole('button', { name: '처리 방식', exact: true }).click();
+  await page.locator('.writer-local-promise').getByRole('button', { name: '처리 방식', exact: true }).click();
   const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
   await help.waitFor({ state: 'visible', timeout: 10000 });
   return help;
@@ -263,6 +263,7 @@ const runScenario = async (
     markModelStatusRequested = resolve;
   });
   let analyzeJobId = null;
+  let analyzeOptionalFields = null;
   let analyzeRequestCount = 0;
   let cancelRequestCount = 0;
   const cancelRequestBodies = [];
@@ -337,6 +338,10 @@ const runScenario = async (
       analyzeRequestCount += 1;
       const postData = (await route.request().postDataBuffer()).toString('utf-8');
       analyzeJobId = multipartField(postData, 'job_id');
+      analyzeOptionalFields = {
+        participants: multipartField(postData, 'participants'),
+        termGlossaries: JSON.parse(multipartField(postData, 'term_glossaries') ?? '[]'),
+      };
       markAnalyzeStarted();
       if (!delayPartialDuringCancel) await analyzeCanFinish;
       const terminalStatus = action === 'stop' ? 'stopped' : 'cancelled';
@@ -400,12 +405,19 @@ const runScenario = async (
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
-    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일 *', '회의 정보']);
+    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일', '회의 정보']);
     const processingHelp = await openProcessingHelp(page);
     await processingHelp.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
     await closeProcessingHelp(page, processingHelp);
-    const titleInput = page.getByLabel('회의 제목 *');
-    await page.getByLabel('회의 목적 *').fill('분석 중 중지와 취소 동작 확인');
+    const titleInput = page.getByLabel('회의 제목', { exact: true });
+    await page.getByLabel('회의 목적', { exact: true }).fill('분석 중 중지와 취소 동작 확인');
+    // Optional inputs: participants as typed text, key terms as chips (one left typed to prove it still counts).
+    await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).click();
+    await page.getByLabel('참석자 (선택)').fill('김수산, 이자원');
+    const keyTermInput = page.getByLabel('주요 용어 (선택)');
+    await keyTermInput.fill('연근해 자원조사');
+    await keyTermInput.press('Enter');
+    await keyTermInput.fill('수산과학원');
     const fileChooserPromise = page.waitForEvent('filechooser');
     await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).press('Enter');
     const fileChooser = await fileChooserPromise;
@@ -505,9 +517,22 @@ const runScenario = async (
     assert.equal(analyzeJobId, null, 'analysis request should wait for model status');
     releaseModelStatusResponse();
     await analyzeStarted;
+    // The analysis request carries both optional inputs; key terms travel as the reserved per-meeting glossary.
+    assert.equal(analyzeOptionalFields.participants, '김수산, 이자원');
+    assert.equal(analyzeOptionalFields.termGlossaries.length, 1);
+    assert.equal(analyzeOptionalFields.termGlossaries[0].id, 'meeting-key-terms');
+    assert.deepEqual(analyzeOptionalFields.termGlossaries[0].entries.map(entry => entry.canonical), ['연근해 자원조사', '수산과학원']);
+    const runningDraft = (await readLocalStorageJson(page, 'analysisResumeDrafts') ?? []).find(draft => draft.jobId === analyzeJobId);
+    assert.equal(runningDraft?.participants, '김수산, 이자원', 'the resume draft keeps participants');
+    assert.deepEqual(runningDraft?.termGlossaries?.[0]?.entries?.map(entry => entry.canonical), ['연근해 자원조사', '수산과학원']);
     if (delayPartialDuringCancel) await partialRequested;
     const stopMenuButton = page.getByRole('button', { name: '중지/취소' });
     await stopMenuButton.waitFor({ timeout: 10000 });
+    // While the file is processed the card repeats the local promise once; the writer's title promise is input-only.
+    const localNote = analysisPanel.locator('.writer-analysis-local-note');
+    await localNote.getByText('이 PC에서 분석하고 있습니다. 회의 파일과 대화록은 밖으로 나가지 않습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await localNote.evaluate(element => Boolean(element.closest('[aria-live]'))), false, 'the fixed promise must stay out of the progress live region');
+    assert.equal(await page.locator('.writer-local-promise').count(), 0, 'the title promise belongs to the input screen');
     const progressLayout = await page.evaluate(() => {
       const panel = document.querySelector('.writer-analysis-panel');
       const stopButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('중지/취소'));
@@ -722,21 +747,22 @@ const runFailureScenario = async (browser, fixture) => {
 
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
-    await page.getByLabel('회의 목적 *').fill('분석 실패 후 복구 화면 확인');
+    await page.getByLabel('회의 목적', { exact: true }).fill('분석 실패 후 복구 화면 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
-    const originalTitle = await page.getByLabel('회의 제목 *').inputValue();
+    const originalTitle = await page.getByLabel('회의 제목', { exact: true }).inputValue();
     await page.getByRole('button', { name: '분석 시작' }).click();
 
     await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
     const failurePanel = page.locator('.writer-analysis-panel-error');
     await failurePanel.getByText('테스트 분석 오류가 발생했습니다.', { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await failurePanel.locator('.writer-analysis-local-note').count(), 0, 'a failed run does not say it is still analyzing');
     assert.equal(await page.locator('.resume-drafts-panel').count(), 0, 'resume draft lists belong only in the sidebar');
     await failurePanel.getByRole('button', { name: '다시 시도' }).waitFor({ timeout: 10000 });
     await failurePanel.getByRole('button', { name: '입력 확인' }).click();
 
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.id === 'meeting-title');
-    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), originalTitle, 'failure recovery should preserve the title');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), originalTitle, 'failure recovery should preserve the title');
     await page.locator('.selected-file-card').getByText(fixture.name, { exact: true }).waitFor({ timeout: 10000 });
     const overflowX = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
     assert.equal(overflowX, 0, 'failure state should not create horizontal overflow');
@@ -747,7 +773,7 @@ const runFailureScenario = async (browser, fixture) => {
     await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
     await page.locator('.writer-completion-panel').getByText(originalTitle, { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(analyzeAttempt, 3, 'retry should start one new analysis request');
-    assert.equal(await page.getByLabel('회의 제목 *').count(), 0, 'retry completion should replace the input form');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).count(), 0, 'retry completion should replace the input form');
 
     console.log('ok - analysis failure recovery simulation');
   } catch (error) {
@@ -1034,9 +1060,9 @@ const runFailureCauseScenarios = async (browser, fixture) => {
 
       await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
       await assertProjectPage(page);
-      await page.getByLabel('회의 목적 *').fill(`원인별 실패 확인: ${scenario.name}`);
+      await page.getByLabel('회의 목적', { exact: true }).fill(`원인별 실패 확인: ${scenario.name}`);
       await page.setInputFiles('#meeting-file-input', fixture.path);
-      const meetingTitle = await page.getByLabel('회의 제목 *').inputValue();
+      const meetingTitle = await page.getByLabel('회의 제목', { exact: true }).inputValue();
       await page.getByRole('button', { name: '분석 시작' }).click();
 
       await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
@@ -1065,7 +1091,7 @@ const runFailureCauseScenarios = async (browser, fixture) => {
         assert.ok(chooser, 'another file can be chosen right away');
         await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
         assert.equal(await page.locator('.selected-file-card').count(), 0, 'the unreadable file is no longer selected');
-        assert.equal(await page.getByLabel('회의 제목 *').inputValue(), meetingTitle, 'the other inputs are kept');
+        assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), meetingTitle, 'the other inputs are kept');
       } else if (scenario.name === 'gpu-memory') {
         await failurePanel.getByText('분석 장치를 CPU로 바꾸면', { exact: false }).waitFor({ timeout: 5000 });
         assert.equal(await failurePanel.getByRole('button', { name: '다시 시도' }).count(), 1, 'a retry stays available as the secondary action');
@@ -1116,9 +1142,9 @@ const runPreparationStopScenario = async (browser, fixture) => {
 
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
-    await page.getByLabel('회의 목적 *').fill('준비 단계 중지 확인');
+    await page.getByLabel('회의 목적', { exact: true }).fill('준비 단계 중지 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
-    const meetingTitle = await page.getByLabel('회의 제목 *').inputValue();
+    const meetingTitle = await page.getByLabel('회의 제목', { exact: true }).inputValue();
     await page.getByRole('button', { name: '분석 시작' }).click();
     await preflightRequested;
 
@@ -1131,7 +1157,7 @@ const runPreparationStopScenario = async (browser, fixture) => {
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 3000 });
     assert.ok(Date.now() - stoppedAt < 3000, 'stopping the preparation returns to the form at once');
     await page.getByText('분석을 중지했습니다.', { exact: true }).waitFor({ timeout: 5000 });
-    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), meetingTitle, 'the inputs are kept');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), meetingTitle, 'the inputs are kept');
     assert.equal(analyzeRequests, 0, 'a stopped preparation never starts the analysis');
     const drafts = await readLocalStorageJson(page, 'analysisResumeDrafts');
     assert.equal(Array.isArray(drafts) ? drafts.length : 0, 0, 'nothing to resume after stopping before the stream');
@@ -1158,7 +1184,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
 
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
-    await page.getByLabel('회의 목적 *').fill('연결 확인 중 줄 확인');
+    await page.getByLabel('회의 목적', { exact: true }).fill('연결 확인 중 줄 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
     const checkingLine = page.locator('#writer-engine-checking');
     await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });

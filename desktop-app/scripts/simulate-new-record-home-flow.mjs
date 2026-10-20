@@ -376,9 +376,9 @@ const runAnalysisEntryPointScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     await putMeeting(page, meetingAt('entry-point-meeting', '진입점 확인 회의', Date.now() - DAY_MS));
-    await page.getByLabel('회의 목적 *').fill('분석 중 진입점 확인');
+    await page.getByLabel('회의 목적', { exact: true }).fill('분석 중 진입점 확인');
     await page.setInputFiles('#meeting-file-input', { name: 'entry-point.m4a', mimeType: 'audio/mp4', buffer: Buffer.from('entry') });
-    await page.getByLabel('회의 제목 *').fill('진입점 분석');
+    await page.getByLabel('회의 제목', { exact: true }).fill('진입점 분석');
     await page.getByRole('button', { name: '분석 시작', exact: true }).click();
     await page.locator('.writer-analysis-panel').waitFor({ timeout: 10000 });
     const navigation = page.locator('.barorok-navigation');
@@ -404,11 +404,25 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     // The processing promise is fixed copy, so it shows even before (or without) an engine answer.
-    const privacyNote = page.locator('.writer-file-privacy-note');
-    await privacyNote.getByText('음성·영상과 대화록은 이 PC에서 처리합니다.', { exact: true }).waitFor({ timeout: 10000 });
-    const noteBox = await privacyNote.boundingBox();
-    assert.ok(noteBox && noteBox.height <= 24, `the processing note must stay one line at 1280px (height ${noteBox?.height})`);
-    const helpTitle = '회의 내용은 내 PC에서 처리합니다';
+    const privacyNote = page.locator('.writer-local-promise');
+    await privacyNote.getByText('회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', { exact: true }).waitFor({ timeout: 10000 });
+    // One fixed line under the title, kept to one line at 1280px so the form below does not move.
+    const promiseBox = await privacyNote.boundingBox();
+    assert.ok(promiseBox && promiseBox.height <= 26, `the promise must stay one line at 1280px (height ${promiseBox?.height})`);
+    // The explanation line was dropped in favor of the (i) help, and the old footnote under the upload area is gone.
+    assert.equal(await page.getByText('외부 AI 서비스 없이', { exact: false }).count(), 0);
+    assert.equal(await page.locator('.writer-file-support').getByText('이 PC', { exact: false }).count(), 0);
+    // The picture beside the title says the same thing at a glance; it keeps the title at its usual top position.
+    const flow = page.getByRole('img', { name: '이 PC 안에서 영상·음성 분석부터 대화록·요약까지 처리' });
+    await flow.waitFor({ state: 'visible', timeout: 10000 });
+    const headerLayout = await page.evaluate(() => ({
+      titleTop: Math.round(document.querySelector('.page-title')?.getBoundingClientRect().top ?? -1),
+      flowTop: Math.round(document.querySelector('.local-flow')?.getBoundingClientRect().top ?? -1),
+      startBottom: Math.round(document.querySelector('.writer-start-button')?.getBoundingClientRect().bottom ?? Infinity),
+    }));
+    assert.equal(headerLayout.flowTop, headerLayout.titleTop, 'the picture lines up with the title top instead of pushing the title down');
+    assert.ok(headerLayout.startBottom <= 720, `analysis start must stay on the first 1280x720 screen (bottom ${headerLayout.startBottom})`);
+    const helpTitle = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
     // The first-visit notice belongs to the web connection build; the default dev UI opens straight to the writer.
     assert.equal(await page.getByRole('dialog', { name: helpTitle }).count(), 0, 'first-visit notice must not open without the connection build flag');
 
@@ -421,6 +435,11 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     // Help opens straight to the details; the first-visit toggle and footnote are intro-only.
     for (const term of ['처리', '보관', '인터넷', '삭제']) {
       assert.equal(await help.locator('dt').getByText(term, { exact: true }).count(), 1, `help must explain ${term}`);
+    }
+    // Each row leads with its symbol and stays short: at most two lines in the dialog.
+    assert.equal(await help.locator('dt svg').count(), 4, 'every help row starts with a symbol');
+    for (const box of await help.locator('dd').evaluateAll(rows => rows.map(row => ({ text: row.textContent, height: row.getBoundingClientRect().height })))) {
+      assert.ok(box.height <= 48, `help row must stay within two lines: "${box.text}" (${box.height}px)`);
     }
     assert.equal(await help.getByRole('button', { name: '처리 방식 자세히 보기' }).count(), 0);
     assert.equal(await help.getByRole('button', { name: '시작하기' }).count(), 0);
@@ -440,9 +459,62 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'Tab from outside the help returns focus to it');
     await page.keyboard.press('Escape');
     await help.waitFor({ state: 'hidden', timeout: 10000 });
-    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '처리 방식');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리 방식');
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'closing help must not mark the first-visit notice as seen');
+    // In a narrow window the picture gives way and the one-line promise carries the message alone.
+    await page.setViewportSize({ width: 800, height: 720 });
+    assert.equal(await flow.isVisible(), false, 'the picture is hidden in a narrow window');
+    assert.equal(await privacyNote.isVisible(), true, 'the promise line stays in a narrow window');
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
+    await page.setViewportSize({ width: 1280, height: 720 });
     console.log('ok - new-record home keeps the local processing note and help without an engine answer');
+
+    // 참석자·주요 용어 fold beside the 회의 정보 heading: closed by default, so the form keeps its height.
+    const optionalToggle = page.getByRole('button', { name: '참석자·주요 용어 (선택)' });
+    assert.equal(await optionalToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.getByLabel('참석자 (선택)').isVisible(), false, 'optional fields start folded');
+    const startBottomFolded = await page.evaluate(() => Math.round(document.querySelector('.writer-start-button').getBoundingClientRect().bottom));
+    await optionalToggle.click();
+    const foldButton = page.getByRole('button', { name: '참석자·주요 용어 접기' });
+    assert.equal(await foldButton.getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.evaluate(() => window.localStorage.getItem('writerOptionalInfoOpen')), '1');
+    await page.getByLabel('참석자 (선택)').fill('김수산, 이자원, 박해양');
+    const keyTermInput = page.getByLabel('주요 용어 (선택)');
+    await keyTermInput.fill('연근해 자원조사');
+    await keyTermInput.press('Enter');
+    // A comma turns the text before it into a chip; a repeat is not added twice.
+    await keyTermInput.fill('수산과학원,연근해 자원조사,체장');
+    const chips = page.locator('.writer-term-chip');
+    assert.deepEqual(await chips.allTextContents(), ['연근해 자원조사', '수산과학원']);
+    assert.equal(await keyTermInput.inputValue(), '체장');
+    await keyTermInput.press('Enter');
+    assert.deepEqual(await chips.allTextContents(), ['연근해 자원조사', '수산과학원', '체장']);
+    // Backspace on an empty box removes the last chip; the x button removes a chosen one.
+    await keyTermInput.press('Backspace');
+    assert.deepEqual(await chips.allTextContents(), ['연근해 자원조사', '수산과학원']);
+    await page.getByRole('button', { name: '연근해 자원조사 용어 삭제' }).click();
+    assert.deepEqual(await chips.allTextContents(), ['수산과학원']);
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-key-terms', 'removing a chip keeps focus in the term box');
+    const toggleBox = await page.getByRole('button', { name: '참석자·주요 용어 접기' }).boundingBox();
+    assert.ok(toggleBox && toggleBox.height >= 24, `the toggle keeps a 24px target (${toggleBox?.height})`);
+    // Folding keeps the values and says what is inside instead of the plain label.
+    await foldButton.click();
+    const summaryToggle = page.getByRole('button', { name: '참석자 3명 · 용어 1개' });
+    assert.equal(await summaryToggle.getAttribute('aria-expanded'), 'false');
+    assert.equal(await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).count(), 0);
+    const startBottomRefolded = await page.evaluate(() => Math.round(document.querySelector('.writer-start-button').getBoundingClientRect().bottom));
+    assert.equal(startBottomRefolded, startBottomFolded, 'folding returns the form to its original height');
+    assert.ok(startBottomFolded <= 720, `analysis start stays on the first 1280x720 screen while folded (${startBottomFolded})`);
+    // The open state is remembered for the next visit; typed values are not.
+    await summaryToggle.click();
+    // Clear the inputs first so the unsaved-input guard does not hold the reload.
+    await page.getByLabel('참석자 (선택)').fill('');
+    await page.getByRole('button', { name: '수산과학원 용어 삭제' }).click();
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '참석자·주요 용어 접기' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByLabel('참석자 (선택)').inputValue(), '');
+    assert.equal(await page.locator('.writer-term-chip').count(), 0);
+    console.log('ok - new-record home folds optional participants and key terms');
   } finally {
     await context.close();
   }

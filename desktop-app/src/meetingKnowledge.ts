@@ -377,3 +377,52 @@ export const getTermGlossariesByIds = (glossaryIds: string[]): TermGlossary[] =>
     const selectedIds = new Set(glossaryIds);
     return listTermGlossaries().filter(glossary => selectedIds.has(glossary.id));
 };
+
+// Key terms typed on the new-meeting form travel as one reserved per-meeting glossary, so the
+// existing result JSON, record sync and regeneration paths carry them without a separate field.
+export const MEETING_KEY_TERMS_GLOSSARY_ID = 'meeting-key-terms';
+export const MAX_MEETING_KEY_TERMS = 30;
+export const MAX_MEETING_KEY_TERM_LENGTH = 40;
+
+interface GlossaryLike {
+    id: string;
+    entries?: Array<{ canonical: string; active?: boolean }>;
+}
+
+/** Splits typed text on commas and line breaks, trims, drops repeats, and caps count and length. */
+export const normalizeMeetingKeyTerms = (terms: string[]): string[] => {
+    const result: string[] = [];
+    for (const raw of terms.flatMap(term => term.split(/[,\n]/))) {
+        const term = raw.replace(/\s+/g, ' ').trim().slice(0, MAX_MEETING_KEY_TERM_LENGTH);
+        if (term && !result.includes(term)) result.push(term);
+        if (result.length >= MAX_MEETING_KEY_TERMS) break;
+    }
+    return result;
+};
+
+export const buildMeetingKeyTermsGlossaries = (terms: string[]): TermGlossary[] => {
+    const normalized = normalizeMeetingKeyTerms(terms);
+    if (normalized.length === 0) return [];
+    return [{
+        id: MEETING_KEY_TERMS_GLOSSARY_ID,
+        name: '주요 용어',
+        category: '회의',
+        entries: normalized.map((term, index) => ({
+            id: `key-term-${index + 1}`,
+            canonical: term,
+            use: 'summary',
+            active: true,
+        })),
+    }];
+};
+
+export const getMeetingKeyTerms = (glossaries?: GlossaryLike[]): string[] => normalizeMeetingKeyTerms(
+    (glossaries ?? [])
+        .filter(glossary => glossary.id === MEETING_KEY_TERMS_GLOSSARY_ID)
+        .flatMap(glossary => (glossary.entries ?? []).filter(entry => entry.active !== false).map(entry => entry.canonical)),
+);
+
+/** The per-meeting key terms survive a change of field glossaries in the meeting detail. */
+export const keepMeetingKeyTermsGlossary = <T extends GlossaryLike>(glossaries?: T[]): T[] => (
+    (glossaries ?? []).filter(glossary => glossary.id === MEETING_KEY_TERMS_GLOSSARY_ID)
+);

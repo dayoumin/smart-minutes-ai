@@ -1487,6 +1487,98 @@
     @apply flex min-h-9 items-end justify-between gap-3;
   }
 
+  /* With the promise and picture the title keeps its top position; the picture sits beside it. */
+  .writer-header-promise {
+    @apply mb-2 items-start;
+  }
+
+  /* Local-processing promise under the writer title, with an (i) button for the 처리 방식 help. */
+  .writer-local-promise {
+    @apply m-0 mt-2 flex items-center gap-1.5 text-base font-medium leading-normal text-foreground;
+    word-break: keep-all;
+  }
+
+  .writer-local-promise > svg {
+    @apply shrink-0;
+    color: var(--brand-primary);
+  }
+
+  .writer-local-promise-help {
+    @apply inline-flex h-6 w-6 shrink-0 items-center justify-center p-0;
+    border: 0;
+    border-radius: var(--radius-btn);
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .writer-local-promise-help:hover {
+    background: var(--surface-action-hover-bg);
+    color: var(--brand-primary);
+  }
+
+  .writer-local-promise-help:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 1px;
+  }
+
+  /* The same promise as a picture in the header's empty right side: inside this PC, nothing to an outside AI. */
+  .local-flow {
+    @apply flex shrink-0 items-center gap-3 rounded-[var(--radius-card)] py-2 pl-2.5 pr-3.5;
+    background: color-mix(in srgb, var(--brand-primary-soft) 55%, var(--color-neutral-0));
+  }
+
+  .local-flow-pc {
+    @apply flex items-start gap-1.5 rounded-[var(--radius-btn)] px-2.5 py-1.5;
+    border: 1px dashed color-mix(in srgb, var(--brand-primary) 45%, transparent);
+    background: var(--color-neutral-0);
+  }
+
+  .local-flow-pc-label {
+    @apply font-bold;
+    color: var(--brand-primary-hover);
+  }
+
+  .local-flow-divider {
+    @apply mx-1 w-0 self-stretch;
+    border-left: 1px dashed color-mix(in srgb, var(--brand-primary) 30%, transparent);
+  }
+
+  .local-flow-arrow {
+    @apply mt-2 shrink-0;
+    color: var(--brand-primary);
+  }
+
+  .local-flow-step {
+    @apply flex flex-col items-center gap-1 whitespace-nowrap text-xs font-medium text-foreground;
+  }
+
+  .local-flow-node {
+    @apply inline-flex h-7 w-7 items-center justify-center rounded-full;
+    background: color-mix(in srgb, var(--brand-primary-soft) 55%, var(--color-neutral-0));
+    color: var(--brand-primary);
+  }
+
+  .local-flow-node-plain {
+    background: transparent;
+  }
+
+  .local-flow-out {
+    @apply text-muted-foreground;
+  }
+
+  .local-flow-node-off {
+    border: 1px dashed var(--border-strong, var(--border-default));
+    background: var(--color-neutral-0);
+    color: var(--text-muted);
+  }
+
+  /* Picture and promise need about 52rem side by side; below that the one-line promise carries it alone. */
+  @container writer (max-width: 51.99rem) {
+    .local-flow {
+      display: none;
+    }
+  }
+
 
   .writer-panel {
     @apply flex flex-col gap-4;
@@ -1542,6 +1634,83 @@
 
   .writer-section-heading h3 {
     @apply m-0 text-sm font-semibold;
+  }
+
+  .writer-section-heading-split {
+    @apply justify-between;
+  }
+
+  /* 참석자·주요 용어 toggle: a text button on the heading line, so folding never changes the form height. */
+  .writer-optional-toggle {
+    @apply inline-flex min-h-6 items-center gap-1 rounded-sm p-0 text-[13px] font-medium leading-5;
+    /* A 24px target drawn over the 20px heading line, so the line does not grow. */
+    margin-block: -0.125rem;
+    border: 0;
+    background: transparent;
+    color: var(--brand-primary);
+  }
+
+  .writer-optional-toggle:hover {
+    color: var(--brand-primary-hover);
+  }
+
+  .writer-optional-toggle:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+  }
+
+  .writer-optional-mark {
+    @apply text-xs font-normal;
+    color: var(--text-muted);
+  }
+
+  .writer-optional-fields {
+    border-top: 1px solid var(--border-default);
+  }
+
+  .writer-optional-fields[hidden] {
+    display: none;
+  }
+
+  /* Key terms: chips inside an input-looking box; Enter or a comma turns the typed text into a chip. */
+  .writer-term-input {
+    @apply flex h-auto min-h-10 flex-wrap items-center gap-1.5 py-1.5;
+  }
+
+  .writer-term-input:focus-within {
+    border-color: var(--brand-primary);
+    box-shadow: 0 0 0 3px var(--focus-ring-soft);
+  }
+
+  .writer-term-input-disabled {
+    @apply cursor-not-allowed opacity-50;
+  }
+
+  .writer-term-input input {
+    @apply min-w-[8rem] flex-1 border-0 bg-transparent p-0 text-sm outline-none placeholder:text-muted;
+  }
+
+  .writer-term-chip {
+    @apply inline-flex items-center gap-0.5 rounded-[var(--radius-btn)] py-0.5 pl-2 pr-0.5 text-[13px];
+    background: var(--color-neutral-100);
+    color: var(--text-default);
+  }
+
+  .writer-term-chip button {
+    @apply inline-flex h-5 w-5 items-center justify-center rounded-sm p-0;
+    border: 0;
+    background: transparent;
+    color: var(--text-muted);
+  }
+
+  .writer-term-chip button:hover {
+    background: var(--color-neutral-200, var(--surface-action-hover-bg));
+    color: var(--text-default);
+  }
+
+  .writer-term-chip button:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 1px;
   }
 
   /* Meeting information reads as property rows: label column, value column. */
@@ -1638,37 +1807,6 @@
 
   .writer-file-tools {
     @apply flex min-w-0 flex-wrap items-center gap-2;
-  }
-
-  .writer-file-privacy-slot {
-    min-height: 1.25rem;
-  }
-
-  .writer-file-privacy-note {
-    @apply flex items-start gap-2 text-xs leading-relaxed text-muted-foreground;
-  }
-
-  .writer-file-privacy-note svg {
-    @apply mt-0.5 shrink-0;
-    color: var(--brand-primary);
-  }
-
-  .writer-file-privacy-link {
-    @apply shrink-0 rounded-sm p-0 font-medium;
-    border: 0;
-    background: transparent;
-    color: var(--brand-primary);
-  }
-
-  .writer-file-privacy-link:hover {
-    color: var(--brand-primary-hover);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-
-  .writer-file-privacy-link:focus-visible {
-    outline: 2px solid var(--focus-ring-color);
-    outline-offset: 2px;
   }
 
   .writer-action-bar {
@@ -2049,11 +2187,16 @@
   }
 
   .local-processing-details > div {
-    @apply grid gap-1 sm:grid-cols-[4.5rem_minmax(0,1fr)] sm:gap-3;
+    @apply grid gap-1 sm:grid-cols-[5.25rem_minmax(0,1fr)] sm:gap-3;
   }
 
   .local-processing-details dt {
-    @apply font-medium;
+    @apply flex items-center gap-1.5 font-medium;
+  }
+
+  .local-processing-details dt svg {
+    @apply shrink-0;
+    color: var(--brand-primary);
   }
 
   .local-processing-details dd {
@@ -2116,6 +2259,17 @@
   .writer-analysis-file {
     @apply flex min-w-0 items-center gap-3 border-b pb-4;
     border-color: var(--border-default);
+  }
+
+  .writer-analysis-local-note {
+    @apply m-0 flex items-start gap-2 border-t pt-4 text-[13px] leading-normal text-foreground;
+    border-color: var(--border-default);
+    word-break: keep-all;
+  }
+
+  .writer-analysis-local-note svg {
+    @apply mt-[2px] shrink-0;
+    color: var(--brand-primary);
   }
 
 

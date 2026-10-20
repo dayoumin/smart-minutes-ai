@@ -167,9 +167,9 @@ const verifyDefaultWriterGuidance = async browser => {
         return json({ detail: 'not used by writer guidance' }, 404);
       });
       await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
-      await page.getByLabel('회의 제목 *').fill(`안내 상태 ${scenario}`);
-      assert.equal(await page.getByRole('dialog', { name: '회의 내용은 내 PC에서 처리합니다' }).count(), 0, 'the first-visit notice is only for the connection build');
-      await page.getByLabel('회의 목적 *').fill('입력과 파일을 보존하며 다음 동작 확인');
+      await page.getByLabel('회의 제목', { exact: true }).fill(`안내 상태 ${scenario}`);
+      assert.equal(await page.getByRole('dialog', { name: '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다' }).count(), 0, 'the first-visit notice is only for the connection build');
+      await page.getByLabel('회의 목적', { exact: true }).fill('입력과 파일을 보존하며 다음 동작 확인');
       await page.setInputFiles('#meeting-file-input', { name: 'guidance.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('guidance fixture') });
       const analyze = page.locator('.writer-start-button');
       if (scenario === 'anonymous') {
@@ -228,8 +228,8 @@ const verifyDefaultWriterGuidance = async browser => {
         }
         assert.ok(probeCount > 0);
       }
-      assert.equal(await page.getByLabel('회의 제목 *').inputValue(), `안내 상태 ${scenario}`);
-      assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '입력과 파일을 보존하며 다음 동작 확인');
+      assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), `안내 상태 ${scenario}`);
+      assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '입력과 파일을 보존하며 다음 동작 확인');
       assert.equal(await page.locator('#meeting-file-input').evaluate(input => input.files[0]?.name), 'guidance.mp3');
       assert.deepEqual(errors, []);
       console.log(`ok - default writer guidance: ${scenario}`);
@@ -895,7 +895,7 @@ const verifyIntroDismissals = async browser => {
   const page = await context.newPage();
   page.setDefaultTimeout(15000);
   await page.route('**/api/**', route => route.abort('connectionrefused'));
-  const intro = page.getByRole('dialog', { name: '회의 내용은 내 PC에서 처리합니다' });
+  const intro = page.getByRole('dialog', { name: '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다' });
   const seen = () => page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen'));
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
@@ -911,7 +911,7 @@ const verifyIntroDismissals = async browser => {
     await intro.waitFor({ state: 'visible' });
     assert.equal(await seen(), null);
     // A click inside the dialog is not a backdrop click.
-    await intro.getByRole('heading', { name: '회의 내용은 내 PC에서 처리합니다' }).click();
+    await intro.getByRole('heading', { name: '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다' }).click();
     assert.equal(await intro.isVisible(), true, 'a click inside the notice keeps it open');
     assert.equal(await seen(), null);
     await page.mouse.click(8, 8);
@@ -1077,7 +1077,7 @@ const run = async () => {
     }));
 
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
-    const introTitle = '회의 내용은 내 PC에서 처리합니다';
+    const introTitle = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
     const intro = page.getByRole('dialog', { name: introTitle });
     await intro.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'opening the notice is not yet a confirmation');
@@ -1102,7 +1102,7 @@ const run = async () => {
     const foldToggle = intro.getByRole('button', { name: '간단히 보기', exact: true });
     assert.equal(await foldToggle.getAttribute('aria-expanded'), 'true');
     assert.equal(await introFootnote.count(), 0, 'the internet row replaces the footnote while details are open');
-    await intro.locator('dd').getByText(`웹사이트를 열 때와 ${LOCAL_ENGINE_NAME}·분석 모델을 받을 때 사용합니다.`, { exact: false }).waitFor();
+    await intro.locator('dd').getByText(`웹사이트 접속과 ${LOCAL_ENGINE_NAME}·모델 받기에만 씁니다.`, { exact: true }).waitFor();
     // The dialog's height is capped to the window, so its box always fits; content that does not fit scrolls inside it.
     await page.setViewportSize({ width: 1280, height: 720 });
     const introOverflow = await intro.evaluate(element => element.scrollHeight - element.clientHeight);
@@ -1132,12 +1132,13 @@ const run = async () => {
     })), { role: 'status', atomic: 'true' });
     assert.equal(await page.locator('.writer-action-row [aria-live], .writer-action-bar').count(), 0, 'no live region over the whole row');
     assert.equal(await rail.getByRole('button', { name: '문제 해결 도움말' }).count(), 0, 'the first visit has no ?');
-    // The writer states local processing once, beside the file picker, instead of repeating it in the status row.
-    assert.equal(await page.getByText('음성·영상과 대화록은 이 PC에서 처리합니다.', { exact: true }).count(), 1);
+    // The writer states local processing once, under the title, instead of repeating it in the status row.
+    assert.equal(await page.locator('.writer-local-promise').getByText('회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', { exact: true }).count(), 1);
+    assert.equal(await rail.getByText('이 PC 밖으로', { exact: false }).count(), 0);
     assert.equal(await rail.getByRole('button', { name: '로컬 분석 안내' }).count(), 0);
 
-    await page.getByLabel('회의 제목 *').fill('연결 상태 보존 회의');
-    await page.getByLabel('회의 목적 *').fill('연결 전 입력 보존 확인');
+    await page.getByLabel('회의 제목', { exact: true }).fill('연결 상태 보존 회의');
+    await page.getByLabel('회의 목적', { exact: true }).fill('연결 전 입력 보존 확인');
     await page.setInputFiles('#meeting-file-input', {
       name: '연결 확인.mp3',
       mimeType: 'audio/mpeg',
@@ -1186,8 +1187,8 @@ const run = async () => {
     assert.equal(await page.getByText('분석 준비 완료', { exact: true }).count(), 0, 'the old ready sentence is gone');
     assert.equal(await rail.locator('.writer-hint-action').count(), 0, 'nothing to fix, so no buttons besides 분석 시작');
     assert.equal(pairingStartCount, 2, 'a rejected request must be replaced with a fresh connection');
-    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '연결 상태 보존 회의');
-    assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '연결 전 입력 보존 확인');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '연결 상태 보존 회의');
+    assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '연결 전 입력 보존 확인');
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
     await analyzeButton.waitFor({ state: 'visible' });
     assert.equal(await analyzeButton.isEnabled(), true, 'a verified connection must unlock analysis');
@@ -1225,8 +1226,8 @@ const run = async () => {
     await status.getByText('연결이 만료되었습니다').waitFor({ state: 'visible' });
     assert.deepEqual(await rail.locator('.writer-action-buttons').getByRole('button').allInnerTexts(), ['다시 확인', '다시 연결', '분석 시작']);
     assert.equal(await analyzeButton.isDisabled(), true);
-    assert.equal(await page.getByLabel('회의 제목 *').inputValue(), '연결 상태 보존 회의');
-    assert.equal(await page.getByLabel('회의 목적 *').inputValue(), '연결 전 입력 보존 확인');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '연결 상태 보존 회의');
+    assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '연결 전 입력 보존 확인');
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
     await verifySummaryReadinessAfterPairing(browser);
     await verifyMissingModelsAfterPairing(browser);

@@ -29,6 +29,12 @@ SUMMARY_MAX_REDUCTION_ROUNDS = 8
 SUMMARY_MAX_GENERATION_CALLS = 128  # Includes the one allowed empty-shape retry.
 GENERIC_SINGLE_TOPIC_TITLES = {"핵심 주제", "주요 주제", "전체 요약", "회의 요약", "전체 대화"}
 MAX_CONTEXT_GLOSSARY_ENTRIES = 80
+# Optional writer inputs: the frontend sends key terms as this reserved glossary so existing
+# result JSON, record sync and regeneration paths carry them without a new field.
+MEETING_KEY_TERMS_GLOSSARY_ID = "meeting-key-terms"
+MAX_CONTEXT_KEY_TERMS = 30
+MAX_CONTEXT_KEY_TERM_CHARS = 40
+MAX_CONTEXT_PARTICIPANTS_CHARS = 300
 ATTRIBUTION_RULES = """Attribution rules for every field, including title and topics:
 - Speaker labels identify who spoke, not who a remark describes.
 - Attribute an opinion, trait, action or intention to a named person only when the source clearly identifies that person as its subject. A nearby name, adjacent remark or shared speaker is not enough.
@@ -187,6 +193,25 @@ def _context_lines_from_glossaries(glossaries: list) -> list[str]:
     return lines
 
 
+def _meeting_key_terms(glossaries: list) -> list[str]:
+    """Terms the user typed on the writer, carried as the reserved per-meeting glossary."""
+    if not isinstance(glossaries, list):
+        return []
+    terms: list[str] = []
+    for glossary in glossaries:
+        if not isinstance(glossary, dict) or glossary.get("id") != MEETING_KEY_TERMS_GLOSSARY_ID:
+            continue
+        for entry in glossary.get("entries", []) or []:
+            if not isinstance(entry, dict) or entry.get("active") is False:
+                continue
+            term = " ".join(str(entry.get("canonical") or "").split())[:MAX_CONTEXT_KEY_TERM_CHARS]
+            if term and term not in terms:
+                terms.append(term)
+            if len(terms) >= MAX_CONTEXT_KEY_TERMS:
+                return terms
+    return terms
+
+
 def _meeting_context_block(meeting_context: dict | None, *, include_report_template: bool = False) -> str:
     context_lines = []
     if meeting_context:
@@ -199,10 +224,22 @@ def _meeting_context_block(meeting_context: dict | None, *, include_report_templ
             context_lines.append(f"- 회의 일시: {date}")
         if purpose:
             context_lines.append(f"- 회의 목적: {purpose}")
+        participant_names = [" ".join(line.split()) for line in str(meeting_context.get("participants") or "").splitlines()]
+        participants = ", ".join(name for name in participant_names if name)[:MAX_CONTEXT_PARTICIPANTS_CHARS]
+        if participants:
+            context_lines.append(f"- 참석자(사용자 입력): {participants}")
+            context_lines.append("- 참석자 이름은 표기 참고용이며, 대화록의 발언자를 짐작해 이 이름을 붙이지 않습니다.")
+        glossaries = meeting_context.get("term_glossaries") or []
+        key_terms = _meeting_key_terms(glossaries)
+        if key_terms:
+            context_lines.append(f"- 주요 용어(사용자 입력, 표기 참고용): {', '.join(key_terms)}")
         context_lines.extend(_context_lines_from_context_template(meeting_context.get("context_template") or {}))
         if include_report_template:
             context_lines.extend(_context_lines_from_report_template(meeting_context.get("report_template") or {}))
-        glossary_lines = _context_lines_from_glossaries(meeting_context.get("term_glossaries") or [])
+        glossary_lines = _context_lines_from_glossaries([
+            glossary for glossary in glossaries
+            if not (isinstance(glossary, dict) and glossary.get("id") == MEETING_KEY_TERMS_GLOSSARY_ID)
+        ] if isinstance(glossaries, list) else [])
         if glossary_lines:
             context_lines.append("- 선택 분야별 용어: 아래 용어는 회의 목적/정리 맥락과 함께 표기와 의미 참고용으로 사용하며, 실제 논의 여부는 대화록으로 판단합니다.")
             context_lines.extend(glossary_lines)
@@ -880,6 +917,7 @@ Do not summarize each participant mechanically from isolated utterances. Interpr
 Use the participant-focused excerpts to review each participant's comments across the meeting, then use the topic sections and transcript context to avoid losing the overall flow.
 Return strict JSON only. Do not wrap it in Markdown.
 Use existing participant labels unless a verified participant name is present in the transcript or summary.
+Names listed in the meeting context are not a speaker mapping: never use them to rename a speaker label or fill display_name.
 Do not invent participant identities. Write all JSON values in Korean unless a source term must remain in English.
 
 {context_block}\

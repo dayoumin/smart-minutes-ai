@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5194/?view=minutes';
+assert.ok(process.env.APP_URL, 'Set APP_URL to the dedicated Vite QA URL.');
+const APP_URL = process.env.APP_URL;
 const origin = new URL(APP_URL).origin;
 const wav = Buffer.alloc(44 + 16000 * 2 * 20);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);

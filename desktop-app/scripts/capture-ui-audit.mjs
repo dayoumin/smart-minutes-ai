@@ -2,6 +2,7 @@
 // Mocked API only: this proves web UI rendering, not the local engine or the desktop executable.
 // Usage: node scripts/capture-ui-audit.mjs [ID,ID,...]   (APP_URL / OUT_DIR / PLAYWRIGHT_BROWSERS_PATH as in other simulations)
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -9,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5199/';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5199/';
 const shouldStartServer = !process.env.APP_URL;
 const OUT_DIR = process.env.OUT_DIR ?? fileURLToPath(new URL('../../.tmp/ui-audit/', import.meta.url));
 const ONLY = new Set((process.argv[2] ?? '').split(',').map(value => value.trim()).filter(Boolean));
@@ -32,18 +33,31 @@ const waitForApp = async (url, timeoutMs = 45000) => {
   throw new Error(`Timed out waiting for ${url}`);
 };
 
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
+
 const startServer = async () => {
-  if (!shouldStartServer) return null;
-  try {
-    await waitForApp(APP_URL, 1000);
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start a dedicated Vite server when none is running.
   }
   const url = new URL(APP_URL);
+  url.port = String(await getAvailablePort(url.hostname));
+  APP_URL = url.toString();
   const child = spawn(
     process.env.ComSpec ?? 'cmd.exe',
-    ['/d', '/s', '/c', `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5199'} --strictPort`],
+    ['/d', '/s', '/c', `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`],
     {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
       env: { ...process.env, BROWSER: 'none' },

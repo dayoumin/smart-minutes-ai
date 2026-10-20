@@ -1,9 +1,40 @@
+# 사용자 확인 대기 (직접 할 일)
+2026-10-20 todo 점검에서 모았다. agent가 대신할 수 없는 확인·승인·결정이다. 끝나면 출처 항목에 결과를 적고 여기서 지운다. 지금 진행 중인 다른 작업이 끝난 뒤 순서대로 본다.
+- [ ] 실제 브라우저 확인
+  - 동작 줄 v2가 들어간 웹을 배포한 뒤 Chrome에서: '기기에 있는 앱'이 '묻기'면 `연결 확인` 전에 팝업이 없는지. 차단 → 허용으로 바꾼 뒤 새로고침 없이 `다시 확인`만으로 `연결됨`이 되는지. 새로고침이 필요하면 버튼을 `새로고침`으로 바꿀지 정하고 입력 내용이 남는지 본다. (「설치 후 웹 연결 안 됨」, 「동작 줄 v2」①)
+  - 처음 문제가 난 PC의 확장 프로그램(Page Assist 등)과 '기기에 있는 앱' 권한 상태. (「설치 후 웹 연결 안 됨」)
+  - Edge에서 권한 허용·거부·재허용, 회사 정책 관문. (「공개 설치 점검」, 웹 엔진 MVP 4단계 잔여)
+  - 실제 분석 중 DevTools Network에서 음성·대화록 요청이 `127.0.0.1` 엔진으로만 가는지. (「웹 첫 방문 로컬 처리 안내」 확인 3)
+- [ ] 배포·설치 승인과 실물 실행
+  - main push, 웹 재빌드·Cloudflare 배포 승인. (「설치 후 웹 연결 안 됨」)
+  - 설치 파일을 다시 빌드해 깨끗한 설치와 0.1.8 위 업데이트, 재설치 뒤 시작 메뉴 `LMO 회의록 연결` 확인. 실행 중인 엔진이 교체되므로 다른 세션의 진단이 끝난 뒤 한다. (「공개 설치 점검」, 3C 설치 관문)
+  - 설치본에서 요약 프로그램 받기 위치, 받은 뒤 요약, 첫 요약 503 재검증. (「내장 Ollama runtime」, 「요약 엔진 첫 준비 지연」)
+  - 코드 서명 인증서 준비. (웹 엔진 MVP)
+- [ ] 다른 PC·회사 PC
+  - 다른 PC에 설치 엔진을 깔고 공개 HTTPS로 연결·분석. (「기능 agent 점검」 A5/A6)
+  - 외부망·내부망 PC에서 음성 인식 모델 받기·중지, 요약 모델 받기. (「Ollama 기반 정리 기능 상태」 후속)
+  - GPU 메모리가 부족한 실제 PC에서 실패 안내. (「디자인 방향 A 후속」)
+- [ ] 사람 품질 판정과 자료
+  - 사람이 만든 정답 대화록, 잡음·작은 목소리 녹음, 품질 저하를 느낀 실제 파일. (「품질 기준 샘플셋」, 「테스트셋 보강」, 전처리)
+  - 대표 장시간 회의의 의미 기준 판정, 집 PC의 120분 원본 결과 확보. (「긴 파일 실전 테스트」 P2)
+  - TXT/MD/DOCX/HWPX를 Word·한글에서 직접 열어 보기. (「내보내기 파일 실사용」, A4)
+  - `참석자 확인 필요` 표시가 너무 많거나 적은지, 진행률 '추정' 표시를 눈으로 확인. (「짧은 왕복 발화」, 「긴 파일 실전 테스트」)
+  - NVDA·내레이터 실제 확인. (「기능 agent 점검」)
+- [ ] 제품 결정
+  - 엔진이 응답하지 않을 때 회의록 삭제 방식. (「웹 첫 방문 로컬 처리 안내」)
+  - 참석자·키워드 입력을 첫 화면에 둘지. (「회의 개요 입력을 요약」)
+  - 보고서 양식을 회의 당시 스냅샷으로 재현할지, 최신 양식으로 다시 만들지. (「Airepoto 참고」)
+  - IndexedDB 롤백 지원 여부. (「LMO 회의록 데스크톱·웹 제품 전환」)
+  - 3·5시간 파일 지원 여부, 업무망 모델 배포 방식, 고양이 알림 유지 여부.
+  - 「이 브라우저를 연결해 주세요」 보조문(시안 문구 `…실행 중이면 자동으로 연결됩니다`)을 그대로 둘지. (「동작 줄 v2」 P3)
+
 # 0. Immediate queue
 - [ ] 2026-10-20 설치 후 웹 연결 안 됨: 브라우저 쪽 원인 안내 반영 후속
   - 원인과 수정은 `docs/web-local-engine-followup-plan.md`의 「설치 후 연결 안 됨」 절과 커밋 99ae0f17·61858a52(미배포)를 따른다. 원인은 Chrome '기기에 있는 앱' 거부·자동 차단과 Page Assist의 127.0.0.1 Origin 변경이었다.
   - 병합 완료(2026-10-20, 로컬 main, 미푸시): 설치 파일(공간 기준값·'음성 분석')·브랜드 상수('LMO 회의록')·시뮬레이션 자체 Vite 브랜치를 합쳤다(`186b842d`, `d76d1cdd`). 연결 안내 문구도 브랜드 상수를 쓴다.
   - 남은 일: 웹을 다시 빌드·배포하고 실제 Chrome에서 확인한다(권한 '묻기'면 '연결 확인' 전 팝업 없음, 차단·확장 변경 안내). 설치 파일을 다시 빌드해 깨끗한 설치와 0.1.8 위 업데이트를 확인한다. 처음 문제가 난 PC의 확장·권한 상태도 확인한다.
   - 병합과 무관한 기존 실패(설치 사전 점검 테스트 2개, 시뮬레이션 1개) 중 테스트 2개는 고쳤다(2026-10-20): `backend.test_web_local_engine_installer_preflight`의 `test_main_accepts_nsis_plugins_dir_when_tmp_and_temp_differ`·`test_main_source_smoke_uses_isolated_targets_and_leaves_no_canary`는 실제 17863 포트를 읽어, 설치 엔진이 실행 중이면 `stop_local_engine_and_retry`로 실패했다. 이제 `_run_main_with_volume`처럼 `inspect_fixed_port`를 `available`로 바꿔 엔진 실행 여부와 무관하게 통과하고 엔진에 probe도 보내지 않는다. 남은 실패: `simulate-local-engine-connection-ui.mjs`의 `writer-guidance`는 익명 개발 API 시나리오에서 probe 2회(기대 0)로 병합 전부터 실패한다.
+  - 2026-10-20 점검: `writer-guidance` 실패는 `ac84ed3b`에서 고쳤다(단언을 "연결 시작 없음"으로, main 병합됨). 99ae0f17·61858a52는 여전히 origin/main에 없다(미배포).
   - 미룬 검토 nit: 사용자 '연결 확인' probe에 시간 제한이 없어 응답 없이 멈춘 엔진이면 확인 중이 계속되고 배경 재확인도 멈춘다. 이 동작은 이전부터 있었다. `localEngineClient.ts`의 fetch 래퍼(응답 시 보류 해제, 실패 시 유지)는 직접 테스트가 없다. 엔진이 한 번 응답한 뒤 같은 방문에서 권한을 '묻기'로 되돌리면 배경 요청이 다시 팝업을 띄운다.
 - [ ] 2026-10-20 새 회의록 동작 줄 v2 구현
   - 기준: `docs/design.md`의 「동작 줄 v2」 절, Figma `15-438`(A1 왼쪽). 연결 카드·준비 배너·`준비 필요` 라벨을 상태 줄 하나와 고치는 버튼으로 바꾼다. 웹 연결 빌드부터 하고 데스크톱·기본 개발 UI는 ④에서 옮긴다.
@@ -16,15 +47,22 @@
     - 이 조각에서 실제 Chrome으로 브라우저 차단(권한 거부) 뒤 `다시 확인`만으로 풀리는지 확인한다.
     - 고칠 테스트: `simulate-local-engine-connection-ui.mjs`(연결 칸 문구·`data-scene` 단언), `test-runtime-boundary.mjs`, `test-local-engine-browser-access.mjs`, `capture-ui-audit.mjs`(C2가 옛 문구 `분석 기능에 연결하지 못했습니다`를 기다림).
     - 검증 순서: `corepack pnpm --dir desktop-app typecheck` → `test:runtime-boundary` → `test:local-engine-browser-access` → `LOCAL_ENGINE_UI_SCENARIO`를 `writer-guidance`·`missing-models`·`browser-blocked`·`permission-prompt`로 하나씩 두고 `test:local-engine-connection-ui` → 시나리오 없이 한 번 → 회귀 `test:writer-model-readiness`, `node scripts/simulate-analysis-stop-flow.mjs preparation`.
+    - 구현(2026-10-20, 커밋 `ac84ed3b`, 브랜치 `claude/strange-wilson-f5718d`를 main에 병합, 미푸시): 선택 함수 `writerStatusRow.ts`, 훅 `useLocalEngineConnectionControls.ts`, 상태 줄 `WriterActionRow.tsx`, 코드 입력 창만 남긴 `LocalEngineCodeDialog.tsx`(옛 `LocalEngineConnectionSurface.tsx`). 배경 재확인(10초·창 포커스)은 마지막 결과를 유지해 스피너·버튼·펼친 도움말이 깜빡이지 않는다. 막힌 `분석 시작`은 `aria-disabled`이고 누르면 상태 줄로 포커스를 옮긴다. 입력 단계 사유(같은 파일 진행 중·이어하기 파일 다름/불가·다른 분석 진행 중)는 ③까지 파일 선택 옆 문장(`writer-resume-note`·`writer-same-file-note`)과 `writer-analysis-start-blocked`를 `aria-describedby`에 더하고 누르면 그 문장으로 포커스를 옮긴다. 위 검증 순서와 C1·C2 캡처 통과(Vite 모의 화면, 실제 엔진 아님). `writer-guidance`의 옛 단언(`probeCount === 0`)은 HEAD에서도 실패해서 "연결 시작 없음"으로 바꿨다(공급자 배경 재연결이 스스로 probe함). 헤드리스 Chromium은 loopback 권한을 '묻기'로 보고해 첫 방문·연결 실패 문장은 두 변형 중 하나를 받는다.
+    - 남은 확인: 실제 Chrome 브라우저 차단 뒤 `다시 확인`만으로 풀리는지(배포 HTTPS 웹 + 설치 엔진 필요). 맨 위 「사용자 확인 대기」에 있다.
+    - 병합 뒤 재검증(2026-10-20 14:07, main `49835054` + 문서): typecheck, `test:runtime-boundary`, `test:local-engine-browser-access`, 시나리오 4개와 전체 `test:local-engine-connection-ui` 통과. Vite 개발 화면(1280px)에서 동작 줄이 Figma v2와 같게 보이는 것도 확인했다. 확인한 상태는 설치 엔진이 개발 origin을 CORS로 거절해 생긴 `browser-blocked`이고, 이때 `aria-disabled`·`aria-describedby`·`role=status`·`?` 24×24가 맞게 붙었다. 미룬 nit(P3) 두 가지:
+      - `permission-prompt` 시나리오가 한 번 `TargetClosedError`(route.fetch 진행 중 page 닫힘)로 실패했다. 다시 돌리니 통과했다. 닫기 전에 `page.unrouteAll({ behavior: 'ignoreErrors' })`를 넣으면 원래 실패 원인이 가려지지 않는다.
+      - 동작 줄 grid가 비어 있는 도움말 행과 행 간격 8px를 늘 잡아서 줄 높이가 48px다. 모든 상태에서 같아 흔들림은 없지만 시안의 40px보다 8px 크다.
+    - 미룬 검토(P3): `이 브라우저를 연결해 주세요`의 보조문 `…실행 중이면 자동으로 연결됩니다`(시안 문구)가 엔진이 응답한 상태라 `연결 시작` 버튼과 어긋나 보일 수 있다. `readiness-blocked`의 `?`는 엔진 `errors[0]` 원문을 보인다(예전 배너와 같음, `describeAnalysisError` 대응 검토). `분석 준비 상태를 확인하지 못했습니다`에서 `다시 확인`이 엔진 무응답으로 끝나면 준비 확인 루프가 이미 멈춰 `분석 준비 확인 중`이 창 포커스 전까지 남는다(②에서 45초 타이머와 함께 정리).
   - ② 45초 응답 없음:
     - 확인 회차마다 45초 타이머를 새로 두고, 인증되거나 확인 루프가 다시 시작되면 지운다. 지금 `readinessTimedOut`은 엔진이 아예 응답하지 않을 때만 켜지고(모델 확인이 멈춘 경우는 못 잡음), `/api/health`가 응답해야 지워진다. 그래서 다시 연결한 직후에는 이전 경고가 잠깐 남을 수 있다.
     - `다시 확인`은 사용자가 누른 연결 확인(`probeLocalEngine`, 사용자 시작) 뒤 준비 확인을 다시 시작한다.
     - 시뮬레이션에 `page.clock.runFor`로 엔진 무응답, 모델 확인 멈춤, 다시 연결 뒤 초기화 시나리오를 추가한다.
   - ③ 입력 단계: 필수 항목 오류, 파일 길이, 이어하기, 다른 분석 진행 중을 상태 줄로 옮긴다. `id="writer-form-error"`는 상태 줄 문구로 옮기고 아래 배너는 없앤다(같은 id가 두 번 생기지 않게). 회귀: `test:resume-draft-flow`, `simulate-analysis-media-limit.mjs`.
-  - ④ 데스크톱·기본 개발 UI: 같은 상태 줄로 옮긴다. `준비 필요` 라벨, 준비 배너, `.writer-start-button-connection-pending`, `readinessTimedOut` 의미를 정리한다. 회귀: `test:writer-model-readiness`, `test:analysis-stop-flow`. Tauri 실행 화면도 확인한다.
+  - ④ 데스크톱·기본 개발 UI: 같은 상태 줄로 옮긴다. `준비 필요` 라벨, 준비 배너, `readinessTimedOut` 의미를 정리한다(`.writer-start-button-connection-pending`은 ①에서 지웠다). 회귀: `test:writer-model-readiness`, `test:analysis-stop-flow`. Tauri 실행 화면도 확인한다.
   - ⑤ 문서: `docs/design.md` 동작 줄 v2 절의 "구현 전" 표시를 지운다. `docs/frontend-simulation-testing.md`의 Playwright 캐시 경로(`D:\Projects\audio`)를 AGENTS.md(`D:\Projects\LMO_audio\.cache\ms-playwright`)와 맞춘다.
   - 범위 밖: `모델 받는 중` 진행 표시(작성 화면이 받기 진행 데이터를 읽게 되면 다시 판단), 명시적 연결 해제 UI.
 - [x] 2026-10-20 공개 설치 점검 오류 수정본 반영·실제 연결 재확인
+  - 2026-10-20 점검: 아래 「추가 설치 오류」·「연결 원인 확인」 줄의 후속(직접 재설치·시작 메뉴 확인, 권한 허용 뒤 실제 연결·분석)은 맨 위 「사용자 확인 대기」로 옮겼다. 그 줄의 `바로록 연결`은 지금 `LMO 회의록 연결`이고, 설치 오류 문구는 `web-local-engine.nsi`의 "실행 중인 음성 분석 프로그램을 종료하지 못했습니다"로 바뀌었다.
   - 자동 연결 완료(2026-10-20): 소스861e586·0.1.8 실제 업데이트exit0·숫자/승인 창 없는 연결·재시작 복원/해제·타Origin 반려·기존196경로 SHA/146모델경로 크기 보존 통과. 새 EXE442815954B/SHA c9415057…e2e62의 전체 R2 read-back·격리 웹6파일 운영 SHA·이전 링크2개307 검증 후 배포했다(version00311f46-d6de-4d4c-a3e1-2661672f8f11). 임시 Worker/로컬 인증 삭제. 현재 Chrome에서 코드 없이 첫 자동 연결·reload 복원·분석 준비 완료를 확인했다. 음성 실분석/Network 본문·Edge/회사 PC 관문은 별도 유지한다. 근거 `.tmp/browser-connection-20261020` 및 followup-plan의 설치 후 자동 연결 절.
   - 원본 오류 이미지는 설치 전 점검 결과 실패 안내다. 기존 frozen helper의 `TMP≠TEMP` exit2/결과 미생성, 수정 helper의 동일/상이 경로 모두 exit10을 재현했다. 관련 backend39·packaging5 검사와 독립 검토 통과. 공식 NSIS3.13 기존 사본으로 컴파일(미사용 label 경고3개)했고 같은 공개0.1.5 엔진을 재사용한 installer revision `0.1.5-beta-20261020-installerfix`를 만들었다.
   - 현재 사용자 실제 업데이트 설치는 `TMP≠TEMP`에서 exit0/40.89초·helper SHA 일치·등록0.1.5·미완료 marker 없음·probe200·정상stop/포트 해제다. 기존 기록/설정/DB 경로196개 SHA·모델 경로146개 크기 불변(논리/physical 중복 관측 포함, 모델 전체 SHA 검사는 아님). 원래 실패 실행의 env/exit 로그가 없어 당시 단독 원인은 확정하지 않는다.
@@ -54,6 +92,7 @@
     - (5) 날짜를 읽지 못한 회의록은 모든 기간 필터에 `날짜 없음`으로 보인다.
     - (6) 사이드바 확인창의 `분석 산출물`과 도움말·정리 화면의 `분석 결과`·`분석 파일` 용어를 맞추는 일이 남았다.
 - [ ] 2026-10-19 웹 첫 방문 로컬 처리 안내·처리 방식 도움말 남은 확인
+  - 2026-10-20 점검: 아래의 `바로록 연결`은 지금 `LMO 회의록 연결`이다. 확인 3의 "운영 HTTPS는 이전 UI"는 10-20 배포로 낡았다(첫 방문 안내 포함 배포). 단 `27a954f9` 이후 변경은 미배포다. 아래의 test_api 실패 6개는 `61ff5efa`에서 고쳤다(테스트가 낡았던 것). generation_gateway 기록은 여전히 유효하다.
   - 구현: 웹 연결 빌드에서 첫 방문 때 `회의 내용은 내 PC에서 처리합니다` 안내창을 이 브라우저에 한 번 띄운다(`localProcessingIntroSeen`). 업로드 영역 아래에는 고정 문장 `음성·영상과 대화록은 이 PC에서 처리합니다.`와 `처리 방식` 도움말(처리·보관·인터넷·삭제)을 둔다. 설정에 맞춘 보관 문장은 도움말로 옮겼고, 연결 줄의 중복 `로컬 분석 안내` 툴팁은 지웠다. 규칙은 `docs/design.md` 새 회의록 절을 따른다.
   - 통과: typecheck, 변경 파일 eslint. `test:local-engine-connection-ui`(첫 방문 표시 → 자세히 → 시작하기 → 새로고침 후 미표시, 기본 개발 UI 미표시), `test:audio-extract-ui`(도움말 보관 문장, 오래된 설정 응답 무시)도 통과했다. `test:analysis-stop-flow`의 앞 6개 장면과 `test:resume-draft-flow`의 최신 설정 장면(도움말 보관 문장) 역시 통과했다.
   - 확인 1 완료(2026-10-19): 병합(`7eb3906`) 뒤 깨끗한 worktree에서 `test:new-record-home-flow` 6개 장면(도움말 한 줄 높이·포커스 복귀·설정 없을 때 보관 문장 포함), `test:analysis-stop-flow` 전체 15개, `test:resume-draft-flow`·`test:audio-extract-ui`·`test:audio-back-navigation`·`test:local-engine-connection-ui` 전체가 통과했다. 새 폴더의 첫 실행은 진입 시간 초과로 두 번 실패했고 단독 재실행에서 통과했다.
@@ -63,12 +102,14 @@
   - 확인 4 완료(2026-10-19): 병합 뒤 코드·문서 agent 검토의 P1(연결 시뮬레이션의 첫 방문 안내 가림)과 문서 P2를 `ae52146`에서 반영했다.
   - 확인 5 완료(2026-10-20): `3ef695d8` 검토의 P2 두 건과 P3를 반영했다. 분석 결과가 있는 회의록을 엔진 응답 없이 사이드바에서 지우면 기록을 남기고 `바로록 연결이 실행 중일 때만 회의록을 삭제할 수 있습니다…` 알림을 띄운다(데스크톱 앱은 앱 재실행 안내). 요약 생성은 HTTP·CLI 요청 전에 클라우드 모델(`-cloud`·`:cloud`)과 이 PC가 아닌 `OLLAMA_HOST`를 거절한다(`summary_model_not_local`·`summary_runtime_not_local`). 설정 저장과 모델 받기도 클라우드 모델을 막는다. 그래서 `외부 AI 서버로 보내지 않고` 문구와 `삭제` 줄은 그대로 둔다. 결정은 `docs/ollama-reliability-review-plan.md` 7절에 남겼다. 안내창은 창 밖 포커스를 Tab으로 되돌린다. 위에 열린 연결 코드 창과 함께 Esc로 닫히지 않는다. 설치 문장은 첫 방문 안내에만 둔다.
     - 통과: typecheck, 변경 파일 eslint, `test:api-error`. backend `test_ollama_readiness`·`test_generation_gateway`·`test_model_manager`·`test_summary_*`·`tests/test_summarize_followups`·`test_summary_generation_limits`·`test_export_record`도 통과했다. `test_api`는 새 테스트를 포함한 202개 중 196개가 통과했다. 실패 6개(파이프라인 장면의 `media_duration_unavailable`)는 깨끗한 HEAD에서도 같고, 테스트가 `convert_to_wav`만 막고 WAV 길이 확인은 막지 않아 생긴다. `test:new-record-home-flow`는 엔진 꺼짐 삭제 장면을 포함한 7개가 모두 통과했다. `test:local-engine-connection-ui`는 1280x720 안내창 넘침, 창 밖 포커스 복귀, Esc·바깥 클릭 저장까지 통과했다. `test:meeting-detail-flow`는 사이드바 삭제의 DELETE 응답 확인을 추가했다. 첫 실행에서 참석자 구분 취소 장면의 IndexedDB 확인이 한 번 실패했고 재실행에서 전체 통과했다. 도움말을 여는 `test:audio-extract-ui`·`test:resume-draft-flow`도 통과했다. `test:analysis-stop-flow`는 18개 장면 뒤 `분석 중지` 장면에서 `현재 처리 중인 구간이 끝나면 이어하기 기록으로 남깁니다.` 대기 시간 초과로 두 번 실패했다. 이번 변경이 없는 HEAD(`47a2dc32`)에서도 같은 장면에서 실패해 별도 확인으로 남긴다.
-    - main 병합 확인(2026-10-20): `a320e5c6`까지의 main을 병합했다. 충돌 4곳(안내창·사이드바·연결 시뮬레이션·이 문서)은 이번 규칙을 유지하면서 main의 이름 상수(`LOCAL_ENGINE_NAME`)로 정리했다. 병합본에서 typecheck, eslint, `test:api-error` 8개, backend 집중 59개, `tests/`·`backend.test_authenticated_web_flow` 118개가 통과했다. `test_api`는 앞의 6개만 실패해 여전히 별도 수정이 필요하다. `test:new-record-home-flow` 7개, `test:local-engine-connection-ui`도 통과했다. `test:meeting-detail-flow`는 같은 참석자 구분 취소 장면에서 한 번 실패했고 재실행에서 통과했다. `test:analysis-stop-flow`는 main의 경쟁 상태 수정(`d76d1cdd`)으로 19개 장면이 모두 통과했다.
+      - 해결(2026-10-20, `61ff5efa`): 두 실패 모두 제품이 아니라 테스트가 낡아 생겼다. `test_api` 6개 중 5개는 `e387db64`가 WAV 길이를 읽지 못하면 `media_duration_unavailable`로 멈추게 한 뒤에도 길이 읽기를 막지 않았다. 다른 파이프라인 테스트처럼 `get_wav_duration_seconds`를 막았다. 나머지 1개(참석자 구분 수동 장면)는 길이 문제가 아니었다. `enabled`만 주면 `generate_during_analysis`가 켜짐으로 정규화되는데(`4e2e5b23`·`116a63d0`), 테스트가 이 기본값을 반영하지 않았다. 그래서 `generate_during_analysis: False`를 명시했다. 길이 제한과 기본값은 바꾸지 않았다. `test:analysis-stop-flow`는 첫 장면의 취소 응답이 바로 거절해 대기 문구가 약 30ms 만에 바뀌는 시뮬레이션 경쟁이었다. 문구는 지금도 `main` 안 분석 패널에 보인다. main의 `072bd632`(`d76d1cdd`로 병합)가 이미 고쳤다. 수정 전 시뮬레이션은 같은 시간 초과(18개 통과)로 다시 실패했다. `41927e01`+`61ff5efa`에서 `test_api` 205개와 `test:analysis-stop-flow` 19개가 모두 통과했다.
+    - main 병합 확인(2026-10-20): `a320e5c6`까지의 main을 병합했다. 충돌 4곳(안내창·사이드바·연결 시뮬레이션·이 문서)은 이번 규칙을 유지하면서 main의 이름 상수(`LOCAL_ENGINE_NAME`)로 정리했다. 병합본에서 typecheck, eslint, `test:api-error` 8개, backend 집중 59개, `tests/`·`backend.test_authenticated_web_flow` 118개가 통과했다. `test_api`는 앞의 6개만 실패했고 `61ff5efa`에서 고쳤다. `test:new-record-home-flow` 7개, `test:local-engine-connection-ui`도 통과했다. `test:meeting-detail-flow`는 같은 참석자 구분 취소 장면에서 한 번 실패했고 재실행에서 통과했다. `test:analysis-stop-flow`는 main의 경쟁 상태 수정(`d76d1cdd`)으로 19개 장면이 모두 통과했다.
     - agent 검토(2026-10-20): 막는 문제는 없었다. 반영한 P2·P3는 다음과 같다. `ollama cp`로 이름만 로컬처럼 바꾼 원격 모델(`/api/tags`의 `remote_host`·`remote_model`)도 거절한다. 준비 확인이 두 거절 사유를 분석 전에 알린다. `OLLAMA_HOST` 판정을 허용 목록으로 좁혔다(`@`·경로·IPv4 매핑 원격 주소 거절). 복구 문구는 `OLLAMA_HOST`를 지운 뒤 PC를 다시 시작하라고 바꿨다(`127.0.0.1`만 쓰면 포트 80으로 연결되고, 실행 중인 프로그램에는 새 환경 변수가 반영되지 않는다). 모델 삭제의 대체 모델도 클라우드 모델이면 거절한다. 설정 거절 테스트는 같은 설정 객체를 넘겨 실제로 변경을 잡게 했다. 포커스가 어느 창에도 없으면 나중에 열린 창이 Esc·Tab을 처리한다. 반영 뒤 집중 백엔드 54개, `test_api`(새 테스트 4개 포함, 앞의 6개만 실패), `backend.test_authenticated_web_flow` 14개, `tests/` 요약·내보내기·진단 104개, typecheck·eslint·`test:api-error`, `test:new-record-home-flow` 7개, `test:local-engine-connection-ui`가 다시 통과했다.
     - 보류 1 해결(2026-10-20, 아래 「회의록 삭제 편의」): 엔진이 꺼져 있으면 회의록을 바로 지우고 PC 파일은 대기열로 미룬다. 원래 기록: 바로록 연결을 지웠거나 PC를 옮겨 엔진이 다시 응답하지 않으면, 분석 결과가 있는 회의록(대화록 포함)을 브라우저에서도 지울 방법이 없다. 이번 작업 지시대로 응답 없는 삭제는 막았다. 대안은 두 가지다. 하나는 브라우저 기록을 먼저 지우고 `jobId`를 대기 목록에 남겨, 다음 연결 때 `DELETE /api/outputs/{jobId}`를 다시 보내는 방식이다(`pendingAnalysisDraftCleanup`와 같은 방식). 다른 하나는 두 번째 확인으로 `이 브라우저의 기록만 삭제할까요?`를 묻는 방식이다.
     - 보류 2: 삭제 알림 문구를 `apiError`의 엔진 끊김 문장과 맞추고, 로컬 네트워크 권한 거부와 401(미연결) 경우를 따로 안내한다. 확인창의 `분석 산출물`과 도움말의 `분석 결과` 용어를 맞추는 일도 남았다. `summary_runtime_not_local`의 `user_action`은 아직 `open_settings`다. 지금 UI는 이 값을 쓰지 않는다.
     - 남은 확인: 연결 코드 창이 안내창 위에 겹친 상태의 Esc는 시뮬레이션으로 재현하지 못했다. 현재 연결 방식이 코드 창을 쓰지 않기 때문이며, 코드 검토로만 확인했다.
 - [ ] 2026-10-17 A4 실제 모델 검사 환경 복구와 짧은 WAV·영상 재검증
+  - 2026-10-20 점검: 공개 HTTPS 관문은 10-18 공개 HTTPS·0.1.5에서 실제 요약 완료로 일부 통과했다(「기능 agent 점검」의 10-18 기록). 남은 것: 사람 정답 품질, loopback 권한 안내 배포 뒤 확인, 다른 PC, Word/한컴에서 열기.
   - 2026-10-18 배포 준비 재점검: 이후 격리 산출물에서 30초 WAV 실제 STT 15개 구간·15초 MP4 2개 구간 및 두 작업의 참석자 구분 완료를 확인했다. 아래 결과 0건은 17일 시도 기록이다. 확인 시 요약은 WAV `generating`·영상 `skipped`로 완료 미검증이며 저장/재열기·파일 최신 내용과 설치/frozen/HTTPS 관문은 유지한다. 최신 근거·집중 검사 90개 및 웹 검사 결과는 원본 계획 6.6의 `웹 + 설치형 로컬 엔진 배포 준비 재점검`을 따른다.
   - 실제 QA API의 health·preflight·WAV 업로드/변환/STT 진입까지 확인했으나 결과 0건이다. `.venv-desktop`에서 514초 이상 대기 후 종료했고 `.venv` 순차 준비도 torch import 247.89초, faster-whisper/ctranslate2/transformers 초기화로 서버 준비 전 11분 이상 대기 후 종료했다. 상세 증거·재실행 명령은 원본 계획 6.6의 `실제 모델 처리 시도·환경 차단`과 성능 기록을 따른다. 마지막 확인: 2026-10-17.
   - 2026-10-18 최종 재검증: 기존 `.venv-desktop` 재사용으로 STT·구분·실제 gemma4:e2b 요약 2건, 동일 기록 브라우저 저장/재열기, sync 및 full TXT/MD/DOCX/HWPX 8개 내용/구조·export 전후 JSON 불변을 확인했다. 최신 근거는 계획 6.6의 `실행 환경 확인·실제 모델 전체 흐름 재검증`이다. 위 `generating/skipped`는 배포 준비 재점검 당시 관측이며 현재 두 요약은 completed다.
@@ -83,6 +124,7 @@
   - 후속/종료: 대화록에서 대상이 확정되지 않으면 다른 인물/성격으로 합치지 않도록 검토하고 모호한 대상을 분리한다. 현재 표본과 구체적인 대조 표본으로 인물 귀속·맥락/본문 구분·무근거 결정/할 일 없음 확인 후 닫는다. 사람 원음 정답은 별도 필요하며 이번 환경 복구에서 프롬프트/모델은 수정하지 않았다. 마지막 확인 2026-10-18.
   - 완료: 짧은 요약·부분 요약·병합·GGUF 공통 지시에 귀속 근거 규칙을 추가하고 부분 요약의 확인 사항은 최종 병합에도 보존한다. 집중 검사 16개와 독립 agent 검토 통과. 같은 gemma4:e2b 실제 WAV 요약은 `혜원의 그림 실력`, `민준의 외모`를 유지하며 불명확한 성격 평가는 채택하지 않았다. 두 표본 모두 없는 결정/할 일을 추가하지 않았다. 특정 이름 치환·추가 모델 호출은 없으며 모든 입력의 요약 정확도를 보장하는 판정은 아니다.
 - [ ] 2026-10-17 기능 agent 점검: 변경 영향 회귀 → A4 실제 음성·모델 준비·복구 확인
+  - 2026-10-20 점검: 아래 10-18 A5/A6 기록의 "Cloudflare … 사용자 답변 대기"는 배포로 해소(0.1.8 공개), runner/conhost P2는 같은 항목의 뒤 기록에서, "다음 묶음"의 Unicode P2는 「주요 주제 중복 판정 통일」([x], f5ef483c)에서 닫혔다. A5/A6(다른 PC·서명·출시 판정)는 남는다.
   - 원본: `docs/web-runtime-separation-implementation-plan.md`의 `6.6 2026-10-17 기능 점검 재개 계획 — 디자인 작업 병행`과 날짜별 실행 결과. 기존 6.5/A1~A4 증거를 이어받고 사용자 흐름 / 데이터 / 연결·복구 에이전트 3개의 계획 조사를 통합했다. 디자인 수정은 제외하며 HEAD `eea2ab6`에서 시작한 기능 변경 영향과 실제 실행 증거를 구분한다.
   - 2026-10-17 최근 내보내기 재검증: backend 집중 7개(API 실제 파일 11조합 포함)·`test:export-consistency` 9개 통과. 독립 agent 2개의 읽기 검토와 실제 helper/MD·전체 TXT 비교에서 Unicode 제목 `Maße/Masse`의 화면 2개·backend 목록 1개 차이를 재현했다. 본문·원본은 보존되며 아래 P2로 기록했다. 대상 11개 파일은 실행 전후 동일했고 다른 AI의 화면·스타일·시뮬레이션 변경은 보존했다. 기능 코드 수정은 하지 않았다.
   - 2026-10-17 FN-01/02/04: 독립 agent 3개의 읽기 검토와 순차 mock 브라우저 검사. 모델 미준비·오류 복구·취소 대기 표준 3개 명령, 분리한 home 기능 4장면, 설정/최근 기록 왕복 입력 보존 통과. 표준 home 검사는 초기 진입/heading 시간 초과로 통과 처리하지 않았다. 취소 안내의 중간 대화록 보존 약속과 실제 삭제, 모델 준비 후 Escape 닫기의 BODY 초점을 재현해 아래 P2로 기록했다. 늦은 모델 응답 후보는 미재현이다. 대상 18개 파일은 검사 전후 같았으며 검사 전용 5197 서버만 종료했다. 상세 근거·환경 한계는 위 6.6 실행 결과를 따른다.
@@ -134,10 +176,12 @@
   - 실제 0.1.4·공개 HTTPS에서 WAV는 요약·저장·재열기·내보내기 4개까지 통과했으나 MP4는 STT/참석자 구분 뒤 요약 `model_missing` 409. 같은 자체 Ollama의 tags API는 약 0.05초, list CLI는 12.876초였고 제품은 CLI를 5초에 중단해 빈 목록으로 처리한다. 직접 HTTP 목록 조회 수정·집중 7개 검사·실제 API 0.07초 통과, 독립 검토와 새 frozen 설치본 재검증 진행 중. 종료 조건: 실제 공개 사이트에서 두 표본의 요약·저장/재열기·8개 내보내기, 모델 보존, 종료/재시작 증거 확인. 영상 오류의 정확한 원인은 재검증까지 보류. 상세는 `docs/web-local-engine-followup-plan.md` 11절.
   - 2026-10-18 후속: 독립 backend 검토·0.1.5 새 frozen/closed manifest/전체 Stage3B·NSIS·R2 전체 read-back SHA·공개 배포·실제 Chrome 받기·독립 다운로드 증거 검토까지 통과했다. 새 파일의 Windows `파일 열기 - 보안 경고`가 남아 있어 사용자에게 직접 실행 승인을 요청했다. 실제 NSIS/0.1.5 설치·영상 요약 복구·실모델 전체 종료/재시작은 미검증이며 완료 표시하지 않는다. 현재 engine은 업데이트용 정상 종료 상태, foreign Ollama36096은 보존했다. 재개 상태는 `.tmp/public-engine-audit-20261018/checkpoint.json`.
 - [ ] 2026-10-18 [P2] 요약 엔진 첫 준비 지연과 준비 전 첫 요청503
+  - 2026-10-20 점검: "0.1.5·공개 경로는 새 코드 아님"은 낡았다. 공개 설치본 0.1.8의 소스 `861e586e`에 `db397708`이 들어 있다. 남은 것: 그 설치본으로 첫 요약·503 재검증.
   - 소스 기능 복구(2026-10-18): 명시적 요약의 준비300초/목록1회/선택 모델 재사용, managed_starting·runtime_preparing과 기존 결과 보존을 구현했다. runtime10+기존4, backend고유52, frontend generation-flow/typecheck/변경lint 및 독립 검토 통과. 같은 영상 대화록의 실제 source helper/gateway/pipeline 첫 실행245.578초(준비78.890·생성166.516·그중 적재159.316), 즉시반복1.422초로 성공하고 기존9개SHA/모델73개크기 불변. 설치0.1.5·공개 브라우저 경로는 아직 새 코드가 아니므로 이 항목은 열어 둔다. native 초기화/적재 시간 자체의 최적화는 위 성공과 구분한다. 상세는 followup-plan11절의 첫 준비 측정 기록.
   - 이 PC의 설치0.1.5에서 자체 Ollama가 시작한 뒤 API 준비 관측까지 약4분, 이후 첫 모델 적재/영상 요약에 추가 약8분이 걸렸다. 준비 전 첫 요청은 `server_unreachable` 503·retryable=true였고, 준비 후 재시도는 성공했다. 모델 미설치·데이터 손실과 구분하며 원인은 아직 확정하지 않았다. 마지막 확인: 2026-10-18.
   - 다음 범위: 첫 기동 상태/실제 준비 완료를 구분하고 준비 중 요청·재시도·취소가 일관되게 동작하도록 점검한다. 대표 PC에서 기동/장치 초기화/모델 읽기 시간을 분리 측정해 환경 영향과 제품 오류를 구분한다. 종료 조건: 새 실행에서 잘못된 중지/모델 없음 안내 없이 첫 요약이 완료되거나 준비 중·실패가 정확히 안내되고, 취소·정상 종료·저장 보존 회귀 통과. 근거: `public-engine-audit-20261018/installed-015-ollama-startup-observations.json`, 실패 resume07-15-21 및 성공 resume07-20-15 증거. 기존 설치 파일 재제작·모든 표본 반복부터 시작하지 않는다.
 - [ ] 2026-10-17 디자인 방향 A 후속: UI/UX agent 검토에서 미룬 항목
+  - 2026-10-20 점검: 아래 10-18 Cloudflare 기록의 "0.1.5 재검증 진행"은 끝났고 지금 공개본은 0.1.8이다. generation_error 표시·diarize·실패 문구 판정 줄은 여전히 유효하다.
   - 근거: 2026-10-17 시각 일관성·접근성 / 사용 흐름·문구 agent 검토 2건. 반영분은 `8754c59`, `12e4883`, `efc9eef`, `7554ca6`, `24bf434`, `d14023e`, `eb87579`. 기준 문서 `docs/design.md`.
   - 완료(2026-10-17): 오류 원문을 사용자 문구로 바꾸는 `toUserFacingAnalysisError`; 엔진 미연결 안내와 바로가기(`문제 해결`/`다시 확인`), 모델이 실제로 없을 때 `모델 받기`; 필수 항목 오류를 `분석 시작` 옆 줄로 이동; 용어 통일(`새 회의록`, `이어서 분석`, `이어서 할 분석`, `요약 모델`); 분석 중 `새 회의록` 비활성과 `분석 중` 카드 복귀; 진행 문구 `음성 인식 2/4 구간`과 경과 시간 도움말 제거; `rounded-md`를 버튼 반경으로, 보고서 구성 칩을 회색 태그로; 설정 모델 탭 상자 겹침 제거; 공통 컴포넌트 `components/common` 카탈로그.
   - 결정: 기록 정리 command bar는 1280px에서 두 줄(정리 종류 / 기준·동작)을 유지한다(기존 결정과 `simulate-template-selection-flow` 검사). 800px 줄바꿈을 줄이도록 기준 선택 폭만 줄였다.
@@ -157,11 +201,13 @@
   - 결정: 설정 모델 탭의 모델명은 모델을 고르는 관리 화면이라 유지한다(일반 흐름에는 노출하지 않음).
   - 남음: 내보내기 일시 형식(백엔드 exporter와 함께, 내보내기 재검증 작업과 조율), 다크 모드 토큰(토글 없음, 기록 찾기·보고서 태그가 primitive 중립색 사용).
 - [ ] 2026-10-05 최소 배포 후 다른 프로젝트 연결
+  - 2026-10-20 점검: 10-05 완료 기록의 "음성 재생 직접 호출, 받기 버튼 꺼짐"은 낡았다. 음성 재생은 공통 client를 쓰고(`localAudioPlayback.ts`), 받기 버튼은 10-18에 공개됐다.
   - 순서: 분석 호출 인증 → 회의 상세·설정·내보내기 호출 인증 → 저장 수명 수정 → 실제 분석 모드와 설치 파일 → 다른 PC 배포 확인 → 다른 프로젝트에는 주소로 연결.
   - 2026-10-05 완료: 작성·복구의 분석 호출을 `localEngineClient`로 옮김. typecheck, `test:analysis-stop-flow`, `test:resume-draft-flow` 통과.
   - 2026-10-05 완료: 회의 상세 생성·진행, 설정, 내보내기, 사이드바 산출물 삭제를 같은 클라이언트로 옮김. typecheck, runtime-boundary, generation, topic, edit-guard, download, report, settings restart, settings model 통과. 음성 재생 주소와 개발용 벤치마크 호출, `/api/health` 탐색은 아직 직접 호출이다. 인증 강제와 다운로드 버튼은 아직 켜지 않음.
   - 2026-10-05 완료: 취소 정리는 진행 중 초안만 지우고, 완료·중지·실패·예전 저장 기록은 남긴다. 상태 필드가 없는 예전 완료 기록은 중간 저장본으로 덮지 않는다. 대상 시뮬레이션 `remote-terminal-transcript-recovery`, `legacy-saved-meeting-rejects-stale-partial`, `completed-meeting-rejects-stale-partial`, `test:analysis-stop-flow` 통과.
 - [x] 2026-10-05 기능 점검: 저장 수명 두 건을 먼저 고친다
+  - 2026-10-20 점검: 아래 "원본 JSON이 없으면 생성 실패"는 `main.py`의 `_load_or_rebuild_job_result`로 해결됐고, "웹 연결은 preview"는 공개 빌드에서 연결 UI가 켜져 낡았다.
   - 기준 점검 원본: `docs/web-runtime-separation-implementation-plan.md`의 `2026-10-05 기준 점검`. 커밋 `c20be64`. 통과한 명령은 그 행의 파일이 바뀌기 전에는 다시 실행하지 않는다.
   - 2026-10-05 실행 결과: typecheck 통과, lint 실패 6건, runtime-boundary 통과, backend quick 115 tests 통과, 화면 시뮬레이션 13 통과·5 실패. 실패는 `test:resume-flow`, `test:audio-extract-ui`, `test:meeting-detail-flow`, `test:local-engine-connection-ui`, `test:template-selection-flow`.
   - 저장 수명 두 건은 위 최소 배포 항목의 2026-10-05 완료 기록으로 닫았다.
@@ -183,12 +229,14 @@
   - 2026-10-13 보강: 개발 서버가 설정 로더를 두 번 실행해도 시작 전 응답과 분석 시작 응답의 보관 안내가 달라지도록 시뮬레이션을 나눴다. `latest-diarization-setting` 장면이 통과했다.
   - 2026-10-15 원격 병합 확인: A1~A4 점검 변경과 최신 보관 설정 반영을 함께 보존했다. `latest-diarization-setting`, typecheck, 해당 코드·시뮬레이션 lint가 병합 후 통과했다.
 - [ ] 2026-10-14 디자인 정합성 후속 (보류 P3)
+  - 2026-10-20 점검: `test:meeting-detail-layout`은 등록됐다(`6ae28f2f`). 주제 공백 중복은 앞뒤 trim만 하므로 내부 공백 항목만 남는다. `MeetingArchive` 숨김 마운트(App.tsx)는 여전히 유효하다.
   - 2026-10-17 방향 A「조용한 문서」 채택으로 화면을 단계별로 다시 만든다(기준: `docs/design.md`). 아래 보류 P3 중 회의 상세 항목은 2단계에서 다시 판단한다.
   - 2026-10-14 완료 커밋: `8f9f5cd`(셸·사이드바 통일) → `e8699f6`(상세 메타 한 줄) → `658a6e4`(사이드바 기록 찾기 숨김) → `bdeadad`(대화록 한 줄 행) → `3654924`(부분 커밋 JSX 복구) → `b4ed780`(주요 주제 칩) → `e5b31c8`(agent 검토 반영). 검증: `desktop-app/scripts/simulate-meeting-detail-layout.mjs`.
   - 2026-10-15 완료: 회의 목적 예시 문구를 줄여 1280×720 잘림 해소, 설정 모델 탭은 모델명을 유지하고 `가볍고 빠름`·`정리 품질 우선` 설명을 덧붙임(관리 화면이라 이름은 필요).
   - 2026-10-17 완료: 화면·기록 찾기·로컬 TXT·백엔드 MD/DOCX/HWPX의 `주요 주제`를 같은 규칙(주제별 정리 제목 우선, 공백·대소문자 중복 제거)으로 통일했다. TXT 제목도 `[주요 주제]`로 맞췄다. 공통 함수: 프런트 `getDisplayTopics`, 백엔드 `pipeline/summary_display.py`.
   - 보류 P3: 주제별 정리가 이전 기준(outdated)일 때 칩이 옛 제목을 보여줌, 공백 차이만 있는 주제의 칩 중복, 메타·시간 `title`의 중복 낭독 가능성, 원본 파일 아이콘이 음성 저장 버튼과 같음, 긴 영문 화자명이 7.5rem 열을 넘침, 운영 빌드에서도 숨긴 `MeetingArchive`가 마운트됨, `package.json`에 `test:meeting-detail-layout` 스크립트 미등록.
 - [ ] 2026-07-29 바로록 데스크톱·웹 제품 전환
+  - 2026-10-20 점검: 제품명은 `LMO 회의록`(configs/brand.json)으로 바뀌었다. 아래의 IndexedDB 롤백 결정과 SQLite 전환은 여전히 남는다.
   - 상위 계획과 결정 기록: `docs/archive/design-2026-06-to-10/barorok-desktop-web-redesign-plan.html`(보관). 2026-10-17부터 디자인은 `docs/design.md`의 방향 A를 따른다.
   - 작업 브랜치: `codex/barorok-desktop-web-redesign`.
   - (2026-10-17 대체) 2026-07-30 승인 시안 여섯 장과 인계 문서는 `docs/archive/design-2026-06-to-10/`로 보관했고 방향 A로 대체했다.
@@ -221,6 +269,7 @@
   - 2026-08-13 완료: `기록 찾기` 작업면에서 IndexedDB의 회의·결정·할 일을 통합 검색하고 기간·종류 필터, 결정 타임라인, 원 회의록 이동을 제공한다. 웹 제품의 기준 저장소는 이후 로컬 엔진 SQLite/FTS로 교체한다.
   - 별도 후속: 기록 찾기에서 확인한 근거를 HWPX 보도자료·결과보고서 생성에 연결하되, 내부망 HWPX 편집기는 저장 계약과 문서 생성 흐름이 안정된 뒤 별도 작업으로 진행한다.
 - [x] 2026-07-29 회사 PC 첫 작업: 균형형 landing-inspired 기능 작업면 적용
+  - 2026-10-20 점검: 아래 07-30 정리의 `ui-structure.json`은 archive로 옮겨졌고 구현 근거로 쓰지 않는다. 현재 근거는 `docs/design.md` 방향 A다.
   - 2026-07-30 정리: 이 항목의 위계·메타 스트립·열린 대화록·command bar 원칙은 새 프로덕션 디자인 명세에 흡수했다. 후속 구현은 별도 중복 작업으로 진행하지 않고 `ui-structure.json`을 따른다.
   - 홍보용 랜딩 페이지나 설명 문구를 추가하는 작업이 아니다. 랜딩 페이지의 여백, 비례, 초점, 레이어링만 기능 중심 회의 작업면에 적용한다.
   - 현재 상세 화면은 메타, 상태, 탭, 명령, 본문이 비슷한 간격과 테두리 강도로 연속되어 시각적 대·중·소 계층이 약하다. 단순히 모든 간격을 넓히지 말고 큰 덩어리 사이 여백과 내부 밀도를 분리한다.
@@ -270,6 +319,7 @@
   - 2026-07-29 완료: 공유 React UI 통합 게이트와 화면 간격·용어·포커스·낮은 창 overflow 마감을 완료했다.
   - 2026-08-14 우선순위 갱신: portable 데스크톱 런타임 게이트는 웹 MVP 이후 별도 제품 단계로 보류한다. 현재 다음 1순위는 `docs/web-runtime-separation-implementation-plan.md`의 2단계 probe·pairing·세션 PoC다.
 - [ ] 2026-06-12 Airepoto 참고 회의록 완성도 강화 1차 계획
+  - 2026-10-20 점검: 보고서 탭·양식 스냅샷·저장 범위 분리는 끝났다(`20a3dcbc`). 남은 후보는 단어 수정 제안과 version 규칙이다. 양식을 회의 당시 스냅샷으로 재현할지는 결정이 필요하다.
   - 세부 계획 원본: `docs/airepoto-reference-adoption-plan.md`.
   - 1차 범위는 내부 기본 회의록 기준, 분야별 용어의 후속 정리/보정 단계 적용, 대화 보관용 회의록/보고서용 정리 회의록 후속 산출물 개념 정리, 긴 회의 안정성 보강으로 잡는다.
   - 이미 구현된 회의 목적 입력, 단계별 정리, 재생성, 대화록 편집, 이어서 분석은 새로 만들지 말고 기반 기능으로 재사용한다.
@@ -293,7 +343,8 @@
   - 최종 실행/검증 기준은 `releases\lmo_audio`이며, 루트 `lmo_audio`는 예전 산출물이므로 사용하지 않는다.
   - 이번 PC에서는 기존 `backend\models\...` 실모델을 복사하지 않기 위해 루트 `models\...`를 junction으로 연결했다. 회사 PC에서는 junction을 필수 절차로 보지 말고, 실제 모델 폴더를 루트 `models` 아래에 두거나 명시적으로 링크한 뒤 `release_portable.ps1`를 실행한다.
   - Qwen 모델은 회사 전달용 portable과 재빌드용 모델 원본에 넣지 않는다.
-- [ ] 2026-06-03 다른/회사 PC 데스크탑앱 실제 검증
+- [x] 2026-06-03 다른/회사 PC 데스크탑앱 실제 검증
+  - 2026-10-20 점검: 닫음. 2026-08-13 이후 portable은 웹 MVP의 선행 조건이 아니다(roadmap.md 42-46줄). 다른 PC 확인은 설치 엔진 기준으로 「기능 agent 점검」 A5/A6가 맡는다.
   - 이번 집 PC 검증은 백엔드 단위 테스트, 프론트 typecheck/lint, 웹 기반 Playwright 시뮬레이션까지이며, `releases\lmo_audio\lmo_audio.exe`를 직접 실행한 데스크탑앱 검증은 아니다.
   - 단순 사용 테스트는 집 PC에서 clean portable 빌드를 만든 뒤 `releases\lmo_audio` 폴더 전체를 다른 PC로 옮겨 확인해도 된다.
   - 회사 PC에서 직접 재빌드할 경우에만 최신 `origin/main`을 pull한 뒤, 기존 회사 PC 모델 폴더를 유지하고 코드/설정만 최신화한다.
@@ -306,11 +357,13 @@
   - Ollama 정리 모델이 없으면 대화록 작성은 완료되어야 하고, 전체 요약/주제별 정리/참석자별 정리는 준비 필요 또는 별도 실행 상태로 남아야 한다.
   - 실패 시 `releases\lmo_audio\logs\analysis.log`, `releases\lmo_audio\backend\logs`, `releases\lmo_audio\backend\outputs`, `releases\lmo_audio\backend\temp`를 확인하고 원인을 기록한다.
 - [ ] 배포 폴더 사용자 노출 줄이기와 모델 registry 정리
+  - 2026-10-20 점검: 폴더 숨김은 portable 전용이라 보류한다. 남은 것은 모델 registry뿐이다(`scripts/portable_model_layout.json`만 있고 Settings.tsx·App.tsx가 모델명을 직접 쓴다).
   - 일반 사용자 배포본에서 최상위에는 `lmo_audio.exe`, `START_HERE.txt`처럼 사용자가 직접 볼 파일만 남기고, `models`, `backend`, `binaries`, `runtime` 같은 내부 리소스 폴더는 `_internal` 또는 앱 관리 데이터 폴더 아래로 숨기는 구조를 검토한다.
   - 모델 파일은 실제로 여러 필수 파일로 구성되므로 단일 파일로 합치지 않는다. 대신 앱/패키징/검증 코드가 역할 기반 모델 registry를 통해 내부 경로를 찾게 한다.
   - `faster-whisper-large-v3`, `speaker-diarization-community-1` 같은 구체 모델명이 backend, Settings UI, verify/release script에 직접 박혀 있는 지점을 줄이고, `stt`, `diarization`, `summary` 역할 기준으로 교체 가능하게 만든다.
   - 변경 시 `docs\tauri-desktop-release-checklist.md`의 리소스와 모델 경로 기준, handoff zip, manifest, `verify_portable.ps1`, `/api/models/status`, 설정 모델 탭을 함께 갱신한다.
-- [ ] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
+- [x] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
+  - 2026-10-20 점검: 닫음. 원래 체크아웃에 `models\` 두 모델, `releases\lmo_audio`, `backend\.venv-desktop`이 있고 README·체크리스트에 옛 `backend\models` 경로가 없다.
   - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
   - 집에서 작업을 시작하면 먼저 `README.md`, `docs/tauri-desktop-release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.
   - 재빌드용 모델 원본은 프로젝트 루트 `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`로 맞춘다.
@@ -318,6 +371,7 @@
   - portable 빌드 Python은 기본적으로 `backend\.venv-desktop\Scripts\python.exe`를 사용하고, 다른 Python을 쓸 때는 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 명시한다.
   - 집 PC 실제 경로가 다르면 빌드 전에 README/체크리스트/todo를 같이 고쳐서 다시 충돌나지 않게 한다.
 - [ ] 0-0-0-1순위: 회의 개요 입력을 요약/정리 모델 참고 정보로 연결
+  - 2026-10-20 점검: 회의 목적은 "대화록 우선" 규칙과 함께 요약 프롬프트에 들어간다(`f1aea32d`). 참석자는 빈 값이고 키워드·STT 힌트는 없다. 참석자·키워드 입력을 첫 화면에 둘지는 결정이 필요하다.
   - 새 회의록 작성 흐름에서 사용자가 간단한 `회의 개요`, `참석자`, `목적`, `중요 키워드`를 선택 입력할 수 있게 한다.
   - 이 정보는 주제별 정리, 참석자별 정리, 액션아이템, 회의 요약 생성 프롬프트에 참고 맥락으로 넣는다.
   - 실제 대화록과 충돌하면 대화록을 우선하고, 개요에만 있는 내용은 확정 사실처럼 쓰지 않도록 프롬프트 규칙을 둔다.
@@ -326,6 +380,7 @@
   - 회사 PC에서는 Ollama 설치/모델 준비 여부가 불확실하므로 요약 AI를 필수 분석 조건으로 보지 않는다.
   - 요약 AI가 준비되지 않았으면 STT, 참석자 구분, 대화록 TXT/JSON은 완료하고 `generation_status.summary=skipped`로 남긴다.
   - UI에서는 `요약 AI 준비 필요`로 표시하고, Ollama가 준비된 PC에서 다시 전체 요약을 실행할 수 있게 둔다.
+  - 2026-10-20 점검: 이 문구는 지금 화면에 없다. 용어가 `요약 프로그램`으로 바뀌었다.
   - 주제별/참석자별 정리는 요약 AI 준비 후 실행하는 선택 정리로 본다.
 - [x] 0-0-0-3순위: 데스크탑앱 Ollama 정리 모델 설치 UX 1차 구현
   - 2026-06-05 원격 병합 기준: 설정 화면에서 추천 정리 모델, 직접 입력 모델, 설치된 Ollama 모델, 사용 중 모델 표시가 추가됐다.
@@ -338,7 +393,8 @@
   - 2026-06-07 보완: STT/Ollama 모델 받기 화면은 진행률, 남은 시간, 중지 버튼을 제공하고, 완료 후 `/api/models/status`로 실제 준비 상태를 다시 확인한 뒤 체크 아이콘으로 표시한다. 자동 반복 확인, `최근 확인`, 긴 완료 배너, 중복 진행 문구는 다시 넣지 않는다.
   - 2026-06-07 추가 안정화: Ollama 모델 받기 시작 직후 중지 요청이 유실되지 않게 하고, 장시간 다운로드 상태 추적과 설정 모델 탭 재진입 시 진행 상태 복구를 추가했다.
   - 다음 회사 PC 실검증에서는 STT 모델 받기/중지/재받기/완료 후 체크 표시, Ollama 모델 받기/중지/사용 전환, Ollama 미설치 링크 이동, 모델 탭 레이아웃 흔들림 여부를 함께 확인한다.
-- [ ] 0-0-0-3-1순위: Ollama 기반 정리 기능 상태·오류 계약 통합
+- [x] 0-0-0-3-1순위: Ollama 기반 정리 기능 상태·오류 계약 통합
+  - 2026-10-20 점검: 닫음. 본문은 이 항목 아래 기록에서 완료로 적혀 있다. 남은 모델 상태 TTL 캐시 P2는 「속도 개선 후보」에서 다룬다.
   - 상태 조회, 서버 기동, 모델 준비, 실제 추론을 별도 단계로 구분하고 설정/기록 정리/보고서가 같은 상태 계약을 사용하게 한다.
   - 실패한 정리가 완료로 보이지 않게 하고, 기존 대화록과 정상 정리 결과는 보존한다.
   - 단계별 구현과 검증 기준은 `docs/ollama-reliability-review-plan.md`를 따른다.
@@ -352,6 +408,7 @@
   - 2026-07-27 completed: audited backend progress events so user-facing messages stay safe while raw exception details remain in logs.
   - 2026-07-27 completed: the STT model smoke now uses a real speech fixture from LMO_REAL_AUDIO_FIXTURE or video\portable_video_15s.mp4, and skips clearly when no speech fixture is available.
 - [ ] 0-0-0-4순위: 내장 Ollama runtime 배포 전환
+  - 2026-10-20 점검: zip에 넣는 대신 앱 안에서 받는 방식으로 구현됐다(`6b39b58d`, 받은 Ollama 우선·전용 포트·`models\ollama`). 남은 것: 설치 엔진에서 받기 위치와 받은 뒤 요약 동작 확인.
   - 공식 standalone Windows CLI 압축을 `runtime\ollama`에 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다.
   - 앱은 내장 Ollama가 있으면 시스템 설치본보다 우선 사용하고, 서버 포트는 배포 폴더 기준 내부 포트, 모델 저장소는 `models\ollama`를 사용한다.
   - 요약 모델은 단일 파일 링크 다운로드가 아니라 앱 내부의 `ollama pull <model>`로 받는다. 사용자는 설정 화면의 `받기`만 누르면 된다.
@@ -374,7 +431,8 @@
     - Windows OpenMP / DLL 충돌 가능성
     - 손상된 venv 또는 패키지 설치 상태
   - 전체 앱을 새로 만들기 전에, ASR 런타임(venv/패키지)만 분리 재구성해서 재현 여부를 먼저 확인한다.
-- [ ] 0-0-1순위: 푸시 안전 기준 정리
+- [x] 0-0-1순위: 푸시 안전 기준 정리
+  - 2026-10-20 점검: 닫음. 상시 규칙으로 `docs/tauri-desktop-release-checklist.md`의 고정 순서와 worktree 브랜치 작업을 따른다.
   - 현재처럼 워크트리가 많이 더러운 상태에서는 `main`에 바로 푸시하지 않는다.
   - 내가 작업한 파일만 별도 브랜치에서 선별 커밋 후 푸시한다.
   - 빌드 전 검증 작업과 기능 개발 변경이 섞여 있으면 푸시 단위를 먼저 분리한다.
@@ -382,14 +440,18 @@
   - build venv, sidecar packaging, portable release, deploy-folder 검증 절차의 상세 원본은 `docs/tauri-desktop-release-checklist.md` 하나로 둔다.
   - `AGENTS.md`에는 체크리스트를 먼저 읽으라는 짧은 운영 규칙만 남기고, 새 시행착오도 체크리스트에 추가한다.
 - [x] 2026-05-13 clean manifest 재생성
+  - 2026-10-20 점검: 지금 `releases\lmo_audio
+elease-manifest.json`은 2026-06-18 `5e57c2b`를 가리켜 HEAD보다 132커밋 뒤다(portable은 웹 MVP 이후).
   - 2026-06-05 확인: `releases\lmo_audio\release-manifest.json`은 현재 배포 커밋을 가리키고 `dirty=false`다.
   - 이번 PC에는 `backend\.venv-desktop`이 없어 검증된 `backend\.venv\Scripts\python.exe`를 명시해 빌드했다.
   - 다음 반복 배포 기준을 더 깔끔하게 맞추려면 `backend\.venv-desktop`를 복구한 뒤 `corepack pnpm check:portable`까지 통과시킨다.
-- [ ] 2026-06-05 release build venv 복구
+- [x] 2026-06-05 release build venv 복구
+  - 2026-10-20 점검: 닫음. 이 PC의 `.venv-desktop`에 PyInstaller·torch·faster_whisper가 있고 10-18 실모델 흐름을 통과했다. 다른 PC 안내는 README에 있다.
   - 정식 반복 배포 기본값은 `backend\.venv-desktop\Scripts\python.exe`다.
   - 이 venv는 PC 간에 복사하지 말고 해당 PC의 Python으로 새로 만든다.
   - 복구 명령: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\ensure_backend_build_env.ps1 -Python <python.exe 경로> -RecreateBroken`.
 - [ ] 2026-06-01 속도 개선 후보 체계 검토
+  - 2026-10-20 점검: 「Ollama 기반 정리 기능 상태」에서 넘어온 모델 상태 TTL 캐시 P2를 여기서 다룬다(아직 없음).
   - 1차 후보는 `/api/models/status` TTL 캐싱이다. 앱 시작/설정 진입 시 모델 폴더, Ollama, GPU 상태 확인 비용을 줄일 수 있는지 먼저 측정한다.
   - 측정 기준: cold start 후 `/api/health`, `/api/models/status` 5회 응답 시간, 캐시 TTL 3~10초 적용 전후 비교, 설정 저장/모델 상태 새로고침 시 캐시 무효화 확인.
   - 긴 영상 분석 속도는 청크 길이부터 추론으로 바꾸지 않는다. `LMO_temp` 실제 샘플로 `30/60/90초`를 비교하고, 처리 시간, STT 글자수, 한글 비율, 청취 품질, 이어하기 체크포인트 영향을 함께 본다.
@@ -417,13 +479,15 @@
   - `release-manifest.json`은 배포본의 신분증이다. verify/diagnose에서 해시 불일치를 확인한다.
   - WebView 캐시는 필요할 때 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
   - 2026-05-11 확인: 기존 `lmo_audio` deploy 폴더 재구성, manifest/모델/sidecar/export smoke, deploy sidecar 15초 실제 분석을 통과했다. 이후 배포 위치는 `releases\lmo_audio`로 정리한다.
-- [ ] 1순위: 회사 PC 기준 portable 폴더 테스트
+- [x] 1순위: 회사 PC 기준 portable 폴더 테스트
+  - 2026-10-20 점검: 닫음. portable은 웹 MVP 이후다(roadmap.md 42-46줄). 다시 쓸 때 이 절차를 참고한다.
   - `releases\lmo_audio` 폴더 전체를 옮긴 뒤 실행한다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
   - 기본 음성 인식 모델은 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
   - 복사 후 `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`가 보여야 한다.
   - 참석자 구분 모델은 `models\speaker-diarization-community-1\config.yaml`, `models\speaker-diarization-community-1\embedding`, `models\speaker-diarization-community-1\segmentation`, `models\speaker-diarization-community-1\plda`가 있으면 된다.
   - 2026-05-11 프로젝트 내부 company-smoke 복사본(`.codex-work\company-smoke\lmo_audio`) 기준으로 verify/export smoke와 15초 실제 분석은 통과했다. 실제 회사 PC 또는 회사 PC와 같은 별도 드라이브 이동 검증은 아직 남아 있다.
 - [ ] 2순위: 긴 파일 실전 테스트
+  - 2026-10-20 점검: 아래 2026-05-11·05-12 기록(30분 이상 미검증, 메모리 위험)은 같은 항목의 30/60/120분 통과 기록과 맞지 않아 정리가 필요하다.
   - 2026-10-19 현재 범위: 입력 상한은 정확2시간(7200초)으로 확정했다. 상한/반려 시 기존 기록 보존·집중 회귀·agent 검토, 설치형QA1.6+별도HTTPS의 실제60분/120분 UI 업로드·중지/재개·구분·저장/재열기·4종 내보내기를 확인했다. QA1.7에서120분 기존 대화록의 실제 요약 재생성·동일 보존 흐름도 통과했다. 아래 요약 의미 품질 P2는 열려 있으며 운영1.5는 복원했다. 2시간30분·3/5시간은 지원/실측 범위 밖이다. 참석자 구분 native 호출·부분 요약의 중간 지점 재개는 후속 기능이다.
   - [x] P1 재시작 복구 상태 보존(2026-10-19): `06c7380`에서 같은 파일/설정의 재개 준비 중 유효한 완료 메타를 보존하고 실제 SHA·설정·실행 지문·chunk 경로/크기 검증과 불일치 fresh fallback을 유지했다. 수정 전6개 중4FAIL→신규8+기존7=15PASS·별도 Python 프로세스 후보2개/inactive·원본 bytes/mtime 보존·독립 검토 통과. 정확한 소스를 포함한 격리 QA1.7 실물 엔진을 완료2청크 뒤 강제 종료하고 새 프로세스/실제 HTTPS UI에서 같은 UUID·파일·설정으로6청크 완료, 기존2청크 SHA/mtime 보존과 저장1건/37구간을 독립 확인했다. 최초 QA 도구는 SSE 실패 관측을 중복 요청으로 세어 종료1이었으며 원본 실패를 보존하고 실제 서버 POST2건·SSE·저장소로 사후 검증했다. 근거 `.tmp/resume-initialization-fix-20261019` 및 `.tmp/two-hour-audit-20261018/crash-recovery`. 물리 전원 차단·디스크 손상·구분/부분 요약 중간 재개 검증은 아니다.
   - [x] P1 장시간 빈 요약 완료 오표시(2026-10-19): QA1.6의120분 최종 빈 JSON을 앞500자 임시 개요로 `completed` 저장하던 경로를3fdbdcd에서 제거했다. 빈/비지원 결과1회 제한 복구 뒤 명시 실패,6000자 병합 입력·8단계·128호출 유한 예산과 기존 내용/불확실성 보존을31개 집중 검사·독립 검토했다. 설치QA1.7의 실제120분 요약 POST1회/부분10+병합1의 유효 응답, 임시 개요 없음·저장/재열기/4종 파일·본문359행/검토108배지·240개 checkpoint 보존을 별도 agent가 확인했다. STT/구분을 반복하지 않았고 공개 설치파일은 아직 교체하지 않았다. 근거는 followup-plan의2시간 검사 항목과 `.tmp/two-hour-audit-20261018/evidence/summary-only-120m-2026-10-18T17-33-26-616Z-21944`.
@@ -460,12 +524,14 @@
   - 후속 개선: 참석자 구분을 별도 재실행할 수 있는 백그라운드 작업/SSE 진행률을 설계한다. 긴 파일에서는 pyannote window 분할과 참석자 라벨 병합이 같이 필요하다.
   - 2026-05-27 조정: 별도 참석자 구분 실행 중 `취소`/`멈추기` UI와 백엔드 중단 요청은 추가했다. 다만 pyannote 호출 자체는 한 번에 실행되므로, 긴 파일에서 중간 지점부터 이어받는 진짜 체크포인트 재개는 window 분할/중간 결과 저장 설계에서 별도로 처리한다.
 - [ ] 2-1순위: 최대2시간 회의의 단계별 checkpoint 복구와 부분 요약 보존
+  - 2026-10-20 점검: STT·구분·정렬·표시 checkpoint(`job_checkpoints.py`)와 부분 요약 병합(`3fdbdcd2`)은 있다. 남은 것은 부분 요약 checkpoint다.
   - 긴 회의 안정성은 AI 정리 품질 기능과 분리된 시스템 과제로 본다.
   - 시간대별 STT checkpoint, partial transcript, merged display segments, 부분 요약 결과를 재사용 가능한 산출물로 남긴다.
   - 실패/취소 후 이미 끝난 STT chunk는 다시 돌리지 않고, 최소한 대화록 TXT/JSON은 회수할 수 있게 한다.
   - 긴 회의 요약은 전체 대화록을 한 번에 넣지 않고 시간대별/주제별 부분 요약을 만든 뒤 최종 전체 요약과 주제별 정리로 합친다.
   - 관련 설계 문서: `docs/audio-long-file-processing-plan.md`
 - [ ] 3순위: 품질 기준 샘플셋 만들기
+  - 2026-10-20 점검: manifest는 10행이지만 정답 대화록 경로가 모두 비어 있고 잡음·작은 목소리 표본이 없다.
   - 6~10개 샘플을 구성한다: 깨끗한 음성, 잡음 많은 음성, 작은 목소리, 다화자, 긴 회의, 영상 MP4.
   - STT 정확도, 참석자 구분 정합성, 요약 품질, 처리 시간을 같은 표로 비교한다.
 - [ ] 3순위: 짧은 왕복 발화/끼어들기 참석자 구분 품질 개선
@@ -476,23 +542,27 @@
   - 자동 보정이 확실하지 않은 구간은 잘못 확정하지 말고 `참석자 확인 필요`로 표시하는 방식을 검토한다.
   - 2026-06-10 보수 처리: 자동 혼합 구간 분할은 speaker coverage gap이 있어도 원래 STT 시간 범위를 보존하고 `speaker_needs_review`/`speaker_split_coverage_gap`을 남기도록 했다. 실제 샘플에서 확인 필요 표시가 과하거나 부족하지 않은지 보고, smoothing 보정 여부(`speaker_smoothed`)와 `mixed_speaker_split`을 UI 확인 후보로 보여줄지도 같이 검토한다.
 - [ ] 3-0순위: 인식 후 정리 품질 개선
+  - 2026-10-20 점검: 문장 단위 표시 구간은 있다(`transcript_display.py`). 사용자 사전과 반복 정리는 없다.
   - 우선 모델 변경보다 `faster-whisper-large-v3 + pyannote` 결과를 회의록답게 정리하는 후처리를 개선한다.
   - 백엔드에서 `sentence_segments` 또는 `display_segments`를 만들어 화면, TXT, MD, DOCX, HWPX 내보내기까지 같은 문장 단위 대화록을 사용한다.
   - 같은 참석자 발화는 너무 잘게 쪼개지 않되, 조사/연결어로 끝난 조각은 다음 조각과 합치고 종결어미/문장 완료 지점에서 나눈다.
   - STT 후처리용 사용자 사전/도메인 사전 후보를 검토한다: 기관명, 위원회명, 법령명, `해양수산LMO`, `위해성 심사`, `가이드라인` 같은 전문용어.
   - 반복/말더듬/중복 문장 정리와 문장부호 보정을 검토한다. 단, 원문 왜곡 위험이 있으므로 원문 세그먼트와 표시용 세그먼트를 분리한다.
   - 실제 구현 전에는 큰 관점(회의록 품질/사용자 흐름)과 작은 관점(세그먼트 병합 로직/내보내기 회귀)으로 agent review를 진행한다.
-- [ ] 3-0-1순위: 대화록 사용자 수정본 구조 추가
+- [x] 3-0-1순위: 대화록 사용자 수정본 구조 추가
+  - 2026-10-20 점검: 닫음. `editedDisplaySegments`와 오래됨 표시(MeetingHistory.tsx), 백엔드 우선 사용(main.py), 테스트(`test-export-consistency.mjs`)가 있다.
   - 원본 STT/정렬 결과는 보존하고, 사용자 수정은 `editedDisplaySegments` 같은 별도 필드에 저장한다.
   - 대화록 편집은 원본 덮어쓰기가 아니라 사용자 수정본 기준으로 간다.
   - 수정 후 `주제별 정리`, `참석자별 정리`, 내보내기 결과가 stale 상태인지 표시하고, 사용자 수정본 기준 재정리 경로를 추가한다.
   - 설계 문서: `docs/transcript-editing-design.md`
 - [ ] 3-0-2순위: 주제별 정리 안정화
+  - 2026-10-20 점검: 3~7개 주제와 근거·할 일은 있다. 결정 필드가 없고 긴 대화록은 잘라 넣는다(「긴 파일 실전 테스트」의 긴 요약 P2와 같이 본다).
   - 주제별 정리는 단순 키워드나 한 덩어리 `핵심 주제`가 아니라 3~7개 주제 섹션으로 만든다.
   - 각 주제 섹션에는 논의 내용, 근거 발언, 관련 결정 사항, 관련 할 일을 함께 남긴다.
   - 긴 대화록에서는 시간대별/부분 요약 결과를 입력으로 받아 중간 쟁점이 빠지지 않게 한다.
   - 설계 문서: `docs/history-right-pane-ux-plan.md`
 - [ ] 3-0-3순위: 전체 요약과 주제별 정리 정합성 기준
+  - 2026-10-20 점검: 요약을 다시 만들면 하위 정리를 초기화하고 화면 fingerprint가 있다. 결론 일치 검증과 백엔드 fingerprint는 없다.
   - 전체 요약을 다시 만들면 기존 주제별 정리와 참석자별 정리는 초기화하고 재생성 필요 상태로 전환한다.
   - 전체 요약은 주제별 정리와 서로 다른 결론을 내지 않도록 주제 섹션을 기준으로 재생성하거나 검증한다.
   - `summary`, `topicSections`, `speakerContextSummaries`의 입력 fingerprint와 무효화 기준을 프론트/백엔드에서 동일하게 유지한다.
@@ -505,6 +575,7 @@
   - 이름 매핑 전에는 확정 참석자별 기록이 아니라 `자동 참석자 라벨 기준 AI 초안`으로 보고, 검토 필요 성격을 유지한다.
   - 설계 문서: `docs/history-right-pane-ux-plan.md`
 - [ ] 3-1순위: 내보내기 파일 실사용 검증
+  - 2026-10-20 점검: 사람 확인은 2026-06-16 보고서 범위만 기록돼 있고, 그 뒤 내보내기가 바뀌었다(`6ae28f2f`, `f5ef483c`). 여전히 Word·한글에서 직접 열어 봐야 한다.
   - HWPX는 zip/XML 생성 smoke test뿐 아니라 한글 또는 HWPX 뷰어에서 실제 열기 검증을 한다.
   - Codex 자동 테스트로는 HWPX 구조와 XML 파싱까지만 확인했다. 한글/뷰어에서 직접 열기, 본문 표시, 서식 깨짐 여부는 사람이 확인해야 한다.
   - 화면에서 제목/일시/참석자를 수정한 뒤 HWPX, MD, TXT, DOCX 다운로드 내용도 같은 값으로 반영되는지 확인한다.
@@ -513,7 +584,8 @@
   - 2026-06-05 완료: 대화록 수정 textarea, 추가 주제 입력 카드, 참석자별 정리 역할/기여도 표면을 `docs/design.md`의 공통 클래스 기준으로 옮겼다.
   - 2026-06-05 완료: `새 회의록 작성` 첫 화면에서 작성 폼이 DOM/키보드 순서상 먼저 읽히도록 미완료/이전 분석 기록 패널을 폼 뒤로 재배치했다.
   - 2026-06-05 완료: 사이드바 `미완료 분석 기록`에 semantic status token과 `status-pill`을 적용해 `진행 중`, `이어하기 가능`, `사용자 취소`, `실패`, `이어하기 불가` 상태가 같은 규칙으로 보이게 했다.
-- [ ] 3-2-1순위: 디자인 시스템 3차 후보 컴포넌트 분리
+- [x] 3-2-1순위: 디자인 시스템 3차 후보 컴포넌트 분리
+  - 2026-10-20 점검: 닫음. 대상 컴포넌트가 사라졌고(`fdffbcbb`, `3f612502`) 공통 컴포넌트는 `eb875791`로 정리됐다.
   - `MeetingWriter.tsx`의 `ResumeDraftSection`과 `ResumeDraftCard`를 파일 안 공통 컴포넌트로 먼저 분리하고, 필요하면 별도 파일로 옮긴다.
   - `MeetingHistory.tsx`의 `SpeakerSummaryList`를 분리해 참석자 필터, 접기, 이름 변경 액션 밀도를 추가로 낮춘다.
   - 새 회의록 작성 CTA 주변에서 `오디오 추출`, `분석 시작`, `이어받기` 상태가 한눈에 구분되는지 확인한다.
@@ -521,7 +593,8 @@
   - `참석자별 정리`는 읽기 화면 기준으로 제어 요소를 줄이고, 이름 연결/필터/접기 동작 밀도를 다시 조정한다.
   - 완료/진행/주의/빈 상태 문구를 `docs/design.md` 규칙에 맞춰 다시 통일한다.
   - 완료 배너와 진행 패널의 helper text 총량을 한 번 더 줄이고, 1440/1280px 기본 데스크톱과 1024px 최소 지원 창에서 버튼 줄바꿈과 텍스트 밀도를 확인한다. 800/640px 검증은 모바일 제품 설계가 아니라 가로 overflow 방어 확인으로만 다룬다.
-- [ ] 3-2-2순위: Stitch 기반 리디자인 준비
+- [x] 3-2-2순위: Stitch 기반 리디자인 준비
+  - 2026-10-20 점검: 닫음. 같은 주제가 위에서 닫혔고 디자인은 A「조용한 문서」를 채택했다(design.md).
   - Stitch 참고안의 전체 윤곽은 채택 후보로 본다: 고정 좌측 사이드바, 중앙 작업 영역, 우측 보조 패널, 차분한 navy/gray 계열, 작은 반경 카드, 명확한 탭/상태/내보내기 버튼 구조.
   - 실제 앱에 없는 `즐겨찾기`, `공유팀`, `휴지통`, 이메일 리포트, 언어 선택, 다크모드, 화자 구분 정밀도 같은 메뉴/설정은 그대로 추가하지 않는다.
   - Stitch 참고안에서 가져올 핵심은 새 회의 작성의 넓은 파일 업로드 영역, 최근 기록 보조 패널, 장시간 분석 진행 화면, 대화록의 넓은 읽기 영역과 우측 회의 정보 패널, 설정의 섹션형 구조다.
@@ -535,6 +608,7 @@
   - 완료/진행/주의/빈 상태 문구를 `docs/design.md` 규칙에 맞춰 다시 통일한다.
   - resume 카드의 helper text, 완료 배너, 진행 패널 설명문 총량을 줄여 업무형 UI 밀도를 맞춘다.
 - [ ] 3-2-3순위: 장시간 분석 완료용 선택형 고양이 알림 실험
+  - 2026-10-20 점검: 결정 필요: design.md가 장식 장면을 없앴다. 유지할지 정한 뒤 roadmap으로 옮기거나 닫는다.
   - 기관 내부 업무용 앱이므로 기본 UI는 차분하고 정보 밀도가 높은 업무 도구 톤을 유지한다.
   - 이 항목은 roadmap의 `백그라운드 분석 완료 알림` 중 앱 화면 효과 구현안으로 본다.
   - 핵심 용도는 장시간 분석이 백그라운드에서 끝났을 때 화면에 작은 고양이 알림이 나타나 `끝났어요`처럼 완료를 알려주는 것이다.
@@ -543,14 +617,17 @@
   - 모션은 짧고 끌 수 있어야 하며, 접근성/집중 모드를 위해 설정에서 `고양이 완료 알림` 또는 `화면 효과`를 on/off 가능하게 설계한다.
   - 기본값은 장시간 대기 사용성을 고려해 `켬`으로 두되, 기관 업무 환경에서 부담스러운 사용자는 설정에서 끌 수 있게 한다.
 - [ ] 4순위: 전처리 품질 개선 순서대로 검증
+  - 2026-10-20 점검: 세부 기록은 `docs/audio-performance-improvement-log.md`로 위임한다.
   - 이미 적용됨: WAV 표준화, 긴 파일 청크, 자동 볼륨 정규화.
   - 다음 후보: AGC/`speechnorm` 자동 게인 보정, 무음 제거, 음성 강화, denoise.
   - denoise는 한국어 자음/말끝 손실 위험이 있어 마지막에 별도 검증한다.
 - [ ] 5순위: 실패/취소 UX 개선
+  - 2026-10-20 점검: 중지·재개(`06c73809`)와 heartbeat는 있다. 남은 것은 업로드 진행 표시다.
   - 분석 중 취소, 실패한 청크만 재시도, partial result 저장, 임시 파일 정리를 추가한다.
   - 참석자 구분 모델 내부 진행률은 pyannote 호출 중 자세히 받을 수 없어 현재는 단계 전환 기준으로만 표시한다. 긴 파일에서 멈춘 것처럼 보이면 pyannote 세부 진행 이벤트 또는 별도 상태 heartbeat 설계를 후속 검토한다.
   - 큰 파일 업로드 저장은 현재 SSE 스트림 시작 전 처리된다. FastAPI 업로드 파일 수명 문제 때문에 먼저 저장하지만, 긴 파일에서 초기 진행률/취소가 비어 보일 수 있어 job 등록과 업로드 진행 상태를 분리하는 후속 개선이 필요하다.
-- [ ] 6순위: 최종 배포 zip 재생성
+- [x] 6순위: 최종 배포 zip 재생성
+  - 2026-10-20 점검: 닫음. portable은 웹 MVP 이후다. 마지막 handoff zip은 06-18 `5e57c2b`, 스크립트는 `08825903`이다.
   - 모델 미포함/포함 기준을 명확히 하고, 회사 PC용 설명 md와 함께 다시 묶는다.
   - 2026-05-12 빌드 기록: sidecar/Tauri 빌드는 성공했고, 최상단 안내 파일 한글 파일명/PowerShell 인코딩 문제로 packaging 단계에서 실패했다. 안내 파일은 `START_HERE.txt`로 고정한다.
   - 2026-05-12 검증 기록: `/api/health`, `/api/settings`는 통과했으나 `/api/models/status` 첫 호출이 5초를 넘겨 runtime smoke timeout이 났다. 검증 스크립트 모델 상태 요청 timeout은 최소 60초로 조정했다.
@@ -558,6 +635,7 @@
   - 2026-05-12 검증 기록: 포트 listen 조회는 권한/환경 영향을 받을 수 있으므로, portable smoke 기준은 `/api/health` 응답으로 둔다.
 
 # 0-1. 회사 PC에서 가장 먼저 할 일
+- 2026-10-20 점검: 이 절은 portable 안내문이며 지금 할 일이 아니다. 같은 내용이 README와 `docs/lmo-meeting-insight-company-pc-guide.md`에 있다.
 - [ ] 최종 배포본은 프로젝트 안에서는 `releases\lmo_audio`에 만든다. 회사 PC에는 이 `lmo_audio` 폴더 자체를 그대로 가져간다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
 - [ ] 기본 음성 인식 모델은 외부망 PC에서는 앱 설정 화면의 `받기`로 받는다. 내부망이거나 다운로드가 실패하면 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사한다.
 - [ ] 복사 후 아래 파일들이 바로 보여야 한다: `models\faster-whisper-large-v3\model.bin`, `models\faster-whisper-large-v3\tokenizer.json`, `models\faster-whisper-large-v3\config.json`.
@@ -586,34 +664,44 @@
 
 ## 2. 모델 및 환경 자동화 (오프라인 배포 준비)
 - [x] 사용자용 자동 모델 다운로드 흐름 제거
-- [ ] 관리자가 준비한 모델 묶음을 `releases\lmo_audio\models\faster-whisper-large-v3`에 복사하는 배포 절차 확정
+  - 2026-10-20 점검: 낡음. `8003f25a`에서 음성 인식·요약 모델 받기가 다시 들어왔다(설정 > 모델).
+- [x] 관리자가 준비한 모델 묶음을 `releases\lmo_audio\models\faster-whisper-large-v3`에 복사하는 배포 절차 확정
+  - 2026-10-20 점검: 닫음. 웹 엔진은 필요할 때 모델을 받는다(followup-plan). portable은 MVP 이후다.
 - [ ] 내부망 이관 후 모델 묶음 배포 위치와 파일 검증 절차 정리
+  - 2026-10-20 점검: 웹 엔진 기준으로 다시 쓴다. 업무망 대안은 `docs/model-download-distribution-evaluation.md`에 있고, 업무망 배포 방식은 결정이 필요하다.
 
 ## 3. 회의록 DB화 및 이력 관리
 - [x] 회의 단위 DB 스키마 설계 (IndexedDB 임시 적용 완료): 제목, 날짜, 참석자, 요약 데이터 저장
 - [x] 발화 세그먼트 스키마 추가 및 상세 모달 스크립트 탭 UI 구현 완료
 - [x] 발화 세그먼트 DB 저장(백엔드 연동 확정 시): 원문 텍스트 연계 로직 추가 완료
 - [x] 대화록 화면 표시 1차 개선: 같은 화자라도 문장 완료로 보이는 지점에서 나누고, 조사/연결어로 끝난 조각은 다음 조각과 이어서 보여준다.
-- [ ] 백엔드 출력용 `sentence_segments` 또는 `display_segments` 생성 검토: 화면뿐 아니라 TXT/MD/DOCX/HWPX 내보내기도 문장 단위 대화록으로 맞춘다.
-- [ ] 요약 결과 DB 저장: 핵심 요약, 주요 토픽, 결정 사항, 할 일, 후속 액션을 구조화해서 보관 (현재는 단일 요약 텍스트로 보관 중)
+- [x] 백엔드 출력용 `sentence_segments` 또는 `display_segments` 생성 검토: 화면뿐 아니라 TXT/MD/DOCX/HWPX 내보내기도 문장 단위 대화록으로 맞춘다.
+  - 2026-10-20 점검: 닫음. `transcript_display.py`가 표시 구간을 만들고 TXT·MD·DOCX·HWPX가 모두 쓴다(`d515fe23`).
+- [x] 요약 결과 DB 저장: 핵심 요약, 주요 토픽, 결정 사항, 할 일, 후속 액션을 구조화해서 보관 (현재는 단일 요약 텍스트로 보관 중)
+  - 2026-10-20 점검: 닫음. `meetingRepository.ts`에 topicSections·actions·decisions·needsCheck가 있다(`2630de58`).
 - [x] 회의록 목록/상세 UI 추가: 최근 회의록 조회, 검색, 삭제, MD 결과 다운로드 기능 구현
 - [x] IndexedDB 저장소 로직을 `meetingRepository.ts`로 분리해 SQLite 마이그레이션 준비
 - [ ] 웹 MVP 6단계에서 로컬 엔진 SQLite를 기준 저장소로 전환한다. 현재 IndexedDB는 UI 계약 검증과 안전한 가져오기 원본으로 유지한다.
 
 ## 4. 요약 프롬프트 및 문서 내보내기 고도화
 - [ ] `backend/pipeline/summarize.py`의 Gemma 프롬프트 세밀 튜닝 (결정사항, 할 일 추출 정확도 향상)
-- [ ] 요약 입력에 표시용 문장 세그먼트를 사용할지 검토한다. 너무 잘게 쪼개진 원 STT 세그먼트 대신 문장 단위 대화록을 주면 쟁점/결정사항 추출이 안정될 수 있다.
+  - 2026-10-20 점검: 「긴 파일 실전 테스트」의 긴 요약 P2와 겹친다. 그 항목에서 같이 다룬다.
+- [x] 요약 입력에 표시용 문장 세그먼트를 사용할지 검토한다. 너무 잘게 쪼개진 원 STT 세그먼트 대신 문장 단위 대화록을 주면 쟁점/결정사항 추출이 안정될 수 있다.
+  - 2026-10-20 점검: 닫음. 기본 경로는 display_segments를 먼저 쓴다. 분석 중 요약 옵션(기본 꺼짐)만 정렬 세그먼트를 쓴다.
 - [ ] 한글(HWPX) 템플릿 지원 (미리 지정된 사내 회의록 양식에 맞게 결과 매핑)
 - [ ] 표 형식을 포함한 깔끔한 DOCX 내보내기 스타일(python-docx) 개선
+  - 2026-10-20 점검: 메타 표는 있지만 완료 기준이 없다. 목표를 구체적으로 적거나 닫는다.
 
 ## 4-1. 오디오 전처리 품질 개선
-- [ ] 0순위: STT 품질 회귀 재현 및 원인 분리
+- [x] 0순위: STT 품질 회귀 재현 및 원인 분리
+  - 2026-10-20 점검: 닫음. Cohere 시절 항목이다. 05-12에 faster-whisper로 고정했고 실제 샘플 비교는 아래 테스트셋 항목이 맡는다.
   - 사용자가 품질 저하를 느낀 실제 파일 1개를 기준 샘플에 추가한다.
   - 현재 기본값, 전처리 off, `noise_gate=false`, 청크 60초/90초를 같은 파일로 비교한다.
   - STT 원문 문제와 화자 정렬 문제를 분리해서 본다.
   - 2026-05-07 1차 확인: `noise_gate=false`, 긴 파일 STT 청크 90초가 같은 샘플에서 더 안정적이었다.
   - 2026-05-07 추가 확인: Cohere 전처리 제거 90초 비교에서 raw/off 한글 비율 47.4%, `auto_no_gate` 54.3%, `noise_gate_on` 45.8%. 전처리 제거만으로 Cohere 품질 문제는 해결되지 않음.
-- [ ] 0순위: `noise_gate` 기본 적용 여부 재검토
+- [x] 0순위: `noise_gate` 기본 적용 여부 재검토
+  - 2026-10-20 점검: 닫음. 기본값이 꺼짐이다(`audio_preprocess.py`, config.json).
   - 방송 오프닝 샘플에는 효과가 있었지만 실제 회의/작은 목소리에서 회귀 가능성이 있다.
   - 비교가 끝날 때까지 기본 회의 인식에서는 끄는 방향을 우선 검토한다. 2026-05-07 설정 기본값은 `false`로 변경했다.
 - [x] 현재 전처리 현황 문서화 (`docs/audio-preprocessing-notes.md`)
@@ -622,7 +710,9 @@
 - [x] `backend/pipeline/audio_preprocess.py`에 선택형 볼륨 정규화(normalize) 1차 적용
 - [x] 입력 음량 측정 기반 `auto normalization` 1차 적용
 - [x] 테스트셋 1차 manifest 구성 (`docs/audio-testset-manifest.csv`, 현재 4개 영상)
+  - 2026-10-20 점검: 지금 manifest는 10행이다.
 - [ ] 테스트셋 보강 (6~10개, 실제 작은 목소리/잡음/기기/길이 편차 포함)
+  - 2026-10-20 점검: manifest는 10행이지만 작은 목소리·잡음 행이 없다.
 - [ ] `off / auto / loudnorm` 기준 faster-whisper STT / diarization / summary 비교 검증
 - [x] `speechnorm` 선택형 모드 추가
 - [x] `speechnorm` 60초 샘플 1차 비교
@@ -633,6 +723,7 @@
 - [x] `speechnorm` 작은 목소리/잡음 변형 샘플 1차 비교
 - [ ] 실제 작은 목소리/잡음 원본 샘플 추가 비교
 - [ ] AGC 자동 게인 보정 후보 검토
+  - 2026-10-20 점검: speechnorm 비교는 끝났고(성능 로그) dynaudnorm 비교 기록은 없다.
   - ffmpeg `speechnorm` 선택형 모드 추가 완료, 샘플 비교 필요
   - ffmpeg `dynaudnorm`
   - 작은 목소리 보정 효과와 잡음 증폭 부작용 비교
@@ -670,14 +761,17 @@
 - [ ] 음성 강화(speech enhancement)는 별도 후보 모델/라이브러리 조사 후 실험 여부 결정
 - [x] denoise는 ffmpeg `afftdn` 후보로 60초 샘플 1차 비교
 - [ ] denoise 청취 검증 및 실제 잡음 샘플 추가 비교
-- [ ] legacy 필요 시 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
+- [x] legacy 필요 시 전처리 on/off에 따른 Cohere STT / diarization / summary 품질 비교 샘플셋 정리
+  - 2026-10-20 점검: 닫음. Cohere는 기록만 보존하고 앱은 faster-whisper로 고정했다.
 - [x] 사용자 설정 UI에 전처리 옵션 추가
+  - 2026-10-20 점검: 모드 선택 UI는 `5511e4ca`에서 빠졌고 지금은 `음성 정리` 켜기/끄기만 있다.
   - 자동
   - 끔
   - 표준 정규화(`loudnorm`)
   - 동적 정규화(`dynaudnorm`)
   - 고급 옵션은 기본 숨김 처리 검토
-- [ ] 사용자에게 현재 적용된 전처리 모드와 자동 선택 결과를 분석 화면/결과 메타데이터에 표시
+- [x] 사용자에게 현재 적용된 전처리 모드와 자동 선택 결과를 분석 화면/결과 메타데이터에 표시
+  - 2026-10-20 점검: 닫음. 결과 메타데이터에 기록되고(resolved_mode), 화면에 보이는 것은 구현 용어 노출 금지(AGENTS.md)와 맞지 않는다.
 
 ## 5. 대용량 음성/영상 처리
 - [x] 영상 파일 업로드 시 ffmpeg로 음성 트랙만 추출하고 원본 영상은 설정에 따라 보관/삭제
@@ -686,7 +780,8 @@
 - [x] 청크별 진행률을 SSE로 전송해 사용자가 긴 파일 처리 상태를 확인할 수 있게 개선
 - [x] 30분 파일 전처리/청크 생성 시간과 임시 용량 기록
 - [x] 1시간/2시간 설치형·HTTPS 실전 기능 검사와 처리 시간·자원 관측 기록(2026-10-19): 실제 STT120/240청크·구분·요약·UI 중지/재개·저장/재열기·4종 내보내기를 확인했다. 120분 초기 빈 요약 정상 완료 결함은 수정/실물 재검증했으나 후반 주제 누락의 의미 품질 P2는 별도 열린 항목이다. `.tmp/two-hour-audit-20261018` 및 `docs/web-local-engine-followup-plan.md`에 단계 시간·5초 간격 메모리·디스크 고정 시점 용량을 기록했다. 디스크 최고치/OS spool·다른 사양의 보장은 아니며 입력 상한2시간·2시간30분/3/5시간 제외를 유지한다.
-- [ ] 실패한 청크만 재시도할 수 있도록 임시 작업 상태와 partial result 저장
+- [x] 실패한 청크만 재시도할 수 있도록 임시 작업 상태와 partial result 저장
+  - 2026-10-20 점검: 닫음. 청크별 checkpoint와 재사용(`reused_stt`)이 있다(`job_checkpoints.py`, main.py).
 
 ## 6. 2026-04-26 Agent Review Notes
 - [x] Cohere Transcribe, Pyannote Community-1, Ollama Gemma 준비 상태 확인 및 Cohere 데모 음성 STT 검증
@@ -697,20 +792,24 @@
   - Cohere가 정확한 단어 타임스탬프를 제공하지 않으므로 텍스트 길이 기반 추정 세그먼트를 생성
   - 추정 세그먼트가 여러 참석자 구간과 겹치면 overlap 비중에 따라 텍스트를 나눠 참석자 정렬
   - API/UI에 `timingApproximate`를 전달해 시간표가 추정값임을 표시
-- [ ] Cohere 장문 STT 품질 후속 개선
+- [x] Cohere 장문 STT 품질 후속 개선
+  - 2026-10-20 점검: 닫음. Cohere는 기록만 보존한다.
   - 현재 일부 구간에서 로마자/영어식 오인식이 남는다.
   - 공식 문서, 모델 옵션, 언어 프롬프트, 후처리 전략을 추가 검토한다.
   - 필요하면 faster-whisper/Whisper 계열과 품질 비교 테스트 세트를 만든다.
 - [ ] 모델/의존성 설치 재현성 개선
+  - 2026-10-20 점검: librosa 등은 requirements에 반영됐다. 남은 것은 frozen 빌드 버전 고정이다.
   - requirements.txt에 Cohere 실행에 필요한 librosa, soundfile, sentencepiece, protobuf 반영
   - Python venv 런처와 네이티브 패키지 버전 정리 필요
 - [x] 데스크탑 패키징 설계 1차 정리
   - 내부 분석 기능은 빈 로컬 포트를 자동 할당하고 Tauri command로 UI에 전달
   - sidecar 터미널 노출 방지, 로그 파일 저장, ffmpeg/model 경로 기준 정리
 - [ ] 데스크탑 패키징 후속 안정화
+  - 2026-10-20 점검: Tauri·portable은 웹 MVP 이후다. 모델 포함 기준은 release checklist에 있다. 그 단계에서 다시 본다.
   - 새 portable zip 생성 후 회사 PC와 유사한 경로에서 재검증
   - 모델 미포함 배포와 모델 포함 배포 기준을 문서화
 - [ ] 인터넷 기반 앱 업데이트 기능 검토
+  - 2026-10-20 점검: 웹 엔진 업데이트는 NSIS 롤백·서명 manifest·`업데이트 안내`로 다룬다. 데스크톱 업데이트는 Tauri 단계에서 다시 본다.
   - 1차 기준은 수동 업데이트 패키지(`scripts\create_update_package.ps1`, `update_lmo_audio.ps1`, `verify_update.ps1`)로 둔다.
   - 수동 업데이트도 적용 중 복사 실패에 대비해 staging/backup/rollback 절차를 설계하고 테스트한다.
   - 새 버전이 있으면 앱 안에서 업데이트 가능 상태를 표시한다.
@@ -718,10 +817,12 @@
   - 회사망/오프라인 환경에서는 업데이트 확인 실패가 분석 기능을 막지 않도록 한다.
   - 설치 패키지 서명 검증, 업데이트 채널, 프록시/차단망 동작, 외부 전송 메타데이터 범위를 먼저 정한다.
 - [ ] 완전 자동 업데이트 기능 구현
+  - 2026-10-20 점검: Tauri 단계에서 다시 본다(웹 엔진은 위 항목 참고).
   - 앱이 업데이트 manifest를 확인하고, 사용자가 승인하면 모델 제외 업데이트 패키지를 내려받아 검증 후 적용한다.
   - 적용 전 실행 중인 앱/sidecar 종료, 기존 `models`, `backend\config.json`, `backend\outputs`, `backend\temp` 보존, 실패 시 rollback 기준을 설계한다.
   - 내부망/외부망 배포 위치, 패키지 서명, 해시 검증, 프록시/차단망 실패 UX를 확정한 뒤 구현한다.
 - [ ] 저장소 기준 정리
+  - 2026-10-20 점검: 위 「웹 MVP 6단계 SQLite 전환」 항목과 겹친다.
   - 백엔드 JSON/MD/DOCX 결과와 UI IndexedDB 저장 구조를 SQLite 전환 전에 단일 기준으로 정리
 
 ## 7. Immediate Priority: Real E2E Smoke Test
@@ -742,6 +843,7 @@
 ## 8. 웹 우선 로컬 엔진
 
 - [ ] 사용자 다운로드형 웹 로컬 엔진 MVP 착수
+  - 2026-10-20 점검: 착수는 `dc610b6f`로 끝났다. 남은 것은 MVP 완료이며 6단계(SQLite)와 8단계는 시작 전이다.
   - 제품 방향: `docs/web-local-engine-followup-plan.md`.
   - 단일 실행 계획과 단계별 증거: `docs/web-runtime-separation-implementation-plan.md`.
   - 2026-08-13 완료: 1단계 첫 묶음인 웹/Tauri 런타임 경계, 공통 로컬 엔진 클라이언트와 연결 상태 기반을 `dc610b6f`에 반영했다. Settings coordinator와 실제 Tauri smoke는 1단계 잔여 관문으로 유지한다.
@@ -760,20 +862,27 @@
   - 2026-08-20 UX 정리: 배포 공지와 중복되는 정상·진행 설명은 제거하고 로컬 처리 설명을 정보 툴팁으로 옮겼다. 오류는 다음 행동 한 문장만 유지하고, 검증된 installer URL 전에는 설치 버튼을 노출하지 않는다. 연결 전 비활성 분석 CTA의 강조를 낮추고 상태 전환·pairing 처리 중 키보드 포커스와 reduced-motion·모달 overscroll·입력 속성을 보강했다.
   - 2026-08-20 UI 밀도 조정: 연결 전 분석 CTA는 고래 장식을 숨긴 텍스트 버튼으로 만들고 상태 레일과 88px 동일 높이로 맞췄다. 시작 화면 빈 상태의 `첫 회의록`과 긴 설명을 제거하고 카드를 낮췄으며, 로컬 보관·지원 파일·결과 설명은 하단 배지의 hover/focus 툴팁으로 옮겼다. 시작 화면의 중복 eyebrow 문구도 제거하고, 한글 hero 제목은 줄간을 완화하고 자간을 기본값으로 복원했으며 제목·설명 단어 간격을 소폭 넓혔다. 빈 상태는 `저장된 회의록이 없습니다`로 축약했고, 주 CTA는 `새 기록`으로 줄여 `+` 아이콘 없이 텍스트 그룹을 최종 왼쪽 5px로 보정했다.
   - [ ] 4단계 preview 잔여: 검증 가능한 Local Network Access 증거를 실제 HTTPS Chrome/Edge에서 확보한 뒤 권한 승인·거부·재승인 장면을 구현한다. installer/update URL은 서명·manifest·3C 실물 관문 뒤에만 활성화하고, 낮은 높이·200% 확대·강제 색상 접근성 smoke와 5단계 전체 API 인증 전환을 별도로 닫는다.
+    - 2026-10-20 점검: Chrome 155 실제 HTTPS 권한 장면은 구현됐다(99ae0f17, 61858a52). 남은 것: Edge, 재승인, 200%·강제 색상 smoke(스크립트 없음).
   - [ ] 집 PC 3C installer 실물 관문: 기존 frozen artifact closed manifest/hash 재검증 → helper build → unsigned NSIS build를 한 번만 실행한다. 격리 `LOCALAPPDATA`에서 fresh install, update, 의도적 중단 복구, readiness rollback, uninstall/reinstall, Start Menu 실행·연결·종료, free/외부 점유 포트와 사용자 data sentinel 보존을 한 smoke 묶음으로 확인한다. 회사 PC에서는 실행하지 않았고 현재 `makensis.exe`도 없다.
+    - 2026-10-20 점검: "makensis 없음"은 틀렸다. NSIS 3.13으로 설치·업데이트·중단 복구를 했고 0.1.8도 컴파일했다. 남은 장면: readiness 롤백, 제거 후 재설치, 외부 포트 점유, helper 차단.
     - 2026-10-19 source-only: `installer/web-local-engine.nsi`의 `barorok-installer-preflight.exe` ExecWait 9곳(RunInstallerPreflight + 정리·검증·tombstone·정지/준비 probe·제거 정리 8곳)에 `ClearErrors`→`IfErrors`→`"launch_failed"` 실행 실패 감지를 넣어, 백신 격리 등으로 helper가 실행되지 않을 때 이전 출력값 0으로 정리·검증이 성공 처리되지 않게 했다. `tests.test_web_local_engine_packaging` 5개 통과·guard 제거 mutation 실패 확인. makensis가 없어 NSIS 컴파일은 미검증이다.
     - [ ] 집 PC에서 이어서: 위 3C build 때 makensis 컴파일 경고·오류 없음을 확인하고, smoke 묶음에 helper 실행 차단(이름 변경·잠금 등) 장면을 넣어 설치 전 점검은 백신 안내 후 중단, 정리·검증·tombstone 복구는 실패 경로, 제거는 데이터 보존 상태로 중단되는지 본다. 정지/준비 probe 루프는 실행 실패 시에도 한도(약 5초/30초)까지 재시도한 뒤 기존 실패 문구를 보여 주므로, 전용 안내가 필요한지 P2로 판단한다.
     - 2026-10-20 source-only(브랜치 `claude/trusting-curran-070748`, 브랜드 브랜치 `claude/peaceful-gagarin-25713f` 위): release build가 manifest에 모델·분석 임시·결과 공간(`storageRequirements`)을 넣어 정상 PC의 설치 중 Yes/No가 사라지고, 공간이 부족하면 드라이브와 비울 GB를 안내한다. 업그레이드는 이미 받은 모델·기존 설치를 구성 요소별 한도까지 뺀다. 설치 프로그램 표시 이름은 브랜드 없는 `음성 분석`, 바로가기는 `음성 분석 시작`·`<브랜드> 연결`·`음성 분석 종료`·`음성 분석 제거`, 브랜드는 `configs/brand.json`에서만 읽는다. 옛 `바로록 로컬 엔진` 시작 메뉴 폴더는 새 바로가기를 만든 뒤 지운다. backend 76/78(기존 17863 포트 검사 2개만 실패)·packaging/verifier 18 통과, NSIS 3.11 컴파일만 확인. 값의 근거는 `docs/web-local-engine-followup-plan.md`의 `설치 전 점검: 모델·작업 공간 크기와 표시 이름 — 2026-10-20`.
-    - [ ] main 병합 대기: 원래 체크아웃의 미커밋 변경 8개 파일(`LocalEngineConnectionSurface.tsx`, `MeetingWriter.tsx`, `localEngineConnectionView.ts`, 시뮬레이션 2개, `docs/design.md`, 후속 계획 문서, `todo.md`)이 이 브랜치와 겹쳐 fast-forward가 거부된다. 그 변경을 커밋한 뒤 브랜드 브랜치 → 이 브랜치 순서로 합친다(이 브랜치는 브랜드 브랜치를 포함한다).
+    - 2026-10-20 점검: 여기서 말한 포트 검사 테스트 2개 실패는 `d3dbbf72`·`a320e5c6`에서 고쳐졌다.
+    - [x] main 병합 대기: 원래 체크아웃의 미커밋 변경 8개 파일(`LocalEngineConnectionSurface.tsx`, `MeetingWriter.tsx`, `localEngineConnectionView.ts`, 시뮬레이션 2개, `docs/design.md`, 후속 계획 문서, `todo.md`)이 이 브랜치와 겹쳐 fast-forward가 거부된다. 그 변경을 커밋한 뒤 브랜드 브랜치 → 이 브랜치 순서로 합친다(이 브랜치는 브랜드 브랜치를 포함한다).
+      - 2026-10-20 점검: 닫음. 미커밋 변경은 `b6170fd5`·`bb366411`·`47a2dc32`로 커밋됐고 설치 브랜치(`186b842d`)와 브랜드 브랜치(`ba320312`)가 main에 들어갔다.
     - [ ] 위 변경의 실물 관문: 옛 payload에는 `storageRequirements`가 없어 재사용할 수 없으므로 payload부터 다시 빌드한다. 정상 PC 새 설치에서 Yes/No 없음, 0.1.8에서 업그레이드 시 옛 폴더 제거·`음성 분석` 폴더 4개 바로가기·앱 목록 이름/게시자·HKCU `ConnectShortcut`, 공간 부족(작은 테스트 볼륨) 안내의 드라이브/GB, 제거 후 바로가기 정리·사용자 데이터 보존, frozen helper에 PyAV/numpy가 없는지(크기)를 본다. 설치하면 실행 중인 엔진이 교체되므로 다른 세션 진단이 끝난 뒤 한다.
     - [ ] 설치 크기 후속(P2): 웹 엔진이 요약 프로그램을 `LocalEngine\config\runtime\ollama`에 받는지 확인(제안 카드 있음), 고정 버전 요약 프로그램의 실제 압축 해제 크기로 `SUMMARY_RUNTIME_INSTALLED_BYTES`(현재 이 PC의 Ollama 설치 폴더 실측 대용값) 교체, 기본 요약 모델을 바꾸면 `SUMMARY_MODEL_BYTES` 재측정, 모델 폴더가 junction이면 공제·안내 드라이브가 맞지 않는 점.
     - [ ] 웹 문구와 설치 이름 맞추기(P2, desktop-app은 다른 세션 범위): 앱 목록에는 `음성 분석`이 보이는데 웹은 `<브랜드> 연결`을 "다시 설치" 대상으로 말한다(`MeetingWriter.tsx`, `apiError.ts`, `localEngineConnectionCoordinator.ts`의 설치 안내), 사용자에게 보이는 `로컬 엔진…` 오류 4개(`localEngineConnectionCoordinator.ts`), 시작 메뉴 안내를 "‘<브랜드> 연결’을 검색해 실행"으로, `backend/main.py`의 "바로록을 다시 설치"(웹 엔진에서는 틀림). main 미커밋 변경의 `바로록 연결 받기`→`설치 파일`은 `docs/design.md` 기준과 맞지 않는다.
+      - 2026-10-20 점검: 백엔드 `바로록`은 사라졌고(`d024a2e1`) design.md가 `설치 파일`을 채택했다. 남은 것: coordinator의 `로컬 엔진…` 문구 5곳과 재설치 대상 이름.
     - [ ] 설치 프로그램 잔여(낮음): MessageBox에 `/SD`가 없어 `/S` 무인 설치에서도 창이 뜬다(기존), `소유권`이 들어간 복구 문구 3개, 기록된 `ConnectShortcut` 값의 `\`·`*` 검사, 0.1.8로 되돌려 설치한 뒤 그 제거 프로그램이 `음성 분석` 폴더 바로가기를 남기는 점.
   - [ ] 외부 배포 전 payload slimming: 모델 제외 manifest도 4,887 files, 1,117,850,125 bytes(약 1.04 GiB)다. `torch_cpu.dll`, `ffmpeg.exe`, LLVM, CTranslate2 등 실제 분석 runtime 의존성을 기능별로 측정해 불필요한 중복만 줄이고 STT·화자 구분·요약·ffmpeg 대표 입력 회귀를 통과해야 닫는다.
+    - 2026-10-20 점검: 설치 파일은 이미 공개됐으므로 "정식 배포 전"으로 읽는다.
   - 3C-0B 잔여: 실기기 결과로 공식 최소·권장 RAM·디스크·처리시간을 확정한다. 모델 manifest의 실제 byte 요구량과 모델 다운로드 시점 재검사는 후속 모델 설치 묶음에서 닫는다.
   - 3C에서는 current-user NSIS installer와 Start Menu의 실행·연결 준비·정상 종료 동작, 실제 install/update/uninstall-reinstall 데이터 보존, staging·rollback을 검증한다. 실제 모델을 넣은 대표 audio/video 분석 smoke도 릴리스 관문으로 닫는다.
   - 첫 웹 제품은 HTTPS 웹 UI와 현재 사용자 단위 Windows NSIS 로컬 엔진 한 경로만 제공한다.
   - 사용자는 웹에 접속해 코드 서명된 LMO Local Engine Setup.exe를 한 번 내려받고, STT·화자 구분·요약 모델은 필요한 시점에 별도로 받는다.
+  - 2026-10-20 점검: 실제 파일명은 `Barorok-Local-Engine-Setup-<ver>.exe`(빌드 스크립트)라 옛 브랜드가 남아 있다(P2 후보).
   - 순수 WASM/WebGPU BrowserEngine, remote SaaS, portable 로컬 엔진, 모바일·PWA는 첫 웹 MVP와 병행하지 않는다.
   - Tauri 데스크톱 앱과 portable/handoff 검증은 웹 MVP 이후 별도 제품 단계에서 수행한다.
   - 0단계는 현재 호출·환경·회귀 inventory를 고정한다. exact origin과 pairing·세션은 2단계, single instance·helper·서명 업데이트는 3단계, Local Network Access 복구 UX는 4단계에서 검증한다.

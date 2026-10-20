@@ -23,6 +23,7 @@ import {
 } from '../src/localEngineSession.ts';
 import { LocalEngineConnectionCoordinator } from '../src/localEngineConnectionCoordinator.ts';
 import { getLocalEngineConnectionView } from '../src/localEngineConnectionView.ts';
+import { selectWriterStatusRow } from '../src/writerStatusRow.ts';
 import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 const web = detectRuntimeEnvironment({
@@ -99,16 +100,27 @@ assert.equal(connection.capabilities.size, 0);
 assert.equal(parseLocalEngineProbe({ ...parsedProbe, product_id: 'other-engine' }), null);
 
 const viewSnapshot = createInitialLocalEngineConnection('web-local-engine');
-assert.equal(getLocalEngineConnectionView({
+const introView = getLocalEngineConnectionView({
   snapshot: viewSnapshot,
   pairingPhase: 'idle',
   connectionStarted: false,
-}).scene, 'intro');
-assert.equal(getLocalEngineConnectionView({
+});
+assert.equal(introView.scene, 'intro');
+assert.equal(introView.title, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 필요합니다`);
+assert.equal(introView.message, '설치했다면 연결 확인을 눌러 주세요.');
+assert.doesNotMatch(introView.message, /자동/, 'nothing has been checked yet, so the first visit never promises an automatic connection');
+assert.equal(introView.tone, 'info');
+assert.equal(introView.help, null);
+const checkingView = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'checking' },
   pairingPhase: 'idle',
   connectionStarted: true,
-}).scene, 'checking');
+});
+assert.equal(checkingView.scene, 'checking');
+assert.equal(checkingView.title, '연결 확인 중');
+assert.equal(checkingView.tone, 'neutral', 'a check in progress is a grey spinner, not a status color');
+assert.equal(checkingView.primaryAction, null);
+assert.equal(checkingView.secondaryAction, null);
 const unreachableView = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'unreachable' },
   pairingPhase: 'idle',
@@ -124,6 +136,7 @@ const introWithInstaller = getLocalEngineConnectionView({
   connectionStarted: false,
   installerAvailable: true,
 });
+assert.equal(introWithInstaller.primaryLabel, '연결 확인');
 assert.equal(introWithInstaller.secondaryAction, 'download', 'a configured installer is offered before the first connection attempt');
 assert.equal(introWithInstaller.secondaryLabel, '설치 파일');
 const unreachableWithInstaller = getLocalEngineConnectionView({
@@ -133,15 +146,21 @@ const unreachableWithInstaller = getLocalEngineConnectionView({
   installerAvailable: true,
 });
 assert.equal(unreachableWithInstaller.primaryAction, 'probe', 'no response does not establish that installation is needed');
-assert.equal(unreachableWithInstaller.primaryLabel, '연결 확인');
-assert.equal(unreachableWithInstaller.secondaryAction, 'download');
+assert.equal(unreachableWithInstaller.primaryLabel, '다시 확인');
+assert.equal(unreachableWithInstaller.secondaryAction, 'download', 'the installer stays a button, not only help text');
 assert.equal(unreachableWithInstaller.secondaryLabel, '설치 파일');
-assert.equal(unreachableWithInstaller.message, `설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`);
-assert.equal(getLocalEngineConnectionView({
+assert.equal(unreachableWithInstaller.title, '연결하지 못했습니다');
+assert.equal(unreachableWithInstaller.tone, 'warning');
+assert.equal(unreachableWithInstaller.message, `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인해 주세요.`);
+assert.ok(unreachableWithInstaller.help.startsWith(`Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하세요.`));
+const pairingRequiredView = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
   pairingPhase: 'idle',
   connectionStarted: true,
-}).scene, 'pairing-required');
+});
+assert.equal(pairingRequiredView.scene, 'pairing-required');
+assert.equal(pairingRequiredView.message, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중이면 자동으로 연결됩니다.`);
+assert.deepEqual([pairingRequiredView.secondaryLabel, pairingRequiredView.primaryLabel], ['다시 확인', '연결 시작']);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
   pairingPhase: 'awaiting-code',
@@ -159,20 +178,147 @@ const connectedView = getLocalEngineConnectionView({
 });
 assert.equal(connectedView.scene, 'connected');
 assert.equal(connectedView.analysisReady, true);
-assert.equal(getLocalEngineConnectionView({
-  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'authenticated', capabilities: new Set(['analysis']) },
-  pairingPhase: 'connected', connectionStarted: true, analysisPrerequisitesMissing: true,
-}).title, '연결됨', 'connection alone must not claim that model checks have completed');
-assert.equal(getLocalEngineConnectionView({
+assert.equal(connectedView.title, '연결됨', 'connection alone must not claim that model checks have completed');
+const sessionEndedView = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'expired' },
   pairingPhase: 'expired',
   connectionStarted: true,
-}).scene, 'session-ended');
-assert.equal(getLocalEngineConnectionView({
+});
+assert.equal(sessionEndedView.scene, 'session-ended');
+assert.deepEqual([sessionEndedView.secondaryLabel, sessionEndedView.primaryLabel], ['다시 확인', '다시 연결']);
+const updateView = getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', updateRequired: true },
   pairingPhase: 'idle',
   connectionStarted: true,
-}).scene, 'update-required');
+  updateAvailable: true,
+});
+assert.equal(updateView.scene, 'update-required');
+assert.equal(updateView.title, `${LOCAL_ENGINE_NAME} 업데이트가 필요합니다`);
+assert.deepEqual([updateView.secondaryLabel, updateView.primaryLabel], ['다시 확인', '업데이트 안내']);
+const pairingErrorView = getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
+  pairingPhase: 'error',
+  connectionStarted: true,
+});
+assert.equal(pairingErrorView.title, '연결을 완료하지 못했습니다');
+assert.equal(pairingErrorView.tone, 'warning');
+assert.equal(pairingErrorView.message, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`);
+assert.equal(pairingErrorView.primaryLabel, '다시 연결');
+assert.equal(getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
+  pairingPhase: 'error', connectionStarted: true, pairingErrorReason: '연결 요청이 만료됐습니다. 다시 연결해 주세요.',
+}).message, '연결 요청이 만료됐습니다. 다시 연결해 주세요.', 'a known cause replaces the generic sentence');
+const capabilityView = getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'authenticated', capabilities: new Set(['export']) },
+  pairingPhase: 'connected',
+  connectionStarted: true,
+});
+assert.equal(capabilityView.scene, 'capability-missing');
+assert.equal(capabilityView.title, '이 브라우저에 분석 권한이 없습니다');
+const invalidView = getLocalEngineConnectionView({
+  snapshot: { ...viewSnapshot, transport: 'error' },
+  pairingPhase: 'idle',
+  connectionStarted: true,
+});
+assert.equal(invalidView.scene, 'invalid-response');
+assert.equal(invalidView.tone, 'warning', 'a retry can fix it, so it is a warning, not an error');
+assert.equal(invalidView.message, '잠시 뒤 다시 확인해 주세요.');
+assert.ok(invalidView.help);
+for (const quiet of [introView, checkingView, pairingRequiredView, sessionEndedView, updateView, pairingErrorView, capabilityView]) {
+  assert.equal(quiet.help, null, `${quiet.scene}: no ? where the first button is the whole fix`);
+}
+for (const view of [introView, unreachableWithInstaller, pairingRequiredView, sessionEndedView, updateView, pairingErrorView, capabilityView, invalidView]) {
+  assert.doesNotMatch(view.title, /바로록|분석 준비 완료/, 'names come from the brand constants');
+}
+
+// Writer status row: the first blocked step only, connection before readiness.
+const rowInput = overrides => ({
+  connection: connectedView,
+  readinessState: 'ready',
+  readinessMessage: '',
+  missingModels: [],
+  diarizationDuringAnalysis: false,
+  gpuUnavailable: false,
+  installerAvailable: true,
+  canOpenModelSettings: true,
+  canOpenAnalysisSettings: true,
+  ...overrides,
+});
+const sttMissing = { key: 'stt_faster_whisper', label: 'faster-whisper', downloadable: true };
+const diarizationMissing = { key: 'diarization', label: 'pyannote', downloadable: false };
+const readyRow = selectWriterStatusRow(rowInput({}));
+assert.deepEqual(
+  { stage: readyRow.stage, state: readyRow.state, title: readyRow.title, message: readyRow.message, actions: readyRow.actions, blocksStart: readyRow.blocksStart },
+  { stage: 'ready', state: 'ready', title: '연결됨', message: null, actions: [], blocksStart: false },
+);
+const blockedConnectionRow = selectWriterStatusRow(rowInput({
+  connection: unreachableWithInstaller, readinessState: 'missing-models', missingModels: [sttMissing], gpuUnavailable: true,
+}));
+assert.equal(blockedConnectionRow.stage, 'connection', 'connection comes before models');
+assert.equal(blockedConnectionRow.state, 'unreachable');
+assert.equal(blockedConnectionRow.blocksStart, true);
+assert.deepEqual(blockedConnectionRow.actions.map(action => action.label), ['설치 파일', '다시 확인'], 'the main fix sits right beside 분석 시작');
+assert.equal(blockedConnectionRow.help, unreachableWithInstaller.help);
+const sessionRow = selectWriterStatusRow(rowInput({ connection: { ...sessionEndedView } }));
+assert.deepEqual(sessionRow.actions, [{ kind: 'probe', label: '다시 확인' }, { kind: 'pair', label: '다시 연결', disabled: false }]);
+for (const [readinessState, state] of [['checking', 'readiness-checking'], ['server-waiting', 'readiness-checking']]) {
+  const row = selectWriterStatusRow(rowInput({ readinessState }));
+  assert.deepEqual([row.state, row.title, row.busy, row.tone, row.actions.length, row.blocksStart], [state, '분석 준비 확인 중', true, 'neutral', 0, true]);
+}
+const readinessErrorRow = selectWriterStatusRow(rowInput({ readinessState: 'error', readinessMessage: '모델 상태를 확인하지 못했습니다.' }));
+assert.deepEqual(
+  [readinessErrorRow.title, readinessErrorRow.message, readinessErrorRow.help, readinessErrorRow.tone],
+  ['분석 준비 상태를 확인하지 못했습니다', '잠시 뒤 다시 확인해 주세요.', '모델 상태를 확인하지 못했습니다.', 'warning'],
+  'the detailed cause moves behind ?',
+);
+assert.deepEqual(readinessErrorRow.actions, [{ kind: 'recheck-readiness', label: '다시 확인' }]);
+const modelsRow = selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [sttMissing, diarizationMissing], gpuUnavailable: true, diarizationDuringAnalysis: true,
+}));
+assert.deepEqual(
+  [modelsRow.state, modelsRow.tone, modelsRow.title, modelsRow.message, modelsRow.help],
+  ['models-missing', 'info', '모델을 받아야 분석할 수 있습니다', '음성 인식, 참석자 구분', null],
+  'a downloadable model is named first, as a list without a period, even with a GPU problem',
+);
+assert.deepEqual(modelsRow.actions, [{ kind: 'models', label: '모델 받기' }]);
+assert.deepEqual(selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [sttMissing], canOpenModelSettings: false,
+})).actions, [], 'no button that cannot open Settings');
+const diarizationRow = selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [diarizationMissing], diarizationDuringAnalysis: true,
+}));
+assert.deepEqual(
+  [diarizationRow.state, diarizationRow.tone, diarizationRow.title, diarizationRow.message, diarizationRow.actions],
+  ['diarization-model-missing', 'warning', '참석자 구분 모델이 없습니다', '이어서 실행을 끄면 대화록부터 만들 수 있습니다.', [{ kind: 'diarization', label: '참석자 구분 설정' }]],
+);
+const reinstallRow = selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [diarizationMissing], diarizationDuringAnalysis: false,
+}));
+assert.deepEqual(
+  [reinstallRow.state, reinstallRow.tone, reinstallRow.title, reinstallRow.message, reinstallRow.actions],
+  ['models-reinstall', 'error', '필요한 모델이 없어 분석을 시작할 수 없습니다', `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`, [{ kind: 'download', label: '설치 파일' }]],
+);
+assert.deepEqual(selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [diarizationMissing], installerAvailable: false,
+})).actions, [], 'no installer link without a configured installer');
+const gpuRow = selectWriterStatusRow(rowInput({ readinessState: 'missing-models', gpuUnavailable: true }));
+assert.deepEqual(
+  [gpuRow.state, gpuRow.tone, gpuRow.title, gpuRow.message, gpuRow.actions],
+  ['gpu-unavailable', 'warning', 'GPU를 쓸 수 없습니다', '분석 장치를 CPU로 바꿔 주세요.', [{ kind: 'device', label: '분석 장치 설정' }]],
+);
+const otherReadinessRow = selectWriterStatusRow(rowInput({ readinessState: 'missing-models', readinessMessage: 'ffmpeg를 찾지 못했습니다.' }));
+assert.deepEqual([otherReadinessRow.state, otherReadinessRow.help, otherReadinessRow.actions.map(action => action.kind)], ['readiness-blocked', 'ffmpeg를 찾지 못했습니다.', ['recheck-readiness']]);
+for (const row of [modelsRow, diarizationRow, reinstallRow, gpuRow, readinessErrorRow]) {
+  assert.ok(row.actions.length <= 1, `${row.state}: one fixing button outside the connection step`);
+  assert.equal(row.blocksStart, true);
+}
+const notice = '테스트 설치 파일이라 Windows 보안 경고가 나올 수 있습니다.';
+assert.equal(selectWriterStatusRow(rowInput({ connection: introWithInstaller, installerNotice: notice })).message,
+  `${introWithInstaller.message} ${notice}`, 'without ?, the installer warning follows the message');
+const unreachableWithNotice = selectWriterStatusRow(rowInput({ connection: unreachableWithInstaller, installerNotice: notice }));
+assert.equal(unreachableWithNotice.message, unreachableWithInstaller.message, 'with ?, the line stays short');
+assert.ok(unreachableWithNotice.help.endsWith(notice));
+assert.equal(selectWriterStatusRow(rowInput({ connection: checkingView, installerNotice: notice })).message, null, 'no installer warning where no installer is offered');
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'checking', updateRequired: true },
   pairingPhase: 'idle',

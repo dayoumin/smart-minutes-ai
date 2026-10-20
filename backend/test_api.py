@@ -4242,6 +4242,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             with (
                 patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=1.0),
                 patch("pipeline.chunk_audio.split_wav_by_duration", side_effect=fake_split),
                 patch("pipeline.transcribe.transcribe_audio", return_value=[{"start": 0.0, "end": 1.0, "text": "hello"}]),
                 patch("pipeline.export_txt.export_txt"),
@@ -4281,6 +4282,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
             with (
                 patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=1.0),
                 patch("pipeline.chunk_audio.split_wav_by_duration", side_effect=fake_split),
                 patch("pipeline.transcribe.transcribe_audio", side_effect=fake_transcribe),
                 patch("pipeline.export_txt.export_txt"),
@@ -4312,6 +4314,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch("main.resolve_model_path", return_value="resolved-model"),
             patch("main.model_exists", return_value=False),
             patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+            patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=1.0),
             patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[{"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0}]),
             patch("pipeline.transcribe.transcribe_audio", return_value=[]),
             patch("pipeline.diarize.diarize_audio") as diarize_mock,
@@ -4499,7 +4502,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
                 "processing": {"enable_long_audio_chunking": True, "long_audio_chunk_seconds": 30},
                 "preprocessing": {"enabled": False},
-                "diarization": {"enabled": True},
+                "diarization": {"enabled": True, "generate_during_analysis": False},
                 "summary": {"enabled": False},
                 "privacy": {"auto_delete_temp_audio": True, "preserve_extracted_audio": True},
             }
@@ -4793,6 +4796,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 patch("main.resolve_model_path", return_value="resolved-model"),
                 patch("main.model_exists", return_value=False),
                 patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+                patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=2.0),
                 patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[
                     {"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0},
                     {"path": TEST_AUDIO_PATH, "offset": 1.0, "duration": 1.0, "index": 1},
@@ -5105,6 +5109,7 @@ class AnalyzeApiTest(unittest.TestCase):
             patch("main.model_exists", return_value=True),
             patch("main.resolve_model_path", return_value="same-model-path"),
             patch("pipeline.audio_preprocess.convert_to_wav", return_value={"preprocessing": {}}),
+            patch("pipeline.chunk_audio.get_wav_duration_seconds", return_value=1.0),
             patch("pipeline.chunk_audio.split_wav_by_duration", return_value=[{"path": TEST_AUDIO_PATH, "offset": 0.0, "duration": 1.0, "index": 0}]),
             patch("pipeline.transcribe.transcribe_audio", side_effect=RuntimeError("stt failed")) as transcribe_mock,
             patch("pipeline.export_txt.export_txt"),

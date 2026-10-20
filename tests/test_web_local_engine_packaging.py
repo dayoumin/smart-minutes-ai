@@ -221,7 +221,15 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('Join-Path $RepoRoot "configs\\brand.json"', builder)
         self.assertIn('"/DBRAND_NAME=$BrandName"', builder)
         self.assertNotIn('/DBRAND_NAME=바로록', builder)
-        self.assertIn('(-join [char[]](0xBC14, 0xB85C, 0xB85D))', builder)
+        # The brand comes only from configs/brand.json; there is no parameter or default.
+        self.assertNotIn('[string]$BrandName', builder)
+        self.assertNotIn('0xBC14', builder)
+        self.assertNotIn("-match '[\"$`\\r\\n]'", builder)
+        self.assertEqual(builder.count('$BrandName -notmatch'), 1)
+        self.assertLess(
+            builder.index('ConvertFrom-Json).brandName'),
+            builder.index('$BrandName -notmatch'),
+        )
         self.assertTrue(builder.isascii())
         compiler_gate = builder.index('$MakensisCommand = Get-Command $Makensis')
         python_gate = builder.index('& $PythonCommand -c "import PyInstaller"')
@@ -230,9 +238,11 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertLess(compiler_gate, output_replacement)
         self.assertLess(python_gate, output_replacement)
         self.assertLess(manifest_gate, output_replacement)
-        self.assertLess(builder.index('BrandName must be'), output_replacement)
+        self.assertLess(builder.index('brandName must be'), output_replacement)
+        brand_name = json.loads((ROOT / "configs" / "brand.json").read_text(encoding="utf-8-sig"))["brandName"]
         pattern = builder.split("if ($BrandName -notmatch '", 1)[1].split("')", 1)[0]
         cases = {
+            brand_name: True,
             "바로록": True,
             "Foo Bar": True,
             "A": True,
@@ -250,6 +260,9 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
                 "powershell",
                 "-NoProfile",
                 "-Command",
+                # The same read as the build script, so the real brand.json value is checked too.
+                "$fromFile = [string](Get-Content -LiteralPath $env:BRAND_FILE -Raw -Encoding UTF8 | ConvertFrom-Json).brandName; "
+                "[Console]::Out.WriteLine([string]($fromFile -match $env:BRAND_PATTERN)); "
                 "$cases = $env:BRAND_CASES | ConvertFrom-Json; "
                 "foreach ($case in $cases) { [Console]::Out.WriteLine([string]($case -match $env:BRAND_PATTERN)) }",
             ],
@@ -259,39 +272,19 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
             encoding="utf-8",
             errors="replace",
             timeout=30,
-            env={**os.environ, "BRAND_CASES": json.dumps(list(cases)), "BRAND_PATTERN": pattern},
+            env={
+                **os.environ,
+                "BRAND_CASES": json.dumps(list(cases)),
+                "BRAND_PATTERN": pattern,
+                "BRAND_FILE": str(ROOT / "configs" / "brand.json"),
+            },
         )
         self.assertEqual(checked.returncode, 0, checked.stderr)
         self.assertEqual(
             checked.stdout.split(),
-            [str(accepted) for accepted in cases.values()],
+            ["True", *(str(accepted) for accepted in cases.values())],
         )
 
-        for unsafe_brand in ('bad"name', 'a$b', ' lead'):
-            with self.subTest(brand=unsafe_brand):
-                rejected = subprocess.run(
-                    [
-                        "powershell",
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-File",
-                        str(ROOT / "scripts" / "build_web_local_engine_installer_poc.ps1"),
-                        "-Makensis",
-                        "missing-makensis.exe",
-                        "-BrandName",
-                        unsafe_brand,
-                    ],
-                    cwd=ROOT,
-                    capture_output=True,
-                    text=True,
-                    encoding="utf-8",
-                    errors="replace",
-                    timeout=30,
-                )
-                self.assertNotEqual(rejected.returncode, 0)
-                self.assertIn("BrandName must be", rejected.stdout + rejected.stderr)
-                self.assertNotIn("makensis.exe is required", rejected.stdout + rejected.stderr)
         self.assertIn('--onefile', helper_builder)
         self.assertIn('--noconsole', helper_builder)
         self.assertIn('web_local_engine_installer_preflight.py', helper_builder)

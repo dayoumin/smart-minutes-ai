@@ -1,42 +1,24 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import ts from 'typescript';
-
-const importTsModule = async (path) => {
-  const source = await readFile(resolve(path), 'utf8');
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022,
-    },
-  });
-  return import(`data:text/javascript;charset=utf-8,${encodeURIComponent(outputText)}`);
-};
-
-const {
+import {
   canGenerateSpeakerContext,
   getMeetingReportGenerationStatus,
   getSpeakerGenerationStatus,
   getTopicGenerationStatus,
   normalizeGenerationStatus,
-} = await importTsModule('src/meetingGeneration.ts');
-
-const {
+} from '../src/meetingGeneration.ts';
+import {
   formatAnalysisDuration,
   formatTranscriptReadyEstimate,
   getTranscriptReadyProgressPercent,
-} = await importTsModule('src/analysisTimeEstimate.ts');
-
-const {
+} from '../src/analysisTimeEstimate.ts';
+import {
   listMinutesOutputTemplates,
   listReportTemplates,
-} = await importTsModule('src/meetingKnowledge.ts');
-
-const {
+} from '../src/meetingKnowledge.ts';
+import {
   parseApiErrorBody,
   toUserFacingAnalysisError,
-} = await importTsModule('src/apiError.ts');
+} from '../src/apiError.ts';
 
 const reportTemplates = listReportTemplates();
 const minutesOutputTemplates = listMinutesOutputTemplates();

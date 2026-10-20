@@ -14,7 +14,7 @@
     "desktop:build": "tauri build",
     "desktop:build:exe": "tauri build --no-bundle",
     "e2e:smoke": "node e2e-smoke.cjs",
-    "test:generation-flow": "node scripts/simulate-generation-flow.mjs",
+    "test:generation-flow": "node --experimental-strip-types scripts/simulate-generation-flow.mjs",
     "test:resume-flow": "node scripts/simulate-resume-flow.mjs",
     "test:resume-draft-flow": "node scripts/simulate-resume-draft-flow.mjs",
     "test:new-record-home-flow": "node scripts/simulate-new-record-home-flow.mjs",
@@ -43,7 +43,7 @@
     "test:download-scope-flow": "node scripts/simulate-download-scope-flow.mjs",
     "test:report-tab-edge-flow": "node scripts/simulate-report-tab-edge-flow.mjs",
     "test:meeting-detail-flow": "node scripts/simulate-meeting-detail-flow.mjs",
-    "test:topic-generation-ui": "node scripts/simulate-topic-generation-ui.mjs",
+    "test:topic-generation-ui": "node --experimental-strip-types scripts/simulate-topic-generation-ui.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "preview": "vite preview"

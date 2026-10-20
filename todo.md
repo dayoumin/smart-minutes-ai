@@ -3,6 +3,24 @@
   - 원인과 수정은 `docs/web-local-engine-followup-plan.md`의 「설치 후 연결 안 됨」 절과 커밋 99ae0f17·61858a52(미배포)를 따른다. 원인은 Chrome '기기에 있는 앱' 거부·자동 차단과 Page Assist의 127.0.0.1 Origin 변경이었다.
   - 남은 일: 설치 파일 `b7ef889f`(공간 기준값·'음성 분석' 이름)와 브랜드 상수 `d024a2e1`을 main에 합친 뒤, 새 안내 문구의 '바로록'도 상수로 바꾼다. 그다음 웹을 다시 빌드·배포하고 실제 Chrome에서 확인한다(권한 '묻기'면 '연결 확인' 전 팝업 없음, 차단·확장 변경 안내). 처음 문제가 난 PC의 확장·권한 상태도 확인한다.
   - 미룬 검토 nit: 사용자 '연결 확인' probe에 시간 제한이 없어 응답 없이 멈춘 엔진이면 확인 중이 계속되고 배경 재확인도 멈춘다. 이 동작은 이전부터 있었다. `localEngineClient.ts`의 fetch 래퍼(응답 시 보류 해제, 실패 시 유지)는 직접 테스트가 없다. 엔진이 한 번 응답한 뒤 같은 방문에서 권한을 '묻기'로 되돌리면 배경 요청이 다시 팝업을 띄운다.
+- [ ] 2026-10-20 새 회의록 동작 줄 v2 구현
+  - 기준: `docs/design.md`의 「동작 줄 v2」 절, Figma `15-438`(A1 왼쪽). 연결 카드·준비 배너·`준비 필요` 라벨을 상태 줄 하나와 고치는 버튼으로 바꾼다. 웹 연결 빌드부터 하고 데스크톱·기본 개발 UI는 ④에서 옮긴다.
+  - 시작 조건: 위 「설치 후 웹 연결 안 됨」 후속의 미커밋 변경(`LocalEngineConnectionSurface.tsx`, `localEngineConnectionView.ts`, `MeetingWriter.tsx`, `index.css`, 연결 시뮬레이션·테스트)이 커밋된 뒤 시작한다. 같은 파일을 두 작업이 동시에 고치지 않는다.
+  - ① 상태 선택과 상태 줄(웹 연결 빌드):
+    - 연결 단계는 `getLocalEngineConnectionView`를 그대로 단일 기준으로 둔다. `connectionStarted`·`manualCheckPending`·`showHelp`는 `LocalEngineConnectionSurface`에서 훅으로 올린다. `MeetingWriter`의 선택 함수 하나가 연결 → 준비 → 분석 시작 조건 → 필수 항목 순서로 상태 하나를 고른다.
+    - 지금 있는 복구 동작은 모두 유지한다: `연결 확인`, `설치 파일`, `다시 연결`, `연결 시작`, `업데이트 안내`, `참석자 구분 설정`.
+    - `#writer-local-engine-requirement`는 상태 줄 루트로 남긴다(`role="status"`, `aria-atomic`, `분석 시작`의 유일한 `aria-describedby`). 준비 배너는 이 빌드에서 제거한다.
+    - 이 조각에서 실제 Chrome으로 브라우저 차단(권한 거부) 뒤 `다시 확인`만으로 풀리는지 확인한다.
+    - 고칠 테스트: `simulate-local-engine-connection-ui.mjs`(연결 칸 문구·`data-scene` 단언), `test-runtime-boundary.mjs`, `test-local-engine-browser-access.mjs`, `capture-ui-audit.mjs`(C2가 옛 문구 `분석 기능에 연결하지 못했습니다`를 기다림).
+    - 검증 순서: `corepack pnpm --dir desktop-app typecheck` → `test:runtime-boundary` → `test:local-engine-browser-access` → `LOCAL_ENGINE_UI_SCENARIO`를 `writer-guidance`·`missing-models`·`browser-blocked`·`permission-prompt`로 하나씩 두고 `test:local-engine-connection-ui` → 시나리오 없이 한 번 → 회귀 `test:writer-model-readiness`, `node scripts/simulate-analysis-stop-flow.mjs preparation`.
+  - ② 45초 응답 없음:
+    - 확인 회차마다 45초 타이머를 새로 두고, 인증되거나 확인 루프가 다시 시작되면 지운다. 지금 `readinessTimedOut`은 엔진이 아예 응답하지 않을 때만 켜지고(모델 확인이 멈춘 경우는 못 잡음), `/api/health`가 응답해야 지워진다. 그래서 다시 연결한 직후에는 이전 경고가 잠깐 남을 수 있다.
+    - `다시 확인`은 사용자가 누른 연결 확인(`probeLocalEngine`, 사용자 시작) 뒤 준비 확인을 다시 시작한다.
+    - 시뮬레이션에 `page.clock.runFor`로 엔진 무응답, 모델 확인 멈춤, 다시 연결 뒤 초기화 시나리오를 추가한다.
+  - ③ 입력 단계: 필수 항목 오류, 파일 길이, 이어하기, 다른 분석 진행 중을 상태 줄로 옮긴다. `id="writer-form-error"`는 상태 줄 문구로 옮기고 아래 배너는 없앤다(같은 id가 두 번 생기지 않게). 회귀: `test:resume-draft-flow`, `simulate-analysis-media-limit.mjs`.
+  - ④ 데스크톱·기본 개발 UI: 같은 상태 줄로 옮긴다. `준비 필요` 라벨, 준비 배너, `.writer-start-button-connection-pending`, `readinessTimedOut` 의미를 정리한다. 회귀: `test:writer-model-readiness`, `test:analysis-stop-flow`. Tauri 실행 화면도 확인한다.
+  - ⑤ 문서: `docs/design.md` 동작 줄 v2 절의 "구현 전" 표시를 지운다. `docs/frontend-simulation-testing.md`의 Playwright 캐시 경로(`D:\Projects\audio`)를 AGENTS.md(`D:\Projects\LMO_audio\.cache\ms-playwright`)와 맞춘다.
+  - 범위 밖: `모델 받는 중` 진행 표시(작성 화면이 받기 진행 데이터를 읽게 되면 다시 판단), 명시적 연결 해제 UI.
 - [x] 2026-10-20 공개 설치 점검 오류 수정본 반영·실제 연결 재확인
   - 자동 연결 완료(2026-10-20): 소스861e586·0.1.8 실제 업데이트exit0·숫자/승인 창 없는 연결·재시작 복원/해제·타Origin 반려·기존196경로 SHA/146모델경로 크기 보존 통과. 새 EXE442815954B/SHA c9415057…e2e62의 전체 R2 read-back·격리 웹6파일 운영 SHA·이전 링크2개307 검증 후 배포했다(version00311f46-d6de-4d4c-a3e1-2661672f8f11). 임시 Worker/로컬 인증 삭제. 현재 Chrome에서 코드 없이 첫 자동 연결·reload 복원·분석 준비 완료를 확인했다. 음성 실분석/Network 본문·Edge/회사 PC 관문은 별도 유지한다. 근거 `.tmp/browser-connection-20261020` 및 followup-plan의 설치 후 자동 연결 절.
   - 원본 오류 이미지는 설치 전 점검 결과 실패 안내다. 기존 frozen helper의 `TMP≠TEMP` exit2/결과 미생성, 수정 helper의 동일/상이 경로 모두 exit10을 재현했다. 관련 backend39·packaging5 검사와 독립 검토 통과. 공식 NSIS3.13 기존 사본으로 컴파일(미사용 label 경고3개)했고 같은 공개0.1.5 엔진을 재사용한 installer revision `0.1.5-beta-20261020-installerfix`를 만들었다.

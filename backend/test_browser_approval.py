@@ -33,14 +33,15 @@ class BrowserApprovalTest(unittest.TestCase):
         self.release.wait(2)
         return self.decision
 
-    def approve(self):
-        challenge = self.coordinator.start(ORIGIN, self.browser_token)
+    def approve(self, browser_token=None):
+        browser_token = browser_token or self.browser_token
+        challenge = self.coordinator.start(ORIGIN, browser_token)
         self.release.set()
         deadline = time.monotonic() + 2
         while time.monotonic() < deadline:
             result = self.coordinator.complete(challenge["pairing_id"], ORIGIN)
             if result:
-                return {**result, "browser_token": self.browser_token}
+                return {**result, "browser_token": browser_token}
             time.sleep(.001)
         self.fail("Approval callback did not finish")
 
@@ -144,12 +145,72 @@ class BrowserApprovalTest(unittest.TestCase):
                 break
             time.sleep(.001)
         self.coordinator.complete(first["pairing_id"], ORIGIN)
-        from local_engine_security import PairingUnavailableError
-        with self.assertRaises(PairingUnavailableError):
-            self.coordinator.complete(second["pairing_id"], ORIGIN)
+        self.assertIn("session_token", self.coordinator.complete(second["pairing_id"], ORIGIN))
         restarted = BrowserApprovalCoordinator(LocalEngineSessionStore())
         restarted.configure(self.path, ORIGIN, lambda _origin: True)
         self.assertEqual(len(restarted._grants), 16)
+        for token in (self.browser_token, "c" * 43):
+            self.assertIn("session_token", restarted.restore(token, ORIGIN))
+
+    def test_lost_browser_credentials_do_not_permanently_block_new_connections(self):
+        first = self.approve()
+        second_session = self.coordinator.restore(first["browser_token"], ORIGIN)
+        for index in range(1, 20):
+            # New private visits/site-data resets lose their old browser token.
+            self.now[0] += 61
+            last_token = str(index).zfill(43)
+            self.approve(last_token)
+        self.assertEqual(len(json.loads(self.path.read_text())["grants"]), 16)
+        # Forgetting a remembered browser must not interrupt an already running job.
+        for session in (first, second_session):
+            self.assertIsNotNone(self.sessions.validate(session["session_token"], origin=ORIGIN))
+        # Explicit disconnect still revokes all sessions even after its durable
+        # registration has been reclaimed and revoke reports it was not saved.
+        self.assertFalse(self.coordinator.revoke(first["browser_token"], ORIGIN))
+        for session in (first, second_session):
+            self.assertIsNone(self.sessions.validate(session["session_token"], origin=ORIGIN))
+        restarted = BrowserApprovalCoordinator(LocalEngineSessionStore())
+        restarted.configure(self.path, ORIGIN, lambda _origin: True)
+        with self.assertRaises(PairingRejectedError):
+            restarted.restore(first["browser_token"], ORIGIN)
+        self.assertIn("session_token", restarted.restore(last_token, ORIGIN))
+        self.now[0] += 61
+        self.assertIn("session_token", self.approve("z" * 43))
+
+    def test_restore_persists_recency_before_reclaiming_a_browser(self):
+        tokens = [str(index).zfill(43) for index in range(16)]
+        for token in tokens:
+            self.now[0] += 61
+            self.approve(token)
+        self.coordinator.restore(tokens[0], ORIGIN)
+        restarted = BrowserApprovalCoordinator(self.sessions, clock=lambda: self.now[0])
+        restarted.configure(self.path, ORIGIN, self.prompt)
+        self.coordinator = restarted
+        self.now[0] += 61
+        self.approve("z" * 43)
+        with self.assertRaises(PairingRejectedError):
+            restarted.restore(tokens[1], ORIGIN)
+        retained = restarted.restore(tokens[0], ORIGIN)
+        self.assertTrue(restarted.revoke(tokens[0], ORIGIN))
+        self.assertIsNone(self.sessions.validate(retained["session_token"], origin=ORIGIN))
+
+    def test_reclaim_only_happens_after_approval_and_successful_persistence(self):
+        for index in range(16):
+            self.now[0] += 61
+            self.approve(str(index).zfill(43))
+        before = self.path.read_bytes()
+        self.now[0] += 61
+        self.decision = False
+        with self.assertRaises(PairingRejectedError):
+            self.approve("x" * 43)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.decision = True
+        with patch.object(self.coordinator, "_persist", side_effect=OSError("disk unavailable")):
+            with self.assertRaises(OSError):
+                self.approve("y" * 43)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(len(self.coordinator._grants), 16)
+        self.assertIn("session_token", self.coordinator.restore(str(0).zfill(43), ORIGIN))
 
     def test_api_wait_restore_and_forget_with_origin_gate(self):
         headers = {"Origin": ORIGIN}

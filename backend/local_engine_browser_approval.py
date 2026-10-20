@@ -17,6 +17,8 @@ from local_engine_security import (
     PairingRejectedError, PairingUnavailableError, parse_exact_origins,
 )
 
+MAX_REMEMBERED_BROWSERS = 16
+
 
 class BrowserApprovalCoordinator:
     def __init__(self, sessions: LocalEngineSessionStore, *, clock=time.time) -> None:
@@ -47,7 +49,7 @@ class BrowserApprovalCoordinator:
             if not isinstance(payload, dict) or payload.get("format") != 1:
                 raise ValueError("Invalid browser approval format")
             raw = payload.get("grants")
-            if not isinstance(raw, dict) or len(raw) > 16:
+            if not isinstance(raw, dict) or len(raw) > MAX_REMEMBERED_BROWSERS:
                 raise ValueError("Invalid browser approval grants")
             for digest, grant_origin in raw.items():
                 if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
@@ -93,8 +95,6 @@ class BrowserApprovalCoordinator:
             self._starts = [stamp for stamp in self._starts if stamp > now - 60]
             if self._dialog_open or len(self._starts) >= 5:
                 raise PairingRateLimitError("Native approval already pending")
-            if len(self._grants) >= 16:
-                raise PairingUnavailableError("Browser approval limit reached")
             pairing_id = secrets.token_urlsafe(24)
             self._pending[pairing_id] = (origin, now + 120, "pending", digest)
             self._starts.append(now)
@@ -133,13 +133,22 @@ class BrowserApprovalCoordinator:
             self._pending.pop(pairing_id, None)
             if pending[2] != "approved":
                 raise PairingRejectedError("Approval declined")
-            if len(self._grants) >= 16:
-                raise PairingUnavailableError("Browser approval limit reached")
             digest = pending[3]
-            updated = {**self._grants, digest: origin}
-            self._persist(updated)
-            self._grants = updated
+            self._remember(digest, origin)
             return self._issue(origin, digest)
+
+    def _remember(self, digest: str, origin: str) -> None:
+        # Called under _lock. JSON object order preserves least-recently-used order
+        # across restarts without changing the existing on-disk format.
+        updated = {key: value for key, value in self._grants.items() if key != digest}
+        while len(updated) >= MAX_REMEMBERED_BROWSERS:
+            del updated[next(iter(updated))]
+        updated[digest] = origin
+        self._persist(updated)
+        self._grants = updated
+        # This bounds remembered credentials, not live API sessions: reclaiming a
+        # lost private-visit token must not interrupt another browser's active job.
+        # Explicit revoke still invalidates every session for its browser digest.
 
     def _issue(self, origin: str, digest: str) -> dict:
         token, grant = self.sessions.issue(origin=origin, capabilities=LOCAL_ENGINE_CAPABILITIES, browser_id=digest)
@@ -151,6 +160,8 @@ class BrowserApprovalCoordinator:
         with self._lock:
             if self._grants.get(digest) != origin:
                 raise PairingRejectedError("Browser approval no longer valid")
+            if next(reversed(self._grants)) != digest:
+                self._remember(digest, origin)
             return self._issue(origin, digest)
 
     def revoke(self, browser_token: str, origin: str) -> bool:

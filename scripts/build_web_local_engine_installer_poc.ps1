@@ -12,7 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 # The brand becomes part of a Start menu file name and NSIS strings.
-if ($BrandName -notmatch '^[\p{L}\p{N}][\p{L}\p{N} _-]{0,38}[\p{L}\p{N}]$|^[\p{L}\p{N}]$') {
+if ($BrandName -notmatch '\A(?:[\p{L}\p{N}][\p{L}\p{N} _-]{0,38}[\p{L}\p{N}]|[\p{L}\p{N}])\z') {
     throw "BrandName must be 1-40 letters, digits, spaces, hyphens or underscores."
 }
 

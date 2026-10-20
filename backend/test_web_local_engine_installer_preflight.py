@@ -753,23 +753,74 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             cleanup_owned_install_tree(install, manifest, local_app_data=root)
             self.assertFalse(install.exists())
 
-    def test_reusable_bytes_count_owned_install_and_downloaded_files_only(self) -> None:
+    def test_reusable_bytes_use_installed_manifest_and_cap_each_component(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = installer_preflight._layout_paths(root)
+            data_root = paths.models.parent
             before = installer_preflight._reusable_bytes(paths)
             paths.install.mkdir(parents=True)
-            (paths.install / "engine.exe").write_bytes(b"x" * 1000)
+            installed_manifest = self._manifest(paths.install)
             unowned = installer_preflight._reusable_bytes(paths)
             (paths.install / ".barorok-install-owned").write_text(INSTALL_MARKER_CONTENT, encoding="utf-8")
-            (paths.models / "faster-whisper-large-v3").mkdir(parents=True)
-            (paths.models / "faster-whisper-large-v3" / "model.bin").write_bytes(b"m" * 5000)
-            (paths.models.parent / "runtime" / "ollama").mkdir(parents=True)
-            (paths.models.parent / "runtime" / "ollama" / "ollama.exe").write_bytes(b"o" * 700)
-            after = installer_preflight._reusable_bytes(paths)
+            files = {
+                paths.models / "faster-whisper-large-v3" / "model.bin": 500,
+                paths.models / "ollama" / "blobs" / "old-summary-model": 900,
+                paths.models / "ollama" / "blobs" / "current-summary-model": 300,
+                paths.models / "embedding" / "pytorch_model.bin": 60,
+                paths.models / "unrelated-download.bin": 4000,
+                data_root / "runtime" / "ollama" / "ollama.exe": 70,
+                data_root / "config" / "runtime" / "ollama" / "lib.dll": 50,
+            }
+            for path, size in files.items():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"x" * size)
+            with (
+                patch.object(installer_preflight, "STT_MODEL_BYTES", 400),
+                patch.object(installer_preflight, "SUMMARY_MODEL_BYTES", 1000),
+                patch.object(installer_preflight, "DIARIZATION_MODEL_BYTES", 100),
+                patch.object(installer_preflight, "SUMMARY_RUNTIME_INSTALLED_BYTES", 110),
+            ):
+                after = installer_preflight._reusable_bytes(paths)
+            expected_install = requirements_from_artifact_manifest(installed_manifest)["install"].required_bytes
         self.assertEqual(before, {"install": 0, "models": 0})
         self.assertEqual(unowned, {"install": 0, "models": 0})
-        self.assertEqual(after, {"install": 1000 + len(INSTALL_MARKER_CONTENT), "models": 5700})
+        # STT 500 capped at 400, summary 1200 capped at 1000, speaker separation and
+        # unrelated files 4060 capped at 100, both runtime folders 120 capped at 110.
+        self.assertEqual(after, {"install": expected_install, "models": 400 + 1000 + 100 + 110})
+
+    def test_reusable_bytes_credit_nothing_when_folders_cannot_be_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = installer_preflight._layout_paths(root)
+            paths.install.mkdir(parents=True)
+            self._manifest(paths.install)
+            (paths.install / ".barorok-install-owned").write_text(INSTALL_MARKER_CONTENT, encoding="utf-8")
+            readable = installer_preflight._reusable_bytes(paths)
+            with (
+                patch.object(installer_preflight, "_existing_tree_bytes", side_effect=PermissionError("denied")),
+                patch.object(
+                    installer_preflight,
+                    "requirements_from_artifact_manifest",
+                    side_effect=PermissionError("denied"),
+                ),
+            ):
+                denied = installer_preflight._reusable_bytes(paths)
+        self.assertGreater(readable["install"], 0)
+        self.assertEqual(denied, {"install": 0, "models": 0})
+
+    @unittest.skipUnless(os.name == "nt", "Windows source smoke")
+    def test_main_still_decides_when_existing_folders_cannot_be_read(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.object(installer_preflight, "_existing_tree_bytes", side_effect=PermissionError("denied")):
+                exit_code, decision, payload = self._run_main_with_volume(
+                    Path(temp_dir),
+                    available_bytes=64 * GIB,
+                    storage=storage_requirements(),
+                )
+        self.assertEqual(exit_code, 0)
+        self.assertIn("decision=ready", decision)
+        self.assertEqual(payload["overall_status"], "pass")
 
     @unittest.skipUnless(os.name == "nt", "Windows junction")
     def test_existing_tree_bytes_skips_junctions_and_stops_at_entry_limit(self) -> None:
@@ -790,10 +841,12 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             self.assertTrue((models / "linked" / "big.bin").exists())
             self.assertEqual(installer_preflight._existing_tree_bytes(models), 300)
             self.assertEqual(installer_preflight._existing_tree_bytes(models / "linked"), 0)
-            for index in range(3):
-                (models / f"extra-{index}.bin").write_bytes(b"e" * 10)
-            limited = installer_preflight._existing_tree_bytes(models, max_entries=2)
-            self.assertLess(limited, 330)
+            same_size = root / "same-size"
+            same_size.mkdir()
+            for index in range(5):
+                (same_size / f"part-{index}.bin").write_bytes(b"e" * 10)
+            self.assertEqual(installer_preflight._existing_tree_bytes(same_size), 50)
+            self.assertEqual(installer_preflight._existing_tree_bytes(same_size, max_entries=2), 20)
 
     def _run_main_with_volume(
         self,
@@ -914,9 +967,19 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             install = local_app_data / "Programs" / "Barorok" / "LocalEngine"
             install.mkdir(parents=True)
             (install / ".barorok-install-owned").write_text(INSTALL_MARKER_CONTENT, encoding="utf-8")
-            models = local_app_data / "Barorok" / "LocalEngine" / "models"
-            models.mkdir(parents=True)
-            (models / "model.bin").write_bytes(b"m" * 4096)
+            # Same release installed: its manifest states the same payload size.
+            self._manifest(install, storage=storage_requirements())
+
+        downloaded = {
+            ("models", "faster-whisper-large-v3"): storage_requirements_module.STT_MODEL_BYTES,
+            ("models", "ollama"): storage_requirements_module.SUMMARY_MODEL_BYTES,
+            ("LocalEngine", "models"): (
+                storage_requirements_module.STT_MODEL_BYTES
+                + storage_requirements_module.SUMMARY_MODEL_BYTES
+                + storage_requirements_module.DIARIZATION_MODEL_BYTES
+            ),
+            ("runtime", "ollama"): storage_requirements_module.SUMMARY_RUNTIME_INSTALLED_BYTES,
+        }
 
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -924,9 +987,8 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
                 installer_preflight,
                 "_existing_tree_bytes",
                 lambda path, **_kwargs: (
-                    11_185_989_538 if path.name == "models"
-                    else install_bytes if path.name == "LocalEngine"
-                    else 0
+                    0 if path.parent.parent.name == "config"
+                    else downloaded.get((path.parent.name, path.name), 0)
                 ),
             ):
                 exit_code, decision, payload = self._run_main_with_volume(

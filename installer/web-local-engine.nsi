@@ -87,6 +87,17 @@ Var CleanupManifest
   RMDir "$SMPROGRAMS\${LEGACY_START_MENU_DIR}"
 !macroend
 
+; The connect shortcut carries the brand, which can change between releases,
+; so each install records the exact name and later runs remove only that file
+; ("음성 분석" is a common folder name another program might also use).
+!macro RemoveRecordedConnectShortcut
+  ReadRegStr $2 HKCU "${PRODUCT_KEY}" "ConnectShortcut"
+  StrCpy $3 $2 "" -7
+  ${If} $3 == " 연결.lnk"
+    Delete "$SMPROGRAMS\${START_MENU_DIR}\$2"
+  ${EndIf}
+!macroend
+
 Function AcquireInstallerMutex
   System::Call 'kernel32::CreateMutexW(p 0, i 0, w "${INSTALLER_MUTEX}") p.r0'
   StrCpy $InstallerMutex $0
@@ -325,7 +336,7 @@ preflight_retry:
   IntOp $PreflightAttempts $PreflightAttempts + 1
   ${If} $PreflightAttempts > 10
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 정리하지 못했습니다. 잠시 후 다시 시도해 주세요."
+    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 종료하지 못했습니다. 잠시 후 다시 시도해 주세요."
     Abort
   ${EndIf}
   Call RunInstallerPreflight
@@ -357,7 +368,7 @@ preflight_retry:
   ${ElseIf} $PreflightExit == 20
     SetErrorLevel 20
     ${If} $PreflightAction == "close_conflicting_app_and_retry"
-      MessageBox MB_OK|MB_ICONSTOP "음성 분석 프로그램이 사용할 고정 포트를 다른 프로그램이 사용 중입니다. 충돌하는 프로그램을 확인한 뒤 다시 실행해 주세요."
+      MessageBox MB_OK|MB_ICONSTOP "다른 프로그램이 음성 분석 프로그램의 연결 포트(17863)를 이미 쓰고 있습니다. 그 프로그램을 종료한 뒤 다시 실행해 주세요."
     ${ElseIf} $PreflightAction == "free_space_and_retry"
       MessageBox MB_OK|MB_ICONSTOP "안전한 설치와 복구에 필요한 저장 공간이 부족합니다. 공간을 확보한 뒤 다시 실행해 주세요."
     ${Else}
@@ -490,15 +501,14 @@ readiness_ready:
   Goto shortcuts
 
 rollback_cleanup_warning:
-  MessageBox MB_OK|MB_ICONEXCLAMATION "음성 분석 프로그램 새 버전은 설치됐지만 이전 복구 파일 정리를 완료하지 못했습니다. 다음 설치에서 다시 정리합니다."
+  MessageBox MB_OK|MB_ICONEXCLAMATION "새 버전을 설치했지만 이전 버전 백업 파일을 정리하지 못했습니다. 다음 설치 때 다시 정리합니다."
   Goto shortcuts
 
 shortcuts:
   !insertmacro RemoveLegacyStartMenuEntries
   CreateDirectory "$SMPROGRAMS\${START_MENU_DIR}"
-  ; The web app tells users to run "<brand> 연결" from the Start menu. Remove a
-  ; connect shortcut left under an earlier brand before creating the current one.
-  Delete "$SMPROGRAMS\${START_MENU_DIR}\* 연결.lnk"
+  ; The web app tells users to run "<brand> 연결" from the Start menu.
+  !insertmacro RemoveRecordedConnectShortcut
   CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 시작.lnk" "$EngineExe"
   CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\${BRAND_NAME} 연결.lnk" "$EngineExe" "--pair"
   CreateShortcut "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 종료.lnk" "$EngineExe" "--stop"
@@ -506,6 +516,7 @@ shortcuts:
   WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayName" "${PRODUCT_NAME}"
   WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayVersion" "${ENGINE_VERSION}"
   WriteRegStr HKCU "${PRODUCT_KEY}" "Publisher" "${BRAND_NAME}"
+  WriteRegStr HKCU "${PRODUCT_KEY}" "ConnectShortcut" "${BRAND_NAME} 연결.lnk"
   WriteRegStr HKCU "${PRODUCT_KEY}" "UninstallString" '"$INSTDIR\Uninstall.exe"'
   WriteRegDWORD HKCU "${PRODUCT_KEY}" "NoModify" 1
   WriteRegDWORD HKCU "${PRODUCT_KEY}" "NoRepair" 1
@@ -665,7 +676,8 @@ remove_program:
   IfErrors uninstall_cleanup_failed
   ClearErrors
   Delete "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 시작.lnk"
-  Delete "$SMPROGRAMS\${START_MENU_DIR}\* 연결.lnk"
+  !insertmacro RemoveRecordedConnectShortcut
+  Delete "$SMPROGRAMS\${START_MENU_DIR}\${BRAND_NAME} 연결.lnk"
   Delete "$SMPROGRAMS\${START_MENU_DIR}\음성 분석 종료.lnk"
   Delete "$SMPROGRAMS\${START_MENU_DIR}\제거.lnk"
   RMDir "$SMPROGRAMS\${START_MENU_DIR}"

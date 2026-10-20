@@ -21,6 +21,12 @@ from local_engine_preflight import (
     is_inside_user_temp,
     write_preflight_json,
 )
+from web_local_engine_storage_requirements import (
+    DIARIZATION_MODEL_BYTES,
+    STT_MODEL_BYTES,
+    SUMMARY_MODEL_BYTES,
+    SUMMARY_RUNTIME_INSTALLED_BYTES,
+)
 
 
 PRODUCT_ID = "barorok-local-engine"
@@ -70,7 +76,7 @@ MANIFEST_STORAGE_ROLES = {
 }
 MAX_MANIFEST_STORAGE_BYTES = 1024 ** 4
 GIB = 1024 ** 3
-MAX_REUSABLE_SCAN_ENTRIES = 100_000
+MAX_REUSABLE_SCAN_ENTRIES = 20_000
 REPARSE_POINT_ATTRIBUTE = getattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT", 0x400)
 CRITICAL_CHECK_IDS = {
     "installer_install_space",
@@ -471,15 +477,51 @@ def _existing_tree_bytes(root: Path, *, max_entries: int = MAX_REUSABLE_SCAN_ENT
     return total
 
 
-def _reusable_bytes(paths: InstallerTargetPaths) -> dict[str, int]:
+def _owned_install_bytes(install: Path) -> int:
+    # An owned earlier install is replaced in place; its manifest states its size,
+    # which avoids walking thousands of payload files before the installer shows.
+    try:
+        if not os.path.isfile(install / INSTALL_MARKER_NAME):
+            return 0
+        requirement = requirements_from_artifact_manifest(
+            install / "poc-manifest.json",
+            include_storage=False,
+        )["install"]
+        return int(requirement.required_bytes or 0)
+    except (OSError, ValueError):
+        return 0
+
+
+def _downloaded_model_bytes(paths: InstallerTargetPaths) -> int:
+    # Downloaded models and the summary program are kept across upgrades. Each
+    # component is capped at its expected size so unrelated or superseded files
+    # (an older summary model, extra pulls) cannot cancel the models check.
     data_root = paths.models.parent
-    install_owned = (paths.install / INSTALL_MARKER_NAME).is_file()
-    return {
-        # An owned earlier install is replaced in place by the new payload.
-        "install": _existing_tree_bytes(paths.install) if install_owned else 0,
-        # Downloaded models and the summary program are kept across upgrades.
-        "models": _existing_tree_bytes(paths.models) + _existing_tree_bytes(data_root / "runtime"),
-    }
+    stt = _existing_tree_bytes(paths.models / "faster-whisper-large-v3")
+    summary_model = _existing_tree_bytes(paths.models / "ollama")
+    speaker_separation = max(0, _existing_tree_bytes(paths.models) - stt - summary_model)
+    # The engine may place the summary program under config\runtime (its
+    # portable root) or runtime; count either once.
+    summary_runtime = (
+        _existing_tree_bytes(data_root / "runtime" / "ollama")
+        + _existing_tree_bytes(data_root / "config" / "runtime" / "ollama")
+    )
+    return (
+        min(stt, STT_MODEL_BYTES)
+        + min(summary_model, SUMMARY_MODEL_BYTES)
+        + min(speaker_separation, DIARIZATION_MODEL_BYTES)
+        + min(summary_runtime, SUMMARY_RUNTIME_INSTALLED_BYTES)
+    )
+
+
+def _reusable_bytes(paths: InstallerTargetPaths) -> dict[str, int]:
+    # Advisory credit only: a read problem credits nothing instead of failing
+    # the preflight, so folder problems still surface as their own checks.
+    try:
+        models = _downloaded_model_bytes(paths)
+    except (OSError, ValueError):
+        models = 0
+    return {"install": _owned_install_bytes(paths.install), "models": models}
 
 
 def _mutex_name(data_root: Path) -> str:

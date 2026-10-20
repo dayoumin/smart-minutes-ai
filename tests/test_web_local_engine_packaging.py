@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -230,6 +231,41 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertLess(python_gate, output_replacement)
         self.assertLess(manifest_gate, output_replacement)
         self.assertLess(builder.index('BrandName must be'), output_replacement)
+        pattern = builder.split("if ($BrandName -notmatch '", 1)[1].split("')", 1)[0]
+        cases = {
+            "바로록": True,
+            "Foo Bar": True,
+            "A": True,
+            "a" * 40: True,
+            "a" * 41: False,
+            "바로록\n": False,
+            " lead": False,
+            "trail ": False,
+            'bad"name': False,
+            "a$b": False,
+            "a.b": False,
+        }
+        checked = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "$cases = $env:BRAND_CASES | ConvertFrom-Json; "
+                "foreach ($case in $cases) { [Console]::Out.WriteLine([string]($case -match $env:BRAND_PATTERN)) }",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            env={**os.environ, "BRAND_CASES": json.dumps(list(cases)), "BRAND_PATTERN": pattern},
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertEqual(
+            checked.stdout.split(),
+            [str(accepted) for accepted in cases.values()],
+        )
 
         for unsafe_brand in ('bad"name', 'a$b', ' lead'):
             with self.subTest(brand=unsafe_brand):
@@ -399,8 +435,9 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
 
         message_lines = [line for line in installer.splitlines() if 'MessageBox' in line]
         self.assertEqual([line for line in message_lines if '엔진' in line], [])
-        self.assertTrue(any('음성 분석 프로그램이 사용할 고정 포트' in line for line in message_lines))
-        self.assertTrue(any('실행 중인 음성 분석 프로그램을 정리하지 못했습니다' in line for line in message_lines))
+        self.assertTrue(any('음성 분석 프로그램의 연결 포트(17863)를 이미 쓰고 있습니다' in line for line in message_lines))
+        self.assertTrue(any('실행 중인 음성 분석 프로그램을 종료하지 못했습니다' in line for line in message_lines))
+        self.assertTrue(any('이전 버전 백업 파일을 정리하지 못했습니다' in line for line in message_lines))
         self.assertTrue(any('이 설치 프로그램이 만들지 않은 파일' in line for line in message_lines))
         old_name_lines = [line.strip() for line in installer.splitlines() if '로컬 엔진' in line]
         self.assertEqual(
@@ -422,10 +459,20 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
             install_shortcuts.index('!insertmacro RemoveLegacyStartMenuEntries'),
             install_shortcuts.index('CreateDirectory "$SMPROGRAMS\\${START_MENU_DIR}"'),
         )
-        # A connect shortcut from an earlier brand is removed before the current one is made.
+        # The recorded connect shortcut (maybe from an earlier brand) is removed before
+        # the current one is made, and the new name is recorded for the next run.
+        recorded_macro = installer.split('!macro RemoveRecordedConnectShortcut\n', 1)[1].split('!macroend', 1)[0]
+        self.assertIn('ReadRegStr $2 HKCU "${PRODUCT_KEY}" "ConnectShortcut"', recorded_macro)
+        self.assertIn('StrCpy $3 $2 "" -7\n  ${If} $3 == " 연결.lnk"', recorded_macro)
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\$2"', recorded_macro)
+        self.assertNotIn('* 연결.lnk', installer)
         self.assertLess(
-            install_shortcuts.index('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\* 연결.lnk"'),
+            install_shortcuts.index('!insertmacro RemoveRecordedConnectShortcut'),
             install_shortcuts.index('CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\${BRAND_NAME} 연결.lnk"'),
+        )
+        self.assertIn(
+            'WriteRegStr HKCU "${PRODUCT_KEY}" "ConnectShortcut" "${BRAND_NAME} 연결.lnk"',
+            install_shortcuts,
         )
         self.assertIn(
             'CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 시작.lnk" "$EngineExe"',
@@ -438,7 +485,11 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayName" "${PRODUCT_NAME}"', install_shortcuts)
         uninstall = installer.split('Section "Uninstall"\n', 1)[1].split('SectionEnd', 1)[0]
         self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 시작.lnk"', uninstall)
-        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\* 연결.lnk"', uninstall)
+        self.assertLess(
+            uninstall.index('!insertmacro RemoveRecordedConnectShortcut'),
+            uninstall.index('DeleteRegKey HKCU "${PRODUCT_KEY}"'),
+        )
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\${BRAND_NAME} 연결.lnk"', uninstall)
         self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 종료.lnk"', uninstall)
         self.assertIn('!insertmacro RemoveLegacyStartMenuEntries', uninstall)
         self.assertNotIn('${START_MENU_DIR}\\로컬 엔진', installer)

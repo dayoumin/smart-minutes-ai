@@ -1,7 +1,9 @@
 # 0. Immediate queue
 - [ ] 2026-10-20 설치 후 웹 연결 안 됨: 브라우저 쪽 원인 안내 반영 후속
   - 원인과 수정은 `docs/web-local-engine-followup-plan.md`의 「설치 후 연결 안 됨」 절과 커밋 99ae0f17·61858a52(미배포)를 따른다. 원인은 Chrome '기기에 있는 앱' 거부·자동 차단과 Page Assist의 127.0.0.1 Origin 변경이었다.
-  - 남은 일: 설치 파일 `b7ef889f`(공간 기준값·'음성 분석' 이름)와 브랜드 상수 `d024a2e1`을 main에 합친 뒤, 새 안내 문구의 '바로록'도 상수로 바꾼다. 그다음 웹을 다시 빌드·배포하고 실제 Chrome에서 확인한다(권한 '묻기'면 '연결 확인' 전 팝업 없음, 차단·확장 변경 안내). 처음 문제가 난 PC의 확장·권한 상태도 확인한다.
+  - 병합 완료(2026-10-20, 로컬 main, 미푸시): 설치 파일(공간 기준값·'음성 분석')·브랜드 상수('LMO 회의록')·시뮬레이션 자체 Vite 브랜치를 합쳤다(`186b842d`, `d76d1cdd`). 연결 안내 문구도 브랜드 상수를 쓴다.
+  - 남은 일: 웹을 다시 빌드·배포하고 실제 Chrome에서 확인한다(권한 '묻기'면 '연결 확인' 전 팝업 없음, 차단·확장 변경 안내). 설치 파일을 다시 빌드해 깨끗한 설치와 0.1.8 위 업데이트를 확인한다. 처음 문제가 난 PC의 확장·권한 상태도 확인한다.
+  - 병합과 무관한 기존 실패 2건: `backend.test_web_local_engine_installer_preflight`의 `test_main_accepts_nsis_plugins_dir_when_tmp_and_temp_differ`·`test_main_source_smoke_uses_isolated_targets_and_leaves_no_canary`는 실제 17863 포트 상태를 읽는다. 이 PC에서 설치 엔진이 실행 중이면 `stop_local_engine_and_retry`가 나와 실패하고, 병합 전 main(47a2dc32)에서도 같다. `simulate-local-engine-connection-ui.mjs`의 `writer-guidance`는 익명 개발 API 시나리오에서 probe 2회(기대 0)로 병합 전부터 실패한다.
   - 미룬 검토 nit: 사용자 '연결 확인' probe에 시간 제한이 없어 응답 없이 멈춘 엔진이면 확인 중이 계속되고 배경 재확인도 멈춘다. 이 동작은 이전부터 있었다. `localEngineClient.ts`의 fetch 래퍼(응답 시 보류 해제, 실패 시 유지)는 직접 테스트가 없다. 엔진이 한 번 응답한 뒤 같은 방문에서 권한을 '묻기'로 되돌리면 배경 요청이 다시 팝업을 띄운다.
 - [ ] 2026-10-20 새 회의록 동작 줄 v2 구현
   - 기준: `docs/design.md`의 「동작 줄 v2」 절, Figma `15-438`(A1 왼쪽). 연결 카드·준비 배너·`준비 필요` 라벨을 상태 줄 하나와 고치는 버튼으로 바꾼다. 웹 연결 빌드부터 하고 데스크톱·기본 개발 UI는 ④에서 옮긴다.

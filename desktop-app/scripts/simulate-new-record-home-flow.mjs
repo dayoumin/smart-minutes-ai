@@ -4,7 +4,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
-import { BRAND_NAME } from '../src/brand.ts';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
@@ -125,6 +125,20 @@ const putMeeting = async (page, meeting) => page.evaluate(value => new Promise((
     transaction.onerror = () => reject(transaction.error);
   };
 }), meeting);
+
+const readMeetingIds = async page => page.evaluate(() => new Promise((resolve, reject) => {
+  const request = indexedDB.open('MeetingHistoryDB', 2);
+  request.onerror = () => reject(request.error);
+  request.onsuccess = () => {
+    const db = request.result;
+    const read = db.transaction('meetings', 'readonly').objectStore('meetings').getAllKeys();
+    read.onsuccess = () => {
+      db.close();
+      resolve(read.result.map(String).sort());
+    };
+    read.onerror = () => reject(read.error);
+  };
+}));
 
 const meetingAt = (id, title, time, meetingPurpose = '') => {
   const iso = new Date(time).toISOString();
@@ -414,15 +428,83 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     // Without an engine answer the storage row still states the local-only promise instead of guessing a retention.
     await help.getByText('회의록은 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await help.getByText('분석용 임시 음성은 완료 후 삭제', { exact: false }).count(), 0);
-    const dialogBox = await help.boundingBox();
-    assert.ok(dialogBox && dialogBox.y >= 0 && dialogBox.y + dialogBox.height <= 720, 'help must fit inside a 1280x720 window');
+    // The install sentence is for the first visit; someone opening help is already using the writer.
+    assert.equal(await help.getByText('처음 한 번', { exact: false }).count(), 0, 'help must not repeat the first-visit install sentence');
+    // The dialog's height is capped to the window, so its box always fits; content that does not fit scrolls inside it.
+    const helpOverflow = await help.evaluate(element => element.scrollHeight - element.clientHeight);
+    assert.ok(helpOverflow <= 0, `help must show all four rows without scrolling at 1280x720 (overflow ${helpOverflow}px)`);
     await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'focus must stay inside the help dialog');
+    await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
+    await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'Tab from outside the help returns focus to it');
     await page.keyboard.press('Escape');
     await help.waitFor({ state: 'hidden', timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '처리 방식');
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'closing help must not mark the first-visit notice as seen');
     console.log('ok - new-record home keeps the local processing note and help without an engine answer');
+  } finally {
+    await context.close();
+  }
+};
+
+const runEngineDownDeleteScene = async browser => {
+  // Without an engine answer its copy of the analysis would stay behind, so the browser record stays too.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const page = await context.newPage();
+  const jobId = 'engine-down-delete-job';
+  let engineUp = false;
+  const deleteRequests = [];
+  await page.route('**/api/**', route => {
+    const request = route.request();
+    if (request.method() === 'DELETE' && new URL(request.url()).pathname === `/api/outputs/${jobId}`) {
+      deleteRequests.push(engineUp ? 'answered' : 'refused');
+      return engineUp
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ deleted: true }) })
+        : route.abort('connectionrefused');
+    }
+    return route.abort('connectionrefused');
+  });
+  const dialogs = [];
+  page.on('dialog', dialog => {
+    dialogs.push({ type: dialog.type(), message: dialog.message() });
+    void dialog.accept();
+  });
+  const waitForDialogs = async count => {
+    for (let attempt = 0; attempt < 200 && dialogs.length < count; attempt += 1) await sleep(50);
+  };
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+    await putMeeting(page, { ...meetingAt('engine-down-delete', '엔진 꺼짐 삭제 회의', Date.now() - DAY_MS), jobId });
+    await putMeeting(page, meetingAt('engine-down-keep', '함께 남는 회의', Date.now() - 2 * DAY_MS));
+    const navigation = page.locator('.barorok-navigation');
+    const menuTrigger = navigation.locator('[data-sidebar-record-menu-trigger][aria-label^="엔진 꺼짐 삭제 회의,"]');
+    const deleteButton = navigation.locator('[data-sidebar-record-menu]').getByRole('button', { name: '삭제', exact: true });
+    await menuTrigger.waitFor({ timeout: 10000 });
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-delete', 'engine-down-keep']);
+
+    await menuTrigger.focus();
+    await menuTrigger.press('Enter');
+    await deleteButton.click();
+    await waitForDialogs(2);
+    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'alert']);
+    assert.equal(dialogs[1].message, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중일 때만 회의록을 삭제할 수 있습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 삭제해 주세요.`);
+    assert.deepEqual(deleteRequests, ['refused']);
+    await page.waitForTimeout(300);
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-delete', 'engine-down-keep'], 'the record stays while the engine copy cannot be deleted');
+    assert.equal(await menuTrigger.count(), 1, 'the record stays in the sidebar');
+
+    engineUp = true;
+    await menuTrigger.focus();
+    await menuTrigger.press('Enter');
+    await deleteButton.click();
+    await menuTrigger.waitFor({ state: 'detached', timeout: 10000 });
+    assert.deepEqual(deleteRequests, ['refused', 'answered']);
+    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'alert', 'confirm'], 'a deletion the engine confirmed shows no error');
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-keep']);
+    assert.equal(await navigation.locator('[data-sidebar-record-menu-trigger][aria-label^="함께 남는 회의,"]').count(), 1);
+    console.log('ok - deleting a record waits for the engine instead of leaving its analysis behind');
   } finally {
     await context.close();
   }
@@ -438,6 +520,7 @@ const run = async () => {
     await runPendingCancellationLockScene(browser);
     await runAnalysisEntryPointScene(browser);
     await runPrivacyNoteWithoutEngineScene(browser);
+    await runEngineDownDeleteScene(browser);
   } finally {
     await browser.close();
     await stopServer(server);

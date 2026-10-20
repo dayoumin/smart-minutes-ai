@@ -207,5 +207,47 @@ class OllamaReadinessTest(unittest.TestCase):
         self.assertNotIn("owned-runtime", " ".join(captured.output))
 
 
+class OllamaLocalOnlyTest(unittest.TestCase):
+    def test_loopback_and_unspecified_hosts_stay_on_this_pc(self):
+        for host in ("127.0.0.1:11434", "127.0.0.2:11434", "localhost:11434", "LOCALHOST", "[::1]:11434",
+                     "::1", "0.0.0.0", "0.0.0.0:11434", ":11434", "", "HTTP://127.0.0.1:11434/",
+                     "::ffff:127.0.0.1", "[::ffff:127.0.0.1]:11434"):
+            with self.subTest(host=host):
+                self.assertTrue(ollama_utils.ollama_host_is_local(host))
+
+    def test_other_computers_are_not_local(self):
+        for host in ("192.168.0.20:11434", "10.0.0.5", "ollama.example.com", "ollama.example.com:443/api",
+                     "[2001:db8::1]:11434", "127.0.0.1.example.com",
+                     # Values that clients parse differently must not pass as local.
+                     "evil.example@127.0.0.1:11434", "127.0.0.1@evil.example", "::ffff:192.168.0.20",
+                     "[::ffff:192.168.0.20]:11434", "127.0.0.1:port", "127.0.0.1:11434/../x", "127.0.0.1 evil.example",
+                     "127.0.0.1#evil.example"):
+            with self.subTest(host=host):
+                self.assertFalse(ollama_utils.ollama_host_is_local(host))
+
+    def test_user_set_ollama_host_decides_for_system_ollama(self):
+        with (
+            patch.object(ollama_utils, "using_embedded_ollama", return_value=False),
+            patch.dict(ollama_utils.os.environ, {"OLLAMA_HOST": "https://ollama.example.com"}),
+        ):
+            self.assertEqual(ollama_utils.get_ollama_host(), "ollama.example.com")
+            self.assertFalse(ollama_utils.ollama_host_is_local())
+        with (
+            patch.object(ollama_utils, "using_embedded_ollama", return_value=False),
+            patch.dict(ollama_utils.os.environ, {"OLLAMA_HOST": ""}),
+        ):
+            self.assertEqual(ollama_utils.get_ollama_host(), "127.0.0.1:11434")
+            self.assertTrue(ollama_utils.ollama_host_is_local())
+
+    def test_cloud_tags_are_recognized_and_local_models_are_not(self):
+        for model in ("gpt-oss:120b-cloud", "glm-4.6:cloud", "qwen3-coder:480b-cloud", "GPT-OSS:20B-CLOUD",
+                      " deepseek-v3.1:671b-cloud "):
+            with self.subTest(model=model):
+                self.assertTrue(ollama_utils.is_cloud_ollama_model(model))
+        for model in ("gemma4:e2b", "gemma4:e4b", "llama3.2:3b", "cloudy:latest", "cloud-notes:7b", "", None):
+            with self.subTest(model=model):
+                self.assertFalse(ollama_utils.is_cloud_ollama_model(model))
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -2489,6 +2489,13 @@ const run = async () => {
       name: '기본 별칭 참석자 회의록, 2026-05-08 00:02 회의록 메뉴',
       exact: true,
     });
+    // Sidebar deletion removes the browser record only after the engine answers for its analysis copy.
+    const legacyDeleteRequests = [];
+    await page.route(`**/api/outputs/${legacyParticipantJobId}`, route => {
+      if (route.request().method() !== 'DELETE') return route.fallback();
+      legacyDeleteRequests.push(route.request().method());
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ deleted: true }) });
+    });
     await legacyDeleteMenuTrigger.focus();
     await legacyDeleteMenuTrigger.press('Enter');
     const selectedDeleteDialog = new Promise((resolve, reject) => {
@@ -2505,6 +2512,7 @@ const run = async () => {
     await sidebarRecordMenu.getByRole('button', { name: '삭제', exact: true }).click();
     await selectedDeleteDialog;
     await legacyDeleteMenuTrigger.waitFor({ state: 'detached', timeout: 10000 });
+    assert.deepEqual(legacyDeleteRequests, ['DELETE']);
     const fallbackSelectedRecord = page.locator('button[aria-current="page"]');
     await fallbackSelectedRecord.waitFor({ timeout: 10000 });
     const fallbackSelectedTitle = await fallbackSelectedRecord.getAttribute('title');

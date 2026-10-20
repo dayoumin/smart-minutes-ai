@@ -12,7 +12,13 @@ from config_normalization import (
     is_local_summary_model_path,
     normalize_summary_model_name,
 )
-from ollama_utils import ensure_ollama_server_running, get_ollama_base_url, ollama_executable_available, probe_ollama_server
+from ollama_utils import (
+    ensure_ollama_server_running,
+    get_ollama_base_url,
+    is_cloud_ollama_model,
+    ollama_executable_available,
+    probe_ollama_server,
+)
 
 
 def normalize_windows_path(path: str) -> str:
@@ -170,6 +176,8 @@ def ollama_model_exists(model_name: str, *, start_server: bool = True) -> bool:
 class OllamaModelInventory:
     complete: bool
     models: tuple[str, ...] = ()
+    # Listed models that run on another computer: cloud tags, or a local-looking alias Ollama reports as remote.
+    remote_models: tuple[str, ...] = ()
 
 
 def read_ollama_model_inventory(*, start_server: bool = True, server_prepared: bool = False) -> OllamaModelInventory:
@@ -193,6 +201,7 @@ def read_ollama_model_inventory(*, start_server: bool = True, server_prepared: b
         return OllamaModelInventory(False)
 
     models: list[str] = []
+    remote_models: list[str] = []
     complete = True
     for row in rows:
         if not isinstance(row, dict):
@@ -204,7 +213,10 @@ def read_ollama_model_inventory(*, start_server: bool = True, server_prepared: b
             continue
         if name.strip() not in models:
             models.append(name.strip())
-    return OllamaModelInventory(complete, tuple(models))
+            # `ollama cp gpt-oss:120b-cloud notes` keeps a local-looking name; Ollama still lists it with remote_host.
+            if row.get("remote_host") or row.get("remote_model") or is_cloud_ollama_model(name):
+                remote_models.append(name.strip())
+    return OllamaModelInventory(complete, tuple(models), tuple(remote_models))
 
 
 def list_ollama_models(*, start_server: bool = True) -> list[str]:
@@ -224,8 +236,12 @@ def _summary_model_status(base_dir: str, config: Optional[dict], *, start_ollama
     ollama_available = ollama_executable_available()
     inventory = read_ollama_model_inventory(start_server=start_ollama)
     ollama_models = []
+    remote_models = {normalize_summary_model_name(model) for model in inventory.remote_models}
     for model in inventory.models:
         normalized_model = normalize_summary_model_name(model)
+        # A model that runs on another computer is never offered or picked as an installed summary model.
+        if is_cloud_ollama_model(normalized_model) or normalized_model in remote_models:
+            continue
         if normalized_model and normalized_model not in ollama_models:
             ollama_models.append(normalized_model)
     ollama_model_set = set(ollama_models)

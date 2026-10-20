@@ -35,6 +35,8 @@ export const LocalEngineCodeDialog: React.FC<{ onClose: (force?: boolean) => voi
             codeInputRef.current?.focus();
         }, 0);
         const handleKeyDown = (event: KeyboardEvent) => {
+            // Another dialog already handled this key; closing this one too would close two dialogs at once.
+            if (event.defaultPrevented) return;
             if (event.key === 'Escape' && !completing) {
                 event.preventDefault();
                 onClose();

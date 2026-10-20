@@ -40,19 +40,30 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
         const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
         const focusTimer = window.setTimeout(() => primaryRef.current?.focus(), 0);
         const handleKeyDown = (event: KeyboardEvent) => {
+            const dialog = dialogRef.current;
+            // A dialog opened above this one (the pairing code dialog) owns Escape and Tab while it has focus.
+            if (event.defaultPrevented || !dialog) return;
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest('[aria-modal="true"]') && !dialog.contains(target)) return;
+            // Without focus in either dialog, the one opened later (later in the page) is on top.
+            const modals = document.querySelectorAll('[aria-modal="true"]');
+            if (modals[modals.length - 1] !== dialog) return;
             if (event.key === 'Escape') {
                 event.preventDefault();
                 closeRef.current();
                 return;
             }
             if (event.key !== 'Tab') return;
-            const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+            const focusable = [...dialog.querySelectorAll<HTMLElement>(
                 'button:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
-            ) ?? [])];
+            )];
             if (focusable.length === 0) return;
             const first = focusable[0];
             const last = focusable[focusable.length - 1];
-            if (event.shiftKey && document.activeElement === first) {
+            if (!dialog.contains(document.activeElement)) {
+                event.preventDefault();
+                (event.shiftKey ? last : first).focus();
+            } else if (event.shiftKey && document.activeElement === first) {
                 event.preventDefault();
                 last.focus();
             } else if (!event.shiftKey && document.activeElement === last) {
@@ -91,7 +102,7 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                 </div>
                 <div id="local-processing-summary" className="local-processing-summary">
                     <p>음성·영상 파일과 대화록을 외부 AI 서버로 보내지 않고, 이 PC에서 분석하고 요약합니다.</p>
-                    {isWeb && (
+                    {isWeb && mode === 'intro' && (
                         <p>이를 위해 처음 한 번 ‘{LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.</p>
                     )}
                 </div>

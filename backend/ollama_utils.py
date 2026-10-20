@@ -1,7 +1,9 @@
 import atexit
 import hashlib
+import ipaddress
 import logging
 import os
+import re
 import subprocess
 import shutil
 import threading
@@ -172,6 +174,44 @@ def get_ollama_host() -> str:
 
 def get_ollama_base_url() -> str:
     return f"http://{get_ollama_host()}"
+
+
+def ollama_host_is_local(host: str | None = None) -> bool:
+    """Whether Ollama requests stay on this PC: a loopback address, or the unspecified one Ollama dials locally.
+
+    A user-set OLLAMA_HOST can point system Ollama at another computer; meeting text must not follow it there.
+    """
+    value = (get_ollama_host() if host is None else host).strip()
+    value = re.sub(r"^https?://", "", value, flags=re.IGNORECASE).removesuffix("/")
+    # Credentials, paths and quotes make clients disagree about which computer is meant.
+    if re.search(r"[@/\\#?\s'\"]", value):
+        return False
+    # Ollama reads an empty host, or a port alone, as this PC.
+    if not value or re.fullmatch(r":\d+", value):
+        return True
+    bracketed = re.fullmatch(r"\[([^\]]+)\](?::\d+)?", value)
+    if bracketed:
+        hostname = bracketed.group(1)
+    elif value.count(":") > 1:
+        hostname = value
+    else:
+        hostname, _, port = value.partition(":")
+        if port and not port.isdigit():
+            return False
+    if hostname.lower() == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    if address.version == 6 and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return address.is_loopback or address.is_unspecified
+
+
+def is_cloud_ollama_model(model_name: str) -> bool:
+    """Ollama cloud models (`gpt-oss:120b-cloud`, `glm-4.6:cloud`) run on ollama.com, not on this PC."""
+    return str(model_name or "").strip().lower().endswith((":cloud", "-cloud"))
 
 
 def ollama_subprocess_env() -> dict[str, str]:

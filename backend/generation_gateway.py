@@ -17,9 +17,12 @@ from ollama_utils import (
     ensure_ollama_server_running,
     find_ollama_executable,
     get_ollama_base_url,
+    is_cloud_ollama_model,
     ollama_executable_available,
+    ollama_host_is_local,
     ollama_subprocess_env,
 )
+from model_manager import read_ollama_model_inventory
 from process_utils import run_hidden
 
 
@@ -35,6 +38,8 @@ GENERATION_ERROR_MESSAGES = {
     "generation_cancelled": "정리를 취소했습니다. 기존 결과는 보존되었습니다.",
     "generation_disabled": "정리 기능이 꺼져 있습니다. 설정에서 정리 기능을 켠 뒤 다시 시도해 주세요.",
     "generation_internal_error": "정리 중 내부 오류가 발생했습니다. 기존 대화록과 정리 결과는 보존되었습니다. 다시 시도해 주세요.",
+    "summary_model_not_local": "클라우드 요약 모델은 회의 내용을 외부 서버로 보내므로 사용할 수 없습니다. 설정에서 이 PC에서 실행하는 요약 모델을 선택해 주세요.",
+    "summary_runtime_not_local": "요약 프로그램(Ollama)이 이 PC가 아닌 다른 컴퓨터에 연결되도록 설정되어 있어 정리하지 않았습니다. 회의 내용은 보내지 않았습니다. 시스템 환경 변수 OLLAMA_HOST를 지운 뒤 PC를 다시 시작해 주세요.",
 }
 
 
@@ -62,6 +67,8 @@ class GenerationFailure(RuntimeError):
             "generation_cancelled": 409,
             "generation_disabled": 409,
             "generation_internal_error": 500,
+            "summary_model_not_local": 409,
+            "summary_runtime_not_local": 409,
         }.get(self.code, 500)
 
     def as_detail(self, generation_kind: str) -> dict:
@@ -79,7 +86,7 @@ def failure_for_code(code: str) -> GenerationFailure:
         return GenerationFailure(code, False, "open_settings")
     if code in {"model_missing", "model_too_large", "model_too_slow"}:
         return GenerationFailure(code, False, "open_settings")
-    if code == "generation_disabled":
+    if code in {"generation_disabled", "summary_model_not_local", "summary_runtime_not_local"}:
         return GenerationFailure(code, False, "open_settings")
     if code in {"server_unreachable", "runtime_preparing", "request_timeout", "invalid_model_response"}:
         return GenerationFailure(code, True, "retry")
@@ -199,6 +206,17 @@ def _ensure_runtime(model_name: str = "") -> None:
         raise failure_for_code("runtime_missing")
     if not ensure_ollama_server_running(timeout_seconds=15):
         raise failure_for_code("server_unreachable")
+    if model_name:
+        _require_model_runs_here(model_name)
+
+
+def _require_model_runs_here(model_name: str) -> None:
+    """A local-looking name can still run on ollama.com; Ollama's model list says so (prepared runs check readiness)."""
+    inventory = read_ollama_model_inventory(server_prepared=True)
+    if not inventory.complete:
+        raise failure_for_code("server_unreachable")
+    if any(_same_ollama_model(name, model_name) for name in inventory.remote_models):
+        raise failure_for_code("summary_model_not_local")
 
 
 def _generate_with_http(model_name: str, prompt: str) -> str:
@@ -325,8 +343,18 @@ def _unload_model(model_name: str) -> None:
         pass
 
 
+def _require_on_device_generation(model_name: str) -> None:
+    """Meeting text goes only to a model running on this PC, as the local-processing notice promises."""
+    if is_cloud_ollama_model(model_name):
+        raise failure_for_code("summary_model_not_local")
+    if not ollama_host_is_local():
+        raise failure_for_code("summary_runtime_not_local")
+
+
 def generate_ollama_text(model_name: str, prompt: str) -> str:
     """Generate once, using CLI only when HTTP was definitely connection-refused."""
+    # Checked before any request, HTTP or CLI: both follow OLLAMA_HOST and both send cloud models off the PC.
+    _require_on_device_generation(model_name)
     try:
         try:
             result_text = _generate_with_http(model_name, prompt)

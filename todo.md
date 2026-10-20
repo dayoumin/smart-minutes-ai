@@ -33,6 +33,13 @@
   - 상태 줄의 안내 아이콘 (i)와 제목 옆 처리 방식 ⓘ 버튼이 같은 모양인 것을 그대로 둘지. (「동작 줄 v2」④ 통합 점검)
 
 # 0. Immediate queue
+- [x] 2026-10-20 원격 병합 후 agent 검토: 확인된 P2 3건 수정·검증·재검토
+  - 검토 범위: `f13a2c7..262ddd8`의 변경과 복원한 미커밋 폴더/글꼴 UI. 화면 흐름, 기록·생성 계약, 설치·연결을 세 agent가 나눠 검토해 세 문제를 재현했고, 사용자 요청으로 수정 후 같은 세 관점에서 독립 재검토했다. 새 차단 지적 없음. 수정 커밋: `20e328f`.
+  - PC 파일 삭제: 작업 폴더 삭제 오류를 `output_delete_failed`로 반환하고 결과 JSON을 마지막에 지운다. 부분 실패 뒤 정리 목록에 남아 재시도할 수 있다. checkpoint/export/result 삭제 실패 3분기와 실제 Windows 파일 잠금→실패/목록 유지→잠금 해제/재시도 성공을 격리 TestClient에서 확인했다. 기존 충돌 ID 파일과 실행 중 작업 보호도 유지한다.
+  - 연결 대기: probe/pair/session의 유한 JSON 본문을 요청 제한 안에서 끝까지 읽고 취소 시 읽기를 정리한다. 권한창 때문에 기다리는 probe도 헤더를 받은 뒤에는 15초 제한을 적용한다. probe/restore/start/complete의 열린 본문과 짧은 승인 기한, 호출자 취소, 권한창 대기, 기존 승인/재연결을 검사했다. 일반 SSE·Range 응답은 본문 버퍼링 대상에서 제외한다.
+  - 폴더 조회 실패: 마지막 성공 목록을 유지하고, 최초 실패에는 오류·재시도 버튼을 표시한다. focus에서 폴더도 다시 읽으며 요청 번호로 오래된 응답을 무시한다. 최초 실패→명시 재시도, 후속 실패→회의록 표시 유지/focus 복구, 저장 folderId/본문 보존을 Chromium에서 확인했다. 이 변경은 기존 미커밋 펼침/메뉴/글꼴 UI와 분리하고 원격 HEAD에 수정만 적용한 버전도 검사했다.
+  - 통과: 프로젝트 Python `-B -X utf8 -m unittest test_api.AnalyzeApiTest.<삭제·목록 관련 7개 메서드>` 7개, `corepack pnpm --dir desktop-app test:browser-approval` 21개·`test:auth-recovery` 22개·`test:api-auth-boundary` 10개·`test:local-engine-browser-access`, `test:folder-recovery` 3장면, `test:meeting-cleanup-flow` 3장면, typecheck·변경 파일 ESLint·diff check. 폴더 검사는 현재 UI와 커밋용 최소 변경본에서 각각 통과했다. 삭제 화면의 앞선 최초 진입 실패도 현재 PC에서 재검증해 통과했다.
+  - 증거: 수정 전 `.tmp/systematic-review-20261020/`, 수정/검증 `.tmp/fix-three-20261020/`. 실제 HTTPS·새 설치 후보·Edge/회사 정책 관문과 구형 숫자 연결 frozen 검증 절차 불일치는 기존 release QA에 유지한다. 이번 작업에서 빌드·배포하지 않는다. 검토용 Vite(루트의 `corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 64924 --strictPort --configLoader runner`, PID40668)는 검증 뒤 종료했다.
 - [x] 2026-10-20 오늘 변경 전체 agent 점검·소스 수정 (남은 검증은 집에서 이어하기)
   - 소스 수정 커밋: `cf12de62` (`Bound engine connection and record cleanup waits`). 오늘 기존 커밋과 함께 main에 올리며, 아래 남은 검증부터 이어간다.
   - 기준: 전날 마지막 main `70652c5a`부터 `cb86cb39`까지 112개 파일. 연결 보안, 작성·중지·이어하기/삭제, 생성·내보내기 계약을 세 agent가 중복 없이 검토했고 설치·운영 변경은 main agent가 점검했다. 새 P1 없음.

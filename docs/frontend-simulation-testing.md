@@ -1,5 +1,14 @@
 # Frontend Simulation Testing
 
+## Folder read recovery — 2026-10-20
+
+Run `corepack pnpm --dir desktop-app test:folder-recovery` with `APP_URL` set to a dedicated
+Vite server for this checkout and `PLAYWRIGHT_BROWSERS_PATH` set to its `.cache/ms-playwright`.
+The test aborts only folder-list IndexedDB reads: initial failure must expose a retry;
+refresh failure must preserve saved folders/meetings; focus and explicit retry must recover
+without changing the stored folder assignment or meeting text. It uses synthetic browser data
+and mocked API replies, not an installed engine.
+
 ## Installed engine automatic connection — 2026-10-20
 
 `test:browser-approval` checks automatic discovery, reload/restart recovery, explicit disconnect,

@@ -121,6 +121,7 @@ corepack pnpm check:portable
 - `check:release`: 배포 후보에서 실행한다. `check:quick` 범위에 백엔드 API unittest, 업데이트 패키지 테스트, 프론트 사용자 흐름 시뮬레이션을 추가한다.
 - `check:portable`: 이미 `releases\lmo_audio`를 만든 뒤 실행한다. `check:release` 범위에 portable 폴더 검증을 추가한다.
 - 실제 모델을 사용하는 STT smoke는 기본 자동 게이트에서 제외한다. 필요할 때 `scripts\run_release_checks.ps1 -Tier release -IncludeModelSmoke`로 별도 실행한다.
+- `check:release`·`check:portable`은 Node 22.6 이상이 필요하다(2026-10-20). `test:generation-flow`·`test:topic-generation-ui`가 `node --experimental-strip-types`로 TypeScript를 바로 불러오기 때문이고, 더 낮은 Node에서는 `bad option: --experimental-strip-types`로 실패한다. 빌드 PC에서 먼저 `node --version`을 확인한다.
 - 현재 `check:release`의 백엔드 API unittest는 Ollama 모델 받기/상태/삭제, 직접 입력 모델 저장, 참석자 구분 분석 중 실행 옵션을 포함한다. 프론트 시뮬레이션은 모델 탭 진입, 추천/직접 입력 표시, 참석자 구분 재실행 상태를 일부 확인한다.
 
 ## 7. 이 프로젝트의 단일 배포 흐름

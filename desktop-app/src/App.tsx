@@ -218,6 +218,13 @@ export const App: React.FC = () => {
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(current => current === id ? fallbackId : current);
     };
+    // 회의록 정리 deletes many at once; an open meeting among them leaves for the new-record page.
+    const handleMeetingsDeleted = (ids: string[]) => {
+        if (!selectedMeetingId || !ids.includes(selectedMeetingId)) return;
+        setMeetingDetailOpenRequest(null);
+        setSelectedMeetingId(null);
+        setActiveTab('minutes');
+    };
     const openSettings = (tab: SettingsTab = 'general', section?: SettingsSection) => {
         setSettingsInitialTab(tab);
         setSettingsInitialSection(section);
@@ -444,6 +451,7 @@ export const App: React.FC = () => {
                     onClose={() => setIsSettingsOpen(false)}
                     initialTab={settingsInitialTab}
                     initialSection={settingsInitialSection}
+                    onMeetingsDeleted={handleMeetingsDeleted}
                     analysisActive={analysisStatus.active || remoteAnalysisActive || backendTaskActive}
                 />
             )}

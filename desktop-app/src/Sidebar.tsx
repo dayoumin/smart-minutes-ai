@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import { AnalysisResumeDraft } from './analysisResumeDrafts';
 import type { AppView } from './appView';
@@ -6,7 +7,6 @@ import { selectVisibleRecoveryDrafts, useAnalysisResumeSnapshot } from './analys
 import {
     addMeetingFolder,
     deleteMeetingFolder,
-    deleteMeeting,
     getAllMeetingFolders,
     getAllMeetings,
     MeetingFolder,
@@ -18,10 +18,10 @@ import {
     updateMeeting,
     updateMeetingPinned,
 } from './meetingRepository';
-import { localEngineClient } from './localEngineClient';
+import { deleteMeetingWithAnalysis } from './meetingDeletion';
 import { isTauriRuntime } from './apiBase';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
-import { ProgressBar } from './components/common';
+import { AppToast, ProgressBar, type AppToastMessage } from './components/common';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
 export interface SidebarProps {
@@ -168,6 +168,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const resumeDrafts = useMemo(() => selectVisibleRecoveryDrafts(resumeSnapshot), [resumeSnapshot]);
     const [showResumeDrafts, setShowResumeDrafts] = useState(false);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+    const [deletionToast, setDeletionToast] = useState<AppToastMessage | null>(null);
+    useEffect(() => {
+        if (!deletionToast) return undefined;
+        const timerId = window.setTimeout(() => {
+            setDeletionToast(current => (current?.id === deletionToast.id ? null : current));
+        }, 5000);
+        return () => window.clearTimeout(timerId);
+    }, [deletionToast]);
     const [showAllRecords, setShowAllRecords] = useState(false);
     const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null);
     const [folderDropTarget, setFolderDropTarget] = useState<{ folderId: string; position: 'before' | 'after' } | null>(null);
@@ -665,31 +673,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
         closeRecordMenu(record.id, true);
         if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?\n\n앱 안의 회의 기록과 분석 산출물은 삭제되지만, 다운로드 폴더에 저장한 HWPX/음성 파일은 직접 삭제해야 합니다.`)) return;
-        if (record.jobId) {
-            const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(record.jobId)}`, {
-                method: 'DELETE',
-            }).catch(() => null);
-            // No answer means the engine's copy of the analysis is still there; deleting only the browser record
-            // would leave it behind, so keep the record until the engine can delete both.
-            if (!response) {
-                window.alert(isTauriRuntime()
-                    ? '분석 기능에 연결하지 못해 회의록을 삭제하지 않았습니다. 앱을 다시 실행한 뒤 다시 삭제해 주세요.'
-                    : `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중일 때만 회의록을 삭제할 수 있습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 삭제해 주세요.`);
-                return;
-            }
-            if (!response.ok && response.status !== 404) {
-                const detail = await response.json().catch(() => null) as { detail?: string } | null;
-                const message = response.status === 409 && detail?.detail === 'analysis_job_active'
-                    ? '아직 분석이 진행 중인 회의록입니다. 분석을 중단한 뒤 삭제해 주세요.'
-                    : '분석 산출물을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.';
-                window.alert(message);
-                return;
-            }
+        const result = await deleteMeetingWithAnalysis(record);
+        if (result === 'analysis-active' || result === 'engine-failed' || result === 'cleanup-not-remembered') {
+            window.alert({
+                'analysis-active': '아직 분석이 진행 중인 회의록입니다. 분석을 중단한 뒤 삭제해 주세요.',
+                'engine-failed': '분석 산출물을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+                'cleanup-not-remembered': `이 PC의 분석 파일을 나중에 지울 수 있도록 기억하지 못해 회의록을 삭제하지 않았습니다. ${isTauriRuntime() ? '앱' : '브라우저'} 저장 공간을 확인한 뒤 다시 삭제해 주세요.`,
+            }[result]);
+            return;
         }
-        await deleteMeeting(record.id);
         window.dispatchEvent(new Event('meetings:updated'));
         onDeleteMeeting?.(record.id, fallbackRecordId);
         focusRecordMenuTrigger(fallbackRecordId);
+        if (result === 'deleted-engine-later') {
+            // A transient note: the record is gone, and nothing is left for the user to do.
+            setDeletionToast({
+                id: Date.now(),
+                tone: 'neutral',
+                message: isTauriRuntime()
+                    ? '회의록을 삭제했습니다. 이 PC의 분석 파일은 분석 기능이 다시 연결되면 지웁니다.'
+                    : `회의록을 삭제했습니다. 이 PC의 분석 파일은 ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행되면 지웁니다.`,
+            });
+        }
     };
 
     return (
@@ -1220,6 +1225,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     </div>
                 )}
             </div>
+            {deletionToast && createPortal(
+                <AppToast
+                    message={deletionToast.message}
+                    tone={deletionToast.tone}
+                    closeLabel="삭제 알림 닫기"
+                    onClose={() => setDeletionToast(null)}
+                />,
+                document.body,
+            )}
         </aside>
     );
 };

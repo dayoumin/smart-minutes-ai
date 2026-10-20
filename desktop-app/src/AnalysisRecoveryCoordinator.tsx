@@ -20,6 +20,7 @@ import { ANALYSIS_RECOVERY_SYNC_REQUESTED_EVENT, setAnalysisResumeSyncState } fr
 import { ANALYSIS_JOB_CLAIMS_UPDATED_EVENT, isAnalysisJobClaimed, queueAnalysisJobMutation } from './analysisJobRuntime';
 import { writeFrontendLog } from './apiBase';
 import { localEngineClient } from './localEngineClient';
+import { flushPendingMeetingOutputCleanups, listPendingMeetingOutputCleanups } from './meetingDeletion';
 import {
     AnalyzeResult,
     deleteMeetingRecordForJob,
@@ -43,6 +44,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
     const syncQueuedRef = useRef(false);
     const mountedRef = useRef(true);
     const ownDraftWriteDepthRef = useRef(0);
+    const outputCleanupInFlightRef = useRef(false);
 
     useEffect(() => {
         mountedRef.current = true;
@@ -76,6 +78,15 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                         successfulAt: new Date().toISOString(),
                     });
                     return;
+                }
+
+                // Records already deleted from this browser; only their copy on this PC is left. Not awaited, so
+                // an engine that does not answer never holds back the drafts below or the home screen's list.
+                if (!outputCleanupInFlightRef.current) {
+                    outputCleanupInFlightRef.current = true;
+                    void flushPendingMeetingOutputCleanups()
+                        .catch(error => writeFrontendLog(`pending meeting output cleanup error ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`))
+                        .finally(() => { outputCleanupInFlightRef.current = false; });
                 }
 
                 const pendingCancelledJobIds = new Set(listPendingCancelledAnalysisCleanups());
@@ -349,6 +360,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                 || hasPendingAnalysisResumeDraftPersistence()
                 || listPendingAnalysisDraftCleanups().length > 0
                 || listPendingCancelledAnalysisCleanups().length > 0
+                || listPendingMeetingOutputCleanups().length > 0
             ) {
                 void syncRecovery();
             }

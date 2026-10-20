@@ -5350,6 +5350,51 @@ class AnalyzeApiTest(unittest.TestCase):
 
                 shutil.rmtree(chunk_dir)
 
+    def test_stored_analyses_lists_completed_jobs_newest_first_with_their_size(self) -> None:
+        with tempfile.TemporaryDirectory() as output_dir, tempfile.TemporaryDirectory() as temp_dir:
+            def write(directory: str, name: str, size: int) -> str:
+                path = os.path.join(directory, name)
+                with open(path, "w", encoding="utf-8") as file:
+                    file.write("x" * size)
+                return path
+
+            write(output_dir, "job-new_result.json", 10)
+            write(output_dir, "job-new_transcript.txt", 5)
+            write(output_dir, "job-new_export_20261020_current.txt", 3)
+            write(temp_dir, "job-new.wav", 20)
+            os.makedirs(os.path.join(temp_dir, "job-new_chunks"))
+            write(os.path.join(temp_dir, "job-new_chunks"), "chunk_0.wav", 7)
+            os.makedirs(os.path.join(temp_dir, "jobs", "job-new", "audio"))
+            write(os.path.join(temp_dir, "jobs", "job-new", "audio"), "source.wav", 100)
+            os.utime(write(output_dir, "job-old_result.json", 4), (1_700_000_000, 1_700_000_000))
+            write(output_dir, "job-new2_result.json", 2)
+            os.utime(os.path.join(output_dir, "job-new2_result.json"), (1_600_000_000, 1_600_000_000))
+            write(output_dir, "job-resumable_partial_result.json", 9)
+            write(output_dir, "job-running_result.json", 9)
+            write(output_dir, "notes.txt", 9)
+
+            with (
+                patch("main.load_config", return_value={"paths": {"output_dir": output_dir, "temp_dir": temp_dir}}),
+                patch.object(main.ANALYSIS_JOBS, "has", side_effect=lambda job_id: job_id == "job-running"),
+            ):
+                response = self.client.get("/api/stored-analyses")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        analyses = response.json()["analyses"]
+        # Partial results belong to resumable drafts and a running analysis is not a leftover.
+        self.assertEqual([item["job_id"] for item in analyses], ["job-new", "job-old", "job-new2"])
+        self.assertEqual([item["size_bytes"] for item in analyses], [10 + 5 + 3 + 20 + 7 + 100, 4, 2])
+        self.assertEqual(analyses[1]["completed_at"], "2023-11-14T22:13:20+00:00")
+
+    def test_stored_analyses_answers_an_empty_list_without_an_output_folder(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            missing = os.path.join(root, "missing")
+            with patch("main.load_config", return_value={"paths": {"output_dir": missing, "temp_dir": missing}}):
+                response = self.client.get("/api/stored-analyses")
+
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), {"analyses": []})
+
     def test_delete_outputs_rejects_invalid_job_id(self) -> None:
         response = self.client.delete("/api/outputs/bad..job")
 

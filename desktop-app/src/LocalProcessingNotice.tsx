@@ -133,7 +133,7 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                         <div>
                             <dt>삭제</dt>
                             <dd>
-                                왼쪽 목록의 회의록 메뉴에서 삭제하면 회의 기록과 분석 결과가 함께 지워집니다. 다운로드 폴더에 저장한 파일은 직접 지워 주세요.
+                                왼쪽 목록의 회의록 메뉴나 설정 &gt; 일반 &gt; 보관의 회의록 정리에서 삭제하면 회의 기록과 분석 결과가 함께 지워집니다. 다운로드 폴더에 저장한 파일은 직접 지워 주세요.
                             </dd>
                         </div>
                     </dl>

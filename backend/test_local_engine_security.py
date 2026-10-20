@@ -142,6 +142,11 @@ class LocalEngineSecurityTest(unittest.TestCase):
                 with self.subTest(job_id=job_id, method=method, operation=operation):
                     self.assertEqual(required_capability_for_request(method, path), expected)
 
+    def test_stored_analyses_list_needs_the_deletion_permission(self) -> None:
+        self.assertEqual(required_capability_for_request('GET', '/api/stored-analyses'), 'meeting-storage')
+        self.assertEqual(required_capability_for_request('DELETE', '/api/outputs/any-job'), 'meeting-storage')
+        self.assertIsNone(required_capability_for_request('GET', '/api/stored-analyses-extra'))
+
     def test_output_auth_uses_operation_for_marker_job_ids(self) -> None:
         app, sessions = build_test_app()
 

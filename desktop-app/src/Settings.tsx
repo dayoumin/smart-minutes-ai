@@ -10,6 +10,7 @@ import {
 import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 import { readApiErrorMessage } from './apiError';
+import { MeetingCleanupPanel } from './MeetingCleanupPanel';
 import { LOCAL_ENGINE_NAME, withJosa } from './brand';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
@@ -251,6 +252,8 @@ interface SettingsProps {
     initialTab?: SettingsTab;
     /** Scroll a section into view on open (the writer's 문제 해결 button). */
     initialSection?: SettingsSection;
+    /** Records deleted from 회의록 정리, so the app can leave a meeting that no longer exists. */
+    onMeetingsDeleted?: (ids: string[]) => void;
 }
 
 export type SettingsTab = 'general' | 'models';
@@ -425,8 +428,19 @@ const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Re
     }
 };
 
-export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general', initialSection }) => {
+export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general', initialSection, onMeetingsDeleted }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
+    // 회의록 정리 opens in place of the 일반 page, so no second dialog stacks on this one.
+    const [generalView, setGeneralView] = useState<'settings' | 'cleanup'>('settings');
+    // While 회의록 정리 deletes, closing or switching away would hide which records stayed and why.
+    const [cleanupBusy, setCleanupBusy] = useState(false);
+    const cleanupButtonRef = useRef<HTMLButtonElement>(null);
+    const returnFocusToCleanupRef = useRef(false);
+    useEffect(() => {
+        if (generalView !== 'settings' || !returnFocusToCleanupRef.current) return;
+        returnFocusToCleanupRef.current = false;
+        cleanupButtonRef.current?.focus();
+    }, [generalView]);
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
     const [models, setModels] = useState<ModelsPayload | null>(null);
     const [apiBase, setApiBase] = useState('');
@@ -1397,6 +1411,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 summaryModelMenuTriggerRef.current?.focus();
                 return;
             }
+            if (cleanupBusy) return;
             onClose();
         };
         const previousOverflow = document.body.style.overflow;
@@ -1407,7 +1422,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             document.body.style.overflow = previousOverflow;
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [onClose, openSummaryModelMenu, supportContactVisible]);
+    }, [cleanupBusy, onClose, openSummaryModelMenu, supportContactVisible]);
 
     const saveGeneralSettings = useCallback(async () => {
         if (!settings) {
@@ -1823,6 +1838,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                         <button
                             type="button"
                             onClick={onClose}
+                            disabled={cleanupBusy}
                             className="icon-button btn-ghost h-9 w-9"
                             aria-label="설정 닫기"
                             title="닫기"
@@ -1843,7 +1859,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             aria-selected={activeTab === tab.key}
                             aria-controls={`settings-${tab.key}-panel`}
                             tabIndex={activeTab === tab.key ? 0 : -1}
-                            onClick={() => setActiveTab(tab.key)}
+                            disabled={cleanupBusy}
+                            onClick={() => {
+                                setActiveTab(tab.key);
+                                // The 일반 tab always leads to the 일반 page, also from 회의록 정리.
+                                if (tab.key === 'general') setGeneralView('settings');
+                            }}
                             onKeyDown={event => handleTabKeyDown(event, tabIndex)}
                             className={`tab-button py-3 ${activeTab === tab.key ? 'tab-button-active' : ''}`}
                         >
@@ -1891,7 +1912,19 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             </StatusBanner>
                         </div>
                     )}
-                    {activeTab === 'general' && (
+                    {activeTab === 'general' && generalView === 'cleanup' && (
+                        <div id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab">
+                            <MeetingCleanupPanel
+                                onBack={() => {
+                                    returnFocusToCleanupRef.current = true;
+                                    setGeneralView('settings');
+                                }}
+                                onMeetingsDeleted={onMeetingsDeleted}
+                                onBusyChange={setCleanupBusy}
+                            />
+                        </div>
+                    )}
+                    {activeTab === 'general' && generalView === 'settings' && (
                         <section id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab" className="settings-page">
                             <div className="settings-page-heading">
                                 <div>
@@ -2027,6 +2060,20 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             />
                                         )}
                                     </label>
+                                    <div className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">회의록 정리</span>
+                                            <span className="settings-row-description">여러 회의록을 한 번에 지우거나, 이 PC에만 남은 분석 파일을 정리합니다.</span>
+                                        </span>
+                                        <button
+                                            ref={cleanupButtonRef}
+                                            type="button"
+                                            className="btn btn-outline h-8 shrink-0 px-3 text-xs"
+                                            onClick={() => setGeneralView('cleanup')}
+                                        >
+                                            정리하기
+                                        </button>
+                                    </div>
                                 </div>
                             </div>
 

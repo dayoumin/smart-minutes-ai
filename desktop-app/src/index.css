@@ -513,6 +513,123 @@
     @apply w-48 shrink-0;
   }
 
+  /* 일반 > 보관 > 회의록 정리: shown in place of the 일반 page inside the settings dialog. */
+  .meeting-cleanup-heading {
+    @apply grid justify-items-start gap-1;
+  }
+
+  .meeting-cleanup-heading h3 {
+    @apply text-base font-semibold text-foreground outline-none;
+  }
+
+  .meeting-cleanup-heading p {
+    @apply text-xs text-muted-foreground;
+  }
+
+  .meeting-cleanup-back {
+    @apply -ml-1 inline-flex items-center gap-0.5 rounded-md px-1 py-0.5 text-[13px] font-medium;
+    color: var(--brand-primary);
+  }
+
+  .meeting-cleanup-back:hover {
+    color: var(--brand-primary-hover);
+  }
+
+  .meeting-cleanup-toolbar {
+    @apply flex items-center gap-3 border-b border-border/70 px-4 py-3;
+  }
+
+  .meeting-cleanup-toolbar > label {
+    @apply shrink-0 text-[13px] font-medium text-muted-foreground;
+  }
+
+  .meeting-cleanup-period {
+    @apply h-8 w-48 py-1;
+  }
+
+  .meeting-cleanup-count {
+    @apply ml-auto shrink-0 text-xs text-muted-foreground;
+  }
+
+  /* The list scrolls inside the card so the delete row stays in reach on long lists. */
+  .meeting-cleanup-list {
+    @apply overflow-y-auto;
+    max-height: min(20rem, 42vh);
+  }
+
+  .meeting-cleanup-row {
+    @apply flex min-h-11 cursor-pointer items-center gap-3 border-b border-border/70 px-4 py-2.5 text-sm;
+  }
+
+  .meeting-cleanup-row-head {
+    background-color: color-mix(in srgb, var(--text-default) 3%, var(--bg-page));
+  }
+
+  .meeting-cleanup-checkbox {
+    @apply h-4 w-4 shrink-0 cursor-pointer disabled:cursor-not-allowed;
+    accent-color: var(--brand-primary);
+  }
+
+  .meeting-cleanup-title {
+    @apply min-w-0 flex-1 truncate font-medium text-foreground;
+  }
+
+  .meeting-cleanup-date,
+  .meeting-cleanup-empty,
+  .meeting-cleanup-hint {
+    @apply shrink-0 text-xs text-muted-foreground;
+  }
+
+  .meeting-cleanup-empty {
+    @apply border-b border-border/70 px-4 py-6 text-center;
+  }
+
+  .meeting-cleanup-selected {
+    @apply shrink-0 text-[13px] font-medium;
+    color: var(--brand-primary);
+  }
+
+  .meeting-cleanup-actions {
+    @apply flex min-h-14 items-center gap-4 px-4 py-3;
+    background-color: color-mix(in srgb, var(--text-default) 3%, var(--bg-page));
+  }
+
+  .meeting-cleanup-actions > p {
+    @apply min-w-0 flex-1;
+  }
+
+  .meeting-cleanup-kept {
+    @apply block text-xs font-medium leading-relaxed;
+    color: var(--status-warning-fg);
+  }
+
+  .meeting-cleanup-danger {
+    @apply h-8 shrink-0 px-3 text-xs;
+    color: var(--status-error-fg);
+    border-color: color-mix(in srgb, var(--status-error-fg) 35%, transparent);
+  }
+
+  .meeting-cleanup-danger:not(:disabled):hover {
+    background-color: var(--status-error-bg);
+  }
+
+  .meeting-cleanup-pc {
+    @apply flex min-h-14 items-center gap-5 px-4 py-3;
+  }
+
+  .meeting-cleanup-pc-copy {
+    @apply grid min-w-0 flex-1 gap-1;
+  }
+
+  .meeting-cleanup-pc-title {
+    @apply text-sm font-medium text-foreground;
+  }
+
+  .meeting-cleanup-pc-description,
+  .meeting-cleanup-pc-status {
+    @apply text-xs leading-relaxed text-muted-foreground;
+  }
+
   .settings-switch {
     @apply relative h-5 w-9 shrink-0 cursor-pointer appearance-none rounded-full border border-border-strong transition-colors disabled:cursor-not-allowed disabled:opacity-45;
     background-color: var(--border-strong);

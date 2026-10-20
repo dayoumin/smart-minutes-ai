@@ -449,18 +449,20 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
 };
 
 const runEngineDownDeleteScene = async browser => {
-  // Without an engine answer its copy of the analysis would stay behind, so the browser record stays too.
+  // Without an engine answer the record is deleted at once and its copy on this PC is deleted on the next answer.
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   const jobId = 'engine-down-delete-job';
+  const blockedJobId = 'engine-down-blocked-job';
   let engineUp = false;
   const deleteRequests = [];
   await page.route('**/api/**', route => {
     const request = route.request();
-    if (request.method() === 'DELETE' && new URL(request.url()).pathname === `/api/outputs/${jobId}`) {
-      deleteRequests.push(engineUp ? 'answered' : 'refused');
+    const { pathname } = new URL(request.url());
+    if (request.method() === 'DELETE' && pathname.startsWith('/api/outputs/')) {
+      deleteRequests.push(`${engineUp ? 'answered' : 'refused'} ${decodeURIComponent(pathname.slice('/api/outputs/'.length))}`);
       return engineUp
-        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ deleted: true }) })
+        ? route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ deleted: [] }) })
         : route.abort('connectionrefused');
     }
     return route.abort('connectionrefused');
@@ -470,41 +472,75 @@ const runEngineDownDeleteScene = async browser => {
     dialogs.push({ type: dialog.type(), message: dialog.message() });
     void dialog.accept();
   });
-  const waitForDialogs = async count => {
-    for (let attempt = 0; attempt < 200 && dialogs.length < count; attempt += 1) await sleep(50);
+  const waitFor = async (check, label) => {
+    for (let attempt = 0; attempt < 300; attempt += 1) {
+      if (await check()) return;
+      await sleep(50);
+    }
+    throw new Error(`timed out waiting for ${label}`);
   };
+  const pendingCleanups = () => page.evaluate(() => JSON.parse(window.localStorage.getItem('pendingMeetingOutputCleanups') ?? '[]'));
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     await putMeeting(page, { ...meetingAt('engine-down-delete', '엔진 꺼짐 삭제 회의', Date.now() - DAY_MS), jobId });
-    await putMeeting(page, meetingAt('engine-down-keep', '함께 남는 회의', Date.now() - 2 * DAY_MS));
+    await putMeeting(page, { ...meetingAt('engine-down-blocked', '정리 기억 실패 회의', Date.now() - 2 * DAY_MS), jobId: blockedJobId });
+    await putMeeting(page, { ...meetingAt('engine-down-keep', '함께 남는 회의', Date.now() - 3 * DAY_MS), jobId: 'engine-down-keep-job' });
     const navigation = page.locator('.barorok-navigation');
-    const menuTrigger = navigation.locator('[data-sidebar-record-menu-trigger][aria-label^="엔진 꺼짐 삭제 회의,"]');
-    const deleteButton = navigation.locator('[data-sidebar-record-menu]').getByRole('button', { name: '삭제', exact: true });
-    await menuTrigger.waitFor({ timeout: 10000 });
-    assert.deepEqual(await readMeetingIds(page), ['engine-down-delete', 'engine-down-keep']);
+    const menuTrigger = title => navigation.locator(`[data-sidebar-record-menu-trigger][aria-label^="${title},"]`);
+    const deleteFromMenu = async title => {
+      await menuTrigger(title).focus();
+      await menuTrigger(title).press('Enter');
+      await navigation.locator('[data-sidebar-record-menu]').getByRole('button', { name: '삭제', exact: true }).click();
+    };
+    await menuTrigger('엔진 꺼짐 삭제 회의').waitFor({ timeout: 10000 });
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-blocked', 'engine-down-delete', 'engine-down-keep']);
+    assert.deepEqual(await pendingCleanups(), []);
 
-    await menuTrigger.focus();
-    await menuTrigger.press('Enter');
-    await deleteButton.click();
-    await waitForDialogs(2);
-    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'alert']);
-    assert.equal(dialogs[1].message, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중일 때만 회의록을 삭제할 수 있습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 삭제해 주세요.`);
-    assert.deepEqual(deleteRequests, ['refused']);
-    await page.waitForTimeout(300);
-    assert.deepEqual(await readMeetingIds(page), ['engine-down-delete', 'engine-down-keep'], 'the record stays while the engine copy cannot be deleted');
-    assert.equal(await menuTrigger.count(), 1, 'the record stays in the sidebar');
+    await deleteFromMenu('엔진 꺼짐 삭제 회의');
+    await menuTrigger('엔진 꺼짐 삭제 회의').waitFor({ state: 'detached', timeout: 10000 });
+    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm'], 'deleting while the engine is off asks nothing more');
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-blocked', 'engine-down-keep']);
+    assert.deepEqual(await pendingCleanups(), [jobId], 'the copy on this PC waits for the engine');
+    assert.ok(deleteRequests.includes(`refused ${jobId}`));
+    const toast = page.locator('.operation-toast');
+    await toast.getByText(`회의록을 삭제했습니다. 이 PC의 분석 파일은 ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행되면 지웁니다.`, { exact: true }).waitFor({ timeout: 5000 });
+    assert.equal(await page.locator('.barorok-navigation .operation-toast').count(), 0, 'the toast is outside the sidebar, above the page');
 
+    // When this browser cannot remember the cleanup, the record stays so its analysis is never orphaned.
+    await page.evaluate(() => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function setItemUnlessCleanup(key, value) {
+        if (key === 'pendingMeetingOutputCleanups') throw new DOMException('blocked', 'QuotaExceededError');
+        return setItem.call(this, key, value);
+      };
+      window.__restoreSetItem = () => { Storage.prototype.setItem = setItem; };
+    });
+    await deleteFromMenu('정리 기억 실패 회의');
+    await waitFor(() => dialogs.length === 3, 'the storage alert');
+    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'confirm', 'alert']);
+    assert.match(dialogs[2].message, /기억하지 못해 회의록을 삭제하지 않았습니다/);
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-blocked', 'engine-down-keep']);
+    assert.equal(await menuTrigger('정리 기억 실패 회의').count(), 1);
+    assert.deepEqual(await pendingCleanups(), [jobId]);
+    await page.evaluate(() => window.__restoreSetItem());
+
+    // A queued job that a record uses again (the same file resumed) leaves the queue without being deleted.
+    await page.evaluate(() => {
+      const queued = JSON.parse(window.localStorage.getItem('pendingMeetingOutputCleanups') ?? '[]');
+      window.localStorage.setItem('pendingMeetingOutputCleanups', JSON.stringify([...queued, 'engine-down-keep-job']));
+    });
+
+    // The next answer from the engine deletes the waiting copy without the user doing anything.
     engineUp = true;
-    await menuTrigger.focus();
-    await menuTrigger.press('Enter');
-    await deleteButton.click();
-    await menuTrigger.waitFor({ state: 'detached', timeout: 10000 });
-    assert.deepEqual(deleteRequests, ['refused', 'answered']);
-    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'alert', 'confirm'], 'a deletion the engine confirmed shows no error');
-    assert.deepEqual(await readMeetingIds(page), ['engine-down-keep']);
-    assert.equal(await navigation.locator('[data-sidebar-record-menu-trigger][aria-label^="함께 남는 회의,"]').count(), 1);
-    console.log('ok - deleting a record waits for the engine instead of leaving its analysis behind');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitFor(async () => (await pendingCleanups()).length === 0, 'the queued cleanup to finish');
+    assert.ok(deleteRequests.includes(`answered ${jobId}`));
+    assert.ok(!deleteRequests.includes(`answered ${blockedJobId}`), 'a kept record keeps its analysis');
+    assert.ok(!deleteRequests.some(request => request.endsWith('engine-down-keep-job')), 'a job a record uses is never deleted from the queue');
+    assert.deepEqual(await readMeetingIds(page), ['engine-down-blocked', 'engine-down-keep']);
+    assert.equal(dialogs.length, 3, 'the background cleanup shows no dialog');
+    console.log('ok - deleting with the engine off removes the record now and its PC copy on the next answer');
   } finally {
     await context.close();
   }

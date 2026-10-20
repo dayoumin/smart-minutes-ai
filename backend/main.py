@@ -2884,6 +2884,76 @@ async def delete_outputs(job_id: str) -> dict:
     return {"job_id": job_id, "deleted": _delete_job_artifacts(job_id)}
 
 
+def _path_size_bytes(path: str) -> int:
+    try:
+        if os.path.isfile(path):
+            return os.path.getsize(path)
+        total = 0
+        for root, _dirs, files in os.walk(path):
+            for name in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, name))
+                except OSError:
+                    pass
+        return total
+    except OSError:
+        return 0
+
+
+def _stored_analysis_sizes(job_ids: list[str], directories: list[str], temp_dir: str) -> dict[str, int]:
+    """Bytes each job's artifacts (the ones `_delete_job_artifacts` removes) take on this PC."""
+    # The job folder (kept audio, uploads, chunks, checkpoints) is usually the largest part.
+    sizes = {job_id: _path_size_bytes(os.path.join(temp_dir, "jobs", job_id)) for job_id in job_ids}
+    owners = {candidate: job_id for job_id in job_ids for candidate in (job_id, _safe_export_id(job_id))}
+    for directory in directories:
+        try:
+            names = os.listdir(directory)
+        except OSError:
+            continue
+        for name in names:
+            # Only names that start with a job's id can be its artifacts; the full check runs on those alone.
+            for candidate, job_id in owners.items():
+                if name.startswith(candidate) and _artifact_belongs_to_job(name, job_id):
+                    sizes[job_id] += _path_size_bytes(os.path.join(directory, name))
+                    break
+    return sizes
+
+
+# A plain function: FastAPI runs it in a worker thread, so walking large folders never stalls progress streams.
+@app.get("/api/stored-analyses")
+def list_stored_analyses() -> dict:
+    """Completed analyses kept on this PC, so a browser can find the ones none of its records point to."""
+    config = load_config()
+    output_dir = os.path.abspath(resolve_config_path(config["paths"]["output_dir"]))
+    temp_dir = os.path.abspath(resolve_config_path(config["paths"]["temp_dir"]))
+    completed: dict[str, float] = {}
+    try:
+        names = os.listdir(output_dir)
+    except OSError:
+        names = []
+    for name in names:
+        if not name.endswith("_result.json") or name.endswith("_partial_result.json"):
+            continue
+        job_id = name[: -len("_result.json")]
+        # A running analysis is not a leftover, and a name the delete route would refuse cannot be offered.
+        if not job_id or os.path.basename(job_id) != job_id or ".." in job_id or ANALYSIS_JOBS.has(job_id):
+            continue
+        try:
+            completed[job_id] = os.path.getmtime(os.path.join(output_dir, name))
+        except OSError:
+            continue
+    sizes = _stored_analysis_sizes(list(completed), [output_dir, temp_dir], temp_dir)
+    analyses = [
+        {
+            "job_id": job_id,
+            "completed_at": datetime.fromtimestamp(modified, timezone.utc).isoformat(),
+            "size_bytes": sizes.get(job_id, 0),
+        }
+        for job_id, modified in sorted(completed.items(), key=lambda item: item[1], reverse=True)
+    ]
+    return {"analyses": analyses}
+
+
 @app.delete("/api/analyze/drafts/{job_id}")
 async def delete_analysis_draft(job_id: str) -> dict:
     job_id = _validate_job_id(job_id)

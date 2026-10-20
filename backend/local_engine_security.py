@@ -410,6 +410,9 @@ def required_capability_for_request(method: str, path: str) -> str | None:
         return "model-management"
     if path == "/api/export-record" or path.startswith("/api/export-record/"):
         return "export"
+    if path == "/api/stored-analyses":
+        # Lists what deletion can remove, so it needs the same permission as deleting.
+        return "meeting-storage"
     if path.startswith("/api/outputs/"):
         # A caller-supplied job ID must not change the capability of its operation.
         _, _, operation = path[len("/api/outputs/"):].partition("/")

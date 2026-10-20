@@ -1,20 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import ts from 'typescript';
-
-const importTsModule = async (path) => {
-  const source = await readFile(resolve(path), 'utf8');
-  const { outputText } = ts.transpileModule(source, {
-    compilerOptions: {
-      module: ts.ModuleKind.ES2022,
-      target: ts.ScriptTarget.ES2022,
-    },
-  });
-  return import(`data:text/javascript;charset=utf-8,${encodeURIComponent(outputText)}`);
-};
-
-const { getTopicGenerationUiState } = await importTsModule('src/topicGenerationUi.ts');
+import { getTopicGenerationUiState } from '../src/topicGenerationUi.ts';
 
 assert.deepEqual(getTopicGenerationUiState({
   generatingKind: null,

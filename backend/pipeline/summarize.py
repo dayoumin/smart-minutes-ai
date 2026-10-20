@@ -35,6 +35,19 @@ MEETING_KEY_TERMS_GLOSSARY_ID = "meeting-key-terms"
 MAX_CONTEXT_KEY_TERMS = 30
 MAX_CONTEXT_KEY_TERM_CHARS = 40
 MAX_CONTEXT_PARTICIPANTS_CHARS = 300
+# Typed participant names are reference only. A name the transcript never says cannot be a
+# verified speaker name or action owner, so it goes back to the speaker label or this owner.
+UNCONFIRMED_ACTION_OWNER = "담당자 미정"
+UNKNOWN_SPEAKER_LABEL = "참석자"
+UNKNOWN_SPEAKER_NOTE = "참석자 이름을 대화록에서 확인하지 못해 자동 라벨로 바꿨습니다. 누구의 발언인지 대화록에서 확인해 주세요."
+PARTICIPANT_INPUT_SPLIT_RE = re.compile(r"[,\n;，、]")
+ACTION_OWNER_RE = re.compile(r"^\s*([^:：\n]{1,40}?)\s*[:：]\s*(\S.*)$", re.DOTALL)
+# "김수산·이자원" lists owners; " · " joins a long summary's qualifiers ("… · 조건: …") and is not split.
+ACTION_OWNER_SPLIT_RE = re.compile(r"\s*[,/、]\s*|(?<=\S)·(?=\S)|\s+및\s+")
+MAX_ACTION_OWNER_WORDS = 2  # A name with a title ("김수산 팀장"); anything longer is the task itself.
+SPEAKER_NAME_RULES = """Keep each participant's existing label as display_name unless the transcript itself states that speaker's name.
+A name that appears only in the basic summary, topic sections or meeting context is not verified.
+Names listed in the meeting context are not a speaker mapping: never use them to rename a speaker label or fill display_name."""
 ATTRIBUTION_RULES = """Attribution rules for every field, including title and topics:
 - Speaker labels identify who spoke, not who a remark describes.
 - Attribute an opinion, trait, action or intention to a named person only when the source clearly identifies that person as its subject. A nearby name, adjacent remark or shared speaker is not enough.
@@ -229,6 +242,7 @@ def _meeting_context_block(meeting_context: dict | None, *, include_report_templ
         if participants:
             context_lines.append(f"- 참석자(사용자 입력): {participants}")
             context_lines.append("- 참석자 이름은 표기 참고용이며, 대화록의 발언자를 짐작해 이 이름을 붙이지 않습니다.")
+            context_lines.append(f"- 할 일 담당자도 이 목록에서 고르지 않습니다. 대화록에 나온 이름이나 화자 라벨만 쓰고, 확인되지 않으면 `{UNCONFIRMED_ACTION_OWNER}`으로 씁니다.")
         glossaries = meeting_context.get("term_glossaries") or []
         key_terms = _meeting_key_terms(glossaries)
         if key_terms:
@@ -395,6 +409,147 @@ def _trim_followup_transcript(transcript_text: str, max_chars: int = 12000) -> s
         return transcript_text
     half = max_chars // 2
     return f"{transcript_text[:half]}\n...\n{transcript_text[-half:]}"
+
+
+def _participant_input_names(value) -> list[str]:
+    names: list[str] = []
+    for part in PARTICIPANT_INPUT_SPLIT_RE.split(str(value or "")):
+        name = " ".join(part.split())
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _name_key(value) -> str:
+    return "".join(str(value or "").split()).casefold()
+
+
+def _typed_only_name_check(meeting_context: dict | None, transcript_segments: list[dict]):
+    """Return a lookup of the typed participant names a value stands for that the transcript never says.
+
+    None when no participants were typed, so callers leave model output untouched.
+    """
+    typed = [(name, _name_key(name)) for name in _participant_input_names((meeting_context or {}).get("participants"))]
+    if not typed:
+        return None
+    # Speaker ids can hide behind speaker_name in the transcript text; a user label stays visible there.
+    sources = [_segments_to_transcript(transcript_segments)]
+    sources += [str(segment.get("speaker") or "") for segment in transcript_segments if isinstance(segment, dict)]
+    # Whitespace is kept so 이자원 does not match "이 자원조사".
+    transcript = " ".join(" ".join(sources).split()).casefold()
+
+    def stated(text) -> bool:
+        phrase = " ".join(str(text or "").split()).casefold()
+        return bool(phrase) and phrase in transcript
+
+    def typed_only_names(value) -> list[str]:
+        key = _name_key(value)
+        if not key or stated(value):
+            return []
+        return [
+            name for name, name_key in typed
+            if (key == name_key or (min(len(key), len(name_key)) >= 2 and (name_key in key or key in name_key)))
+            and not stated(name)
+        ]
+
+    return typed_only_names
+
+
+def _without_typed_action_owners(actions, typed_only_names):
+    if not isinstance(actions, list):
+        return actions
+    cleaned = []
+    for action in actions:
+        match = ACTION_OWNER_RE.match(action) if isinstance(action, str) else None
+        if not match:
+            cleaned.append(action)
+            continue
+        owners = [owner for owner in ACTION_OWNER_SPLIT_RE.split(match.group(1).strip()) if owner]
+        kept = [owner for owner in owners if not typed_only_names(owner)]
+        if len(kept) == len(owners) or any(len(owner.split()) > MAX_ACTION_OWNER_WORDS for owner in owners):
+            cleaned.append(action)
+            continue
+        cleaned.append(f"{', '.join(kept) or UNCONFIRMED_ACTION_OWNER}: {match.group(2).strip()}")
+    return cleaned
+
+
+def _replace_name_text(value, name: str, label: str):
+    if isinstance(value, str):
+        return value.replace(name, label)
+    if isinstance(value, list):
+        return [_replace_name_text(item, name, label) for item in value]
+    return value
+
+
+def _guard_typed_participant_names(summaries: list[dict], transcript_segments: list[dict], meeting_context: dict | None) -> list[dict]:
+    """Put speaker labels back where the model used a typed participant name the transcript never says."""
+    typed_only_names = _typed_only_name_check(meeting_context, transcript_segments)
+    if typed_only_names is None:
+        return summaries
+    labels: list[str] = []
+    label_for: dict[str, str] = {}
+    for segment in transcript_segments:
+        if not isinstance(segment, dict):
+            continue
+        speaker_id = str(segment.get("speaker") or "").strip()
+        label = str(segment.get("speaker_name") or speaker_id).strip()
+        if not label:
+            continue
+        if label not in labels:
+            labels.append(label)
+        label_for.setdefault(label, label)
+        if speaker_id:
+            label_for.setdefault(speaker_id, label)
+    claimed = {label_for[item["speaker"]] for item in summaries if item["speaker"] in label_for}
+
+    # A reverted name, and the typed name inside it ("김수산" in "김수산 팀장"), stands for that label
+    # in every item's text. A name two items claim for different labels is left alone.
+    replacements: dict[str, str] = {}
+    conflicting: set[str] = set()
+
+    def replace_later(names: list[str], label: str) -> None:
+        for name in names:
+            name = name.strip()
+            if len(name) < 2 or name in conflicting:
+                continue
+            if replacements.setdefault(name, label) != label:
+                conflicting.add(name)
+                del replacements[name]
+
+    guarded = []
+    for index, item in enumerate(summaries):
+        item = dict(item)
+        speaker_names = typed_only_names(item["speaker"]) if item["speaker"] not in label_for else []
+        if speaker_names:
+            # The model renamed the speaker itself. Excerpts are listed in transcript order, so the
+            # same position (or the only label left) is the best remaining guess, flagged as a guess.
+            recovered = label_for.get(item["display_name"])
+            if recovered is None or recovered in claimed:
+                free = [label for label in labels if label not in claimed]
+                position_label = labels[index] if index < len(labels) else ""
+                recovered = position_label if position_label in free else free[0] if len(free) == 1 else UNKNOWN_SPEAKER_LABEL
+                item["needs_check"] = [*item["needs_check"], UNKNOWN_SPEAKER_NOTE]
+            claimed.add(recovered)
+            replace_later([item["speaker"], *speaker_names], recovered)
+            item["speaker"] = recovered
+        label = label_for.get(item["speaker"], item["speaker"])
+        display_names = typed_only_names(item["display_name"])
+        if display_names:
+            replace_later([item["display_name"], *display_names], label)
+            item["display_name"] = label
+        elif speaker_names and item["display_name"] in label_for:
+            # Another speaker's label would show this card under that speaker's name.
+            item["display_name"] = label
+        guarded.append(item)
+
+    ordered = sorted(replacements.items(), key=lambda pair: len(pair[0]), reverse=True)
+    for item in guarded:
+        # needs_check keeps the name: "참석자01이 김수산인지 확인" is the doubt it records.
+        for key in ("role_in_meeting", "summary", "key_points", "actions"):
+            for name, label in ordered:
+                item[key] = _replace_name_text(item[key], name, label)
+        item["actions"] = _without_typed_action_owners(item["actions"], typed_only_names)
+    return guarded
 
 
 def _speaker_focused_transcript(
@@ -916,8 +1071,7 @@ Create participant-by-participant context summaries from the whole meeting conte
 Do not summarize each participant mechanically from isolated utterances. Interpret each participant's comments in relation to the overall discussion, other participants, topics, decisions, and tasks.
 Use the participant-focused excerpts to review each participant's comments across the meeting, then use the topic sections and transcript context to avoid losing the overall flow.
 Return strict JSON only. Do not wrap it in Markdown.
-Use existing participant labels unless a verified participant name is present in the transcript or summary.
-Names listed in the meeting context are not a speaker mapping: never use them to rename a speaker label or fill display_name.
+{SPEAKER_NAME_RULES}
 Do not invent participant identities. Write all JSON values in Korean unless a source term must remain in English.
 
 {context_block}\
@@ -926,7 +1080,7 @@ Required JSON schema:
   "speaker_context_summaries": [
     {{
       "speaker": "참석자01",
-      "display_name": "참석자01 or verified participant name",
+      "display_name": "참석자01, or the name the transcript states for this speaker",
       "role_in_meeting": "observed role in this meeting",
       "summary": "context-aware summary of this participant's contribution",
       "key_points": ["important point in context"],
@@ -951,12 +1105,13 @@ Transcript context:
     data = _generate_json_once(model_name_or_path, prompt)
     summaries = _speaker_context_summaries_from_response(data)
     if summaries:
-        return summaries
+        return _guard_typed_participant_names(summaries, transcript_segments, meeting_context)
 
     retry_prompt = f"""Return only valid JSON with exactly one top-level key named "speaker_context_summaries".
 Do not return prose, markdown, or a single general summary.
 Create one item per participant label found in the transcript.
 Each item must include "speaker", "display_name", "role_in_meeting", "summary", "key_points", "actions", and "needs_check".
+{SPEAKER_NAME_RULES}
 
 {context_block}\
 Schema:
@@ -977,7 +1132,7 @@ Transcript context:
     retry_data = _generate_json_once(model_name_or_path, retry_prompt)
     summaries = _speaker_context_summaries_from_response(retry_data)
     if summaries:
-        return summaries
+        return _guard_typed_participant_names(summaries, transcript_segments, meeting_context)
     return _fallback_speaker_context_from_segments(transcript_segments)
 
 
@@ -1165,6 +1320,9 @@ def summarize_meeting(
             ))
         else:
             result = generate_summary(transcript_text, stage="direct")
+        typed_only_names = _typed_only_name_check(meeting_context, transcript_segments)
+        if typed_only_names is not None:
+            result["actions"] = _without_typed_action_owners(result["actions"], typed_only_names)
         _summary_diagnostic(diagnostic_callback, "final", summary=result)
         return result
     except Exception as exc:

@@ -30,6 +30,9 @@ interface LocalEngineConnectionSurfaceProps {
 }
 
 const PAIRING_CODE_PATTERN = /^\d{6,8}$/;
+// A refused loopback request fails within milliseconds; without a floor the retry
+// flips straight back to the same message and looks like the button did nothing.
+const MIN_MANUAL_CHECK_MS = 700;
 
 const SceneIcon: React.FC<{ scene: string; busy: boolean }> = ({ scene, busy }) => {
     if (busy) return <Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden="true" />;
@@ -54,6 +57,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
         resetPairing,
     } = useLocalEngineConnection();
     const [connectionStarted, setConnectionStarted] = useState(false);
+    const [manualCheckPending, setManualCheckPending] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
     const [isCodeDialogOpen, setIsCodeDialogOpen] = useState(false);
     const [pairingCode, setPairingCode] = useState('');
@@ -64,13 +68,15 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
     const statusRef = useRef<HTMLDivElement>(null);
 
     const view = useMemo(() => getLocalEngineConnectionView({
-        snapshot,
+        snapshot: manualCheckPending && ['unreachable', 'error', 'checking'].includes(snapshot.transport)
+            ? { ...snapshot, transport: 'checking', blockedBy: undefined }
+            : snapshot,
         pairingPhase: pairingState.phase,
         connectionStarted: connectionStarted || connectionRequested,
         installerAvailable: Boolean(installerUrl),
         updateAvailable: Boolean(updateUrl),
         analysisPrerequisitesMissing,
-    }), [analysisPrerequisitesMissing, connectionRequested, connectionStarted, installerUrl, pairingState.phase, snapshot, updateUrl]);
+    }), [analysisPrerequisitesMissing, connectionRequested, connectionStarted, installerUrl, manualCheckPending, pairingState.phase, snapshot, updateUrl]);
 
     useEffect(() => {
         if (pairingState.phase !== 'awaiting-code') return;
@@ -145,11 +151,17 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
     const probe = async () => {
         setConnectionStarted(true);
         setShowHelp(false);
+        setManualCheckPending(true);
+        const startedAt = Date.now();
         try {
             const result = await probeLocalEngine();
             if (result) await onProbeCompleted?.(result);
         } catch {
             // The provider owns the durable transport state shown by this surface.
+        } finally {
+            const remaining = MIN_MANUAL_CHECK_MS - (Date.now() - startedAt);
+            if (remaining > 0) await new Promise(resolve => window.setTimeout(resolve, remaining));
+            setManualCheckPending(false);
         }
     };
 

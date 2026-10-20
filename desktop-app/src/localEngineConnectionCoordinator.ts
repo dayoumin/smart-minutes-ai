@@ -2,15 +2,20 @@ import type { LocalEngineAuthorizationRecovery, LocalEngineClient } from './loca
 import { createBrowserApprovalToken, LocalEngineBrowserCredentialStore } from './localEngineBrowserCredential.ts';
 import type {
     LocalEngineAuthorizationState,
+    LocalEngineBlockedCause,
     LocalEngineCapability,
     LocalEngineProbePayload,
     LocalEngineTransportState,
 } from './localEngineConnection';
+import type { LocalEngineBrowserAccessState } from './localEngineBrowserAccess';
 import type {
     LocalEnginePairingStart,
     LocalEngineSessionCredential,
     LocalEngineSessionCredentialStore,
 } from './localEngineSession';
+
+// Short: a stopped engine refuses at once, and a slow answer must not hold the failure screen.
+const REACH_CHECK_TIMEOUT_MS = 3000;
 
 export type LocalEnginePairingPhase =
     | 'idle'
@@ -30,7 +35,9 @@ export interface LocalEnginePairingState {
 }
 
 export interface LocalEngineConnectionCoordinatorCallbacks {
-    onTransport: (transport: LocalEngineTransportState) => void;
+    onTransport: (transport: LocalEngineTransportState, detail?: { blockedBy?: LocalEngineBlockedCause }) => void;
+    /** Asked after a probe gets no response, to separate a browser block from a stopped engine. */
+    browserAccessState?: () => Promise<LocalEngineBrowserAccessState>;
     onProbe: (probe: LocalEngineProbePayload) => void;
     onAuthorization: (
         authorization: LocalEngineAuthorizationState,
@@ -183,13 +190,33 @@ export class LocalEngineConnectionCoordinator {
             }
             return parsed;
         } catch (error) {
-            if (this.isLatestTransport(operationId)) {
-                this.callbacks.onTransport(
-                    error instanceof LocalEngineConnectionRequestError ? 'error' : 'unreachable',
-                );
+            if (error instanceof LocalEngineConnectionRequestError) {
+                if (this.isLatestTransport(operationId)) this.callbacks.onTransport('error');
+                throw error;
             }
-            if (error instanceof LocalEngineConnectionRequestError) throw error;
+            if (this.isLatestTransport(operationId)) {
+                const blockedBy = await this.diagnoseUnreachable();
+                if (this.isLatestTransport(operationId)) {
+                    this.callbacks.onTransport('unreachable', { blockedBy });
+                }
+            }
             throw new LocalEngineConnectionRequestError('unreachable', '로컬 엔진에 연결할 수 없습니다.');
+        }
+    }
+
+    // A failed fetch looks the same whether the engine is stopped or the browser refused it.
+    private async diagnoseUnreachable(): Promise<LocalEngineBlockedCause | undefined> {
+        const access = await this.callbacks.browserAccessState?.().catch(() => 'unsupported' as const) ?? 'unsupported';
+        if (access === 'denied') return 'browser-permission';
+        // While Chrome may still ask, another request would raise (or re-raise) its prompt.
+        if (access === 'prompt') return undefined;
+        try {
+            // A no-cors request still completes against a running engine when only the
+            // readable response was refused, so it separates that from a stopped engine.
+            await this.client.reach({ cache: 'no-store', timeoutMs: REACH_CHECK_TIMEOUT_MS });
+            return 'response-blocked';
+        } catch {
+            return undefined;
         }
     }
 

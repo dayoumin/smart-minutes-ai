@@ -9,6 +9,7 @@ export type LocalEngineConnectionScene =
     | 'intro'
     | 'checking'
     | 'unreachable'
+    | 'browser-blocked'
     | 'invalid-response'
     | 'pairing-required'
     | 'pairing'
@@ -78,6 +79,30 @@ export const getLocalEngineConnectionView = ({
             secondaryLabel: null,
             busy: false,
             analysisReady: true,
+        });
+    }
+
+    // Comes before every other state, and before the first click: while the browser refuses
+    // the request, session, pairing or update guidance would send the user to the wrong fix.
+    // A background re-check keeps this view; a manual retry clears the flag to show progress.
+    if (snapshot.blockedBy
+        && (snapshot.transport === 'unreachable' || snapshot.transport === 'checking')) {
+        return view({
+            scene: 'browser-blocked',
+            tone: 'warning',
+            title: '브라우저가 연결을 막고 있습니다',
+            // A response-blocked answer may also come from an older install that does not list
+            // this site, so reinstalling stays offered there; a denied permission it cannot fix.
+            message: snapshot.blockedBy === 'browser-permission'
+                ? '주소창 왼쪽 사이트 정보에서 ‘기기에 있는 앱’을 허용한 뒤 새로고침해 주세요.'
+                : '응답은 왔지만 브라우저가 결과를 막았습니다. 요청을 바꾸는 확장 프로그램을 끄고 새로고침하세요. 계속되면 바로록 연결을 다시 설치해 주세요.',
+            primaryAction: 'probe',
+            primaryLabel: '연결 확인',
+            primaryDisabled: false,
+            secondaryAction: snapshot.blockedBy === 'response-blocked' && installerAvailable ? 'download' : null,
+            secondaryLabel: snapshot.blockedBy === 'response-blocked' && installerAvailable ? '바로록 연결 받기' : null,
+            busy: false,
+            analysisReady: false,
         });
     }
 

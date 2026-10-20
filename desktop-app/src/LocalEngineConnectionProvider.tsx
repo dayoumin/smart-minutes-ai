@@ -20,6 +20,7 @@ import {
     parseLocalEngineSessionCredential,
 } from './localEngineSession';
 import { LocalEngineConnectionContext } from './LocalEngineConnectionContext';
+import { getLocalEngineBrowserAccessState } from './localEngineBrowserAccess';
 
 export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
     const environment = useMemo(() => getRuntimeEnvironment(), []);
@@ -46,9 +47,15 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
             localEngineClient,
             localEngineSessionCredentials,
             {
-                onTransport: transport => {
-                    setSnapshot(previous => updateLocalEngineTransport(previous, transport));
+                onTransport: (transport, detail) => {
+                    setSnapshot(previous => updateLocalEngineTransport(
+                        previous,
+                        transport,
+                        Date.now(),
+                        detail?.blockedBy,
+                    ));
                 },
+                browserAccessState: () => getLocalEngineBrowserAccessState(),
                 onProbe: probe => {
                     setSnapshot(previous => applyLocalEngineProbe(previous, probe));
                 },

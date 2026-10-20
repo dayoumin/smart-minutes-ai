@@ -381,6 +381,71 @@ const verifyMissingModelsAfterPairing = async browser => {
   }
 };
 
+const verifyBrowserBlockedConnection = async browser => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(15000);
+  await page.addInitScript(() => {
+    window.localStorage.setItem('localProcessingIntroSeen', '1');
+    // Stand-in for Chrome's '기기에 있는 앱' setting; the test flips it like a user would.
+    window.__loopbackPermission = 'denied';
+    const query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = descriptor => descriptor?.name === 'loopback-network'
+      ? Promise.resolve({ state: window.__loopbackPermission })
+      : query(descriptor);
+  });
+  let probes = 0;
+  let engineAnswersOpaque = false;
+  await page.route('**/api/**', async route => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/probe') probes += 1;
+    // An extension that rewrites Origin lets no-cors requests through but fails every CORS read.
+    // A no-cors GET carries no Origin header, which is how this stand-in tells the two apart.
+    const headers = await route.request().allHeaders();
+    if (engineAnswersOpaque && path === '/api/probe' && !headers.origin) {
+      return route.fulfill({ status: 200, contentType: 'application/json', body: '{}' });
+    }
+    // Both a browser block and a stopped engine look like a refused request to the page.
+    return route.abort('connectionrefused');
+  });
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    const rail = page.locator('.local-engine-connection');
+    await rail.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).waitFor();
+    assert.equal(await rail.getAttribute('data-scene'), 'browser-blocked', 'the automatic check reports the block before any click');
+    assert.match(await rail.innerText(), /‘기기에 있는 앱’을 허용/);
+    assert.doesNotMatch(await rail.innerText(), /바로록 연결을 실행/, 'a browser block is not explained as a stopped engine');
+    assert.equal(await rail.getByRole('link').count(), 0, 'reinstalling is not offered for a denied permission');
+    assert.ok(probes >= 1);
+
+    // The user allows access but the engine is still not running.
+    await page.evaluate(() => { window.__loopbackPermission = 'granted'; });
+    const probesBeforeClick = probes;
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByText('연결 확인 중', { exact: true }).waitFor();
+    assert.equal(await rail.getAttribute('data-scene'), 'checking', 'a fast failure still shows the retry happening');
+    await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+    assert.equal(await rail.getAttribute('data-scene'), 'unreachable');
+    assert.equal(await rail.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).count(), 0);
+    assert.ok(probes > probesBeforeClick);
+
+    // Retrying from the plain failure also shows the check instead of looking unchanged.
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByText('연결 확인 중', { exact: true }).waitFor();
+    await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+
+    // The engine now answers, but the browser refuses to let the page read it.
+    engineAnswersOpaque = true;
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByText('연결 확인 중', { exact: true }).waitFor();
+    await rail.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).waitFor();
+    assert.match(await rail.innerText(), /응답은 왔지만/);
+    assert.match(await rail.innerText(), /확장 프로그램/);
+    assert.doesNotMatch(await rail.innerText(), /기기에 있는 앱/, 'the permission is already allowed here');
+    assert.doesNotMatch(await rail.innerText(), /설치했다면/);
+    console.log('ok - browser blocks are told apart from a stopped engine and retries visibly check');
+  } finally { await page.close(); }
+};
+
 const verifyAutomaticEngineConnection = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(15000);
@@ -449,6 +514,10 @@ const run = async () => {
     browser = await chromium.launch({ headless: true });
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'automatic') {
       await verifyAutomaticEngineConnection(browser);
+      return;
+    }
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'browser-blocked') {
+      await verifyBrowserBlockedConnection(browser);
       return;
     }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'writer-guidance') {

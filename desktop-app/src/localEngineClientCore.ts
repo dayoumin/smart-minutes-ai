@@ -18,6 +18,8 @@ export interface LocalEngineRequestInit extends RequestInit {
 
 export interface LocalEngineClient {
     probe: (init?: LocalEngineRequestInit) => Promise<Response>;
+    /** Resolves when the engine answered at all, without reading the (opaque) response. */
+    reach: (init?: LocalEngineRequestInit) => Promise<Response>;
     pair: (path: '/api/pair/start' | '/api/pair/complete' | '/api/pair/restore' | '/api/pair/forget', init?: LocalEngineRequestInit) => Promise<Response>;
     session: (
         path: '/api/session/renew' | '/api/session/revoke',
@@ -219,6 +221,7 @@ export const createLocalEngineClient = (
 
     return {
         probe: (init = {}) => execute('/api/probe', init, false),
+        reach: (init = {}) => execute('/api/probe', { ...init, mode: 'no-cors', credentials: 'omit' }, false),
         pair: (path, init = {}) => execute(path, init, false),
         session: (path, sessionToken, init = {}) => execute(path, init, false, sessionToken),
         request,

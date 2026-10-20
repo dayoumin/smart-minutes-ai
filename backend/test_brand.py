@@ -14,6 +14,7 @@ import brand
 
 
 REPO_BRAND_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "brand.json"
+TAURI_CONFIG = Path(__file__).resolve().parent.parent / "desktop-app" / "src-tauri" / "tauri.conf.json"
 
 
 class BrandTest(unittest.TestCase):
@@ -21,6 +22,13 @@ class BrandTest(unittest.TestCase):
         configured = json.loads(REPO_BRAND_CONFIG.read_text(encoding="utf-8"))["brandName"]
         self.assertEqual(brand.BRAND_NAME, configured)
         self.assertEqual(brand.brand_config_path(), REPO_BRAND_CONFIG)
+
+    def test_desktop_app_name_matches_the_brand(self) -> None:
+        # tauri.conf.json is plain JSON and cannot read configs/brand.json, so it keeps a copy that must match.
+        tauri = json.loads(TAURI_CONFIG.read_text(encoding="utf-8"))
+        self.assertEqual(tauri["productName"], brand.BRAND_NAME)
+        self.assertEqual([window["title"] for window in tauri["app"]["windows"]], [brand.BRAND_NAME])
+        self.assertNotEqual(tauri["productName"], "AI 회의록 도우미")
 
     def test_packaged_build_reads_the_bundled_copy(self) -> None:
         bundle_dir = Path("C:/bundle/_internal")
@@ -40,6 +48,7 @@ class BrandTest(unittest.TestCase):
 
     def test_particles_follow_the_last_syllable(self) -> None:
         self.assertEqual(brand.with_josa("바로록", "을/를"), "바로록을")
+        self.assertEqual(brand.with_josa("LMO 회의록", "을/를"), "LMO 회의록을")
         self.assertEqual(brand.with_josa("바로", "을/를"), "바로를")
         self.assertEqual(brand.with_josa("바로록 연결", "이/가"), "바로록 연결이")
         self.assertEqual(brand.with_josa("바로", "이/가"), "바로가")

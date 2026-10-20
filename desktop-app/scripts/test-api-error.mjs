@@ -15,6 +15,8 @@ await test('the brand comes from configs/brand.json and particles follow the las
   assert.equal(BRAND_NAME, brandConfig.brandName);
   assert.equal(LOCAL_ENGINE_NAME, `${brandConfig.brandName} 연결`);
   assert.equal(withJosa('바로록', '을/를'), '바로록을');
+  assert.equal(withJosa('LMO 회의록', '을/를'), 'LMO 회의록을');
+  assert.equal(withJosa('LMO 회의록 연결', '이/가'), 'LMO 회의록 연결이');
   assert.equal(withJosa('바로', '을/를'), '바로를');
   assert.equal(withJosa('바로록 연결', '이/가'), '바로록 연결이');
   assert.equal(withJosa('바로', '이/가'), '바로가');

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { build } from 'vite';
 import { chromium } from 'playwright';
+import { BRAND_NAME } from '../src/brand.ts';
 
 // Use the production transport without Vite's live-reload WebSocket or request
 // interception, either of which can prevent a genuine BFCache round trip.
@@ -51,7 +52,7 @@ try {
   await mkdir(root, { recursive: true });
   const transport = path.join(appRoot, 'src/localAudioPlayback.ts').replaceAll('\\', '/');
   const client = path.join(appRoot, 'src/localEngineClient.ts').replaceAll('\\', '/');
-  await writeFile(path.join(root, 'index.html'), `<!doctype html><title>바로록 음성 복원 검사</title>
+  await writeFile(path.join(root, 'index.html'), `<!doctype html><title>${BRAND_NAME} 음성 복원 검사</title>
     <audio controls aria-label="검사 음성"></audio><a href="${awayUrl}">다른 페이지</a>
     <script type="module">
       import { createLocalAudioPlaybackSource } from '${transport}';

@@ -2866,38 +2866,33 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             </div>
 
             <div className="writer-panel">
-                {resumeSelectionActive && (
-                    <div className="detail-inline-note flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                        <span>{selectedResumeDraftActive
-                            ? '다른 실행에서 진행 중인 분석입니다. 상태를 다시 확인하거나 필요하면 기록을 삭제할 수 있습니다.'
-                            : '이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.'}</span>
-                        <div className="flex shrink-0 gap-2">
-                            {!selectedResumeDraftActive && (
-                                <Button variant="outline" onClick={handleStartFreshFromResume} disabled={isAnalyzing}>
-                                    새 분석
-                                </Button>
-                            )}
-                            {selectedResumeDraft && (
+                {showInputForm && (<div className="writer-input-grid">
+                <section className="writer-section">
+                    {/* Resuming: the status row says what to do (choose the same file, or why it cannot continue), so
+                        the heading line only carries the two ways out, small enough not to push the form down. */}
+                    <div className={`writer-section-heading ${selectedResumeDraft ? 'writer-section-heading-split' : ''}`}>
+                        <h3>{resumeSelectionActive ? '같은 영상·음성 파일 선택' : '영상·음성 파일'}</h3>
+                        {selectedResumeDraft && (
+                            <div className="writer-resume-actions">
+                                {!selectedResumeDraftActive && (
+                                    <Button variant="outline" className="writer-heading-action" onClick={handleStartFreshFromResume} disabled={isAnalyzing}>
+                                        새 분석
+                                    </Button>
+                                )}
                                 <Button
                                     variant="outline"
+                                    className="writer-heading-action"
                                     onClick={() => void handleDeleteResumeDraft(selectedResumeDraft)}
                                     disabled={isAnalyzing || deletingResumeDraftIds.has(selectedResumeDraft.jobId)}
                                     aria-label={`${selectedResumeDraft.title || selectedResumeDraft.sourceFilename} 분석 기록 삭제`}
                                 >
                                     {deletingResumeDraftIds.has(selectedResumeDraft.jobId)
-                                        ? <Loader2 size={15} className="animate-spin" />
-                                        : <Trash2 size={15} />}
+                                        ? <Loader2 size={14} className="animate-spin" aria-hidden="true" />
+                                        : <Trash2 size={14} aria-hidden="true" />}
                                     {deletingResumeDraftIds.has(selectedResumeDraft.jobId) ? '삭제 중' : '삭제'}
                                 </Button>
-                            )}
-                        </div>
-                    </div>
-                )}
-
-                {showInputForm && (<div className="writer-input-grid">
-                <section className="writer-section">
-                    <div className="writer-section-heading">
-                        <h3>{resumeSelectionActive ? '같은 영상·음성 파일 선택' : '영상·음성 파일'}</h3>
+                            </div>
+                        )}
                     </div>
                     <input
                         type="file"

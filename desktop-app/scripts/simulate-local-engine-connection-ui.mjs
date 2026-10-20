@@ -722,6 +722,19 @@ const verifyBrowserBlockedConnection = async browser => {
     assert.equal(await page.locator('[role="status"] #writer-status-help, [aria-live] #writer-status-help').count(), 0, 'help is outside the live region');
     assert.equal(await page.locator('.writer-action-row [aria-live]').count(), 0, 'no aria-live over the whole action row');
     assert.equal((await rail.locator('.writer-status-line').boundingBox()).height, lineHeightBefore, 'the 24px ? does not grow the status line');
+    // Below 40rem the buttons sit under the line and the opened help goes under them, so 분석 시작 does not move.
+    await page.setViewportSize({ width: 920, height: 720 });
+    try {
+      const topOf = locator => locator.evaluate(element => Math.round(element.getBoundingClientRect().top));
+      const startTop = await topOf(rail.locator('.writer-start-button'));
+      assert.ok(await topOf(page.locator('#writer-status-help')) > startTop, 'narrow: the help opens under the buttons');
+      await helpToggle.click();
+      assert.equal(await page.locator('#writer-status-help').isVisible(), false);
+      assert.equal(await topOf(rail.locator('.writer-start-button')), startTop, 'narrow: folding ? leaves 분석 시작 in place');
+      await helpToggle.click();
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
 
     // The user allows access but the engine is still not running.
     await page.evaluate(() => { window.__loopbackPermission = 'granted'; });
@@ -1026,6 +1039,21 @@ const verifyInputStage = async browser => {
     assert.equal(await start.getAttribute('aria-describedby'), 'writer-local-engine-requirement', `${state}: one description`);
     assert.doesNotMatch(await start.innerText(), /준비 필요|이어하기 불가/);
   };
+  // The first screen at 1280x720 (design.md 새 회의록): 분석 시작 and the whole status line fit without scrolling.
+  const expectFirstScreen = async state => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    try {
+      const box = await page.evaluate(() => {
+        document.querySelector('.barorok-workspace')?.scrollTo(0, 0);
+        window.scrollTo(0, 0);
+        const bottom = selector => Math.round(document.querySelector(selector)?.getBoundingClientRect().bottom ?? Infinity);
+        return { start: bottom('.writer-start-button'), status: bottom('#writer-local-engine-requirement') };
+      });
+      assert.ok(box.start <= 720 && box.status <= 720, `${state}: 분석 시작 and the status line fit 1280x720 (${JSON.stringify(box)})`);
+    } finally {
+      await page.setViewportSize({ width: 1280, height: 900 });
+    }
+  };
   const setDrafts = drafts => page.evaluate(value => {
     window.localStorage.setItem('analysisResumeDrafts', JSON.stringify(value));
     window.dispatchEvent(new Event('analysis-resume-drafts:updated'));
@@ -1036,6 +1064,7 @@ const verifyInputStage = async browser => {
     await waitState('ready');
     assert.equal(await page.locator('#writer-form-error').count(), 0, 'before 분석 시작 nothing is listed');
     assert.equal(await start.getAttribute('aria-disabled'), null);
+    await expectFirstScreen('ready');
     // In page coordinates: moving focus to a field may scroll the window, which is not the row moving.
     const startBox = () => start.evaluate(element => {
       const box = element.getBoundingClientRect();
@@ -1138,6 +1167,10 @@ const verifyInputStage = async browser => {
     await page.getByRole('heading', { name: '이어하기', exact: true }).waitFor();
     await expectRow('resume-choose-file', '이어서 분석할 파일을 선택해 주세요', sameFile.name);
     assert.deepEqual(await fixButtons(), ['파일 선택']);
+    // No sentence above the form repeats the row; 새 분석 and 삭제 sit on the heading line, so the form keeps its place.
+    assert.equal(await page.getByText('이전 분석 기록을 이어서 진행합니다', { exact: false }).count(), 0);
+    assert.deepEqual(await page.locator('.writer-resume-actions').getByRole('button').allInnerTexts(), ['새 분석', '삭제']);
+    await expectFirstScreen('resume-choose-file');
     assert.equal(await start.innerText(), '이어하기');
     await expectNoOldSurfaces('resume-choose-file');
     await pressBlockedStart('resume-choose-file');

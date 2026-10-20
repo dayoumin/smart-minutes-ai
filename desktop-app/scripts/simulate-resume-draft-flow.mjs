@@ -1325,8 +1325,10 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('이어하기-전-선택.mp3', { exact: true }).count(), 0);
     await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
-    await page.getByText('이전 분석 기록을 이어서 진행합니다. 같은 음성 파일을 다시 선택한 뒤 이어하기를 시작하세요.').waitFor({ timeout: 10000 });
     await page.getByText('같은 영상·음성 파일 선택', { exact: true }).waitFor({ timeout: 10000 });
+    // The status row says what to do; the heading line only carries 새 분석 and 삭제, without a sentence above the form.
+    assert.deepEqual(await page.locator('.writer-resume-actions').getByRole('button').allInnerTexts(), ['새 분석', '삭제']);
+    assert.equal(await page.getByText('이전 분석 기록을 이어서 진행합니다', { exact: false }).count(), 0);
     // The status row asks for the draft's own file; no note under the upload area repeats it.
     await page.locator('.writer-action-row[data-state="resume-choose-file"]').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '이어서 분석할 파일을 선택해 주세요');

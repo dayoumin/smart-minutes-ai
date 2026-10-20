@@ -22,6 +22,8 @@ const REACH_CHECK_TIMEOUT_MS = 3000;
 // The engine answers a probe at once. One it never answers would leave the check, and every later
 // background check, waiting forever; the readiness requests give up after the same 15s.
 const PROBE_TIMEOUT_MS = 15_000;
+// Discovery continues through restoration and approval; those requests must also settle.
+const PAIRING_REQUEST_TIMEOUT_MS = 15_000;
 
 export type LocalEnginePairingPhase =
     | 'idle'
@@ -260,6 +262,7 @@ export class LocalEngineConnectionCoordinator {
         const response = await this.client.pair('/api/pair/restore', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ browser_token: browserToken }), signal,
+            timeoutMs: PAIRING_REQUEST_TIMEOUT_MS,
         });
         if (!this.isLatestAuthorization(operationId)) return false;
         if (response.status === 401 || response.status === 403) {
@@ -305,6 +308,7 @@ export class LocalEngineConnectionCoordinator {
             const response = await this.client.pair('/api/pair/start', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ mode: 'browser-connection', browser_token: freshBrowserToken }), signal: controller.signal,
+                timeoutMs: PAIRING_REQUEST_TIMEOUT_MS,
             });
             if (!response.ok) throw await responseError(response, 'pairing');
             const challenge = this.parsers.pairingStart(await response.json());
@@ -320,6 +324,7 @@ export class LocalEngineConnectionCoordinator {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ pairing_id: challenge.pairing_id, mode: 'browser-connection' }),
                     signal: controller.signal,
+                    timeoutMs: Math.min(PAIRING_REQUEST_TIMEOUT_MS, Math.max(1, deadline - Date.now())),
                 });
                 if (result.status === 202) {
                     await new Promise<void>((resolve, reject) => {

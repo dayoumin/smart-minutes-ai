@@ -6,6 +6,8 @@ import { deleteMeeting, getAllMeetings, type MeetingRecord } from './meetingRepo
 // Engine copies of deleted meetings that still have to be deleted. A record deleted while the engine did not
 // answer leaves its analysis on this PC; the recovery sync retries these until the engine confirms each one.
 const PENDING_CLEANUP_STORAGE_KEY = 'pendingMeetingOutputCleanups';
+// A running engine can stop answering; deletion must still finish or enter the retry queue.
+const MEETING_CLEANUP_REQUEST_TIMEOUT_MS = 15_000;
 
 export const listPendingMeetingOutputCleanups = (): string[] => {
     try {
@@ -64,6 +66,7 @@ export const deleteMeetingWithAnalysis = async (
     if (jobId) {
         const response = options.engineUnreachable ? null : await localEngineClient.request(`/api/outputs/${encodeURIComponent(jobId)}`, {
             method: 'DELETE',
+            timeoutMs: MEETING_CLEANUP_REQUEST_TIMEOUT_MS,
         }).catch(() => null);
         if (!response) {
             if (!queuePendingMeetingOutputCleanup(jobId)) return 'cleanup-not-remembered';
@@ -133,7 +136,9 @@ export type StoredAnalysesLookup =
 
 /** Completed analyses kept on this PC, whichever browser's records they belong to. */
 export const listStoredAnalyses = async (): Promise<StoredAnalysesLookup> => {
-    const response = await localEngineClient.request('/api/stored-analyses').catch(() => null);
+    const response = await localEngineClient.request('/api/stored-analyses', {
+        timeoutMs: MEETING_CLEANUP_REQUEST_TIMEOUT_MS,
+    }).catch(() => null);
     if (!response) return { status: 'engine-unreachable' };
     if (response.status === 403 || response.status === 404) return { status: 'engine-outdated' };
     if (!response.ok) return { status: 'failed' };
@@ -168,6 +173,7 @@ export const deleteStoredAnalyses = async (jobIds: string[]): Promise<StoredAnal
     for (const jobId of jobIds) {
         const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(jobId)}`, {
             method: 'DELETE',
+            timeoutMs: MEETING_CLEANUP_REQUEST_TIMEOUT_MS,
         }).catch(() => null);
         if (!response || response.status === 401 || response.status === 403) {
             outcome.interrupted = true;
@@ -207,6 +213,7 @@ export const flushPendingMeetingOutputCleanups = async (): Promise<void> => {
             if (isAnalysisJobClaimed(jobId)) return 'skipped';
             const response = await localEngineClient.request(`/api/outputs/${encodeURIComponent(jobId)}`, {
                 method: 'DELETE',
+                timeoutMs: MEETING_CLEANUP_REQUEST_TIMEOUT_MS,
             }).catch(() => null);
             if (!response || response.status === 401 || response.status === 403) return 'unreachable';
             if (response.ok || response.status === 404) removePendingMeetingOutputCleanup(jobId);

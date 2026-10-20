@@ -137,6 +137,7 @@ const monthsAgo = months => {
 const installEngine = async page => {
   const engine = {
     mode: 'up',
+    silentDeletes: false,
     deleted: [],
     stored: [
       { job_id: 'cleanup-old-job', completed_at: '2025-12-01T00:00:00+00:00', size_bytes: 1024 * 1024 },
@@ -156,6 +157,8 @@ const installEngine = async page => {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ analyses }) });
     }
     if (request.method() === 'DELETE' && pathname.startsWith('/api/outputs/')) {
+      // Leave the request pending to exercise the client's timeout while health and listing still answer.
+      if (engine.silentDeletes) return undefined;
       // Only the answering engine deletes, so the queued retry cannot race the listing checks below.
       if (engine.mode !== 'up') return route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ detail: 'busy' }) });
       const jobId = decodeURIComponent(pathname.slice('/api/outputs/'.length));
@@ -301,11 +304,81 @@ const runCleanupScene = async browser => {
   }
 };
 
+const runUnresponsiveDeleteScenes = async browser => {
+  for (const target of ['record', 'pc-files']) {
+    const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+    const page = await context.newPage();
+    const engine = await installEngine(page);
+    engine.stored = [
+      { job_id: 'cleanup-timeout-job', completed_at: '2026-10-19T00:00:00+00:00', size_bytes: 1024 },
+      { job_id: 'cleanup-timeout-orphan', completed_at: '2026-10-19T00:00:00+00:00', size_bytes: 1024 },
+    ];
+    page.on('dialog', dialog => { void dialog.accept(); });
+    try {
+      await page.clock.install();
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+      await putMeeting(page, {
+        ...meetingAt('cleanup-timeout', '응답 없는 엔진의 회의', Date.now() - DAY_MS),
+        jobId: 'cleanup-timeout-job',
+      });
+      await page.getByRole('button', { name: '설정', exact: true }).first().click();
+      const settings = page.getByRole('dialog', { name: '설정' });
+      await settings.getByRole('button', { name: '정리하기', exact: true }).click();
+      await settings.getByText('분석 결과 1개 · 1 KB', { exact: true }).waitFor({ timeout: 10000 });
+      engine.silentDeletes = true;
+      const back = settings.getByRole('button', { name: '일반 설정', exact: true });
+      const close = settings.getByRole('button', { name: '설정 닫기', exact: true });
+      const jobId = target === 'record' ? 'cleanup-timeout-job' : 'cleanup-timeout-orphan';
+      const requestStarted = page.waitForRequest(request => request.method() === 'DELETE'
+        && new URL(request.url()).pathname === `/api/outputs/${jobId}`);
+      if (target === 'record') {
+        await settings.locator('.meeting-cleanup-list input').check();
+        await settings.getByRole('button', { name: '선택한 1개 삭제', exact: true }).click();
+      } else {
+        await settings.getByRole('button', { name: '모두 삭제', exact: true }).click();
+      }
+      await requestStarted;
+      // Keep two seconds of margin around the 15s deadline for a loaded Windows machine.
+      await page.clock.runFor(13_000);
+      assert.equal(await back.isDisabled(), true, `${target} stays busy while the engine has not answered`);
+      assert.equal(await close.isDisabled(), true);
+      await page.clock.runFor(4_000);
+      await page.waitForFunction(() => !document.querySelector('.meeting-cleanup-back')?.disabled, null, { timeout: 5000 });
+      assert.equal(await close.isEnabled(), true, 'the timeout releases the settings close guard');
+      assert.equal(await settings.getByRole('tab', { name: '모델', exact: true }).isEnabled(), true);
+      if (target === 'record') {
+        assert.deepEqual(await readMeetingIds(page), [], 'the record is deleted after remembering its PC copy');
+        assert.deepEqual(await pendingCleanups(page), ['cleanup-timeout-job']);
+        await page.locator('.operation-toast').getByText(
+          `회의록 1개를 삭제했습니다. 이 PC의 분석 파일은 ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행되면 지웁니다.`,
+          { exact: true },
+        ).waitFor({ timeout: 5000 });
+      } else {
+        assert.deepEqual(await readMeetingIds(page), ['cleanup-timeout']);
+        assert.deepEqual(await pendingCleanups(page), [], 'PC-only cleanup does not delete or queue browser records');
+        await settings.getByText(`${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않아 나머지는 지우지 못했습니다.`,
+          { exact: true }).waitFor({ timeout: 5000 });
+        assert.equal(await settings.getByRole('button', { name: '모두 삭제', exact: true }).isEnabled(), true, 'PC cleanup can be retried');
+      }
+      assert.deepEqual(engine.deleted, [], 'a timeout is not reported as an engine-side deletion');
+      await back.click();
+      await close.click();
+      await settings.waitFor({ state: 'hidden', timeout: 5000 });
+      console.log(`ok - unresponsive ${target} deletion finishes after its timeout and releases settings`);
+    } finally {
+      await page.unrouteAll({ behavior: 'ignoreErrors' });
+      await context.close();
+    }
+  }
+};
+
 const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
     await runCleanupScene(browser);
+    await runUnresponsiveDeleteScenes(browser);
   } finally {
     await browser.close();
     await stopServer(server);

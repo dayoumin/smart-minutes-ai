@@ -23,7 +23,7 @@ const fixture = (respond, saved = storage(), probe = { pairing_available: true }
         fetch: async (input, init) => {
             const path = new URL(input).pathname;
             const body = init.body ? JSON.parse(init.body) : null;
-            calls.push({ path, body, authorization: new Headers(init.headers).get('Authorization') });
+            calls.push({ path, body, authorization: new Headers(init.headers).get('Authorization'), signal: init.signal });
             if (path === '/api/probe') return reply(probe);
             if (path === '/api/pair/forget') return reply({ revoked: true });
             return respond(path, body);
@@ -34,6 +34,30 @@ const fixture = (respond, saved = storage(), probe = { pairing_available: true }
         onPairingState: value => states.push(value.phase),
     }, { probe: value => value, pairingStart: parseLocalEnginePairingStart, sessionCredential: parseLocalEngineSessionCredential }, undefined, browser);
     return { coordinator, credentials, browser, calls, states, saved };
+};
+
+const requestTimeouts = context => {
+    let now = Date.now();
+    let nextId = 0;
+    const timers = new Map();
+    context.mock.method(Date, 'now', () => now);
+    context.mock.method(globalThis, 'setTimeout', (callback, milliseconds, ...args) => {
+        const id = ++nextId;
+        timers.set(id, { callback: () => callback(...args), milliseconds });
+        return id;
+    });
+    context.mock.method(globalThis, 'clearTimeout', id => { timers.delete(id); });
+    return {
+        expireOnly(milliseconds) {
+            assert.equal(timers.size, 1, 'only the outstanding request owns a timeout');
+            const [id, timer] = timers.entries().next().value;
+            assert.equal(timer.milliseconds, milliseconds);
+            timers.delete(id);
+            now += milliseconds;
+            timer.callback();
+        },
+        pending: () => timers.size,
+    };
 };
 
 test('native approval has no numeric step and a returning browser restores without another approval', async () => {
@@ -150,3 +174,58 @@ test('disconnect during approval prevents a late response from reconnecting and 
     const cancelled = f.calls.find(call => call.path === '/api/pair/forget');
     assert.equal(cancelled.body.browser_token, f.calls[0].body.browser_token);
 });
+
+for (const { stage, expiresIn, timeoutMs } of [
+    { stage: 'restore', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'start', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'complete', expiresIn: 120, timeoutMs: 15000 },
+    { stage: 'complete', expiresIn: 2, timeoutMs: 2000 },
+]) {
+    test(`an unanswered ${stage} request expires after ${timeoutMs}ms and can reconnect`, async context => {
+        const timeouts = requestTimeouts(context);
+        let stall = true;
+        let requestStarted;
+        const outstanding = new Promise(resolve => { requestStarted = resolve; });
+        const pathToStall = `/api/pair/${stage}`;
+        const f = fixture(path => {
+            if (stall && path === pathToStall) {
+                requestStarted();
+                // The real client must cancel even when fetch never settles itself.
+                return new Promise(() => {});
+            }
+            return path === '/api/pair/start'
+                ? reply({ ...challenge(), expires_in_seconds: expiresIn })
+                : reply(grant());
+        }, storage(), { pairing_available: true, pairing_mode: 'browser-connection' });
+        if (stage === 'restore') f.browser.replace('b'.repeat(43));
+        const operation = f.coordinator.startBrowserApproval();
+        const rejected = assert.rejects(operation, error => error instanceof DOMException && error.name === 'AbortError');
+        await outstanding;
+        assert.equal(f.coordinator.shouldReconnectBrowser(), false, 'the approval owns the pending intent');
+        const stalledRequest = f.calls.find(call => call.path === pathToStall);
+        assert.equal(stalledRequest.signal.aborted, false);
+        timeouts.expireOnly(timeoutMs);
+        await rejected;
+
+        assert.equal(stalledRequest.signal.aborted, true, 'the timeout cancels the actual fetch signal');
+        assert.equal(f.credentials.current(), null);
+        assert.equal(f.coordinator.shouldReconnectBrowser(), true, 'finally releases the pending intent');
+        assert.equal(timeouts.pending(), 0, 'request and cleanup timers are released');
+        if (stage === 'restore') {
+            assert.equal(f.browser.current(), 'b'.repeat(43), 'temporary failure preserves existing approval');
+            assert.ok(!f.calls.some(call => call.path === '/api/pair/start' || call.path === '/api/pair/forget'));
+        } else {
+            const started = f.calls.find(call => call.path === '/api/pair/start');
+            const forgotten = f.calls.find(call => call.path === '/api/pair/forget');
+            assert.equal(forgotten.body.browser_token, started.body.browser_token, 'the abandoned browser grant is revoked');
+            assert.equal(f.browser.current(), null);
+        }
+
+        stall = false;
+        await f.coordinator.probe();
+        assert.ok(f.credentials.current(), 'a later discovery completes the connection');
+        assert.ok(f.browser.current());
+        assert.equal(f.coordinator.shouldReconnectBrowser(), false);
+        assert.equal(timeouts.pending(), 0);
+    });
+}

@@ -413,6 +413,196 @@ const verifyMissingModelsAfterPairing = async browser => {
   }
 };
 
+const waitUntil = async (condition, message, timeoutMs = 10_000) => {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await condition())) {
+    if (Date.now() > deadline) throw new Error(`Timed out waiting: ${message}`);
+    await sleep(50);
+  }
+};
+
+// Connected, then the engine stops answering the readiness check (design.md 동작 줄 v2 응답 없음):
+// 45s of 분석 준비 확인 중 becomes a warning whose 다시 확인 checks the connection, then readiness.
+const verifyReadinessNoResponse = async browser => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(15000);
+  await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
+  await page.clock.install();
+  const grant = { session_token: 'no-response-ui-test-session-token',
+    // The page clock runs minutes ahead of this process once the test fast-forwards it.
+    expires_at: Math.floor(Date.now() / 1000) + 3600,
+    capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] };
+  // answer: the engine answers. silent: nothing answers (the page gives up on readiness requests after 15s).
+  // models-silent: health answers, model status never does. models-failing: model status answers 503.
+  // gone: the engine is not running.
+  let engine = 'answer';
+  let probes = 0;
+  let healthRequests = 0;
+  let modelRequests = 0;
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.route('**/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
+    if (path === '/api/settings') return json({});
+    if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+    if (path === '/api/probe') probes += 1;
+    if (path === '/api/health') healthRequests += 1;
+    if (path === '/api/models/status') modelRequests += 1;
+    if (engine === 'gone') return route.abort('connectionrefused');
+    if (engine === 'silent' || (engine === 'models-silent' && path === '/api/models/status')) return undefined;
+    if (path === '/api/probe') return json({ product_id: 'barorok-local-engine', engine_version: 'test',
+      api_contract_version: 1, capabilities: grant.capabilities, auth_state: 'pairing-required',
+      pairing_available: true, pairing_mode: 'browser-connection', update_required: false });
+    if (path === '/api/pair/start') return json({ mode: 'browser-connection', pairing_id: 'no-response-challenge', expires_in_seconds: 120 });
+    if (path === '/api/pair/complete') return json(grant);
+    if (path === '/api/health') return json({ ok: true });
+    if (path === '/api/models/status' && engine === 'models-failing') return json({ detail: 'model status failed' }, 503);
+    if (path === '/api/models/status') return route.request().headers().authorization === `Bearer ${grant.session_token}`
+      ? json({ ready: true, models: [], errors: [] }) : json({}, 401);
+    return json({}, 404);
+  });
+  const rail = statusRowOf(page);
+  const status = statusOf(page);
+  const start = rail.getByRole('button', { name: '분석 시작', exact: true });
+  const waitForRowState = state => page.locator(`.writer-action-row[data-state="${state}"]`).waitFor();
+  const noResponseTitle = `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`;
+  const warningShown = () => status.getByText(noResponseTitle, { exact: true }).count();
+  // The count starts once the row shows the check: 43s later it still checks, 47s later it warns.
+  // The page clock also runs in real time, so each side keeps a 2s margin for a busy machine.
+  const expectWarningAfter45s = async () => {
+    await page.clock.runFor(43_000);
+    assert.equal(await rowState(page), 'readiness-checking', '43s of checking is still a check');
+    assert.equal(await warningShown(), 0);
+    await page.clock.runFor(4_000);
+    await waitForRowState('no-response');
+    assert.equal(await status.getByText('분석 준비 확인 중', { exact: true }).count(), 0);
+  };
+  try {
+    await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await waitForRowState('ready');
+    await status.getByText('연결됨', { exact: true }).waitFor();
+    assert.equal(await isAriaDisabled(start), false);
+
+    // The engine stops answering. The next check (window focus) keeps the last answer until its request gives up.
+    engine = 'silent';
+    const healthBefore = healthRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitUntil(async () => healthRequests > healthBefore, 'the focus check reaches the engine');
+    assert.equal(await rowState(page), 'ready');
+    await page.clock.runFor(15_000);
+    await waitForRowState('readiness-checking');
+    await expectWarningAfter45s();
+    assert.deepEqual(await status.evaluate(element => [
+      element.querySelector('.writer-status-title')?.textContent,
+      element.querySelector('.writer-status-message')?.textContent,
+    ]), [noResponseTitle, '잠시 뒤 다시 확인해 주세요.']);
+    assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-warning');
+    assert.deepEqual(await rail.getByRole('button').allInnerTexts(), ['', '다시 확인', '분석 시작'], '?, one fix, then 분석 시작');
+    assert.equal(await isAriaDisabled(start), true);
+    assert.equal(await page.locator('#writer-readiness-hint, #writer-engine-checking, .status-banner').count(), 0, 'no banner or old hint line');
+    const helpToggle = rail.getByRole('button', { name: '문제 해결 도움말', exact: true });
+    await helpToggle.click();
+    assert.equal(await page.locator('#writer-status-help').innerText(),
+      `계속되면 Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행하세요.`);
+
+    // 다시 확인 checks the connection first. A check the engine never answers ends in the same warning 45s later.
+    const probesBeforeRecheck = probes;
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState('readiness-checking');
+    assert.equal(await warningShown(), 0, 'the old warning gives way to the new check');
+    assert.equal(await page.locator('#writer-status-help').count(), 0);
+    await waitUntil(() => page.evaluate(() => document.activeElement?.id === 'writer-local-engine-requirement'),
+      'focus follows to the line that reports the check');
+    await waitUntil(async () => probes > probesBeforeRecheck, 'the press checks the connection');
+    await sleep(300);
+    assert.equal(probes, probesBeforeRecheck + 1, 'one connection check per press');
+    await expectWarningAfter45s();
+
+    // The engine answers again: 다시 확인 recovers without a reload.
+    engine = 'answer';
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState('ready');
+    await status.getByText('연결됨', { exact: true }).waitFor();
+    assert.equal(await warningShown(), 0);
+    assert.equal(await isAriaDisabled(start), false, 'a recovered engine unlocks 분석 시작');
+
+    // Health answers but the model check never does: the same 45s warning.
+    engine = 'models-silent';
+    const modelsBefore = modelRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitUntil(async () => modelRequests > modelsBefore, 'the focus check asks for model status');
+    assert.equal(await rowState(page), 'ready');
+    await page.clock.runFor(15_000);
+    await waitForRowState('readiness-checking');
+    await expectWarningAfter45s();
+
+    // The engine answers again on its own: the slow re-check finds it without a click, and the next
+    // check that waits starts from the plain spinner, not the warning it once had.
+    engine = 'answer';
+    await waitUntil(async () => {
+      await page.clock.runFor(5_000);
+      return (await rowState(page)) === 'ready';
+    }, 'the slow re-check finds the engine again', 30_000);
+    assert.equal(await warningShown(), 0);
+    engine = 'models-silent';
+    const modelsBeforeRetry = modelRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await waitUntil(async () => modelRequests > modelsBeforeRetry, 'the next focus check asks for model status');
+    await page.clock.runFor(15_000);
+    await waitForRowState('readiness-checking');
+    assert.equal(await warningShown(), 0, 'an answered check leaves no warning for the next one');
+    await expectWarningAfter45s();
+
+    // The engine goes away and comes back: the reconnect starts a fresh 45s instead of keeping the warning.
+    engine = 'gone';
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState('unreachable');
+    assert.equal(await status.locator('.writer-status-title').innerText(), '연결하지 못했습니다', 'a refused check after connecting is not a first visit');
+    assert.equal(await warningShown(), 0);
+    engine = 'models-silent';
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState('readiness-checking');
+    assert.equal(await warningShown(), 0, 'no warning left over from before the reconnect');
+    await expectWarningAfter45s();
+
+    engine = 'answer';
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitForRowState('ready');
+    assert.equal(await isAriaDisabled(start), false);
+
+    // An engine that answers, even with an error, is not silent: each answer restarts the 45s, so the loop's
+    // own check at 45s reports the error without a 응답하지 않습니다 in between.
+    engine = 'models-failing';
+    await page.evaluate(() => {
+      window.__noResponseRowStates = [];
+      new MutationObserver(() => window.__noResponseRowStates.push(document.querySelector('.writer-action-row')?.dataset.state))
+        .observe(document.querySelector('.writer-action-row'), { attributes: true, attributeFilter: ['data-state'] });
+    });
+    let answeredModels = modelRequests;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    // One second at a time, so the engine answers about once per page second like the real loop.
+    for (let step = 0; step < 60 && (await rowState(page)) !== 'readiness-error'; step += 1) {
+      await waitUntil(async () => modelRequests > answeredModels || (await rowState(page)) === 'readiness-error', 'the next soft check');
+      answeredModels = modelRequests;
+      await sleep(50);
+      await page.clock.runFor(1_000);
+    }
+    await waitForRowState('readiness-error');
+    assert.equal(await status.locator('.writer-status-title').innerText(), '분석 준비 상태를 확인하지 못했습니다');
+    assert.deepEqual(await page.evaluate(() => window.__noResponseRowStates), ['readiness-checking', 'readiness-error'],
+      'no 응답하지 않습니다 while the engine answers');
+    assert.deepEqual(errors, []);
+    console.log('ok - a connected engine that stops answering readiness warns after 45s and 다시 확인 recovers');
+  } catch (error) {
+    console.error('no-response body:', (await page.locator('body').innerText()).slice(0, 2000));
+    throw error;
+  } finally {
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await page.close();
+  }
+};
+
 const verifyBrowserBlockedConnection = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(15000);
@@ -733,6 +923,10 @@ const run = async () => {
       await verifyMissingModelsAfterPairing(browser);
       return;
     }
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'no-response') {
+      await verifyReadinessNoResponse(browser);
+      return;
+    }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'intro-dismissal') {
       await verifyIntroDismissals(browser);
       return;
@@ -997,6 +1191,7 @@ const run = async () => {
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
     await verifySummaryReadinessAfterPairing(browser);
     await verifyMissingModelsAfterPairing(browser);
+    await verifyReadinessNoResponse(browser);
     await verifyAutomaticEngineConnection(browser);
     await verifyIntroDismissals(browser);
     console.log('ok - local engine connection UI and auth recovery simulation');

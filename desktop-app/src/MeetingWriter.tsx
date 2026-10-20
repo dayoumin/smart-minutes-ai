@@ -622,6 +622,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [readinessMessage, setReadinessMessage] = useState('');
     // True once the load-time readiness loop gave up without reaching the analysis engine.
     const [readinessTimedOut, setReadinessTimedOut] = useState(false);
+    // Web connection build: 분석 준비 확인 중 went 45s without an answer from the engine (응답하지 않습니다).
+    const [readinessNoResponse, setReadinessNoResponse] = useState(false);
+    // Restarts that 45s count: a readiness loop starting, an answer from the engine, or the user's 다시 확인.
+    const [readinessRound, setReadinessRound] = useState(0);
+    // The user pressed its 다시 확인, so a refused check reads as a failed connection, not a first visit.
+    const [engineRecheckStarted, setEngineRecheckStarted] = useState(false);
+    const engineRecheckRef = useRef(0);
     const readinessLoopRef = useRef(0);
     const [isRecheckingEngine, setIsRecheckingEngine] = useState(false);
     // Bumped when an analysis run ends: the background readiness loop stops at `ready`, and a run that found the
@@ -853,6 +860,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const modelsResponse = await requestWithinPreparationTimeout('/api/models/status', { signal: options.signal });
             await writeFrontendLog(`readiness models status=${modelsResponse.status} ok=${modelsResponse.ok}`);
             if (superseded()) return { state: 'checking', message: '' };
+            // The engine answered, even if it is not ready yet.
+            if (localEngineConnectionRequired) setReadinessRound(round => round + 1);
             if (modelsResponse.status === 401 || modelsResponse.status === 403) {
                 setConnectionCheckRequired(!isTauriRuntime());
                 const message = '연결 상태를 확인해야 분석을 시작할 수 있습니다.';
@@ -926,6 +935,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             // Only the newest loop keeps polling; focus and settings events start a fresh one.
             const loopId = readinessLoopRef.current + 1;
             readinessLoopRef.current = loopId;
+            if (localEngineConnectionRequired) setReadinessRound(round => round + 1);
             const superseded = () => cancelled || loopId !== readinessLoopRef.current;
             const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
             let finalCheckDone = false;
@@ -1054,16 +1064,29 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
 
     // Web connection build: the status row beside 분석 시작 names the first blocked step and its fix.
     const connectionControls = useLocalEngineConnectionControls({
-        connectionRequested: webConnectionRecoveryStarted,
+        connectionRequested: webConnectionRecoveryStarted || engineRecheckStarted,
         checkRequested: webConnectionCheckPending,
         onProbeCompleted: webConnectionRecoveryStarted ? recheckDevelopmentReadiness : undefined,
     });
     const { setShowHelp: setStatusHelpOpen } = connectionControls;
+    // 45s of 분석 준비 확인 중 without an answer turns the row into 응답하지 않습니다 (design.md 동작 줄 v2).
+    // Only while connected, so a reconnect starts again from the plain check.
+    const watchReadinessResponse = localEngineConnectionRequired && connectionControls.view.analysisReady
+        && (readinessState === 'checking' || readinessState === 'server-waiting');
+    useEffect(() => {
+        if (!watchReadinessResponse) {
+            setReadinessNoResponse(false);
+            return;
+        }
+        const timer = window.setTimeout(() => setReadinessNoResponse(true), BACKEND_READY_TIMEOUT_MS);
+        return () => window.clearTimeout(timer);
+    }, [readinessRound, watchReadinessResponse]);
     const writerStatusRef = useRef<HTMLDivElement | null>(null);
     const writerStatusRow = selectWriterStatusRow({
         connection: connectionControls.view,
         readinessState,
         readinessMessage,
+        readinessNoResponse,
         missingModels: missingRequiredModels,
         diarizationDuringAnalysis: modelsPayload?.diarization_generate_during_analysis === true,
         gpuUnavailable: modelsPayload?.selected_stt_device === 'cuda' && modelsPayload?.stt_device_status?.gpu_usable === false,
@@ -1228,6 +1251,22 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         } finally {
             setIsRecheckingEngine(false);
         }
+    };
+
+    // 다시 확인 from 응답하지 않습니다: the user's own connection check, then a fresh readiness loop. The 45s
+    // count restarts at the press, so a check the engine never answers ends in the same warning.
+    const handleRecheckUnresponsiveEngine = async () => {
+        const recheckId = engineRecheckRef.current + 1;
+        engineRecheckRef.current = recheckId;
+        setEngineRecheckStarted(true);
+        setReadinessNoResponse(false);
+        setReadinessRound(round => round + 1);
+        try {
+            await probeLocalEngine({ userInitiated: true });
+        } catch {
+            // A refused check hands the row to the connection step, which explains it.
+        }
+        if (recheckId === engineRecheckRef.current) setReadinessLoopKey(key => key + 1);
     };
 
     const handleRefreshReadiness = async () => {
@@ -2537,6 +2576,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 return;
             case 'recheck-readiness':
                 void handleRecheckEngine();
+                return;
+            case 'recheck-engine':
+                // The warning gives way to the check, and focus follows to the line that reports it.
+                statusFocusRequestedRef.current = true;
+                void handleRecheckUnresponsiveEngine();
                 return;
             case 'download':
             case 'update':

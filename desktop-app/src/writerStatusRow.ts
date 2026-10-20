@@ -13,7 +13,9 @@ export type WriterStatusActionKind =
     | 'models'
     | 'device'
     | 'diarization'
-    | 'recheck-readiness';
+    | 'recheck-readiness'
+    /** The user's own connection check, then a fresh readiness round. */
+    | 'recheck-engine';
 
 export interface WriterStatusAction {
     kind: WriterStatusActionKind;
@@ -49,6 +51,8 @@ export interface SelectWriterStatusRowInput {
     readinessState: WriterReadinessState;
     /** The engine's own reason when readiness could not be confirmed; shown behind `?`. */
     readinessMessage: string;
+    /** The readiness check has gone 45s without an answer from the engine (only while it is checking). */
+    readinessNoResponse?: boolean;
     /** Required models that are not installed. */
     missingModels: WriterMissingModel[];
     /** 참석자 구분까지 이어서 실행 is on, which makes the diarization model required. */
@@ -109,6 +113,16 @@ const selectReadinessRow = (input: SelectWriterStatusRowInput): WriterStatusRow 
             return null;
         case 'checking':
         case 'server-waiting':
+            if (input.readinessNoResponse) {
+                return readinessRow({
+                    state: 'no-response',
+                    tone: 'warning',
+                    title: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`,
+                    message: '잠시 뒤 다시 확인해 주세요.',
+                    help: `계속되면 Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행하세요.`,
+                    actions: [{ kind: 'recheck-engine', label: '다시 확인' }],
+                });
+            }
             return readinessRow({
                 state: 'readiness-checking',
                 tone: 'neutral',

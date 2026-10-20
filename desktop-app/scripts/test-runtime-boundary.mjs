@@ -264,7 +264,29 @@ assert.deepEqual(sessionRow.actions, [{ kind: 'probe', label: '다시 확인' },
 for (const [readinessState, state] of [['checking', 'readiness-checking'], ['server-waiting', 'readiness-checking']]) {
   const row = selectWriterStatusRow(rowInput({ readinessState }));
   assert.deepEqual([row.state, row.title, row.busy, row.tone, row.actions.length, row.blocksStart], [state, '분석 준비 확인 중', true, 'neutral', 0, true]);
+  assert.deepEqual(selectWriterStatusRow(rowInput({ readinessState, readinessNoResponse: false })), row, 'no warning before 45s pass');
+  // 45s without an answer: the check gives way to a warning with its own fix.
+  const silent = selectWriterStatusRow(rowInput({ readinessState, readinessNoResponse: true }));
+  assert.deepEqual(
+    { stage: silent.stage, state: silent.state, tone: silent.tone, busy: silent.busy, title: silent.title, message: silent.message, help: silent.help, actions: silent.actions, blocksStart: silent.blocksStart },
+    {
+      stage: 'readiness', state: 'no-response', tone: 'warning', busy: false,
+      title: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`,
+      message: '잠시 뒤 다시 확인해 주세요.',
+      help: `계속되면 Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행하세요.`,
+      actions: [{ kind: 'recheck-engine', label: '다시 확인' }],
+      blocksStart: true,
+    },
+  );
+  assert.notEqual(silent.title, '분석 준비 확인 중');
 }
+// The warning is only for a check still waiting: any answer, or a lost connection, speaks instead.
+assert.deepEqual(selectWriterStatusRow(rowInput({ readinessNoResponse: true })), readyRow, 'an answered check is 연결됨');
+assert.equal(selectWriterStatusRow(rowInput({ readinessState: 'error', readinessNoResponse: true })).state, 'readiness-error');
+assert.equal(selectWriterStatusRow(rowInput({ readinessState: 'missing-models', missingModels: [sttMissing], readinessNoResponse: true })).state, 'models-missing');
+const lostWhileSilent = selectWriterStatusRow(rowInput({ connection: unreachableWithInstaller, readinessState: 'server-waiting', readinessNoResponse: true }));
+assert.deepEqual([lostWhileSilent.stage, lostWhileSilent.state], ['connection', 'unreachable'], 'the connection step comes first');
+assert.equal(selectWriterStatusRow(rowInput({ connection: checkingView, readinessState: 'checking', readinessNoResponse: true })).state, 'checking');
 const readinessErrorRow = selectWriterStatusRow(rowInput({ readinessState: 'error', readinessMessage: '모델 상태를 확인하지 못했습니다.' }));
 assert.deepEqual(
   [readinessErrorRow.title, readinessErrorRow.message, readinessErrorRow.help, readinessErrorRow.tone],

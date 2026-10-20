@@ -2,6 +2,7 @@
 2026-10-20 todo 점검에서 모았다. agent가 대신할 수 없는 확인·승인·결정이다. 끝나면 출처 항목에 결과를 적고 여기서 지운다. 지금 진행 중인 다른 작업이 끝난 뒤 순서대로 본다.
 - [ ] 실제 브라우저 확인
   - 동작 줄 v2가 들어간 웹을 배포한 뒤 Chrome에서: '기기에 있는 앱'이 '묻기'면 `연결 확인` 전에 팝업이 없는지. 차단 → 허용으로 바꾼 뒤 새로고침 없이 `다시 확인`만으로 `연결됨`이 되는지. 새로고침이 필요하면 버튼을 `새로고침`으로 바꿀지 정하고 입력 내용이 남는지 본다. (「설치 후 웹 연결 안 됨」, 「동작 줄 v2」①)
+  - 같은 웹에서 `연결됨` 뒤 설치 엔진을 종료하거나 멈춘 채로 창을 다시 눌러, 45초 안팎에 `LMO 회의록 연결이 응답하지 않습니다`로 바뀌는지, 엔진을 다시 실행한 뒤 `다시 확인`으로 `연결됨`이 되는지 본다. (「동작 줄 v2」②)
   - 처음 문제가 난 PC의 확장 프로그램(Page Assist 등)과 '기기에 있는 앱' 권한 상태. (「설치 후 웹 연결 안 됨」)
   - Edge에서 권한 허용·거부·재허용, 회사 정책 관문. (「공개 설치 점검」, 웹 엔진 MVP 4단계 잔여)
   - 실제 분석 중 DevTools Network에서 음성·대화록 요청이 `127.0.0.1` 엔진으로만 가는지. (「웹 첫 방문 로컬 처리 안내」 확인 3)
@@ -52,11 +53,25 @@
     - 병합 뒤 재검증(2026-10-20 14:07, main `49835054` + 문서): typecheck, `test:runtime-boundary`, `test:local-engine-browser-access`, 시나리오 4개와 전체 `test:local-engine-connection-ui` 통과. Vite 개발 화면(1280px)에서 동작 줄이 Figma v2와 같게 보이는 것도 확인했다. 확인한 상태는 설치 엔진이 개발 origin을 CORS로 거절해 생긴 `browser-blocked`이고, 이때 `aria-disabled`·`aria-describedby`·`role=status`·`?` 24×24가 맞게 붙었다. 미룬 nit(P3) 두 가지:
       - `permission-prompt` 시나리오가 한 번 `TargetClosedError`(route.fetch 진행 중 page 닫힘)로 실패했다. 다시 돌리니 통과했다. 닫기 전에 `page.unrouteAll({ behavior: 'ignoreErrors' })`를 넣으면 원래 실패 원인이 가려지지 않는다.
       - 동작 줄 grid가 비어 있는 도움말 행과 행 간격 8px를 늘 잡아서 줄 높이가 48px다. 모든 상태에서 같아 흔들림은 없지만 시안의 40px보다 8px 크다.
-    - 미룬 검토(P3): `이 브라우저를 연결해 주세요`의 보조문 `…실행 중이면 자동으로 연결됩니다`(시안 문구)가 엔진이 응답한 상태라 `연결 시작` 버튼과 어긋나 보일 수 있다. `readiness-blocked`의 `?`는 엔진 `errors[0]` 원문을 보인다(예전 배너와 같음, `describeAnalysisError` 대응 검토). `분석 준비 상태를 확인하지 못했습니다`에서 `다시 확인`이 엔진 무응답으로 끝나면 준비 확인 루프가 이미 멈춰 `분석 준비 확인 중`이 창 포커스 전까지 남는다(②에서 45초 타이머와 함께 정리).
+    - 미룬 검토(P3): `이 브라우저를 연결해 주세요`의 보조문 `…실행 중이면 자동으로 연결됩니다`(시안 문구)가 엔진이 응답한 상태라 `연결 시작` 버튼과 어긋나 보일 수 있다. `readiness-blocked`의 `?`는 엔진 `errors[0]` 원문을 보인다(예전 배너와 같음, `describeAnalysisError` 대응 검토). `분석 준비 상태를 확인하지 못했습니다`에서 `다시 확인`이 엔진 무응답으로 끝나면 준비 확인 루프가 이미 멈춰 `분석 준비 확인 중`이 창 포커스 전까지 남는다(②에서 정리: 이제 45초 뒤 `응답하지 않습니다`로 바뀐다. 코드로만 확인했고 시뮬레이션은 없다).
   - ② 45초 응답 없음:
     - 확인 회차마다 45초 타이머를 새로 두고, 인증되거나 확인 루프가 다시 시작되면 지운다. 지금 `readinessTimedOut`은 엔진이 아예 응답하지 않을 때만 켜지고(모델 확인이 멈춘 경우는 못 잡음), `/api/health`가 응답해야 지워진다. 그래서 다시 연결한 직후에는 이전 경고가 잠깐 남을 수 있다.
     - `다시 확인`은 사용자가 누른 연결 확인(`probeLocalEngine`, 사용자 시작) 뒤 준비 확인을 다시 시작한다.
     - 시뮬레이션에 `page.clock.runFor`로 엔진 무응답, 모델 확인 멈춤, 다시 연결 뒤 초기화 시나리오를 추가한다.
+    - 구현(2026-10-20, worktree `happy-mclaren-1c2243` 브랜치 `claude/admiring-bardeen-a90fec`, 미커밋): 선택 함수에 `no-response` 상태(경고색, `${LOCAL_ENGINE_NAME}이/가 응답하지 않습니다`, `잠시 뒤 다시 확인해 주세요.`, `다시 확인`(`recheck-engine`), `?` 도움말 `계속되면 Windows 시작 메뉴에서 …을/를 다시 실행하세요.`)를 더했다. `MeetingWriter`는 연결됨이면서 준비 확인 중(`checking`·`server-waiting`)인 동안만 45초를 센다. 위 계획과 달리, 표시된 경고는 루프가 다시 시작돼도 지우지 않고 카운트만 새로 둔다(창 포커스마다 경고 → 스피너 → 경고로 깜빡이지 않게).
+      - 카운트를 새로 두는 때: 준비 확인 루프 시작(연결, 창 포커스, 설정 변경, 분석 종료), 엔진의 모델 상태 응답(503 같은 오류 응답 포함), `다시 확인`. 응답마다 새로 두므로 오류로 답하는 엔진은 경고 없이 루프의 45초 확인에서 `분석 준비 상태를 확인하지 못했습니다`가 된다.
+      - 경고를 지우는 때: 준비 확인이 답을 받거나(연결됨·모델·오류 상태) 상태 줄이 연결 단계로 돌아갈 때. 그래서 다시 연결하면 스피너부터 새로 센다.
+      - `다시 확인`은 `probeLocalEngine({ userInitiated: true })` 뒤 루프를 다시 시작한다. probe가 끝내 답하지 않아도 누른 때부터 45초 뒤 같은 경고로 돌아온다. 확인이 거절되면 첫 방문 문구 대신 `연결하지 못했습니다`가 나오도록 연결을 시작한 것으로 표시한다(훅의 `connectionRequested`).
+      - 데스크톱·플래그 없는 개발 웹의 `readinessTimedOut`은 바꾸지 않았다(④).
+    - 검증(Vite 모의 화면, 실제 엔진 아님): typecheck, `test:runtime-boundary`(새 상태 before/after, 연결 단계·답을 받은 상태에서는 경고를 무시), `test:local-engine-browser-access`, 새 `LOCAL_ENGINE_UI_SCENARIO=no-response`, 기존 `writer-guidance`·`missing-models`·`browser-blocked`·`permission-prompt`, 시나리오 없는 전체 실행, 회귀 `test:writer-model-readiness`·`node scripts/simulate-analysis-stop-flow.mjs preparation` 통과.
+      - `no-response`는 `page.clock.runFor`로 확인한다: 엔진 무응답, `다시 확인`이 답을 못 받을 때, 복구, 모델 확인 멈춤, 클릭 없는 자동 회복 뒤 새로 셈, 엔진 종료 뒤 재연결, 503 응답. 각 경고는 43초에 아직 확인 중이고 47초에 경고다.
+      - 마지막 두 단계는 해당 코드(지움 경로, 응답 때 카운트 새로 둠)를 빼면 실패하는 것을 확인했다.
+    - 독립 agent 검토: P1 없음. P2 1개(재연결 단언이 지움 경로를 거치지 않음)와 P3 3개(경계 여유 1초, probe 개수 경쟁, 응답 때 카운트 새로 둠 미검증)는 시뮬레이션에서 고쳤다.
+    - 남은 일(P3, 미룸):
+      - 경고가 뜬 뒤 엔진이 모델 상태를 오류(5xx)로만 답하면, 루프가 마감 뒤 soft 확인만 반복해 `응답하지 않습니다`가 남는다(엔진은 답하는 중이라 문구가 부정확함, 이전에는 스피너가 끝없이 돌았음). 모델 상태가 200인데 JSON이 깨지면 응답마다 카운트가 새로 시작돼 스피너가 끝나지 않는다.
+      - 시간 제한 없는 probe(위 미룬 nit)가 `다시 확인`에서 더 잘 드러난다. 멈춘 probe가 남은 채 준비 확인이 회복하면 상태 줄은 `연결됨`인데 raw transport가 `checking`이라 `분석 시작`이 막혀 있다(엔진이 그 probe에 답하면 풀림). 엔진을 다시 실행할 때 멈춘 probe가 끊기는 순간 새 엔진이 이미 떠 있으면 `diagnoseUnreachable`이 `response-blocked`로 잘못 진단할 수 있다. probe 시간 제한 작업의 우선순위를 올릴 근거다.
+      - 분석 중에도 센다. 분석 중에는 동작 줄이 분석 패널로 가려지고, 입력 화면으로 돌아왔을 때 경고가 보이면 실제로 답이 없던 경우다.
+      - 실제 Chrome과 설치 엔진으로는 확인하지 않았다. 맨 위 「사용자 확인 대기」에 있다.
   - ③ 입력 단계: 필수 항목 오류, 파일 길이, 이어하기, 다른 분석 진행 중을 상태 줄로 옮긴다. `id="writer-form-error"`는 상태 줄 문구로 옮기고 아래 배너는 없앤다(같은 id가 두 번 생기지 않게). 회귀: `test:resume-draft-flow`, `simulate-analysis-media-limit.mjs`.
   - ④ 데스크톱·기본 개발 UI: 같은 상태 줄로 옮긴다. `준비 필요` 라벨, 준비 배너, `readinessTimedOut` 의미를 정리한다(`.writer-start-button-connection-pending`은 ①에서 지웠다). 회귀: `test:writer-model-readiness`, `test:analysis-stop-flow`. Tauri 실행 화면도 확인한다.
   - ⑤ 문서: `docs/design.md` 동작 줄 v2 절의 "구현 전" 표시를 지운다. `docs/frontend-simulation-testing.md`의 Playwright 캐시 경로(`D:\Projects\audio`)를 AGENTS.md(`D:\Projects\LMO_audio\.cache\ms-playwright`)와 맞춘다.

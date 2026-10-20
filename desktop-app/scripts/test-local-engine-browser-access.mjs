@@ -271,9 +271,29 @@ assert.deepEqual(result.transports, [['checking', undefined], ['unreachable', { 
 assert.equal(accessAsked, 0);
 assert.equal(result.reachCalls.length, 0, 'a held-back check sends nothing else either');
 result = await runFailedProbe({ userInitiated: true, browserAccessState: async () => 'granted', reach: engineStopped });
-assert.deepEqual(result.probeCalls, [{ cache: 'no-store', userInitiated: true }], 'a user check is marked so the browser may ask');
+assert.deepEqual(result.probeCalls, [{ cache: 'no-store', userInitiated: true, timeoutMs: 15000 }], 'a user check is marked so the browser may ask');
 result = await runFailedProbe({ browserAccessState: async () => 'granted', reach: engineStopped });
-assert.deepEqual(result.probeCalls, [{ cache: 'no-store', userInitiated: false }], 'background checks never ask');
+assert.deepEqual(result.probeCalls, [{ cache: 'no-store', userInitiated: false, timeoutMs: 15000 }], 'background checks never ask');
+// While Chrome may be showing its prompt, the user's check waits for the answer instead of running out of time.
+result = await runFailedProbe({ userInitiated: true, browserAccessState: async () => 'prompt', reach: engineAnswers });
+assert.deepEqual(result.probeCalls, [{ cache: 'no-store', userInitiated: true }]);
+assert.equal(result.probeCalls[0].timeoutMs, undefined);
+result = await runFailedProbe({ userInitiated: true, browserAccessState: async () => { throw new Error('permissions API broke'); }, reach: engineStopped });
+assert.equal(result.probeCalls[0].timeoutMs, 15000, 'a failing permission lookup keeps the time limit');
+// A probe that ran out of time reached an engine that never answered: no browser diagnosis, no extra request.
+for (const userInitiated of [false, true]) {
+  let asked = 0;
+  result = await runFailedProbe({
+    userInitiated,
+    probeError: new DOMException('The operation was aborted.', 'AbortError'),
+    browserAccessState: async () => { asked += 1; return 'granted'; },
+    reach: engineAnswers,
+  });
+  assert.deepEqual(result.transports, [['checking', undefined], ['unreachable', { blockedBy: undefined }]],
+    'a silent engine is not reported as a browser block');
+  assert.equal(result.reachCalls.length, 0);
+  assert.equal(asked, userInitiated ? 1 : 0, 'only the user check asks the browser, once, before sending');
+}
 result = await runFailedProbe({ browserAccessState: async () => 'unsupported', reach: engineAnswers });
 assert.deepEqual(result.transports, [['checking', undefined], ['unreachable', { blockedBy: 'response-blocked' }]], 'browsers without the permission still get the check');
 result = await runFailedProbe({ browserAccessState: async () => 'granted', reach: engineStopped });
@@ -305,6 +325,8 @@ assert.deepEqual(result.transports, [['checking', undefined], ['unreachable', { 
   );
   const userCheck = coordinator.probe({ userInitiated: true });
   assert.equal(await coordinator.probe(), null, 'the 10s/focus re-check waits for the user check');
+  // The user check asks the browser before it sends.
+  await new Promise(resolve => setTimeout(resolve, 0));
   assert.equal(probeInits.length, 1);
   releaseUserCheck();
   await assert.rejects(userCheck, error => error.code === 'unreachable');
@@ -326,6 +348,20 @@ assert.equal(sent[0].url, 'http://127.0.0.1:17863/api/probe');
 assert.equal(sent[0].init.mode, 'no-cors');
 assert.equal(sent[0].init.credentials, 'omit');
 assert.equal(new Headers(sent[0].init.headers).has('Authorization'), false);
+
+// Client: a probe the engine never answers ends with AbortError when its time runs out (the coordinator relies on it).
+{
+  let fetchSignal;
+  const silentClient = createLocalEngineClient({
+    resolveBaseUrl: async () => 'http://127.0.0.1:17863',
+    resolveRequestHeaders: async () => ({}),
+    fetch: (url, init) => { fetchSignal = init.signal; return new Promise(() => {}); },
+  });
+  const startedAt = Date.now();
+  await assert.rejects(silentClient.probe({ cache: 'no-store', timeoutMs: 30 }), error => error instanceof DOMException && error.name === 'AbortError');
+  assert.ok(Date.now() - startedAt >= 25, 'it waits for the limit, not less');
+  assert.equal(fetchSignal.aborted, true, 'the request itself is cancelled');
+}
 
 // Client: every request passes the gate first, and a held request never reaches fetch.
 const gateCalls = [];

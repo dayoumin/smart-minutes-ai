@@ -426,7 +426,15 @@ const waitUntil = async (condition, message, timeoutMs = 10_000) => {
 const verifyReadinessNoResponse = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(15000);
-  await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
+  await page.addInitScript(() => {
+    window.localStorage.setItem('localProcessingIntroSeen', '1');
+    // '기기에 있는 앱' already allowed: no prompt can hold the user's check, so it has a time limit.
+    // (Headless Chromium otherwise reports the permission as undecided.)
+    const query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = descriptor => descriptor?.name === 'loopback-network'
+      ? Promise.resolve({ state: 'granted' })
+      : query(descriptor);
+  });
   await page.clock.install();
   const grant = { session_token: 'no-response-ui-test-session-token',
     // The page clock runs minutes ahead of this process once the test fast-forwards it.
@@ -506,7 +514,8 @@ const verifyReadinessNoResponse = async browser => {
     assert.equal(await page.locator('#writer-status-help').innerText(),
       `계속되면 Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행하세요.`);
 
-    // 다시 확인 checks the connection first. A check the engine never answers ends in the same warning 45s later.
+    // 다시 확인 checks the connection first. The engine never answers it, so after 15s the row says the
+    // connection failed instead of checking forever.
     const probesBeforeRecheck = probes;
     await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
     await waitForRowState('readiness-checking');
@@ -517,7 +526,24 @@ const verifyReadinessNoResponse = async browser => {
     await waitUntil(async () => probes > probesBeforeRecheck, 'the press checks the connection');
     await sleep(300);
     assert.equal(probes, probesBeforeRecheck + 1, 'one connection check per press');
-    await expectWarningAfter45s();
+    // The probe's 15s started at the click, so each side keeps a 2s margin like expectWarningAfter45s.
+    const expectFailedAfter15s = async waitingState => {
+      await page.clock.runFor(13_000);
+      assert.equal(await rowState(page), waitingState, '13s in, the check is still waiting');
+      await page.clock.runFor(4_000);
+      await waitForRowState('unreachable');
+      assert.equal(await status.locator('.writer-status-title').innerText(), '연결하지 못했습니다');
+      assert.equal(await warningShown(), 0);
+    };
+    await expectFailedAfter15s('readiness-checking');
+
+    // The connection row's own 다시 확인 also gives up after 15s instead of spinning.
+    const probesBeforeRowCheck = probes;
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitUntil(async () => probes > probesBeforeRowCheck, 'the row check reaches the engine');
+    await waitForRowState('checking');
+    await status.getByText('연결 확인 중', { exact: true }).waitFor();
+    await expectFailedAfter15s('checking');
 
     // The engine answers again: 다시 확인 recovers without a reload.
     engine = 'answer';
@@ -592,6 +618,19 @@ const verifyReadinessNoResponse = async browser => {
     assert.equal(await status.locator('.writer-status-title').innerText(), '분석 준비 상태를 확인하지 못했습니다');
     assert.deepEqual(await page.evaluate(() => window.__noResponseRowStates), ['readiness-checking', 'readiness-error'],
       'no 응답하지 않습니다 while the engine answers');
+
+    // 다시 확인 from that error when the engine has gone silent: it re-checks readiness only (no
+    // connection check), its request gives up after 15s, and the spinner that follows turns into the
+    // warning 45s later instead of running on.
+    engine = 'silent';
+    const healthBeforeRecheck = healthRequests;
+    const probesBeforeReadinessRecheck = probes;
+    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitUntil(async () => healthRequests > healthBeforeRecheck, 'the readiness re-check reaches the engine');
+    await page.clock.runFor(15_000);
+    await waitForRowState('readiness-checking');
+    await expectWarningAfter45s();
+    assert.equal(probes, probesBeforeReadinessRecheck, 'this 다시 확인 re-checks readiness, not the connection');
     assert.deepEqual(errors, []);
     console.log('ok - a connected engine that stops answering readiness warns after 45s and 다시 확인 recovers');
   } catch (error) {

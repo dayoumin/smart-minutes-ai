@@ -19,6 +19,9 @@ import type {
 
 // Short: a stopped engine refuses at once, and a slow answer must not hold the failure screen.
 const REACH_CHECK_TIMEOUT_MS = 3000;
+// The engine answers a probe at once. One it never answers would leave the check, and every later
+// background check, waiting forever; the readiness requests give up after the same 15s.
+const PROBE_TIMEOUT_MS = 15_000;
 
 export type LocalEnginePairingPhase =
     | 'idle'
@@ -189,7 +192,14 @@ export class LocalEngineConnectionCoordinator {
         const operationId = this.beginTransportOperation();
         this.callbacks.onTransport('checking');
         try {
-            const response = await this.client.probe({ cache: 'no-store', userInitiated });
+            // Only the user's own check may wait longer: the browser holds it while its '기기에 있는 앱'
+            // prompt is up, and the user may take a while to answer.
+            const promptMayHold = userInitiated && await this.browserAccessState() === 'prompt';
+            const response = await this.client.probe({
+                cache: 'no-store',
+                userInitiated,
+                ...(promptMayHold ? {} : { timeoutMs: PROBE_TIMEOUT_MS }),
+            });
             if (!response.ok) throw await responseError(response, 'probe');
             const parsed = this.parsers.probe(await response.json());
             if (!parsed) {
@@ -211,9 +221,11 @@ export class LocalEngineConnectionCoordinator {
                 throw error;
             }
             if (this.isLatestTransport(operationId)) {
+                // A probe that ran out of time reached something that never answered, not a browser block.
+                const timedOut = error instanceof DOMException && error.name === 'AbortError';
                 const blockedBy = error instanceof LocalEnginePermissionPromptDeferredError
                     ? 'permission-prompt'
-                    : await this.diagnoseUnreachable();
+                    : timedOut ? undefined : await this.diagnoseUnreachable();
                 if (this.isLatestTransport(operationId)) {
                     this.callbacks.onTransport('unreachable', { blockedBy });
                 }
@@ -222,9 +234,13 @@ export class LocalEngineConnectionCoordinator {
         }
     }
 
+    private async browserAccessState(): Promise<LocalEngineBrowserAccessState> {
+        return await this.callbacks.browserAccessState?.().catch(() => 'unsupported' as const) ?? 'unsupported';
+    }
+
     // A failed fetch looks the same whether the engine is stopped or the browser refused it.
     private async diagnoseUnreachable(): Promise<LocalEngineBlockedCause | undefined> {
-        const access = await this.callbacks.browserAccessState?.().catch(() => 'unsupported' as const) ?? 'unsupported';
+        const access = await this.browserAccessState();
         if (access === 'denied') return 'browser-permission';
         // Still undecided after a request: either the prompt was closed, or nothing answered
         // and Chrome never asked (Chrome 155 fails a closed port in ms without a prompt).

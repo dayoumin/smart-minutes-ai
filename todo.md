@@ -36,7 +36,7 @@
   - 남은 일: 웹을 다시 빌드·배포하고 실제 Chrome에서 확인한다(권한 '묻기'면 '연결 확인' 전 팝업 없음, 차단·확장 변경 안내). 설치 파일을 다시 빌드해 깨끗한 설치와 0.1.8 위 업데이트를 확인한다. 처음 문제가 난 PC의 확장·권한 상태도 확인한다.
   - 병합과 무관한 기존 실패(설치 사전 점검 테스트 2개, 시뮬레이션 1개) 중 테스트 2개는 고쳤다(2026-10-20): `backend.test_web_local_engine_installer_preflight`의 `test_main_accepts_nsis_plugins_dir_when_tmp_and_temp_differ`·`test_main_source_smoke_uses_isolated_targets_and_leaves_no_canary`는 실제 17863 포트를 읽어, 설치 엔진이 실행 중이면 `stop_local_engine_and_retry`로 실패했다. 이제 `_run_main_with_volume`처럼 `inspect_fixed_port`를 `available`로 바꿔 엔진 실행 여부와 무관하게 통과하고 엔진에 probe도 보내지 않는다. 남은 실패: `simulate-local-engine-connection-ui.mjs`의 `writer-guidance`는 익명 개발 API 시나리오에서 probe 2회(기대 0)로 병합 전부터 실패한다.
   - 2026-10-20 점검: `writer-guidance` 실패는 `ac84ed3b`에서 고쳤다(단언을 "연결 시작 없음"으로, main 병합됨). 99ae0f17·61858a52는 여전히 origin/main에 없다(미배포).
-  - 미룬 검토 nit: 사용자 '연결 확인' probe에 시간 제한이 없어 응답 없이 멈춘 엔진이면 확인 중이 계속되고 배경 재확인도 멈춘다. 이 동작은 이전부터 있었다. `localEngineClient.ts`의 fetch 래퍼(응답 시 보류 해제, 실패 시 유지)는 직접 테스트가 없다. 엔진이 한 번 응답한 뒤 같은 방문에서 권한을 '묻기'로 되돌리면 배경 요청이 다시 팝업을 띄운다.
+  - 미룬 검토 nit: 사용자 '연결 확인' probe에 시간 제한이 없어 응답 없이 멈춘 엔진이면 확인 중이 계속되고 배경 재확인도 멈춘다. 이 동작은 이전부터 있었다. (2026-10-20 고침: probe 15초 제한, 「동작 줄 v2」② 아래 기록) `localEngineClient.ts`의 fetch 래퍼(응답 시 보류 해제, 실패 시 유지)는 직접 테스트가 없다. 엔진이 한 번 응답한 뒤 같은 방문에서 권한을 '묻기'로 되돌리면 배경 요청이 다시 팝업을 띄운다.
 - [ ] 2026-10-20 새 회의록 동작 줄 v2 구현
   - 기준: `docs/design.md`의 「동작 줄 v2」 절, Figma `15-438`(A1 왼쪽). 연결 카드·준비 배너·`준비 필요` 라벨을 상태 줄 하나와 고치는 버튼으로 바꾼다. 웹 연결 빌드부터 하고 데스크톱·기본 개발 UI는 ④에서 옮긴다.
   - 시작 조건: 연결 쪽 변경과 브랜드 상수 병합은 `d76d1cdd`까지 커밋되어 충족됐다(2026-10-20 12:40, 작업 트리 깨끗함). 시작할 때 `LocalEngineConnectionSurface.tsx`, `localEngineConnectionView.ts`, `MeetingWriter.tsx`, `index.css`, 연결 시뮬레이션·테스트에 다른 작업의 미커밋 변경이 없는지 다시 확인한다. 같은 파일을 두 작업이 동시에 고치지 않는다.
@@ -69,7 +69,16 @@
     - 독립 agent 검토: P1 없음. P2 1개(재연결 단언이 지움 경로를 거치지 않음)와 P3 3개(경계 여유 1초, probe 개수 경쟁, 응답 때 카운트 새로 둠 미검증)는 시뮬레이션에서 고쳤다.
     - 남은 일(P3, 미룸):
       - 경고가 뜬 뒤 엔진이 모델 상태를 오류(5xx)로만 답하면, 루프가 마감 뒤 soft 확인만 반복해 `응답하지 않습니다`가 남는다(엔진은 답하는 중이라 문구가 부정확함, 이전에는 스피너가 끝없이 돌았음). 모델 상태가 200인데 JSON이 깨지면 응답마다 카운트가 새로 시작돼 스피너가 끝나지 않는다.
-      - 시간 제한 없는 probe(위 미룬 nit)가 `다시 확인`에서 더 잘 드러난다. 멈춘 probe가 남은 채 준비 확인이 회복하면 상태 줄은 `연결됨`인데 raw transport가 `checking`이라 `분석 시작`이 막혀 있다(엔진이 그 probe에 답하면 풀림). 엔진을 다시 실행할 때 멈춘 probe가 끊기는 순간 새 엔진이 이미 떠 있으면 `diagnoseUnreachable`이 `response-blocked`로 잘못 진단할 수 있다. probe 시간 제한 작업의 우선순위를 올릴 근거다.
+      - 시간 제한 없는 probe(위 미룬 nit)가 `다시 확인`에서 더 잘 드러난다. 멈춘 probe가 남은 채 준비 확인이 회복하면 상태 줄은 `연결됨`인데 raw transport가 `checking`이라 `분석 시작`이 막혀 있다(엔진이 그 probe에 답하면 풀림). 엔진을 다시 실행할 때 멈춘 probe가 끊기는 순간 새 엔진이 이미 떠 있으면 `diagnoseUnreachable`이 `response-blocked`로 잘못 진단할 수 있다. (2026-10-20 아래 probe 시간 제한으로 15초 안에 끝난다.)
+    - probe 시간 제한(2026-10-20, 같은 브랜치, 미커밋):
+      - `LocalEngineConnectionCoordinator.runProbe`는 probe에 `timeoutMs: 15000`(준비 확인 요청과 같은 15초)을 건다. 예외는 사용자가 누른 확인이면서 `browserAccessState()`가 `prompt`일 때다. Chrome이 '기기에 있는 앱' 팝업을 띄운 동안 요청을 붙잡고 있어서 사용자가 답할 때까지 기다린다. 이 조회는 사용자 확인 직전에 한 번만 한다(배경 확인은 권한 관문이 이미 막는다).
+      - 시간이 다 된 probe(AbortError)는 막힘 진단(reach 3초) 없이 `unreachable`이다. 그래서 멈춘 엔진은 `다시 확인`이나 연결 줄의 `다시 확인` 뒤 15초 안에 `연결하지 못했습니다`가 되고, 배경 재확인도 다시 돈다.
+      - 검증(Vite 모의 화면, 실제 엔진 아님): typecheck, `test:local-engine-browser-access`(probe 인자, `prompt`일 때 제한 없음, 권한 조회 실패 때 제한 유지, 시간 초과 때 진단 없음·조회 횟수, 실제 client가 AbortError로 끝나고 요청을 취소함), `test:runtime-boundary`·`test:auth-recovery`·`test:browser-approval`·`test-protected-activity`, `no-response` 시나리오(권한 '허용' stub: `다시 확인`과 연결 줄 `다시 확인`이 13초엔 확인 중, 17초엔 `연결하지 못했습니다`; `분석 준비 상태를 확인하지 못했습니다` → `다시 확인` 무응답이 45초 뒤 경고), 기존 시나리오 4개, 전체 실행, 회귀 `test:writer-model-readiness`·`simulate-analysis-stop-flow preparation` 통과. 시간 제한을 빼면 `no-response`가 실패하는 것을 확인했다.
+      - 독립 agent 검토: P1 없음. P2(15초 단언 여유 1초)는 13/17초로 고쳤다.
+      - 남은 일(P3, 미룸):
+        - `prompt` 예외가 넓다. 권한 상태를 `pageNeedsLoopbackPermission()`과 상관없이 보므로 localhost 화면(Vite 개발 UI, 헤드리스 Chromium)이나 '묻기'라고 보고하면서 막지 않는 브라우저에서는 사용자 확인에 여전히 제한이 없다(이전과 같음). 이 페이지에서 엔진이 한 번 답했으면 제한을 걸거나, provider 콜백이 `pageNeedsLoopbackPermission()`이 false면 `unsupported`를 돌려주는 방법이 있다(후자는 막힘 진단 문구도 바뀜).
+        - 팝업에서 '허용'을 누른 뒤에도 그 요청에는 제한이 없다. 첫 연결에서 엔진이 답하지 않으면 스피너가 남는다. `PermissionStatus` change 이벤트로 `granted`가 되는 때부터 제한을 거는 방법이 있다.
+        - probe 뒤의 `/api/pair/restore`·`/api/pair/start`·`/api/pair/complete`에도 시간 제한이 없다(이전부터). 엔진이 probe에만 답하고 멈추면 같은 종류로 멈춘다.
       - 분석 중에도 센다. 분석 중에는 동작 줄이 분석 패널로 가려지고, 입력 화면으로 돌아왔을 때 경고가 보이면 실제로 답이 없던 경우다.
       - 실제 Chrome과 설치 엔진으로는 확인하지 않았다. 맨 위 「사용자 확인 대기」에 있다.
   - ③ 입력 단계: 필수 항목 오류, 파일 길이, 이어하기, 다른 분석 진행 중을 상태 줄로 옮긴다. `id="writer-form-error"`는 상태 줄 문구로 옮기고 아래 배너는 없앤다(같은 id가 두 번 생기지 않게). 회귀: `test:resume-draft-flow`, `simulate-analysis-media-limit.mjs`.

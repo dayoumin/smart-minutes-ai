@@ -76,6 +76,8 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
         installerAvailable: Boolean(installerUrl),
         updateAvailable: Boolean(updateUrl),
         analysisPrerequisitesMissing,
+        // The cause survives the 'checking' state, so it tells whether the prompt may be up now.
+        permissionPromptPending: manualCheckPending && snapshot.blockedBy === 'permission-prompt',
     }), [analysisPrerequisitesMissing, connectionRequested, connectionStarted, installerUrl, manualCheckPending, pairingState.phase, snapshot, updateUrl]);
 
     useEffect(() => {
@@ -154,7 +156,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
         setManualCheckPending(true);
         const startedAt = Date.now();
         try {
-            const result = await probeLocalEngine();
+            const result = await probeLocalEngine({ userInitiated: true });
             if (result) await onProbeCompleted?.(result);
         } catch {
             // The provider owns the durable transport state shown by this surface.

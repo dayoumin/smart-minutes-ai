@@ -75,8 +75,8 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
             },
         );
     });
-    const probeLocalEngine = useCallback(() => (
-        coordinator.probe()
+    const probeLocalEngine = useCallback((options?: { userInitiated?: boolean }) => (
+        coordinator.probe(options)
     ), [coordinator]);
     const startPairing = useCallback(() => (
         coordinator.startBrowserApproval()

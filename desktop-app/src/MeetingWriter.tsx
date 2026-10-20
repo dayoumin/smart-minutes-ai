@@ -1109,7 +1109,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         setReadinessMessage('');
         setWebConnectionRecoveryStarted(true);
         try {
-            const probe = await probeLocalEngine();
+            const probe = await probeLocalEngine({ userInitiated: true });
             if (probe) await recheckDevelopmentReadiness(probe);
         } catch {
             // The connection surface explains the coordinator's current state and recovery action.

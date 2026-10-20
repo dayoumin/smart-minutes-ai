@@ -7,6 +7,8 @@ import type {
     LocalEngineProbePayload,
     LocalEngineTransportState,
 } from './localEngineConnection';
+// Explicit extension: the Node test scripts load this module without a bundler.
+import { LocalEnginePermissionPromptDeferredError } from './localEngineBrowserAccess.ts';
 import type { LocalEngineBrowserAccessState } from './localEngineBrowserAccess';
 import type {
     LocalEnginePairingStart,
@@ -105,6 +107,7 @@ export class LocalEngineConnectionCoordinator {
     private approvalAbort: AbortController | null = null;
     private readonly browserCredentials: LocalEngineBrowserCredentialStore;
     private explicitlyDisconnected = false;
+    private userProbesInFlight = 0;
 
     constructor(
         client: LocalEngineClient,
@@ -169,11 +172,23 @@ export class LocalEngineConnectionCoordinator {
         return true;
     }
 
-    async probe(): Promise<LocalEngineProbePayload | null> {
+    async probe({ userInitiated = false }: { userInitiated?: boolean } = {}): Promise<LocalEngineProbePayload | null> {
+        // A background re-check would supersede the user's check while Chrome's prompt is open,
+        // so the user's allow would land on a stale operation and skip pairing.
+        if (!userInitiated && this.userProbesInFlight > 0) return null;
+        if (userInitiated) this.userProbesInFlight += 1;
+        try {
+            return await this.runProbe(userInitiated);
+        } finally {
+            if (userInitiated) this.userProbesInFlight -= 1;
+        }
+    }
+
+    private async runProbe(userInitiated: boolean): Promise<LocalEngineProbePayload | null> {
         const operationId = this.beginTransportOperation();
         this.callbacks.onTransport('checking');
         try {
-            const response = await this.client.probe({ cache: 'no-store' });
+            const response = await this.client.probe({ cache: 'no-store', userInitiated });
             if (!response.ok) throw await responseError(response, 'probe');
             const parsed = this.parsers.probe(await response.json());
             if (!parsed) {
@@ -195,7 +210,9 @@ export class LocalEngineConnectionCoordinator {
                 throw error;
             }
             if (this.isLatestTransport(operationId)) {
-                const blockedBy = await this.diagnoseUnreachable();
+                const blockedBy = error instanceof LocalEnginePermissionPromptDeferredError
+                    ? 'permission-prompt'
+                    : await this.diagnoseUnreachable();
                 if (this.isLatestTransport(operationId)) {
                     this.callbacks.onTransport('unreachable', { blockedBy });
                 }
@@ -208,8 +225,10 @@ export class LocalEngineConnectionCoordinator {
     private async diagnoseUnreachable(): Promise<LocalEngineBlockedCause | undefined> {
         const access = await this.callbacks.browserAccessState?.().catch(() => 'unsupported' as const) ?? 'unsupported';
         if (access === 'denied') return 'browser-permission';
-        // While Chrome may still ask, another request would raise (or re-raise) its prompt.
-        if (access === 'prompt') return undefined;
+        // Still undecided after a request: either the prompt was closed, or nothing answered
+        // and Chrome never asked (Chrome 155 fails a closed port in ms without a prompt).
+        // Another request here would raise (or re-raise) the prompt, so classify without one.
+        if (access === 'prompt') return 'permission-prompt';
         try {
             // A no-cors request still completes against a running engine when only the
             // readable response was refused, so it separates that from a stopped engine.

@@ -34,10 +34,11 @@ export interface LocalEngineConnectionSnapshot {
 
 /**
  * - browser-permission: the browser denied this site access to apps on this PC.
+ * - permission-prompt: the browser has not been allowed yet; it asks on the user's next check.
  * - response-blocked: the engine answered but the browser refused the response,
  *   e.g. an extension rewrote the request's Origin so CORS no longer matched.
  */
-export type LocalEngineBlockedCause = 'browser-permission' | 'response-blocked';
+export type LocalEngineBlockedCause = 'browser-permission' | 'permission-prompt' | 'response-blocked';
 
 export interface LocalEngineProbePayload {
     product_id: string;

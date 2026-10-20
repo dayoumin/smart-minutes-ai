@@ -446,6 +446,93 @@ const verifyBrowserBlockedConnection = async browser => {
   } finally { await page.close(); }
 };
 
+// Serves the dev app from a public-looking HTTPS origin, where Chrome would ask before the
+// page may reach 127.0.0.1. The prompt itself is stood in for by a permissions/fetch stub.
+const PUBLIC_TEST_ORIGIN = 'https://barorok.test';
+const verifyPermissionPromptWaitsForUser = async browser => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  page.setDefaultTimeout(15000);
+  await page.route(`${PUBLIC_TEST_ORIGIN}/**`, async route => {
+    const requested = new URL(route.request().url());
+    const response = await route.fetch({ url: new URL(`${requested.pathname}${requested.search}`, APP_URL).toString() });
+    return route.fulfill({ response });
+  });
+  await page.addInitScript(() => {
+    window.localStorage.setItem('localProcessingIntroSeen', '1');
+    window.__loopbackPermission = 'prompt';
+    window.__allowWhenAsked = false;
+    window.__promptsShown = 0;
+    const query = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = descriptor => descriptor?.name === 'loopback-network'
+      ? Promise.resolve({ state: window.__loopbackPermission })
+      : query(descriptor);
+    // Chrome asks on the first request to this PC while undecided; the test answers for the user.
+    const originalFetch = window.fetch.bind(window);
+    window.fetch = (input, init) => {
+      const url = String(input instanceof Request ? input.url : input);
+      if (url.startsWith('http://127.0.0.1') && window.__loopbackPermission === 'prompt') {
+        window.__promptsShown += 1;
+        if (!window.__allowWhenAsked) return Promise.reject(new TypeError('Failed to fetch'));
+        window.__loopbackPermission = 'granted';
+      }
+      return originalFetch(input, init);
+    };
+  });
+  const engineRequests = [];
+  const grant = { session_token: 'permission-prompt-test-session-token',
+    expires_at: Math.floor(Date.now() / 1000) + 300,
+    capabilities: ['analysis', 'model-management', 'meeting-storage', 'export'] };
+  await page.route('http://127.0.0.1:17863/api/**', route => {
+    const path = new URL(route.request().url()).pathname;
+    engineRequests.push(path);
+    const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json',
+      headers: { 'Access-Control-Allow-Origin': PUBLIC_TEST_ORIGIN }, body: JSON.stringify(body) });
+    if (path === '/api/probe') return json({ product_id: 'barorok-local-engine', engine_version: 'test',
+      api_contract_version: 1, capabilities: grant.capabilities, auth_state: 'pairing-required',
+      pairing_available: true, pairing_mode: 'browser-connection', update_required: false });
+    if (path === '/api/pair/start') return json({ mode: 'browser-connection', pairing_id: 'permission-prompt-challenge', expires_in_seconds: 120 });
+    if (path === '/api/pair/complete' || path === '/api/pair/restore') return json(grant);
+    if (path === '/api/models/status') return json({ ready: true, models: [], errors: [] });
+    if (path === '/api/health') return json({ ok: true });
+    if (path === '/api/settings') return json({});
+    if (path === '/api/analyze/draft-statuses') return json({ drafts: [] });
+    return json({}, 404);
+  });
+  try {
+    const url = new URL(APP_URL);
+    await page.goto(`${PUBLIC_TEST_ORIGIN}${url.pathname}${url.search}`, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    const rail = page.locator('.local-engine-connection');
+    await rail.getByText('‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: false }).waitFor();
+    assert.equal(await rail.getAttribute('data-scene'), 'intro', 'an undecided permission is not shown as a failure');
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await sleep(2500);
+    assert.deepEqual(engineRequests, [], 'nothing reaches this PC, so Chrome has no reason to ask yet');
+    assert.equal(await page.evaluate(() => window.__promptsShown), 0, 'no prompt before the user acts');
+
+    // The user clicks, Chrome asks, and the user closes the prompt. The page cannot tell this
+    // from an engine that never answered, so it keeps the install guidance and adds the hint.
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByText('Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: true }).waitFor();
+    assert.equal(await rail.getAttribute('data-scene'), 'checking');
+    await page.waitForFunction(() => document.querySelector('.local-engine-connection')?.dataset.scene === 'unreachable');
+    assert.match(await rail.innerText(), /설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요\. Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요\./);
+    assert.equal(await page.evaluate(() => window.__promptsShown), 1);
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await sleep(1500);
+    assert.equal(await page.evaluate(() => window.__promptsShown), 1, 'a background re-check does not raise the prompt again');
+    assert.deepEqual(engineRequests, []);
+
+    // The user clicks again and allows this time.
+    await page.evaluate(() => { window.__allowWhenAsked = true; });
+    await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
+    await rail.getByText(/^(분석 준비 완료|연결됨)$/).waitFor();
+    assert.equal(await page.evaluate(() => window.__promptsShown), 2);
+    assert.equal(engineRequests[0], '/api/probe', 'the first request to this PC is the user\'s own check');
+    assert.ok(engineRequests.includes('/api/pair/start'));
+    console.log('ok - an undecided browser permission waits for 연결 확인 and explains the prompt');
+  } finally { await page.close(); }
+};
+
 const verifyAutomaticEngineConnection = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(15000);
@@ -514,6 +601,10 @@ const run = async () => {
     browser = await chromium.launch({ headless: true });
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'automatic') {
       await verifyAutomaticEngineConnection(browser);
+      return;
+    }
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'permission-prompt') {
+      await verifyPermissionPromptWaitsForUser(browser);
       return;
     }
     if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'browser-blocked') {

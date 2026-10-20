@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
 const shouldStartServer = !process.env.APP_URL;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -23,16 +25,29 @@ const waitForApp = async (url, timeoutMs = 30000) => {
   throw new Error(`Timed out waiting for ${url}`);
 };
 
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
+
 const startServer = async () => {
-  if (!shouldStartServer) return null;
-  try {
-    await waitForApp(APP_URL, 1000);
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start a dedicated Vite server when none is running.
   }
   const url = new URL(APP_URL);
-  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5173'}`;
+  url.port = String(await getAvailablePort(url.hostname));
+  APP_URL = url.toString();
+  const command = `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`;
   const child = spawn(
     process.env.ComSpec ?? 'cmd.exe',
     ['/d', '/s', '/c', command],
@@ -150,7 +165,7 @@ const runEmptyHomeScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.ocean-backdrop, .start-workspace, [data-shell-variant]').count(), 0);
-    assert.equal(await page.getByRole('button', { name: '바로록 첫 화면' }).getAttribute('aria-current'), 'page');
+    assert.equal(await page.getByRole('button', { name: `${BRAND_NAME} 첫 화면` }).getAttribute('aria-current'), 'page');
     // Give the recent-meetings load a moment; an empty store renders no list at all.
     await page.waitForTimeout(300);
     assert.equal(await page.locator('.recent-meetings, .writer-recovery').count(), 0);
@@ -474,7 +489,7 @@ const runEngineDownDeleteScene = async browser => {
     await deleteButton.click();
     await waitForDialogs(2);
     assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'alert']);
-    assert.equal(dialogs[1].message, '바로록 연결이 실행 중일 때만 회의록을 삭제할 수 있습니다. 바로록 연결을 실행한 뒤 다시 삭제해 주세요.');
+    assert.equal(dialogs[1].message, `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중일 때만 회의록을 삭제할 수 있습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 삭제해 주세요.`);
     assert.deepEqual(deleteRequests, ['refused']);
     await page.waitForTimeout(300);
     assert.deepEqual(await readMeetingIds(page), ['engine-down-delete', 'engine-down-keep'], 'the record stays while the engine copy cannot be deleted');

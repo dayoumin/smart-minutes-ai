@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { BRAND_NAME } from '../src/brand.ts';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5194/?view=minutes';
+assert.ok(process.env.APP_URL, 'Set APP_URL to the dedicated Vite QA URL.');
+const APP_URL = process.env.APP_URL;
 const origin = new URL(APP_URL).origin;
 const wav = Buffer.alloc(44 + 16000 * 2 * 20);
 wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
@@ -38,7 +40,7 @@ try {
     return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(data) });
   });
   await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-  assert.equal(await page.title(), '바로록');
+  assert.equal(await page.title(), BRAND_NAME);
   await page.evaluate(async () => {
     const { localEngineSessionCredentials } = await import('/src/localEngineClient.ts');
     localEngineSessionCredentials.replace({ session_token: 'browser-audio-test-session-long-enough', expires_at: Date.now() / 1000 + 300, capabilities: ['analysis', 'export'] });

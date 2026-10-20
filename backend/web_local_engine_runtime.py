@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Mapping, MutableMapping
 
+from brand import BRAND_NAME
 from local_engine_security import parse_exact_origins
 
 
@@ -515,7 +516,7 @@ def make_pairing_code_presenter(
             return False
         remaining_seconds = max(1, int(expires_at - now))
         return dispatch_message(
-            "바로록 연결 코드",
+            f"{BRAND_NAME} 연결 코드",
             "다음 웹사이트의 연결 요청입니다.\n\n"
             f"{normalized_origin}\n\n"
             f"연결 코드: {code}\n"

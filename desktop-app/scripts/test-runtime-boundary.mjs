@@ -23,6 +23,7 @@ import {
 } from '../src/localEngineSession.ts';
 import { LocalEngineConnectionCoordinator } from '../src/localEngineConnectionCoordinator.ts';
 import { getLocalEngineConnectionView } from '../src/localEngineConnectionView.ts';
+import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 const web = detectRuntimeEnvironment({
   hostname: 'meetings.example.test',
@@ -135,7 +136,7 @@ assert.equal(unreachableWithInstaller.primaryAction, 'probe', 'no response does 
 assert.equal(unreachableWithInstaller.primaryLabel, '연결 확인');
 assert.equal(unreachableWithInstaller.secondaryAction, 'download');
 assert.equal(unreachableWithInstaller.secondaryLabel, '설치 파일');
-assert.match(unreachableWithInstaller.message, /설치했다면 바로록 연결을 실행/);
+assert.equal(unreachableWithInstaller.message, `설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`);
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'reachable', authorization: 'unpaired' },
   pairingPhase: 'idle',

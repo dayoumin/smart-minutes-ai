@@ -20,6 +20,7 @@ import {
 } from './meetingRepository';
 import { localEngineClient } from './localEngineClient';
 import { isTauriRuntime } from './apiBase';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
 import { ProgressBar } from './components/common';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
@@ -673,7 +674,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
             if (!response) {
                 window.alert(isTauriRuntime()
                     ? '분석 기능에 연결하지 못해 회의록을 삭제하지 않았습니다. 앱을 다시 실행한 뒤 다시 삭제해 주세요.'
-                    : '바로록 연결이 실행 중일 때만 회의록을 삭제할 수 있습니다. 바로록 연결을 실행한 뒤 다시 삭제해 주세요.');
+                    : `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중일 때만 회의록을 삭제할 수 있습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 삭제해 주세요.`);
                 return;
             }
             if (!response.ok && response.status !== 404) {
@@ -694,10 +695,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     return (
         <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex h-full max-h-none w-60 shrink-0 flex-col border-r px-3 py-3.5">
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
-                <button type="button" className="sidebar-brand" aria-label="바로록 첫 화면" aria-current={activeTab === 'minutes' ? 'page' : undefined} onClick={onOpenStart}>
+                <button type="button" className="sidebar-brand" aria-label={`${BRAND_NAME} 첫 화면`} aria-current={activeTab === 'minutes' ? 'page' : undefined} onClick={onOpenStart}>
                     <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
                     <span className="app-brand-copy">
-                        <strong>바로록</strong>
+                        <strong>{BRAND_NAME}</strong>
                     </span>
                 </button>
                 <button

@@ -4,6 +4,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes&localEngineConnection=1';
 const shouldStartServer = !process.env.APP_URL;
@@ -170,7 +171,7 @@ const verifyDefaultWriterGuidance = async browser => {
         assert.equal(await page.locator('.local-engine-connection').count(), 0);
       } else {
         if (scenario === 'outage-recovery') {
-          await page.getByText('바로록 연결 확인 중', { exact: true }).waitFor();
+          await page.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor();
           assert.ok(healthCount > 0);
           await page.clock.runFor(47_000);
           await page.getByText('분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.', { exact: true }).waitFor();
@@ -183,7 +184,7 @@ const verifyDefaultWriterGuidance = async browser => {
         const rail = page.locator('.local-engine-connection');
         if (scenario === 'outage-recovery') {
           await rail.getByText('연결하지 못했습니다', { exact: true }).waitFor();
-          await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+          await rail.getByText(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`, { exact: true }).waitFor();
           assert.equal(await rail.locator('a[href=""]').count(), 0);
           healthUp = true;
           await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
@@ -413,7 +414,7 @@ const verifyBrowserBlockedConnection = async browser => {
     await rail.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).waitFor();
     assert.equal(await rail.getAttribute('data-scene'), 'browser-blocked', 'the automatic check reports the block before any click');
     assert.match(await rail.innerText(), /‘기기에 있는 앱’을 허용/);
-    assert.doesNotMatch(await rail.innerText(), /바로록 연결을 실행/, 'a browser block is not explained as a stopped engine');
+    assert.ok(!(await rail.innerText()).includes(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행`), 'a browser block is not explained as a stopped engine');
     assert.equal(await rail.getByRole('link').count(), 0, 'reinstalling is not offered for a denied permission');
     assert.ok(probes >= 1);
 
@@ -423,7 +424,7 @@ const verifyBrowserBlockedConnection = async browser => {
     await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await rail.getByText('연결 확인 중', { exact: true }).waitFor();
     assert.equal(await rail.getAttribute('data-scene'), 'checking', 'a fast failure still shows the retry happening');
-    await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+    await rail.getByText(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`, { exact: true }).waitFor();
     assert.equal(await rail.getAttribute('data-scene'), 'unreachable');
     assert.equal(await rail.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).count(), 0);
     assert.ok(probes > probesBeforeClick);
@@ -431,7 +432,7 @@ const verifyBrowserBlockedConnection = async browser => {
     // Retrying from the plain failure also shows the check instead of looking unchanged.
     await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await rail.getByText('연결 확인 중', { exact: true }).waitFor();
-    await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+    await rail.getByText(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`, { exact: true }).waitFor();
 
     // The engine now answers, but the browser refuses to let the page read it.
     engineAnswersOpaque = true;
@@ -502,7 +503,9 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     const url = new URL(APP_URL);
     await page.goto(`${PUBLIC_TEST_ORIGIN}${url.pathname}${url.search}`, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     const rail = page.locator('.local-engine-connection');
-    await rail.getByText('‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: false }).waitFor();
+    // domcontentloaded returns before a cold Vite has served the app's modules through the route.
+    await rail.getByText('‘연결 확인’을 누른 뒤 Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: false })
+      .waitFor({ timeout: PAGE_GOTO_TIMEOUT_MS });
     assert.equal(await rail.getAttribute('data-scene'), 'intro', 'an undecided permission is not shown as a failure');
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await sleep(2500);
@@ -515,7 +518,7 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     await rail.getByText('Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: true }).waitFor();
     assert.equal(await rail.getAttribute('data-scene'), 'checking');
     await page.waitForFunction(() => document.querySelector('.local-engine-connection')?.dataset.scene === 'unreachable');
-    assert.match(await rail.innerText(), /설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요\. Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요\./);
+    assert.ok((await rail.innerText()).includes(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요. Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.`));
     assert.equal(await page.evaluate(() => window.__promptsShown), 1);
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await sleep(1500);
@@ -773,7 +776,7 @@ const run = async () => {
     await intro.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'opening the notice is not yet a confirmation');
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '시작하기');
-    await intro.getByText('이를 위해 처음 한 번 ‘바로록 연결’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.', { exact: true }).waitFor();
+    await intro.getByText(`이를 위해 처음 한 번 ‘${LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.`, { exact: true }).waitFor();
     const introFootnote = intro.getByText('웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.', { exact: true });
     assert.equal(await introFootnote.count(), 1);
     assert.equal(await intro.locator('#local-processing-details').count(), 0, 'first visit keeps the details folded');
@@ -793,7 +796,7 @@ const run = async () => {
     const foldToggle = intro.getByRole('button', { name: '간단히 보기', exact: true });
     assert.equal(await foldToggle.getAttribute('aria-expanded'), 'true');
     assert.equal(await introFootnote.count(), 0, 'the internet row replaces the footnote while details are open');
-    await intro.locator('dd').getByText('웹사이트를 열 때와 바로록 연결·분석 모델을 받을 때 사용합니다.', { exact: false }).waitFor();
+    await intro.locator('dd').getByText(`웹사이트를 열 때와 ${LOCAL_ENGINE_NAME}·분석 모델을 받을 때 사용합니다.`, { exact: false }).waitFor();
     // The dialog's height is capped to the window, so its box always fits; content that does not fit scrolls inside it.
     await page.setViewportSize({ width: 1280, height: 720 });
     const introOverflow = await intro.evaluate(element => element.scrollHeight - element.clientHeight);

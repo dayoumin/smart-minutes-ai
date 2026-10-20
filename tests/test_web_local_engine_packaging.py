@@ -1,4 +1,8 @@
+import json
+import os
 import subprocess
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -14,6 +18,10 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('$EntryPointPath', script)
         self.assertIn('--noconsole', script)
         self.assertIn('Get-PeSubsystem $OutputPath', script)
+        # backend/brand.py reads the display name from the bundled copy (sys._MEIPASS/configs).
+        self.assertIn('Join-Path $RepoRoot "configs\\brand.json"', script)
+        self.assertIn('--add-data "${BrandConfigPath}:configs"', script)
+        self.assertIn('"_internal\\configs\\brand.json"', script)
 
         completed = subprocess.run(
             [
@@ -125,10 +133,48 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         ffmpeg_preflight = script.index('if (-not (Test-Path -LiteralPath $ResolvedFfmpegPath')
         ffmpeg_version_validated = script.index('$FfmpegVersionLine = $ffmpegVersionMatch.Value.Trim()')
         ffmpeg_probe_disposed = script.index('$ffmpegProbe.Dispose()')
+        storage_derived = script.index('web_local_engine_storage_requirements.py')
         output_replacement = script.index('if (Test-Path -LiteralPath $ResolvedOutputDir)')
         self.assertLess(ffmpeg_preflight, output_replacement)
         self.assertLess(ffmpeg_version_validated, output_replacement)
         self.assertLess(ffmpeg_probe_disposed, output_replacement)
+        self.assertLess(storage_derived, output_replacement)
+        self.assertIn('Storage requirement derivation failed.', script)
+        self.assertIn('storageRequirements = $StorageRequirements', script)
+
+    def test_web_poc_builder_embeds_storage_requirements_as_exact_integers(self) -> None:
+        script = (ROOT / "scripts" / "build_web_local_engine_poc.ps1").read_text(encoding="utf-8")
+        start = script.index('$storageRequirementsJson = ')
+        end = script.index('if (Test-Path -LiteralPath $ResolvedOutputDir)')
+        snippet = script[start:end]
+        harness = (
+            '$ErrorActionPreference = "Stop"\n'
+            f'$PythonCommand = "{sys.executable}"\n'
+            f'$BackendDir = "{ROOT / "backend"}"\n'
+            + snippet
+            + '[ordered]@{ storageRequirements = $StorageRequirements } | ConvertTo-Json -Depth 8\n'
+        )
+        with tempfile.TemporaryDirectory() as temp_dir:
+            harness_path = Path(temp_dir) / "storage-harness.ps1"
+            harness_path.write_text(harness, encoding="utf-8-sig")
+            completed = subprocess.run(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", str(harness_path)],
+                cwd=ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=60,
+            )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        storage = json.loads(completed.stdout)["storageRequirements"]
+        self.assertEqual(storage["models"]["requiredBytes"], 11_185_989_538)
+        self.assertEqual(storage["models"]["recommendedBytes"], 12_210_001_824)
+        self.assertEqual(storage["analysisTemp"]["requiredBytes"], 1_764_941_824)
+        self.assertEqual(storage["analysisTemp"]["recommendedBytes"], 2_916_941_824)
+        self.assertEqual(storage["results"]["requiredBytes"], 268_435_456)
+        self.assertEqual(storage["results"]["recommendedBytes"], 1_073_741_824)
+        self.assertEqual(set(storage), {"models", "analysisTemp", "results"})
 
     def test_web_server_hard_codes_loopback_and_security_profile(self) -> None:
         server = (ROOT / "backend" / "web_local_engine_server.py").read_text(encoding="utf-8")
@@ -172,6 +218,19 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('signed = $false', builder)
         self.assertIn('distributionReady = $false', builder)
         self.assertIn('--manifest-only', builder)
+        self.assertIn('Join-Path $RepoRoot "configs\\brand.json"', builder)
+        self.assertIn('"/DBRAND_NAME=$BrandName"', builder)
+        self.assertNotIn('/DBRAND_NAME=바로록', builder)
+        # The brand comes only from configs/brand.json; there is no parameter or default.
+        self.assertNotIn('[string]$BrandName', builder)
+        self.assertNotIn('0xBC14', builder)
+        self.assertNotIn("-match '[\"$`\\r\\n]'", builder)
+        self.assertEqual(builder.count('$BrandName -notmatch'), 1)
+        self.assertLess(
+            builder.index('ConvertFrom-Json).brandName'),
+            builder.index('$BrandName -notmatch'),
+        )
+        self.assertTrue(builder.isascii())
         compiler_gate = builder.index('$MakensisCommand = Get-Command $Makensis')
         python_gate = builder.index('& $PythonCommand -c "import PyInstaller"')
         manifest_gate = builder.index('--manifest-only')
@@ -179,6 +238,53 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertLess(compiler_gate, output_replacement)
         self.assertLess(python_gate, output_replacement)
         self.assertLess(manifest_gate, output_replacement)
+        self.assertLess(builder.index('brandName must be'), output_replacement)
+        brand_name = json.loads((ROOT / "configs" / "brand.json").read_text(encoding="utf-8-sig"))["brandName"]
+        pattern = builder.split("if ($BrandName -notmatch '", 1)[1].split("')", 1)[0]
+        cases = {
+            brand_name: True,
+            "바로록": True,
+            "Foo Bar": True,
+            "A": True,
+            "a" * 40: True,
+            "a" * 41: False,
+            "바로록\n": False,
+            " lead": False,
+            "trail ": False,
+            'bad"name': False,
+            "a$b": False,
+            "a.b": False,
+        }
+        checked = subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                # The same read as the build script, so the real brand.json value is checked too.
+                "$fromFile = [string](Get-Content -LiteralPath $env:BRAND_FILE -Raw -Encoding UTF8 | ConvertFrom-Json).brandName; "
+                "[Console]::Out.WriteLine([string]($fromFile -match $env:BRAND_PATTERN)); "
+                "$cases = $env:BRAND_CASES | ConvertFrom-Json; "
+                "foreach ($case in $cases) { [Console]::Out.WriteLine([string]($case -match $env:BRAND_PATTERN)) }",
+            ],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=30,
+            env={
+                **os.environ,
+                "BRAND_CASES": json.dumps(list(cases)),
+                "BRAND_PATTERN": pattern,
+                "BRAND_FILE": str(ROOT / "configs" / "brand.json"),
+            },
+        )
+        self.assertEqual(checked.returncode, 0, checked.stderr)
+        self.assertEqual(
+            checked.stdout.split(),
+            ["True", *(str(accepted) for accepted in cases.values())],
+        )
+
         self.assertIn('--onefile', helper_builder)
         self.assertIn('--noconsole', helper_builder)
         self.assertIn('web_local_engine_installer_preflight.py', helper_builder)
@@ -186,6 +292,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
     def test_web_nsis_installer_preserves_data_and_uses_preflight_rollback(self) -> None:
         installer = (ROOT / "installer" / "web-local-engine.nsi").read_text(encoding="utf-8")
         self.assertIn('RequestExecutionLevel user', installer)
+        self.assertIn('!ifndef BRAND_NAME\n  !error "BRAND_NAME is required"', installer)
         self.assertNotIn('SetShellVarContext', installer.split('Function ', 1)[0])
         for callback in ('.onInit', 'un.onInit'):
             initialization = installer.split(f'Function {callback}\n', 1)[1].split('FunctionEnd', 1)[0]
@@ -283,14 +390,171 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
             installer.index('Rename "$StageDir" "$INSTDIR"'),
         )
         self.assertIn('WriteRegStr HKCU', installer)
-        self.assertIn('로컬 엔진 시작.lnk', installer)
-        self.assertIn('바로록 연결.lnk', installer)
-        self.assertIn('로컬 엔진 종료.lnk', installer)
+        self.assertIn('음성 분석 시작.lnk', installer)
+        self.assertIn('${BRAND_NAME} 연결.lnk', installer)
+        self.assertIn('음성 분석 종료.lnk', installer)
         self.assertIn('사용자 데이터는 보존했습니다', installer)
         self.assertNotIn('RMDir /r "$INSTDIR"', installer)
         self.assertNotIn('RMDir /r "$RollbackDir"', installer)
         self.assertNotIn('RMDir /r "$StageDir"', installer)
         self.assertNotIn('RMDir /r "$LOCALAPPDATA\\Barorok\\LocalEngine"', installer)
+
+    def test_web_nsis_installer_uses_unbranded_name_and_keeps_upgrade_identity(self) -> None:
+        installer = (ROOT / "installer" / "web-local-engine.nsi").read_text(encoding="utf-8")
+        self.assertIn('!define PRODUCT_NAME "음성 분석"', installer)
+        self.assertIn('!define START_MENU_DIR "음성 분석"', installer)
+        self.assertIn('!ifndef BRAND_NAME\n  !error "BRAND_NAME is required"\n!endif', installer)
+        self.assertIn('!define LEGACY_START_MENU_DIR "바로록 로컬 엔진"', installer)
+        # Upgrade identity stays unchanged so earlier installs are found and replaced.
+        self.assertIn(
+            '!define PRODUCT_KEY "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\BarorokLocalEngine"',
+            installer,
+        )
+        self.assertIn('InstallDir "$LOCALAPPDATA\\Programs\\Barorok\\LocalEngine"', installer)
+        self.assertIn('StrCpy $EngineExe "$INSTDIR\\engine\\${ENGINE_EXE_NAME}"', installer)
+        self.assertIn('!define INSTALLER_MUTEX "Local\\BarorokLocalEngineInstaller"', installer)
+
+        # The brand is never hard-coded; only historical file names of old releases keep it.
+        brand_lines = [line.strip() for line in installer.splitlines() if '바로록' in line]
+        self.assertEqual(
+            brand_lines,
+            [
+                '!define LEGACY_START_MENU_DIR "바로록 로컬 엔진"',
+                'Delete "$SMPROGRAMS\\${LEGACY_START_MENU_DIR}\\바로록 연결.lnk"',
+            ],
+        )
+        self.assertIn('WriteRegStr HKCU "${PRODUCT_KEY}" "Publisher" "${BRAND_NAME}"', installer)
+        self.assertNotIn('"Publisher" "Barorok"', installer)
+
+        message_lines = [line for line in installer.splitlines() if 'MessageBox' in line]
+        self.assertEqual([line for line in message_lines if '엔진' in line], [])
+        self.assertTrue(any(
+            '음성 분석 프로그램의 연결(포트 17863)을 쓰고 있습니다. ${BRAND_NAME} 데스크톱 앱 등' in line
+            for line in message_lines
+        ))
+        self.assertEqual(
+            sum('컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요' in line for line in message_lines),
+            3,
+        )
+        self.assertEqual([line for line in message_lines if '선언되지 않은' in line], [])
+        self.assertTrue(any('실행 중인 음성 분석 프로그램을 종료하지 못했습니다' in line for line in message_lines))
+        self.assertTrue(any('이전 버전 백업 파일을 정리하지 못했습니다' in line for line in message_lines))
+        self.assertTrue(any('이 설치 프로그램이 만들지 않은 파일' in line for line in message_lines))
+        old_name_lines = [line.strip() for line in installer.splitlines() if '로컬 엔진' in line]
+        self.assertEqual(
+            old_name_lines,
+            [
+                '!define LEGACY_START_MENU_DIR "바로록 로컬 엔진"',
+                'Delete "$SMPROGRAMS\\${LEGACY_START_MENU_DIR}\\로컬 엔진 시작.lnk"',
+                'Delete "$SMPROGRAMS\\${LEGACY_START_MENU_DIR}\\로컬 엔진 종료.lnk"',
+            ],
+        )
+
+        legacy_macro = installer.split('!macro RemoveLegacyStartMenuEntries\n', 1)[1].split('!macroend', 1)[0]
+        self.assertIn('Delete "$SMPROGRAMS\\${LEGACY_START_MENU_DIR}\\제거.lnk"', legacy_macro)
+        self.assertIn('RMDir "$SMPROGRAMS\\${LEGACY_START_MENU_DIR}"', legacy_macro)
+        self.assertNotIn('RMDir /r', legacy_macro)
+
+        install_shortcuts = installer.split('\nshortcuts:\n', 1)[1].split('Goto install_done', 1)[0]
+        # The old folder goes only after every new shortcut exists.
+        new_uninstall_shortcut = (
+            'CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 제거.lnk" "$INSTDIR\\Uninstall.exe"'
+        )
+        self.assertLess(
+            install_shortcuts.index('CreateDirectory "$SMPROGRAMS\\${START_MENU_DIR}"'),
+            install_shortcuts.index(new_uninstall_shortcut),
+        )
+        self.assertLess(
+            install_shortcuts.index(new_uninstall_shortcut),
+            install_shortcuts.index('!insertmacro RemoveLegacyStartMenuEntries'),
+        )
+        # Every fixed shortcut name in the shared folder carries the product name.
+        current_folder_names = [
+            line.split('${START_MENU_DIR}\\', 1)[1].split('"', 1)[0]
+            for line in installer.splitlines()
+            if '${START_MENU_DIR}\\' in line and '.lnk' in line and '$2' not in line
+        ]
+        self.assertEqual(
+            sorted(set(current_folder_names)),
+            sorted({'음성 분석 시작.lnk', '${BRAND_NAME} 연결.lnk', '음성 분석 종료.lnk', '음성 분석 제거.lnk'}),
+        )
+        # The recorded connect shortcut (maybe from an earlier brand) is removed before
+        # the current one is made, and the new name is recorded for the next run.
+        recorded_macro = installer.split('!macro RemoveRecordedConnectShortcut\n', 1)[1].split('!macroend', 1)[0]
+        self.assertIn('ReadRegStr $2 HKCU "${PRODUCT_KEY}" "ConnectShortcut"', recorded_macro)
+        self.assertIn('StrCpy $3 $2 "" -7\n  ${If} $3 == " 연결.lnk"', recorded_macro)
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\$2"', recorded_macro)
+        self.assertNotIn('* 연결.lnk', installer)
+        self.assertLess(
+            install_shortcuts.index('!insertmacro RemoveRecordedConnectShortcut'),
+            install_shortcuts.index('CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\${BRAND_NAME} 연결.lnk"'),
+        )
+        self.assertIn(
+            'WriteRegStr HKCU "${PRODUCT_KEY}" "ConnectShortcut" "${BRAND_NAME} 연결.lnk"',
+            install_shortcuts,
+        )
+        self.assertIn(
+            'CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 시작.lnk" "$EngineExe"',
+            install_shortcuts,
+        )
+        self.assertIn(
+            'CreateShortcut "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 종료.lnk" "$EngineExe" "--stop"',
+            install_shortcuts,
+        )
+        self.assertIn('WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayName" "${PRODUCT_NAME}"', install_shortcuts)
+        uninstall = installer.split('Section "Uninstall"\n', 1)[1].split('SectionEnd', 1)[0]
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 시작.lnk"', uninstall)
+        self.assertLess(
+            uninstall.index('!insertmacro RemoveRecordedConnectShortcut'),
+            uninstall.index('DeleteRegKey HKCU "${PRODUCT_KEY}"'),
+        )
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\${BRAND_NAME} 연결.lnk"', uninstall)
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 종료.lnk"', uninstall)
+        self.assertIn('Delete "$SMPROGRAMS\\${START_MENU_DIR}\\음성 분석 제거.lnk"', uninstall)
+        self.assertIn('!insertmacro RemoveLegacyStartMenuEntries', uninstall)
+        self.assertNotIn('${START_MENU_DIR}\\로컬 엔진', installer)
+
+    def test_web_nsis_low_space_question_names_space_to_free(self) -> None:
+        installer = (ROOT / "installer" / "web-local-engine.nsi").read_text(encoding="utf-8")
+        self.assertNotIn('권장값', installer)
+        preflight_run = installer.split('Function RunInstallerPreflight\n', 1)[1].split('FunctionEnd', 1)[0]
+        self.assertIn(
+            'ReadINIStr $PreflightFreeSpaceGb "$PreflightDecision" "preflight" "free_space_gb"',
+            preflight_run,
+        )
+        self.assertIn(
+            'ReadINIStr $PreflightFreeSpaceDrive "$PreflightDecision" "preflight" "free_space_drive"',
+            preflight_run,
+        )
+        self.assertLess(preflight_run.index('StrCpy $PreflightFreeSpaceGb ""'), preflight_run.index('IfErrors 0 +3'))
+        confirm_branch = installer.split('${ElseIf} $PreflightExit == 10\n', 1)[1].split(
+            '${ElseIf} $PreflightExit == 20', 1
+        )[0]
+        self.assertLess(
+            confirm_branch.index('IfSilent preflight_ready'),
+            confirm_branch.index('${If} $PreflightAction == "free_space_and_retry"'),
+        )
+        self.assertIn(
+            '$PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비워 주세요.',
+            confirm_branch,
+        )
+        self.assertEqual(
+            confirm_branch.count('음성 분석에 필요한 모델과 회의 작업 파일을 저장할 공간이 부족합니다'),
+            2,
+        )
+        self.assertEqual(confirm_branch.count('‘아니요’를 누르면 설치를 멈춥니다.'), 2)
+        self.assertIn('설치 전 점검 중 일부를 마치지 못했습니다. 설치는 계속할 수 있고', confirm_branch)
+        self.assertNotIn('저장 공간 확인이나 임시 파일 정리', installer)
+        blocked_branch = installer.split('${ElseIf} $PreflightExit == 20\n', 1)[1].split(
+            '${ElseIf} $PreflightExit == 30', 1
+        )[0]
+        self.assertIn(
+            '$PreflightFreeSpaceDrive 드라이브에서 약 $PreflightFreeSpaceGb GB를 비운 뒤 설치 파일을 다시 실행해 주세요.',
+            blocked_branch,
+        )
+        self.assertIn('공간을 확보한 뒤 설치 파일을 다시 실행해 주세요.', blocked_branch)
+        self.assertEqual(confirm_branch.count('IDYES preflight_ready'), 3)
+        self.assertIn('SetErrorLevel 10\n    Abort', confirm_branch)
 
 
 if __name__ == "__main__":

@@ -9,6 +9,7 @@ from argparse import Namespace
 from pathlib import Path
 from unittest.mock import patch
 
+from brand import BRAND_NAME
 from web_local_engine_runtime import (
     WindowsNamedEvent,
     WindowsNamedMutex,
@@ -268,6 +269,7 @@ class WebLocalEngineRuntimeTest(unittest.TestCase):
             arm_pairing_helper(layout, origin="https://minutes.example", now=90)
             self.assertTrue(presenter("pairing", "123456", 220))
             self.assertEqual(len(shown), 1)
+            self.assertEqual(shown[0][0], f"{BRAND_NAME} 연결 코드")
             self.assertIn("https://minutes.example", shown[0][1])
             self.assertIn("123456", shown[0][1])
             self.assertFalse(layout.pairing_arm_path.exists())

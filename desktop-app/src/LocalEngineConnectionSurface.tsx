@@ -10,6 +10,7 @@ import {
     ShieldCheck,
     X,
 } from 'lucide-react';
+import { LOCAL_ENGINE_NAME, withJosa } from './brand';
 import { Button, IconButton, Input } from './components/common';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import type { LocalEngineProbePayload } from './localEngineConnection';
@@ -260,8 +261,8 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
                     <a
                         className="btn btn-outline local-engine-secondary-action"
                         href={installerUrl}
-                        aria-label="바로록 설치 파일 받기"
-                        title="바로록 설치 파일 받기"
+                        aria-label={`${LOCAL_ENGINE_NAME} 설치 파일 받기`}
+                        title={`${LOCAL_ENGINE_NAME} 설치 파일 받기`}
                     >
                         <Download size={15} aria-hidden="true" />
                         {view.secondaryLabel}
@@ -314,7 +315,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
 
             {showHelp && (
                 <div id="local-engine-help" className="local-engine-help">
-                    Windows 시작 메뉴에서 바로록 연결을 실행하세요. Chrome에서는 이 사이트의 ‘기기에 있는 앱’을 허용한 뒤 새로고침해 주세요. 회사 정책으로 차단되면 관리자에게 문의하세요.{testInstallerNotice && ` ${testInstallerNotice}`}
+                    Windows 시작 메뉴에서 {withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하세요. Chrome에서는 이 사이트의 ‘기기에 있는 앱’을 허용한 뒤 새로고침해 주세요. 회사 정책으로 차단되면 관리자에게 문의하세요.{testInstallerNotice && ` ${testInstallerNotice}`}
                 </div>
             )}
 
@@ -335,7 +336,7 @@ export const LocalEngineConnectionSurface: React.FC<LocalEngineConnectionSurface
                         <div className="local-engine-pairing-header">
                             <div>
                                 <h3 id="local-engine-pairing-title">이 브라우저 연결</h3>
-                                <p id="local-engine-pairing-description">바로록 연결 창에 표시된 일회성 코드를 입력합니다.</p>
+                                <p id="local-engine-pairing-description">{LOCAL_ENGINE_NAME} 창에 표시된 일회성 코드를 입력합니다.</p>
                             </div>
                             <IconButton
                                 variant="ghost"

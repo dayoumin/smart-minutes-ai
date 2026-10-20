@@ -1,13 +1,15 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { mkdtemp, stat, writeFile } from 'node:fs/promises';
+import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
 const PROCESSING_HELP_TITLE = '회의 내용은 내 PC에서 처리합니다';
 // Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
@@ -39,7 +41,7 @@ const waitForApp = async (url, timeoutMs = 30000) => {
 
 const assertProjectPage = async (page) => {
   const title = await page.title();
-  if (title !== '바로록') {
+  if (title !== BRAND_NAME) {
     throw new Error(`Unexpected app at ${APP_URL}: ${title || '(no title)'}`);
   }
 };
@@ -67,18 +69,30 @@ const stopServer = async (child) => {
   ]);
 };
 
-const startServer = async () => {
-  if (!shouldStartServer) return null;
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
 
-  try {
-    await waitForApp(APP_URL, 1000);
+const startServer = async () => {
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start local Vite server.
   }
 
   const url = new URL(APP_URL);
-  const command = `corepack pnpm run dev --host ${url.hostname} --port ${url.port || '5173'} --strictPort --configLoader runner`;
+  url.port = String(await getAvailablePort(url.hostname));
+  APP_URL = url.toString();
+  const command = `corepack pnpm run dev --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`;
   const child = process.platform === 'win32'
     ? spawn(
       process.env.ComSpec ?? 'cmd.exe',
@@ -92,7 +106,7 @@ const startServer = async () => {
     )
     : spawn(
       'corepack',
-      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port || '5173'],
+      ['pnpm', 'exec', 'vite', '--host', url.hostname, '--port', url.port, '--strictPort', '--configLoader', 'runner'],
       {
         cwd: fileURLToPath(new URL('..', import.meta.url)),
         env: { ...process.env, BROWSER: 'none' },
@@ -260,6 +274,10 @@ const runScenario = async (
   const stopDecisionCanFinish = new Promise(resolve => {
     releaseStopDecisionResponse = resolve;
   });
+  let releasePendingStopMessage = () => {};
+  const pendingStopMessageChecked = new Promise(resolve => {
+    releasePendingStopMessage = resolve;
+  });
   let releasePartialResponse = () => {};
   const partialResponseCanFinish = new Promise(resolve => {
     releasePartialResponse = resolve;
@@ -369,6 +387,8 @@ const runScenario = async (
       cancelRequestCount += 1;
       cancelRequestBodies.push(JSON.parse(route.request().postData() ?? '{}'));
       markCancelRequested();
+      // The pending message lasts only until the decision arrives; an instant rejection replaces it before it can be read.
+      await pendingStopMessageChecked;
       if (delayStopDecisionResponse) await stopDecisionCanFinish;
       return route.fulfill({
         status: 200,
@@ -512,6 +532,7 @@ const runScenario = async (
       await page.locator('.analysis-stop-panel').getByRole('button', { name: '진행 중 기록을 끝내고 분석 취소' }).click();
       await page.getByRole('main').getByText('현재 처리 중인 구간이 끝나면 진행 중 기록을 끝냅니다.').waitFor({ timeout: 10000 });
     }
+    releasePendingStopMessage();
 
     await cancelRequested;
     assert.equal(cancelRequestCount, 1);
@@ -949,7 +970,7 @@ const FAILURE_CAUSES = [
   {
     name: 'engine-disconnected',
     abortAnalyze: true,
-    message: '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
+    message: `이 PC의 분석 기능에 연결하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인한 뒤 다시 시도해 주세요.`,
     primary: '다시 확인',
   },
   ...[false, true].map(gpuSelected => ({
@@ -1140,7 +1161,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await page.getByLabel('회의 목적 *').fill('연결 확인 중 줄 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
     const checkingLine = page.locator('#writer-engine-checking');
-    await checkingLine.getByText('바로록 연결 확인 중', { exact: true }).waitFor({ timeout: 5000 });
+    await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });
     const startButton = page.getByRole('button', { name: '분석 시작' });
     assert.equal(await startButton.isDisabled(), true, '분석 시작 waits for the engine');
     assert.match(await startButton.getAttribute('aria-describedby') ?? '', /writer-engine-checking/, 'the disabled button says why');
@@ -1160,7 +1181,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await startButton.click();
     await page.locator('.writer-analysis-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 5000 });
-    await checkingLine.getByText('바로록 연결 확인 중', { exact: true }).waitFor({ timeout: 5000 });
+    await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });
     engineUp = true;
     await checkingLine.waitFor({ state: 'detached', timeout: 5000 });
     await startEnabled();

@@ -2,14 +2,16 @@
 // Mocked API only: this proves web UI rendering, not the local engine or the desktop executable.
 // Usage: node scripts/capture-ui-audit.mjs [ID,ID,...]   (APP_URL / OUT_DIR / PLAYWRIGHT_BROWSERS_PATH as in other simulations)
 import { spawn } from 'node:child_process';
+import net from 'node:net';
 import { mkdir, mkdtemp, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { LOCAL_ENGINE_NAME } from '../src/brand.ts';
 
-const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5199/';
+let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5199/';
 const shouldStartServer = !process.env.APP_URL;
 const OUT_DIR = process.env.OUT_DIR ?? fileURLToPath(new URL('../../.tmp/ui-audit/', import.meta.url));
 const ONLY = new Set((process.argv[2] ?? '').split(',').map(value => value.trim()).filter(Boolean));
@@ -32,18 +34,31 @@ const waitForApp = async (url, timeoutMs = 45000) => {
   throw new Error(`Timed out waiting for ${url}`);
 };
 
+const getAvailablePort = async (host) => new Promise((resolve, reject) => {
+  const server = net.createServer();
+  server.once('error', reject);
+  server.listen(0, host, () => {
+    const address = server.address();
+    if (!address || typeof address === 'string') {
+      server.close(() => reject(new Error('Could not allocate a local test port.')));
+      return;
+    }
+    const { port } = address;
+    server.close(() => resolve(port));
+  });
+});
+
 const startServer = async () => {
-  if (!shouldStartServer) return null;
-  try {
-    await waitForApp(APP_URL, 1000);
+  if (!shouldStartServer) {
+    await waitForApp(APP_URL);
     return null;
-  } catch {
-    // Start a dedicated Vite server when none is running.
   }
   const url = new URL(APP_URL);
+  url.port = String(await getAvailablePort(url.hostname));
+  APP_URL = url.toString();
   const child = spawn(
     process.env.ComSpec ?? 'cmd.exe',
-    ['/d', '/s', '/c', `corepack pnpm exec vite --host ${url.hostname} --port ${url.port || '5199'} --strictPort`],
+    ['/d', '/s', '/c', `corepack pnpm exec vite --host ${url.hostname} --port ${url.port} --strictPort --configLoader runner`],
     {
       cwd: fileURLToPath(new URL('..', import.meta.url)),
       env: { ...process.env, BROWSER: 'none' },
@@ -530,7 +545,7 @@ const captures = [
   },
   { id: 'W5', note: '모델 없음 (설정에서 받을 수 있음)', routes: { model: { sttInstalled: false, downloadable: true } }, steps: async page => { await ready(page); await page.locator('.status-banner').first().waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
   { id: 'W6', note: '모델 없음 (받을 수 없음)', routes: { model: { sttInstalled: false, downloadable: false } }, steps: async page => { await ready(page); await page.locator('.status-banner').first().waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
-  { id: 'W7', note: '바로록 연결 45초 무응답', routes: { engineDown: true }, steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).first().waitFor({ timeout: 90000 }); await page.waitForTimeout(300); return { noticeAfterMs: Date.now() - started }; } },
+  { id: 'W7', note: `${LOCAL_ENGINE_NAME} 45초 무응답`, routes: { engineDown: true }, steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).first().waitFor({ timeout: 90000 }); await page.waitForTimeout(300); return { noticeAfterMs: Date.now() - started }; } },
   {
     id: 'W8', note: '이어서 할 분석 + 최근 회의록', routes: { drafts: remoteDraftStatuses }, ...withDrafts([stoppedDraft(), failedDraft()]),
     steps: async page => { await seedAndReload(page); await page.waitForTimeout(800); },
@@ -557,7 +572,7 @@ const captures = [
   },
   // Stage 3 states (audit 4.4): engine check before the 45s notice, failure after the transcript was saved, preparation phase.
   {
-    id: 'W9', note: '바로록 연결 확인 중 (45초 전)', routes: { engineDown: true },
+    id: 'W9', note: `${LOCAL_ENGINE_NAME} 확인 중 (45초 전)`, routes: { engineDown: true },
     steps: async page => { await ready(page); const started = Date.now(); await page.locator('#writer-engine-checking').waitFor({ timeout: 10000 }); await page.waitForTimeout(300); return { checkingLineAfterMs: Date.now() - started }; },
   },
   {

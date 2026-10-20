@@ -10,6 +10,7 @@ import {
 import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 import { readApiErrorMessage } from './apiError';
+import { LOCAL_ENGINE_NAME, withJosa } from './brand';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
@@ -397,9 +398,9 @@ const getModelStatusFailureMessage = (error: unknown): string => {
         : '모델 상태를 확인하지 못했습니다.';
 };
 
-// 재시작 exists only in the desktop app (설정 > 일반 > 문제 해결); the web app's engine is the separate 바로록 연결.
+// 재시작 exists only in the desktop app (설정 > 일반 > 문제 해결); the web app's engine is the separate LOCAL_ENGINE_NAME program.
 const getEngineRecoveryStep = (): string => (
-    isTauriRuntime() ? '계속 실패하면 재시작을 눌러 주세요.' : '계속 실패하면 바로록 연결이 실행 중인지 확인해 주세요.'
+    isTauriRuntime() ? '계속 실패하면 재시작을 눌러 주세요.' : `계속 실패하면 ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`
 );
 
 const isModelStatusCheckFailure = (message: string): boolean => (

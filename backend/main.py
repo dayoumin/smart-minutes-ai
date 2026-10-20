@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
+from brand import BRAND_NAME, with_josa
 from config_normalization import (
     DEFAULT_LONG_AUDIO_CHUNK_SECONDS,
     DEFAULT_SUMMARY_MODEL,
@@ -1025,7 +1026,7 @@ async def models_status() -> dict:
             "ready": False,
             "models": [],
             "errors": [
-                "모델 상태를 확인하지 못했습니다. 앱을 다시 실행해 주세요. 계속되면 바로록을 다시 설치해 주세요.",
+                f"모델 상태를 확인하지 못했습니다. 앱을 다시 실행해 주세요. 계속되면 {with_josa(BRAND_NAME, '을/를')} 다시 설치해 주세요.",
                 str(exc),
             ],
         }

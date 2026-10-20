@@ -1,3 +1,4 @@
+import { LOCAL_ENGINE_NAME, withJosa } from './brand.ts';
 import type {
     LocalEngineConnectionSnapshot,
 } from './localEngineConnection';
@@ -168,7 +169,7 @@ export const getLocalEngineConnectionView = ({
             scene: 'pairing-required',
             tone: 'error',
             title: '연결을 완료하지 못했습니다',
-            message: '바로록 연결이 실행 중인지 확인한 뒤 다시 연결해 주세요.',
+            message: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인한 뒤 다시 연결해 주세요.`,
             primaryAction: snapshot.transport === 'reachable' ? 'pair' : 'probe',
             primaryLabel: snapshot.transport === 'reachable' ? '다시 연결' : '다시 확인',
             primaryDisabled: false,
@@ -200,7 +201,7 @@ export const getLocalEngineConnectionView = ({
             scene: 'pairing-required',
             tone: 'info',
             title: '이 브라우저를 연결해 주세요',
-            message: '바로록 연결을 실행하면 자동으로 연결됩니다.',
+            message: `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하면 자동으로 연결됩니다.`,
             primaryAction: 'pair',
             primaryLabel: '연결 시작',
             primaryDisabled: false,
@@ -216,12 +217,12 @@ export const getLocalEngineConnectionView = ({
             scene: 'intro',
             tone: 'neutral',
             title: '이 PC에서 분석합니다',
-            message: installerAvailable ? '처음이면 바로록 연결을 받아 설치한 뒤 연결을 확인하세요.' : null,
+            message: installerAvailable ? `처음이면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 받아 설치한 뒤 연결을 확인하세요.` : null,
             primaryAction: 'probe',
             primaryLabel: '연결 확인',
             primaryDisabled: false,
             secondaryAction: installerAvailable ? 'download' : null,
-            secondaryLabel: installerAvailable ? '바로록 연결 받기' : null,
+            secondaryLabel: installerAvailable ? `${LOCAL_ENGINE_NAME} 받기` : null,
             busy: false,
             analysisReady: false,
         });
@@ -232,12 +233,12 @@ export const getLocalEngineConnectionView = ({
             scene: 'unreachable',
             tone: 'warning',
             title: '분석 기능에 연결하지 못했습니다',
-            message: '설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.',
+            message: `설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`,
             primaryAction: 'probe',
             primaryLabel: '연결 확인',
             primaryDisabled: false,
             secondaryAction: installerAvailable ? 'download' : null,
-            secondaryLabel: installerAvailable ? '바로록 연결 받기' : null,
+            secondaryLabel: installerAvailable ? `${LOCAL_ENGINE_NAME} 받기` : null,
             busy: false,
             analysisReady: false,
         });

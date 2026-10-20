@@ -23,6 +23,10 @@ SetCompressor zlib
 !ifndef ICON_PATH
   !error "ICON_PATH is required"
 !endif
+; Product display name from configs\brand.json, passed by scripts\build_web_local_engine_installer_poc.ps1.
+!ifndef BRAND_NAME
+  !error "BRAND_NAME is required"
+!endif
 
 !define PRODUCT_NAME "바로록 로컬 엔진"
 !define PRODUCT_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\BarorokLocalEngine"

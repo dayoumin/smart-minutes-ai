@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
@@ -39,7 +40,7 @@ const waitForApp = async (url, timeoutMs = 30000) => {
 
 const assertProjectPage = async (page) => {
   const title = await page.title();
-  if (title !== '바로록') {
+  if (title !== BRAND_NAME) {
     throw new Error(`Unexpected app at ${APP_URL}: ${title || '(no title)'}`);
   }
 };
@@ -949,7 +950,7 @@ const FAILURE_CAUSES = [
   {
     name: 'engine-disconnected',
     abortAnalyze: true,
-    message: '이 PC의 분석 기능에 연결하지 못했습니다. 바로록 연결이 실행 중인지 확인한 뒤 다시 시도해 주세요.',
+    message: `이 PC의 분석 기능에 연결하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인한 뒤 다시 시도해 주세요.`,
     primary: '다시 확인',
   },
   {
@@ -1139,7 +1140,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await page.getByLabel('회의 목적 *').fill('연결 확인 중 줄 확인');
     await page.setInputFiles('#meeting-file-input', fixture.path);
     const checkingLine = page.locator('#writer-engine-checking');
-    await checkingLine.getByText('바로록 연결 확인 중', { exact: true }).waitFor({ timeout: 5000 });
+    await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });
     const startButton = page.getByRole('button', { name: '분석 시작' });
     assert.equal(await startButton.isDisabled(), true, '분석 시작 waits for the engine');
     assert.match(await startButton.getAttribute('aria-describedby') ?? '', /writer-engine-checking/, 'the disabled button says why');
@@ -1159,7 +1160,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await startButton.click();
     await page.locator('.writer-analysis-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 5000 });
-    await checkingLine.getByText('바로록 연결 확인 중', { exact: true }).waitFor({ timeout: 5000 });
+    await checkingLine.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor({ timeout: 5000 });
     engineUp = true;
     await checkingLine.waitFor({ state: 'detached', timeout: 5000 });
     await startEnabled();

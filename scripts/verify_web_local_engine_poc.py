@@ -22,6 +22,10 @@ from pathlib import Path
 
 
 ENGINE_EXE_NAME = "barorok-local-engine-x86_64-pc-windows-msvc.exe"
+# Window titles carry the product display name, which is written only in configs/brand.json.
+BRAND_NAME = json.loads(
+    (Path(__file__).resolve().parents[1] / "configs" / "brand.json").read_text(encoding="utf-8-sig")
+)["brandName"]
 ENGINE_URL = "http://127.0.0.1:17863"
 CREATE_NO_WINDOW = 0x08000000
 PREFLIGHT_PROCESS_TIMEOUT_SECONDS = 60
@@ -630,7 +634,7 @@ def exercise_pairing(
     helper_window = 0
     code_window = 0
     try:
-        helper_window = wait_for_window(helper.pid, "바로록 연결 준비")
+        helper_window = wait_for_window(helper.pid, f"{BRAND_NAME} 연결 준비")
         helper_text = child_window_text(helper_window)
         if origin not in helper_text or re.search(r"(?<!\d)\d{6}(?!\d)", helper_text):
             fail("The pairing helper must show the exact origin without a code")
@@ -660,7 +664,7 @@ def exercise_pairing(
         if "code" in started:
             fail("The pairing start response exposed the local code")
 
-        code_window = wait_for_window(engine.pid, "바로록 연결 코드")
+        code_window = wait_for_window(engine.pid, f"{BRAND_NAME} 연결 코드")
         code_text = child_window_text(code_window)
         match = re.search(r"(?<!\d)(\d{6})(?!\d)", code_text)
         if origin not in code_text or match is None:
@@ -709,7 +713,7 @@ def exercise_expired_pairing_arm(
     helper = start_process(executable, environment, "--pair")
     helper_window = 0
     try:
-        helper_window = wait_for_window(helper.pid, "바로록 연결 준비")
+        helper_window = wait_for_window(helper.pid, f"{BRAND_NAME} 연결 준비")
         arm_path = data_root / "runtime" / "pairing-arm.json"
         arm_payload = json.loads(arm_path.read_text(encoding="utf-8"))
         arm_payload["expires_at"] = 0
@@ -743,11 +747,11 @@ def exercise_expired_pairing_challenge(
     helper_window = 0
     code_window = 0
     try:
-        helper_window = wait_for_window(helper.pid, "바로록 연결 준비")
+        helper_window = wait_for_window(helper.pid, f"{BRAND_NAME} 연결 준비")
         status, started = request_json("/api/pair/start", origin=origin, method="POST")
         if status != 200 or "code" in started:
             fail("The challenge-expiry smoke could not start a code challenge safely")
-        code_window = wait_for_window(engine.pid, "바로록 연결 코드")
+        code_window = wait_for_window(engine.pid, f"{BRAND_NAME} 연결 코드")
         code_text = child_window_text(code_window)
         match = re.search(r"(?<!\d)(\d{6})(?!\d)", code_text)
         if origin not in code_text or match is None:

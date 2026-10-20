@@ -6,8 +6,24 @@ import {
   toUserFacingAnalysisError,
   toUserFacingError,
 } from '../src/apiError.ts';
+import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import brandConfig from '../../configs/brand.json' with { type: 'json' };
 
 const FETCH_FAILURE = new TypeError('Failed to fetch');
+
+await test('the brand comes from configs/brand.json and particles follow the last syllable', () => {
+  assert.equal(BRAND_NAME, brandConfig.brandName);
+  assert.equal(LOCAL_ENGINE_NAME, `${brandConfig.brandName} 연결`);
+  assert.equal(withJosa('바로록', '을/를'), '바로록을');
+  assert.equal(withJosa('바로', '을/를'), '바로를');
+  assert.equal(withJosa('바로록 연결', '이/가'), '바로록 연결이');
+  assert.equal(withJosa('바로', '이/가'), '바로가');
+  assert.equal(withJosa('바로록 연결', '으로/로'), '바로록 연결로');
+  assert.equal(withJosa('음성 분석', '으로/로'), '음성 분석으로');
+  assert.equal(withJosa('바로', '으로/로'), '바로로');
+  assert.equal(withJosa('LMO', '을/를'), 'LMO을(를)');
+  assert.notEqual(withJosa('바로', '을/를'), '바로을');
+});
 
 await test('analysis failures are classified by engine code before wording', () => {
   assert.deepEqual(
@@ -63,7 +79,7 @@ await test('localized OS and engine text is classified but never shown as is', (
 await test('engine disconnection names the runtime-specific next step', () => {
   const web = describeAnalysisError(FETCH_FAILURE);
   assert.equal(web.cause, 'engine-disconnected');
-  assert.match(web.message, /바로록 연결이 실행 중인지/);
+  assert.equal(web.message, `이 PC의 분석 기능에 연결하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인한 뒤 다시 시도해 주세요.`);
   assert.match(describeAnalysisError(FETCH_FAILURE, { desktopApp: true }).message, /앱을 다시 실행/);
   assert.equal(toUserFacingAnalysisError('Failed to fetch'), web.message);
 });
@@ -78,7 +94,7 @@ await test('unknown English text never reaches the user', () => {
 
 await test('other actions lead with what failed and add the cause next step', () => {
   const failed = '대화록 수정본을 저장하지 못했습니다.';
-  assert.equal(toUserFacingError(FETCH_FAILURE, failed), `${failed} 바로록 연결이 실행 중인지 확인해 주세요.`);
+  assert.equal(toUserFacingError(FETCH_FAILURE, failed), `${failed} ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`);
   assert.equal(toUserFacingError(FETCH_FAILURE, failed, { desktopApp: true }), `${failed} 앱을 다시 실행한 뒤 다시 시도해 주세요.`);
   assert.equal(
     toUserFacingError(new DOMException('The quota has been exceeded.', 'QuotaExceededError'), failed),

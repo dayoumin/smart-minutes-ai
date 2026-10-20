@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { BRAND_NAME } from '../src/brand.ts';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
@@ -206,7 +207,7 @@ const run = async () => {
     await page.reload({ waitUntil: 'domcontentloaded' });
     await page.getByText('수정본 가드 시뮬레이션').first().click();
 
-    assert.equal(await page.title(), '바로록');
+    assert.equal(await page.title(), BRAND_NAME);
     const detailTabs = page.getByRole('tablist', { name: '회의록 상세' });
     const transcriptTab = detailTabs.getByRole('tab', { name: '대화록', exact: true });
     const organizedTab = detailTabs.getByRole('tab', { name: '기록 정리', exact: true });

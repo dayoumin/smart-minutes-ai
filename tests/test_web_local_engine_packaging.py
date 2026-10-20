@@ -14,6 +14,10 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('$EntryPointPath', script)
         self.assertIn('--noconsole', script)
         self.assertIn('Get-PeSubsystem $OutputPath', script)
+        # backend/brand.py reads the display name from the bundled copy (sys._MEIPASS/configs).
+        self.assertIn('Join-Path $RepoRoot "configs\\brand.json"', script)
+        self.assertIn('--add-data "${BrandConfigPath}:configs"', script)
+        self.assertIn('"_internal\\configs\\brand.json"', script)
 
         completed = subprocess.run(
             [
@@ -172,6 +176,9 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertIn('signed = $false', builder)
         self.assertIn('distributionReady = $false', builder)
         self.assertIn('--manifest-only', builder)
+        self.assertIn('Join-Path $RepoRoot "configs\\brand.json"', builder)
+        self.assertIn('"/DBRAND_NAME=$BrandName"', builder)
+        self.assertNotIn('/DBRAND_NAME=바로록', builder)
         compiler_gate = builder.index('$MakensisCommand = Get-Command $Makensis')
         python_gate = builder.index('& $PythonCommand -c "import PyInstaller"')
         manifest_gate = builder.index('--manifest-only')
@@ -186,6 +193,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
     def test_web_nsis_installer_preserves_data_and_uses_preflight_rollback(self) -> None:
         installer = (ROOT / "installer" / "web-local-engine.nsi").read_text(encoding="utf-8")
         self.assertIn('RequestExecutionLevel user', installer)
+        self.assertIn('!ifndef BRAND_NAME\n  !error "BRAND_NAME is required"', installer)
         self.assertNotIn('SetShellVarContext', installer.split('Function ', 1)[0])
         for callback in ('.onInit', 'un.onInit'):
             initialization = installer.split(f'Function {callback}\n', 1)[1].split('FunctionEnd', 1)[0]

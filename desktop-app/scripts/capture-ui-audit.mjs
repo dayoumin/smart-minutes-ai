@@ -8,6 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { LOCAL_ENGINE_NAME } from '../src/brand.ts';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5199/';
 const shouldStartServer = !process.env.APP_URL;
@@ -530,7 +531,7 @@ const captures = [
   },
   { id: 'W5', note: '모델 없음 (설정에서 받을 수 있음)', routes: { model: { sttInstalled: false, downloadable: true } }, steps: async page => { await ready(page); await page.locator('.status-banner').first().waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
   { id: 'W6', note: '모델 없음 (받을 수 없음)', routes: { model: { sttInstalled: false, downloadable: false } }, steps: async page => { await ready(page); await page.locator('.status-banner').first().waitFor({ timeout: 20000 }); await page.waitForTimeout(400); } },
-  { id: 'W7', note: '바로록 연결 45초 무응답', routes: { engineDown: true }, steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).first().waitFor({ timeout: 90000 }); await page.waitForTimeout(300); return { noticeAfterMs: Date.now() - started }; } },
+  { id: 'W7', note: `${LOCAL_ENGINE_NAME} 45초 무응답`, routes: { engineDown: true }, steps: async page => { await ready(page); const started = Date.now(); await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).first().waitFor({ timeout: 90000 }); await page.waitForTimeout(300); return { noticeAfterMs: Date.now() - started }; } },
   {
     id: 'W8', note: '이어서 할 분석 + 최근 회의록', routes: { drafts: remoteDraftStatuses }, ...withDrafts([stoppedDraft(), failedDraft()]),
     steps: async page => { await seedAndReload(page); await page.waitForTimeout(800); },
@@ -557,7 +558,7 @@ const captures = [
   },
   // Stage 3 states (audit 4.4): engine check before the 45s notice, failure after the transcript was saved, preparation phase.
   {
-    id: 'W9', note: '바로록 연결 확인 중 (45초 전)', routes: { engineDown: true },
+    id: 'W9', note: `${LOCAL_ENGINE_NAME} 확인 중 (45초 전)`, routes: { engineDown: true },
     steps: async page => { await ready(page); const started = Date.now(); await page.locator('#writer-engine-checking').waitFor({ timeout: 10000 }); await page.waitForTimeout(300); return { checkingLineAfterMs: Date.now() - started }; },
   },
   {

@@ -4,6 +4,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
@@ -171,7 +172,7 @@ const installRoutes = async (page) => {
   return state;
 };
 
-// The web app has no 재시작: a failed settings load points at 바로록 연결 and offers 다시 확인 (SB-2).
+// The web app has no 재시작: a failed settings load points at the connection program and offers 다시 확인 (SB-2).
 const verifyWebSettingsRecovery = async (browser) => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   let settingsUp = false;
@@ -190,14 +191,14 @@ const verifyWebSettingsRecovery = async (browser) => {
 
     await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
     const dialog = page.getByRole('dialog', { name: '설정' });
-    await dialog.getByText('설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. 계속 실패하면 바로록 연결이 실행 중인지 확인해 주세요.', { exact: true })
+    await dialog.getByText(`설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. 계속 실패하면 ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`, { exact: true })
       .waitFor({ state: 'visible', timeout: 10000 });
     assert.equal(await dialog.getByText('재시작', { exact: false }).count(), 0, 'the web app must not point at the desktop-only 재시작');
     settingsUp = true;
     await dialog.getByRole('button', { name: '다시 확인', exact: true }).click();
     await dialog.getByText('설정을 불러오지 못했습니다.', { exact: false }).waitFor({ state: 'hidden', timeout: 10000 });
     assert.equal(await dialog.getByText('불러오지 못함', { exact: true }).count(), 0, 'settings load after 다시 확인');
-    console.log('ok - web settings failure points at 바로록 연결 and rechecks');
+    console.log(`ok - web settings failure points at ${LOCAL_ENGINE_NAME} and rechecks`);
   } finally {
     await page.close();
   }
@@ -402,8 +403,8 @@ const run = async () => {
     state.downloadable = false;
     await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
     const errorBanner = page.locator('.status-banner-error').filter({ hasText: '분석을 시작할 수 없습니다' });
-    // The web app's engine is the downloaded 바로록 연결, so that is what gets reinstalled (WR-9).
-    await errorBanner.getByText('이 모델은 설정에서 받을 수 없으니 바로록 연결을 다시 설치해 주세요.', { exact: false }).waitFor({ timeout: 10000 });
+    // The web app's engine is the downloaded connection program, so that is what gets reinstalled (WR-9).
+    await errorBanner.getByText(`이 모델은 설정에서 받을 수 없으니 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`, { exact: false }).waitFor({ timeout: 10000 });
     // The action row states the cause in one sentence and offers no button that cannot fix it.
     await page.locator('#writer-readiness-hint').getByText('필요한 모델이 없어 분석을 시작할 수 없습니다.', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-action-bar').getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 're-checking cannot install a model Settings cannot download');

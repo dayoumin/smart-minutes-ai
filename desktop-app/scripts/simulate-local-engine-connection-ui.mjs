@@ -4,6 +4,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes&localEngineConnection=1';
 const shouldStartServer = !process.env.APP_URL;
@@ -170,7 +171,7 @@ const verifyDefaultWriterGuidance = async browser => {
         assert.equal(await page.locator('.local-engine-connection').count(), 0);
       } else {
         if (scenario === 'outage-recovery') {
-          await page.getByText('바로록 연결 확인 중', { exact: true }).waitFor();
+          await page.getByText(`${LOCAL_ENGINE_NAME} 확인 중`, { exact: true }).waitFor();
           assert.ok(healthCount > 0);
           await page.clock.runFor(47_000);
           await page.getByText('분석 기능의 응답이 없습니다. 연결 상태를 확인해 주세요.', { exact: true }).waitFor();
@@ -183,7 +184,7 @@ const verifyDefaultWriterGuidance = async browser => {
         const rail = page.locator('.local-engine-connection');
         if (scenario === 'outage-recovery') {
           await rail.getByText('분석 기능에 연결하지 못했습니다', { exact: true }).waitFor();
-          await rail.getByText('설치했다면 바로록 연결을 실행한 뒤 다시 확인하세요.', { exact: true }).waitFor();
+          await rail.getByText(`설치했다면 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인하세요.`, { exact: true }).waitFor();
           assert.equal(await rail.locator('a[href=""]').count(), 0);
           healthUp = true;
           await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
@@ -575,7 +576,7 @@ const run = async () => {
     await intro.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'opening the notice is not yet a confirmation');
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '시작하기');
-    await intro.getByText('이를 위해 처음 한 번 ‘바로록 연결’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.', { exact: true }).waitFor();
+    await intro.getByText(`이를 위해 처음 한 번 ‘${LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.`, { exact: true }).waitFor();
     const introFootnote = intro.getByText('웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.', { exact: true });
     assert.equal(await introFootnote.count(), 1);
     assert.equal(await intro.locator('#local-processing-details').count(), 0, 'first visit keeps the details folded');
@@ -586,7 +587,7 @@ const run = async () => {
     const foldToggle = intro.getByRole('button', { name: '간단히 보기', exact: true });
     assert.equal(await foldToggle.getAttribute('aria-expanded'), 'true');
     assert.equal(await introFootnote.count(), 0, 'the internet row replaces the footnote while details are open');
-    await intro.locator('dd').getByText('웹사이트를 열 때와 바로록 연결·분석 모델을 받을 때 사용합니다.', { exact: false }).waitFor();
+    await intro.locator('dd').getByText(`웹사이트를 열 때와 ${LOCAL_ENGINE_NAME}·분석 모델을 받을 때 사용합니다.`, { exact: false }).waitFor();
     const introBox = await intro.boundingBox();
     assert.ok(introBox && introBox.y >= 0 && introBox.y + introBox.height <= 900, 'expanded notice must fit in the window');
     await intro.getByRole('button', { name: '시작하기', exact: true }).click();

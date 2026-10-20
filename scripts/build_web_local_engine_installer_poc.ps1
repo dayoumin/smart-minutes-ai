@@ -82,9 +82,16 @@ if (-not (Test-Path -LiteralPath $EnginePath -PathType Leaf)) {
 $EngineExeName = [System.IO.Path]::GetFileName($EngineRelativePath)
 $IconPath = Join-Path $RepoRoot "desktop-app\src-tauri\icons\icon.ico"
 $NsiPath = Join-Path $RepoRoot "installer\web-local-engine.nsi"
+$BrandConfigPath = Join-Path $RepoRoot "configs\brand.json"
 if (-not (Test-Path -LiteralPath $IconPath -PathType Leaf) -or
-    -not (Test-Path -LiteralPath $NsiPath -PathType Leaf)) {
+    -not (Test-Path -LiteralPath $NsiPath -PathType Leaf) -or
+    -not (Test-Path -LiteralPath $BrandConfigPath -PathType Leaf)) {
     throw "Installer source input is missing."
+}
+# The product display name is written only in configs\brand.json; NSIS receives it as ${BRAND_NAME}.
+$BrandName = [string](Get-Content -LiteralPath $BrandConfigPath -Raw -Encoding UTF8 | ConvertFrom-Json).brandName
+if ([string]::IsNullOrWhiteSpace($BrandName) -or $BrandName -match '["$`\r\n]') {
+    throw "The brand name cannot be passed safely to the installer compiler."
 }
 
 & $PythonCommand (Join-Path $RepoRoot "scripts\verify_web_local_engine_poc.py") `
@@ -121,6 +128,7 @@ $InstallerPath = Join-Path $ResolvedOutputDir "Barorok-Local-Engine-Setup-$Engin
     "/DENGINE_EXE_NAME=$EngineExeName" `
     "/DENGINE_VERSION=$EngineVersion" `
     "/DICON_PATH=$IconPath" `
+    "/DBRAND_NAME=$BrandName" `
     $NsiPath
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
     throw "NSIS installer build failed."

@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 const APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
 const shouldStartServer = !process.env.APP_URL;
@@ -319,7 +320,7 @@ const runErrorPlacementScenario = async browser => {
     await page.locator('.script-edit-textarea').first().fill('3분기 자원조사 결과를 다시 정리하겠습니다.');
     await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '저장', exact: true }).click();
     const scriptStatus = page.locator('#meeting-detail-panel-script .detail-report-status');
-    await scriptStatus.getByText('저장 내용은 반영됐지만 분석 원본과 동기화하지 못했습니다. 바로록 연결이 실행 중인지 확인해 주세요.', { exact: true }).waitFor({ timeout: 10000 });
+    await scriptStatus.getByText(`저장 내용은 반영됐지만 분석 원본과 동기화하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행 중인지 확인해 주세요.`, { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await shellBanners.count(), 0, 'a save failure must not use the shell banner');
     assert.equal(await page.getByText('Failed to fetch', { exact: false }).count(), 0, 'raw fetch errors must not reach the screen');
     assert.equal(await tabListTop(), topBefore, 'the save warning must not push the tabs');

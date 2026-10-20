@@ -7,7 +7,9 @@
   - Edge에서 권한 허용·거부·재허용, 회사 정책 관문. (「공개 설치 점검」, 웹 엔진 MVP 4단계 잔여)
   - 실제 분석 중 DevTools Network에서 음성·대화록 요청이 `127.0.0.1` 엔진으로만 가는지. (「웹 첫 방문 로컬 처리 안내」 확인 3)
 - [ ] 배포·설치 승인과 실물 실행
-  - main push, 웹 재빌드·Cloudflare 배포 승인. (「설치 후 웹 연결 안 됨」)
+  - 웹 재빌드·Cloudflare 배포 승인. main 커밋·push는 이번 전체 점검 요청에서 승인됐다. (「설치 후 웹 연결 안 됨」)
+    - push 보류(2026-10-20 18:05, Claude 세션): 로컬 main `cb86cb39`(동작 줄 v2 ①~④·참석자 이름 보호 포함)는 origin보다 58커밋 앞(behind 0)이다. 다른 AI가 main 작업 폴더에서 `pnpm --dir desktop-app install --force --frozen-lockfile`과 미커밋 변경 7개(연결·회의록 정리 무응답 15초 제한 등)를 진행 중이라 멈췄다. 두 곳에서 push하지 않도록, 그 작업을 커밋하는 쪽이 아래 검사 뒤 한 번만 push한다.
+    - push 전 검사: `cb86cb39`에서 typecheck(복구 뒤)·`test:runtime-boundary`·backend `test_summary_meeting_context` 17개는 통과했다. `test:local-engine-connection-ui`·`test:writer-model-readiness`·`test:resume-draft-flow`·`test:new-record-home-flow`·`test:analysis-stop-flow`는 의존성 복구 도중에 돌려 실패했고 원인은 확인하지 않았다. 복구가 끝난 뒤 이 다섯 개를 다시 돌려 통과를 확인한다. 직전 `764f33d9` 전체 실행은 29/30 통과였다(`test:audio-playback`은 `APP_URL` 전용 Vite가 필요해 제외).
   - 설치 파일을 다시 빌드해 깨끗한 설치와 0.1.8 위 업데이트, 재설치 뒤 시작 메뉴 `LMO 회의록 연결` 확인. 실행 중인 엔진이 교체되므로 다른 세션의 진단이 끝난 뒤 한다. (「공개 설치 점검」, 3C 설치 관문)
   - 설치본에서 요약 프로그램 받기 위치, 받은 뒤 요약, 첫 요약 503 재검증. (「내장 Ollama runtime」, 「요약 엔진 첫 준비 지연」)
   - 코드 서명 인증서 준비. (웹 엔진 MVP)
@@ -23,8 +25,6 @@
   - `참석자 확인 필요` 표시가 너무 많거나 적은지, 진행률 '추정' 표시를 눈으로 확인. (「짧은 왕복 발화」, 「긴 파일 실전 테스트」)
   - NVDA·내레이터 실제 확인. (「기능 agent 점검」)
 - [ ] 제품 결정
-  - 엔진이 응답하지 않을 때 회의록 삭제 방식. (「웹 첫 방문 로컬 처리 안내」)
-  - 참석자·키워드 입력을 첫 화면에 둘지. (「회의 개요 입력을 요약」)
   - 보고서 양식을 회의 당시 스냅샷으로 재현할지, 최신 양식으로 다시 만들지. (「Airepoto 참고」)
   - IndexedDB 롤백 지원 여부. (「LMO 회의록 데스크톱·웹 제품 전환」)
   - 3·5시간 파일 지원 여부, 업무망 모델 배포 방식, 고양이 알림 유지 여부.
@@ -33,6 +33,26 @@
   - 상태 줄의 안내 아이콘 (i)와 제목 옆 처리 방식 ⓘ 버튼이 같은 모양인 것을 그대로 둘지. (「동작 줄 v2」④ 통합 점검)
 
 # 0. Immediate queue
+- [x] 2026-10-20 오늘 변경 전체 agent 점검·소스 수정 (남은 검증은 집에서 이어하기)
+  - 소스 수정 커밋: `cf12de62` (`Bound engine connection and record cleanup waits`). 오늘 기존 커밋과 함께 main에 올리며, 아래 남은 검증부터 이어간다.
+  - 기준: 전날 마지막 main `70652c5a`부터 `cb86cb39`까지 112개 파일. 연결 보안, 작성·중지·이어하기/삭제, 생성·내보내기 계약을 세 agent가 중복 없이 검토했고 설치·운영 변경은 main agent가 점검했다. 새 P1 없음.
+  - 고친 P2 두 건: 자동 연결의 restore/start/complete와 회의록 정리의 목록/DELETE/대기열 요청이 무응답일 때 계속 기다리던 문제. 15초 제한(complete는 승인 남은 시간 이내)과 회귀 검사를 추가했다. 기존 승인·회의록·삭제 대기열·임시 자격 철회는 유지하며 별도 agent가 수정 후 재검토했다.
+  - 통과한 검증: 프로젝트 Python `backend\.venv-desktop\Scripts\python.exe` 3.12.14, `-B -X utf8`로 계약 168개·API 207개·설치 사전 점검 35개·패키징 8개(합계 418개). 연결 회귀 14개와 기존 Node 계약 검사(`runtime-boundary`, `local-engine-browser-access`, `auth-recovery`, `api-auth-boundary`, `api-error`, `export-consistency`) 통과. 프론트엔드 typecheck, 오늘 변경 파일 ESLint(0 errors; 설정상 제외된 `vite.config.js` 경고 1개), 변경 PowerShell 4개 구문 검사, Cloudflare 다운로드/Range/이전 링크 계약, `git diff --check` 통과.
+  - 미완료 검증: `test:meeting-cleanup-flow`는 최초 `page.goto`에서 시간 초과해 새 DELETE 무응답 장면까지 도달하지 못했다. 성공으로 처리하지 않는다. 나머지 대표 화면 검증도 아래에 남긴다. ESLint는 최초 `cross-spawn/index.js` 누락 실패 후 파일 복원·재실행했고, 종료 정리 전에 완료된 결과를 회수해 통과를 확인했다.
+  - 환경: 프로필 임시 경로 권한, 누락된 `.bin`/React 타입, manifest만 있고 entrypoint가 없는 `cross-spawn` 손상을 확인했다. 잠금 파일을 고정한 의존성 복구로 대부분을 복원했지만 마지막 `lightningcss-win32-x64-msvc@1.32.0/.../lightningcss.win32-x64-msvc.node` 교체에서 `ERR_PNPM_EPERM unlink`로 끝났다. 프로세스 21412는 종료됐고, 이 세션의 임시 Vite(`corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5199 --strictPort --configLoader runner`, 작업 폴더 저장소 루트)만 종료했다. ESLint는 이미 완료됐고 사용자 설치 엔진은 종료하지 않았다. 설치 검사 정션 생성은 권한 경계로 집중 재실행해 통과했다.
+  - 실제 배포 후보의 무응답 복구는 `docs/web-runtime-separation-implementation-plan.md` 릴리스 QA 표에 기록했다. 실제 HTTPS/설치 엔진/요약 모델·Edge/회사 정책·Word/한컴 확인은 기존 미완료 관문을 유지하며 이번 작업에서 빌드·배포하지 않는다.
+  - 시작 시 미추적이던 `.claude/launch.json`, 미사용 `ocean-sunlight/{coral,whale}.webp`는 이번 커밋 범위에서 제외하고 보존한다.
+- [ ] 집에서 이어하기: 오늘 수정의 남은 검증 (2026-10-20 사용자 요청)
+  1. `git pull --ff-only` 후 실제 체크아웃 경로를 기준으로 Windows 실행 환경을 확인한다. 이 PC의 `D:\Projects\LMO_audio`를 집 PC 경로로 복사하지 않는다. 기존 프로젝트 Python/Node 환경과 `node_modules`를 먼저 확인한다.
+  2. 의존성 파일이 실제로 누락되었으면 잠금 파일을 유지해 복구한다: `corepack pnpm@10.33.2 --dir desktop-app install --frozen-lockfile`. 현재 PC의 `lightningcss` 파일 잠금은 다른 세션의 Vite/Node 소유권을 확인하고 해결하며, 다른 작업의 서버를 임의로 종료하지 않는다. 무조건 재설치하거나 강제 삭제하지 않는다.
+  3. `corepack pnpm@10.33.2 --dir desktop-app typecheck`, `corepack pnpm@10.33.2 --dir desktop-app exec eslint src/localEngineConnectionCoordinator.ts src/meetingDeletion.ts scripts/test-browser-approval.mjs scripts/simulate-meeting-cleanup-flow.mjs`, `corepack pnpm@10.33.2 --dir desktop-app test:browser-approval`를 실행한다. 오늘 전체 변경 lint가 필요하면 `git diff --name-only 70652c5a cb86cb39 -- desktop-app/src desktop-app/scripts desktop-app/vite.config.js`의 현존 파일 범위로 넓힌다.
+  4. `PLAYWRIGHT_BROWSERS_PATH`를 집 체크아웃 내부 `.cache\ms-playwright`로 설정하고 브라우저가 있는지 확인한다. `test:meeting-cleanup-flow`를 먼저 실행해 DELETE 15초 무응답의 기록 대기열 저장/PC 파일 중단·설정 잠금 해제를 확인한다. 최초 `page.goto`가 멈추면 Vite 직접 응답·프로젝트 제목·브라우저 진입부터 확인한다.
+  5. 화면 검사는 동시에 돌리지 않는다: `LOCAL_ENGINE_UI_SCENARIO=input-stage`와 `automatic` 각각 `test:local-engine-connection-ui`, `test:new-record-home-flow`, `test:analysis-stop-flow -- preparation`, `test:resume-draft-flow -- writer-layout resume-draft`. 환경변수는 각 시나리오 뒤 해제하고, 자동으로 시작된 이 체크아웃의 서버만 정리한다. 화면/API 모의 검사는 실제 설치 엔진·HTTPS·Tauri 검증으로 확대하지 않는다.
+  - 필요할 때만 작업 범위 환경변수 사용: `COREPACK_HOME=<체크아웃>\.cache\corepack`, `TEMP`/`TMP=<체크아웃>\.tmp\review-20261020\temp`(먼저 생성). 이 PC에서 사용한 의존성 저장소 옵션은 `--store-dir D:\Projects\LMO_audio\.cache\pnpm-store`. 로그는 이 PC의 `.tmp\review-20261020`에만 있으며 Git에는 올리지 않았다.
+- [ ] 브라우저 승인 파일 손상 시 안전한 연결 복구 (2026-10-20 전체 agent 점검 P2)
+  - `browser-approvals.json`이 잘못된 JSON/형식이면 승인을 거절하는 현재 보안 동작은 유지한다. 현재는 로그만 남고 승인 coordinator가 비활성화되어, 파일을 보존하는 재시작·재설치만으로는 다시 연결되지 않는다.
+  - 다음 작업: 손상 상태를 명확히 알리고 사용자가 선택하는 안전한 재등록 절차를 제공한다. 손상 파일·기존 회의록·모델을 보존하며 임의 승인이나 자동 초기화로 우회하지 않는다.
+  - 종료 조건: 잘못된 JSON/초과 크기/잘못된 Origin을 계속 거절하면서, 정상적인 사용자 복구 후 새 연결·재시작 복원·명시적 해제가 가능함을 격리 테스트와 설치 후보에서 확인한다. 이번 점검에서는 구현을 미뤘다.
 - [ ] 2026-10-20 설치 후 웹 연결 안 됨: 브라우저 쪽 원인 안내 반영 후속
   - 원인과 수정은 `docs/web-local-engine-followup-plan.md`의 「설치 후 연결 안 됨」 절과 커밋 99ae0f17·61858a52(미배포)를 따른다. 원인은 Chrome '기기에 있는 앱' 거부·자동 차단과 Page Assist의 127.0.0.1 Origin 변경이었다.
   - 병합 완료(2026-10-20, 로컬 main, 미푸시): 설치 파일(공간 기준값·'음성 분석')·브랜드 상수('LMO 회의록')·시뮬레이션 자체 Vite 브랜치를 합쳤다(`186b842d`, `d76d1cdd`). 연결 안내 문구도 브랜드 상수를 쓴다.

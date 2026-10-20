@@ -55,6 +55,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 
 ## Windows Runtime Pitfalls
 
+- If sandboxed Corepack or Python temporary files fail under the user profile, use task-scoped `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack` and `TEMP`/`TMP=D:\Projects\LMO_audio\.tmp\<task>\temp` (create the temp directory first). Do not change global environment variables. For dependency repair, keep the lockfile fixed and use `--store-dir D:\Projects\LMO_audio\.cache\pnpm-store`; a sandbox denial while creating Windows links requires a focused elevated retry, not repeated installs.
 - PowerShell 5.1 defaults to a legacy code page, so Korean/UTF-8 text can break when rewritten through shell output. Prefer `apply_patch` for edits and explicit UTF-8 .NET writes inside scripts.
 - If `Get-Content`, `cat`, or wrapped PowerShell output shows mojibake for Korean/UTF-8 text, do not treat that terminal output as source of truth. Re-check with `git diff`, targeted search, or another UTF-8-safe path before editing.
 - `Get-CimInstance Win32_Process` may fail with `Access denied` under Codex sandboxing even when ordinary file and process commands work. Use `Get-Process` when executable path is enough; request escalation only when command-line inspection is required.

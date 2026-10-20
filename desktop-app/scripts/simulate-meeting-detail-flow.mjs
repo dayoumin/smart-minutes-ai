@@ -1843,7 +1843,8 @@ const run = async () => {
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();
 
     await page.getByText('원본 음성 누락 회의록').first().click();
-    await page.getByText('참석자 구분 원본 음성 누락 확인').waitFor({ timeout: 10000 });
+    // Exact: the summary callout also contains this phrase once the record's summary renders.
+    await page.getByText('참석자 구분 원본 음성 누락 확인', { exact: true }).waitFor({ timeout: 10000 });
     await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
     const topDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 실행' });
     const detailDiarizationButton = page.locator('section.detail-action-row').getByRole('button', { name: '참석자 구분 실행' });
@@ -1937,7 +1938,7 @@ const run = async () => {
     await page.getByText('참석자 구분 실행을 취소하고 있습니다. 나중에 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
     releaseCancelDiarizationResponse();
     assert.deepEqual(cancelDiarizationStopBodies, [{ action: 'cancel' }]);
-    const cancelledRecord = await page.evaluate(async ({ cancelMeetingId }) => {
+    const readCancelledRecord = () => page.evaluate(async ({ cancelMeetingId }) => {
       const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
         request.onsuccess = () => resolve(request.result);
@@ -1952,6 +1953,12 @@ const run = async () => {
       db.close();
       return record;
     }, { cancelMeetingId });
+    // The app saves the cancelled state after the released response arrives; read once it has.
+    let cancelledRecord = await readCancelledRecord();
+    for (let attempt = 0; attempt < 100 && cancelledRecord?.diarizationRequested === undefined; attempt += 1) {
+      await sleep(50);
+      cancelledRecord = await readCancelledRecord();
+    }
     assert.equal(cancelledRecord.diarizationRequested, true);
     assert.equal(cancelledRecord.diarizationDeferred, false);
     assert.equal(cancelledRecord.diarizationApplied, false);

@@ -1095,6 +1095,12 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             manifest = self._manifest(root)
             result = fake_temp / "result.json"
             decision = fake_temp / "decision.ini"
+            port_calls: list[dict] = []
+
+            def fake_inspect_fixed_port(**kwargs):
+                port_calls.append(kwargs)
+                return PortInspection("available")
+
             previous_tempdir = tempfile.tempdir
             try:
                 tempfile.tempdir = str(fake_temp)
@@ -1103,11 +1109,7 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
                         os.environ,
                         {"TEMP": str(fake_temp), "TMP": str(fake_temp), "LOCALAPPDATA": str(local_app_data)},
                     ),
-                    patch.object(
-                        installer_preflight,
-                        "inspect_fixed_port",
-                        lambda **_kwargs: PortInspection("available"),
-                    ),
+                    patch.object(installer_preflight, "inspect_fixed_port", fake_inspect_fixed_port),
                 ):
                     exit_code = main([
                         "--manifest", str(manifest),
@@ -1118,6 +1120,12 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             finally:
                 tempfile.tempdir = previous_tempdir
 
+            # The fake stands in for the real port check, so pin the call main() makes.
+            self.assertEqual(len(port_calls), 1)
+            self.assertEqual(set(port_calls[0]), {"port", "expected_product_id", "own_engine_marker"})
+            self.assertEqual(port_calls[0]["port"], 17863)
+            self.assertEqual(port_calls[0]["expected_product_id"], "barorok-local-engine")
+            self.assertTrue(callable(port_calls[0]["own_engine_marker"]))
             self.assertEqual(exit_code, 10)
             self.assertEqual(
                 decision.read_text(encoding="utf-8").splitlines(),

@@ -271,3 +271,4 @@
 - 커밋 제목으로 끝난 작업 확인: Task 1 `feat(detail): split meeting detail…`, Task 2 `feat(shell): collapsible app menu…`, Task 3 `fix(detail): keep progress and stop panels…`, Task 4 `docs: record two-column…`. 없는 첫 Task부터 이어서 한다.
 - 결정 사항: 재생기는 정보 칸에 둔다. 좁은 창은 앱 메뉴를 아이콘 줄로 접고 정보 칸은 고정. Task 2의 Layout은 `<main className="barorok-workspace">`의 React 위치를 바꾸지 않도록 Sidebar와 56px 자리를 항상 있는 감싸개 하나(`div.barorok-sidebar-slot`) 안에 둔다.
 - main 작업 폴더(`D:\Projects\audio`)에는 같은 design.md 절과 이 계획 파일이 커밋 안 된 변경으로도 남아 있다(다른 세션 변경과 섞여 있음). 브랜치를 main에 합칠 때 중복을 정리한다.
+- 2026-10-22 집 PC 종료 시점 상태: Task 1을 구현했고 `columns` 시나리오도 추가했다. `typecheck`는 통과했다. **Task 1 Step 6 검증(eslint와 시뮬레이션)과 작업 리뷰는 아직 하지 않았다.** 회사에서는 `WIP Task 1` 커밋에서 시작해 Step 6을 먼저 돌린다. 실패를 고친 뒤 리뷰를 받고, 원래 제목(`feat(detail): split meeting detail into header, info panel and tab column`)으로 커밋하고 Task 2로 간다.

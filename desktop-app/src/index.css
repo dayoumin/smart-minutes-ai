@@ -1228,12 +1228,23 @@
     @apply rounded-none border-0 bg-transparent shadow-none;
   }
 
+  /* Title row only: one hairline closes the header, then info panel and tabs share the width below it. */
   .meeting-detail-overview {
-    @apply border-0 bg-transparent p-0;
+    @apply mb-3 border-0 border-b border-solid border-border bg-transparent px-0 pb-4 pt-0;
   }
 
-  .meeting-detail-overview-main {
-    @apply grid gap-4 rounded-[var(--radius-card)] border border-border bg-background p-5;
+  .meeting-detail-columns {
+    @apply grid min-w-0 gap-6;
+  }
+
+  .meeting-detail-info {
+    @apply min-w-0 pt-2;
+  }
+
+  .meeting-detail-main {
+    @apply min-w-0;
+    container-name: meeting-detail;
+    container-type: inline-size;
   }
 
   .meeting-detail-title-row {
@@ -1409,6 +1420,56 @@
     background-color: transparent;
   }
 
+  /* From 50rem of detail width the meeting information moves into a pinned 280px column beside the tabs. */
+  @container meeting-detail-shell (min-width: 50rem) {
+    .meeting-detail-columns {
+      display: grid;
+      grid-template-columns: 17.5rem minmax(0, 1fr);
+      align-items: start;
+      column-gap: 0;
+    }
+
+    .meeting-detail-info {
+      position: sticky;
+      top: 0;
+      max-height: calc(100dvh - 4rem);
+      overflow-y: auto;
+      padding: 1.5rem 1.5rem 1.5rem 0;
+      border-right: 1px solid var(--border-default);
+    }
+
+    .meeting-detail-main {
+      padding-left: 2rem;
+      max-width: 64rem;
+    }
+
+    .meeting-detail-info .meeting-meta-item {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.125rem;
+    }
+
+    .meeting-detail-info .meeting-meta-item-audio .meeting-meta-label {
+      min-height: 1.25rem;
+    }
+
+    .meeting-detail-info .meeting-meta-item-purpose .meeting-meta-value {
+      display: block;
+      overflow: visible;
+      overflow-wrap: anywhere;
+      -webkit-line-clamp: unset;
+    }
+
+    .meeting-detail-info .meeting-status-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.25rem;
+    }
+
+    .meeting-detail-info .meeting-status-item {
+      justify-content: space-between;
+    }
+  }
+
   .detail-callout {
     @apply text-[15px] leading-7 text-foreground;
   }
@@ -1432,8 +1493,8 @@
   }
 
   .meeting-detail-shell {
-    @apply mx-auto w-full max-w-[var(--rail-content)];
-    container-name: meeting-detail;
+    @apply w-full;
+    container-name: meeting-detail-shell;
     container-type: inline-size;
   }
 
@@ -1516,7 +1577,8 @@
   }
 
   .detail-main-nav {
-    @apply mt-7 flex flex-col gap-3 border-b border-border sm:flex-row sm:items-end sm:justify-between;
+    @apply sticky top-0 z-10 flex flex-col gap-3 border-b border-border sm:flex-row sm:items-end sm:justify-between;
+    background: var(--color-neutral-0);
   }
 
   .detail-main-nav .tab-list {

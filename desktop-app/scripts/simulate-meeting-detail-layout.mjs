@@ -436,7 +436,7 @@ const runTranscriptReviewScenario = async (browser, width) => {
     await page.locator('audio').evaluate(audio => { if (audio.readyState < 1) return new Promise(resolve => audio.addEventListener('loadedmetadata', resolve, { once: true })); });
     await next.getByRole('button').click();
     await page.evaluate(async () => { window.__rejectOldReviewPlay(new DOMException('old source replaced', 'AbortError')); await Promise.resolve(); });
-    assert.equal(await page.getByText('해당 구간을 재생하지 못했습니다. 상단 음성 재생기를 확인해 주세요.', { exact: true }).count(), 0);
+    assert.equal(await page.getByText('해당 구간을 재생하지 못했습니다. 음성 재생기를 확인해 주세요.', { exact: true }).count(), 0);
     await page.waitForFunction(() => { const audio = document.querySelector('audio'); return audio.paused && audio.currentTime >= 1.8 && audio.currentTime < 2.6; }, null, { timeout: 10000 });
     assert(await page.evaluate(() => window.__reviewPauseCalls) > 0, 'old failure must not disable the new meeting clip stop');
     await page.reload({ waitUntil: 'domcontentloaded' }); await openMeeting(page, meeting.title);
@@ -445,10 +445,83 @@ const runTranscriptReviewScenario = async (browser, width) => {
   } finally { await context.close(); }
 };
 
+// Two columns at 50rem of detail width: header, a pinned 280px info panel, and the tab column (docs/design.md, 회의 상세·분석 진행 2단 배치).
+const runColumnsScenario = async (browser, { width, height }) => {
+  const context = await browser.newContext({ viewport: { width, height } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  const audio = Buffer.alloc(44 + 8000 * 2 * 30);
+  audio.write('RIFF', 0); audio.writeUInt32LE(audio.length - 8, 4); audio.write('WAVEfmt ', 8);
+  audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24); audio.writeUInt32LE(16000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34);
+  audio.write('data', 36); audio.writeUInt32LE(audio.length - 44, 40);
+  await page.route('**/api/outputs/*/audio', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: audio }));
+  const longTitle = '2026년 하반기 연근해 자원조사 결과 공유 및 음향 장비 교정 일정 협의를 위한 정기 연구 회의';
+  const many = Array.from({ length: 60 }, (_, index) => ({
+    start: `00:${String(Math.floor(index / 2)).padStart(2, '0')}:${index % 2 ? '30' : '00'}`,
+    end: `00:${String(Math.floor(index / 2)).padStart(2, '0')}:${index % 2 ? '59' : '29'}`,
+    speaker: index % 2 ? 'SPEAKER_01' : 'SPEAKER_00',
+    text: `${index + 1}번째 발언입니다. 어획량과 수온 변화, 장비 교정 일정을 길게 이야기하며 스크롤 위치를 만들어 줍니다.`,
+  }));
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
+    await putMeetings(page, [{
+      ...baseMeeting,
+      id: 'layout-columns-meeting',
+      title: longTitle,
+      jobId: 'layout-columns-job',
+      diarizationApplied: true,
+      meetingPurpose: '하반기 조사 결과와 장비 교정 일정을 정리한다',
+      segments: many,
+      displaySegments: many,
+    }]);
+    await openMeeting(page, longTitle);
+    await page.locator('.meeting-audio-player').waitFor({ timeout: 10000 });
+    await page.locator('.script-row').first().waitFor();
+    const measure = () => page.evaluate(() => {
+      const box = selector => {
+        const rect = document.querySelector(selector)?.getBoundingClientRect();
+        if (!rect) throw new Error(`Missing ${selector}`);
+        return { top: rect.top, bottom: rect.bottom, left: rect.left, right: rect.right, width: rect.width };
+      };
+      return {
+        info: box('.meeting-detail-info'),
+        tablist: box('[role=tablist][aria-label="회의록 상세"]'),
+        header: box('.meeting-detail-overview'),
+        title: box('.meeting-detail-title'),
+        actions: box('.meeting-detail-actions'),
+        audio: box('.meeting-audio-player'),
+        workspaceTop: box('.barorok-workspace').top,
+        innerHeight: window.innerHeight,
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    const { info, tablist, header, title, actions, documentOverflow: overflowBefore } = await measure();
+    assert.ok(info.right <= tablist.left + 1, `info panel sits left of the tabs at ${width}px`);
+    assert.ok(Math.abs(info.width - 280) <= 1, `info panel is 280px, got ${info.width}`);
+    assert.ok(tablist.top <= header.bottom + 24, `tabs start right under the header at ${width}px: tabs ${tablist.top}, header bottom ${header.bottom}`);
+    assert.ok(title.right <= actions.left + 1, 'long title does not run under the actions');
+    assert.ok(overflowBefore <= 0, `document overflowed by ${overflowBefore}px`);
+
+    await page.locator('.barorok-workspace').evaluate(element => { element.scrollTop = 1500; });
+    await page.waitForTimeout(200);
+    const after = await measure();
+    assert.ok(after.audio.top >= 0 && after.audio.bottom <= after.innerHeight, 'audio player stays visible while reading');
+    assert.ok(after.tablist.top >= after.workspaceTop - 1 && after.tablist.top <= after.workspaceTop + 2, `tab bar sticks to the top: ${after.tablist.top} vs ${after.workspaceTop}`);
+    assert.ok(after.documentOverflow <= 0, `document overflowed by ${after.documentOverflow}px`);
+    console.log(`ok - header, 280px info panel and sticky tab column at ${width}x${height}`);
+  } finally {
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const browser = await chromium.launch({ headless: true });
 try {
-  if (process.argv.includes('review')) {
+  if (process.argv.includes('columns')) {
+    for (const size of [{ width: 1280, height: 720 }, { width: 1440, height: 900 }]) await runColumnsScenario(browser, size);
+  } else if (process.argv.includes('review')) {
     for (const width of [1280, 760]) await runTranscriptReviewScenario(browser, width);
   } else {
   await runTopicChipScenario(browser);

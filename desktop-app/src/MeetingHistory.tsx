@@ -4021,75 +4021,77 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
 
             <article className="app-panel meeting-detail-frame">
                 <div className="app-panel-header meeting-detail-overview">
-                    <div className="meeting-detail-overview-main">
-                        <div className="meeting-detail-title-row">
+                    <div className="meeting-detail-title-row">
+                        {isEditing ? (
+                            <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-foreground">
+                                회의 제목
+                                <Input value={editTitle} onChange={event => setEditTitle(event.target.value)} aria-label="회의 제목" placeholder="회의 제목" />
+                            </label>
+                        ) : (
+                            <h2 ref={meetingDetailTitleRef} className="meeting-detail-title min-w-0 flex-1" tabIndex={-1}>{selectedMeeting.title}</h2>
+                        )}
+                        <div className="meeting-detail-actions" inert={analysisLocked || undefined}>
                             {isEditing ? (
-                                <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-foreground">
-                                    회의 제목
-                                    <Input value={editTitle} onChange={event => setEditTitle(event.target.value)} aria-label="회의 제목" placeholder="회의 제목" />
-                                </label>
+                                <>
+                                    <Button onClick={handleSaveEdit}>
+                                        <Save size={16} />
+                                        저장
+                                    </Button>
+                                    <IconButton
+                                        aria-label="수정 취소"
+                                        title="수정 취소"
+                                        icon={<X size={18} />}
+                                        onClick={() => setIsEditing(false)}
+                                    />
+                                </>
                             ) : (
-                                <h2 ref={meetingDetailTitleRef} className="meeting-detail-title min-w-0 flex-1" tabIndex={-1}>{selectedMeeting.title}</h2>
-                            )}
-                            <div className="meeting-detail-actions" inert={analysisLocked || undefined}>
-                                {isEditing ? (
-                                    <>
-                                        <Button onClick={handleSaveEdit}>
-                                            <Save size={16} />
-                                            저장
-                                        </Button>
+                                <>
+                                    {selectedMeeting.jobId && audioSourceUrl && (
                                         <IconButton
-                                            aria-label="수정 취소"
-                                            title="수정 취소"
-                                            icon={<X size={18} />}
-                                            onClick={() => setIsEditing(false)}
-                                        />
-                                    </>
-                                ) : (
-                                    <>
-                                        {selectedMeeting.jobId && audioSourceUrl && (
-                                            <IconButton
-                                                aria-label="음성 파일을 다운로드 폴더에 저장"
-                                                title="음성 파일을 다운로드 폴더에 저장"
-                                                icon={<FileAudio size={18} />}
-                                                onClick={handleSaveAudioCopy}
-                                                disabled={isDownloading}
-                                            />
-                                        )}
-                                        <IconButton
-                                            aria-label="회의 정보 수정"
-                                            title="회의 정보 수정"
-                                            icon={<Edit3 size={18} />}
-                                            onClick={() => setIsEditing(true)}
+                                            aria-label="음성 파일을 다운로드 폴더에 저장"
+                                            title="음성 파일을 다운로드 폴더에 저장"
+                                            icon={<FileAudio size={18} />}
+                                            onClick={handleSaveAudioCopy}
                                             disabled={isDownloading}
                                         />
-                                        {savedFileToast && (
-                                            <div className="save-toast" role="status" aria-live="polite">
-                                                <span className="font-semibold text-foreground">저장됨</span>
-                                                {savedFileToast.path && isTauriRuntime() && (
-                                                    <button
-                                                        type="button"
-                                                        className="save-toast-action"
-                                                        onClick={handleOpenSavedFileLocation}
-                                                    >
-                                                        폴더 열기
-                                                    </button>
-                                                )}
+                                    )}
+                                    <IconButton
+                                        aria-label="회의 정보 수정"
+                                        title="회의 정보 수정"
+                                        icon={<Edit3 size={18} />}
+                                        onClick={() => setIsEditing(true)}
+                                        disabled={isDownloading}
+                                    />
+                                    {savedFileToast && (
+                                        <div className="save-toast" role="status" aria-live="polite">
+                                            <span className="font-semibold text-foreground">저장됨</span>
+                                            {savedFileToast.path && isTauriRuntime() && (
                                                 <button
                                                     type="button"
-                                                    className="save-toast-close"
-                                                    aria-label="저장 알림 닫기"
-                                                    onClick={() => setSavedFileToast(null)}
+                                                    className="save-toast-action"
+                                                    onClick={handleOpenSavedFileLocation}
                                                 >
-                                                    <X size={14} />
+                                                    폴더 열기
                                                 </button>
-                                            </div>
-                                        )}
-                                    </>
-                                )}
-                            </div>
+                                            )}
+                                            <button
+                                                type="button"
+                                                className="save-toast-close"
+                                                aria-label="저장 알림 닫기"
+                                                onClick={() => setSavedFileToast(null)}
+                                            >
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    )}
+                                </>
+                            )}
                         </div>
+                    </div>
+                </div>
 
+                <div className="meeting-detail-columns">
+                    <aside className="meeting-detail-info" aria-label="회의 정보">
                         {isEditing ? (
                             <div className="grid gap-3">
                                 <div className="grid gap-3 sm:grid-cols-2">
@@ -4248,884 +4250,886 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                         )}
                         {/* Failures of the header's own actions (회의 정보, 음성 저장, 참석자 구분) stay in the header. */}
                         <DetailStatusLine status={placedDetailError('meeting')} action={renderModelSetupAction('meeting')} reserve={false} />
-                    </div>
+                    </aside>
 
-                    <div className="detail-main-nav">
-                        <div className="tab-list" role="tablist" aria-label="회의록 상세">
-                            <DetailTabButton
-                                id="meeting-detail-tab-script"
-                                panelId="meeting-detail-panel-script"
-                                active={detailTab === 'script'}
-                                onClick={() => setDetailTab('script')}
-                                onKeyDown={handleDetailTabKeyDown}
-                            >
-                                대화록
-                            </DetailTabButton>
-                            <DetailTabButton
-                                id="meeting-detail-tab-summary"
-                                panelId="meeting-detail-panel-summary"
-                                active={detailTab === 'summary'}
-                                disabled={!canOpenOrganizeTab}
-                                onClick={() => setDetailTab('summary')}
-                                onKeyDown={handleDetailTabKeyDown}
-                                title={canOpenOrganizeTab ? '기록 정리' : organizeTabDisabledMessage}
-                            >
-                                기록 정리
-                            </DetailTabButton>
-                            <DetailTabButton
-                                id="meeting-detail-tab-report"
-                                panelId="meeting-detail-panel-report"
-                                active={detailTab === 'report'}
-                                disabled={!canOpenReportTab}
-                                onClick={() => setDetailTab('report')}
-                                onKeyDown={handleDetailTabKeyDown}
-                                title={reportTabDisabledMessage}
-                            >
-                                보고서
-                            </DetailTabButton>
+                    <div className="meeting-detail-main">
+                        <div className="detail-main-nav">
+                            <div className="tab-list" role="tablist" aria-label="회의록 상세">
+                                <DetailTabButton
+                                    id="meeting-detail-tab-script"
+                                    panelId="meeting-detail-panel-script"
+                                    active={detailTab === 'script'}
+                                    onClick={() => setDetailTab('script')}
+                                    onKeyDown={handleDetailTabKeyDown}
+                                >
+                                    대화록
+                                </DetailTabButton>
+                                <DetailTabButton
+                                    id="meeting-detail-tab-summary"
+                                    panelId="meeting-detail-panel-summary"
+                                    active={detailTab === 'summary'}
+                                    disabled={!canOpenOrganizeTab}
+                                    onClick={() => setDetailTab('summary')}
+                                    onKeyDown={handleDetailTabKeyDown}
+                                    title={canOpenOrganizeTab ? '기록 정리' : organizeTabDisabledMessage}
+                                >
+                                    기록 정리
+                                </DetailTabButton>
+                                <DetailTabButton
+                                    id="meeting-detail-tab-report"
+                                    panelId="meeting-detail-panel-report"
+                                    active={detailTab === 'report'}
+                                    disabled={!canOpenReportTab}
+                                    onClick={() => setDetailTab('report')}
+                                    onKeyDown={handleDetailTabKeyDown}
+                                    title={reportTabDisabledMessage}
+                                >
+                                    보고서
+                                </DetailTabButton>
+                            </div>
+                            <label className="detail-search-field">
+                                <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                                <Input
+                                    value={searchQuery}
+                                    onChange={event => setSearchQuery(event.target.value)}
+                                    onKeyDown={event => {
+                                        if (event.key === 'Escape' && searchQuery) {
+                                            event.preventDefault();
+                                            setSearchQuery('');
+                                        }
+                                    }}
+                                    placeholder="현재 회의에서 검색"
+                                    className="pl-9 pr-10"
+                                    aria-label="현재 회의에서 검색"
+                                />
+                                {searchQuery && (
+                                    <button
+                                        type="button"
+                                        className="detail-search-clear"
+                                        aria-label="검색어 지우기"
+                                        title="검색어 지우기"
+                                        onClick={() => setSearchQuery('')}
+                                    >
+                                        <X size={15} aria-hidden="true" />
+                                    </button>
+                                )}
+                            </label>
                         </div>
-                        <label className="detail-search-field">
-                            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                            <Input
-                                value={searchQuery}
-                                onChange={event => setSearchQuery(event.target.value)}
-                                onKeyDown={event => {
-                                    if (event.key === 'Escape' && searchQuery) {
-                                        event.preventDefault();
-                                        setSearchQuery('');
-                                    }
-                                }}
-                                placeholder="현재 회의에서 검색"
-                                className="pl-9 pr-10"
-                                aria-label="현재 회의에서 검색"
-                            />
-                            {searchQuery && (
-                                <button
-                                    type="button"
-                                    className="detail-search-clear"
-                                    aria-label="검색어 지우기"
-                                    title="검색어 지우기"
-                                    onClick={() => setSearchQuery('')}
-                                >
-                                    <X size={15} aria-hidden="true" />
-                                </button>
-                            )}
-                        </label>
-                    </div>
-                </div>
 
-                <div className="meeting-detail-body space-y-6">
-                    {detailTab === 'summary' && (
-                        <section
-                            id="meeting-detail-panel-summary"
-                            role="tabpanel"
-                            aria-labelledby="meeting-detail-tab-summary"
-                            className="space-y-6"
-                        >
-                            {/* Only when the user must act. A runtime that starts itself on 정리 needs no standing notice. */}
-                            {summaryModelUnavailable && (
-                                <StatusBanner
-                                    tone="warning"
-                                    heading="모델 필요"
-                                    className="mb-4"
-                                    action={onOpenSettings ? (
-                                        <Button variant="outline" onClick={onOpenSettings}>
-                                            모델 준비
-                                        </Button>
-                                    ) : undefined}
+                        <div className="meeting-detail-body space-y-6">
+                            {detailTab === 'summary' && (
+                                <section
+                                    id="meeting-detail-panel-summary"
+                                    role="tabpanel"
+                                    aria-labelledby="meeting-detail-tab-summary"
+                                    className="space-y-6"
                                 >
-                                    {organizeModelGuidanceMessage}
-                                </StatusBanner>
-                            )}
-                            <section className="detail-work-surface">
-                                <div className="detail-command-bar" inert={analysisLocked || undefined}>
-                                    <div className="detail-command-primary">
-                                        <div className="detail-mode-switch" role="tablist" aria-label="정리 종류">
-                                            <DetailTabButton
-                                                id="organize-mode-tab-summary"
-                                                panelId="organize-mode-panel-summary"
-                                                active={organizeTab === 'summary'}
-                                                onClick={() => setOrganizeTab('summary')}
-                                                onKeyDown={handleOrganizeTabKeyDown}
-                                            >
-                                                전체 요약
-                                            </DetailTabButton>
-                                            <DetailTabButton
-                                                id="organize-mode-tab-topics"
-                                                panelId="organize-mode-panel-topics"
-                                                active={organizeTab === 'topics'}
-                                                onClick={() => setOrganizeTab('topics')}
-                                                onKeyDown={handleOrganizeTabKeyDown}
-                                            >
-                                                주제별 정리
-                                            </DetailTabButton>
-                                            <DetailTabButton
-                                                id="organize-mode-tab-speakers"
-                                                panelId="organize-mode-panel-speakers"
-                                                active={organizeTab === 'speakers'}
-                                                onClick={() => setOrganizeTab('speakers')}
-                                                onKeyDown={handleOrganizeTabKeyDown}
-                                            >
-                                                참석자별 정리
-                                            </DetailTabButton>
-                                        </div>
-                                        {organizeTab === 'speakers' && (
-                                            <div className="detail-command-inline-tools">
-                                                <DetailHelpButton
-                                                    title="AI가 참석자별로 정리한 초안입니다. 텍스트 비중은 대화록 글자 수 기준입니다."
-                                                    ariaLabel="참석자별 정리 도움말"
-                                                />
-                                                {(!!visibleSpeakerSummaries.length || hasCompletedEmptySpeakerContext) && (
-                                                    <IconButton
-                                                        variant="outline"
-                                                        icon={<Edit3 size={16} />}
-                                                        className="h-8 w-8"
-                                                        onClick={openSpeakerLabelEditor}
-                                                        aria-label="이름 변경"
-                                                        title="이름 변경"
-                                                    />
+                                    {/* Only when the user must act. A runtime that starts itself on 정리 needs no standing notice. */}
+                                    {summaryModelUnavailable && (
+                                        <StatusBanner
+                                            tone="warning"
+                                            heading="모델 필요"
+                                            className="mb-4"
+                                            action={onOpenSettings ? (
+                                                <Button variant="outline" onClick={onOpenSettings}>
+                                                    모델 준비
+                                                </Button>
+                                            ) : undefined}
+                                        >
+                                            {organizeModelGuidanceMessage}
+                                        </StatusBanner>
+                                    )}
+                                    <section className="detail-work-surface">
+                                        <div className="detail-command-bar" inert={analysisLocked || undefined}>
+                                            <div className="detail-command-primary">
+                                                <div className="detail-mode-switch" role="tablist" aria-label="정리 종류">
+                                                    <DetailTabButton
+                                                        id="organize-mode-tab-summary"
+                                                        panelId="organize-mode-panel-summary"
+                                                        active={organizeTab === 'summary'}
+                                                        onClick={() => setOrganizeTab('summary')}
+                                                        onKeyDown={handleOrganizeTabKeyDown}
+                                                    >
+                                                        전체 요약
+                                                    </DetailTabButton>
+                                                    <DetailTabButton
+                                                        id="organize-mode-tab-topics"
+                                                        panelId="organize-mode-panel-topics"
+                                                        active={organizeTab === 'topics'}
+                                                        onClick={() => setOrganizeTab('topics')}
+                                                        onKeyDown={handleOrganizeTabKeyDown}
+                                                    >
+                                                        주제별 정리
+                                                    </DetailTabButton>
+                                                    <DetailTabButton
+                                                        id="organize-mode-tab-speakers"
+                                                        panelId="organize-mode-panel-speakers"
+                                                        active={organizeTab === 'speakers'}
+                                                        onClick={() => setOrganizeTab('speakers')}
+                                                        onKeyDown={handleOrganizeTabKeyDown}
+                                                    >
+                                                        참석자별 정리
+                                                    </DetailTabButton>
+                                                </div>
+                                                {organizeTab === 'speakers' && (
+                                                    <div className="detail-command-inline-tools">
+                                                        <DetailHelpButton
+                                                            title="AI가 참석자별로 정리한 초안입니다. 텍스트 비중은 대화록 글자 수 기준입니다."
+                                                            ariaLabel="참석자별 정리 도움말"
+                                                        />
+                                                        {(!!visibleSpeakerSummaries.length || hasCompletedEmptySpeakerContext) && (
+                                                            <IconButton
+                                                                variant="outline"
+                                                                icon={<Edit3 size={16} />}
+                                                                className="h-8 w-8"
+                                                                onClick={openSpeakerLabelEditor}
+                                                                aria-label="이름 변경"
+                                                                title="이름 변경"
+                                                            />
+                                                        )}
+                                                    </div>
                                                 )}
                                             </div>
-                                        )}
-                                    </div>
-                                    <div className="detail-command-actions">
-                                        <label className="detail-inline-select">
-                                            <span>이번 정리 기준</span>
-                                            <select
-                                                value={activeContextTemplate.id}
-                                                onChange={event => void handleSelectContextTemplate(event.target.value)}
-                                                disabled={generatingKind !== null || organizeOutputIsGenerating}
-                                                aria-label="이번 정리 기준 선택"
-                                            >
-                                                <option value="general">선택 안 함</option>
-                                                {contextTemplates.filter(template => template.id !== 'general').map(template => (
-                                                    <option key={template.id} value={template.id}>
-                                                        {template.name}
-                                                    </option>
-                                                ))}
-                                            </select>
-                                        </label>
-                                        <div className="detail-context-menu-wrap" ref={contextTemplateMenuRef}>
-                                            <IconButton
-                                                id="context-template-menu-button"
-                                                variant="outline"
-                                                className="detail-context-menu-button"
-                                                icon={<MoreVertical size={16} />}
-                                                onClick={() => setIsContextTemplateMenuOpen(value => !value)}
-                                                aria-label="정리 맥락 메뉴"
-                                                title="정리 맥락 메뉴"
-                                                aria-haspopup="menu"
-                                                aria-expanded={isContextTemplateMenuOpen}
-                                                aria-controls="context-template-menu"
-                                                disabled={generatingKind !== null || organizeOutputIsGenerating}
-                                            />
-                                            {isContextTemplateMenuOpen && (
-                                                <div
-                                                    id="context-template-menu"
-                                                    className="detail-context-menu"
-                                                    role="menu"
-                                                    aria-labelledby="context-template-menu-button"
-                                                >
-                                                    <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewContextTemplate}>
-                                                        <Plus size={14} />
-                                                        추가
-                                                    </button>
-                                                    <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditContextTemplate} disabled={!canEditActiveContextTemplate}>
-                                                        <Edit3 size={14} />
-                                                        변경
-                                                    </button>
-                                                    <button
-                                                        type="button"
-                                                        role="menuitem"
-                                                        tabIndex={-1}
-                                                        className="detail-context-menu-danger"
-                                                        onClick={handleDeleteContextTemplate}
-                                                        disabled={!canEditActiveContextTemplate}
+                                            <div className="detail-command-actions">
+                                                <label className="detail-inline-select">
+                                                    <span>이번 정리 기준</span>
+                                                    <select
+                                                        value={activeContextTemplate.id}
+                                                        onChange={event => void handleSelectContextTemplate(event.target.value)}
+                                                        disabled={generatingKind !== null || organizeOutputIsGenerating}
+                                                        aria-label="이번 정리 기준 선택"
                                                     >
-                                                        <Trash2 size={14} />
-                                                        삭제
-                                                    </button>
-                                                    {!canCreateContextTemplate && (
-                                                        <div className="detail-context-menu-note">
-                                                            최대 {MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                        <option value="general">선택 안 함</option>
+                                                        {contextTemplates.filter(template => template.id !== 'general').map(template => (
+                                                            <option key={template.id} value={template.id}>
+                                                                {template.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                                <div className="detail-context-menu-wrap" ref={contextTemplateMenuRef}>
+                                                    <IconButton
+                                                        id="context-template-menu-button"
+                                                        variant="outline"
+                                                        className="detail-context-menu-button"
+                                                        icon={<MoreVertical size={16} />}
+                                                        onClick={() => setIsContextTemplateMenuOpen(value => !value)}
+                                                        aria-label="정리 맥락 메뉴"
+                                                        title="정리 맥락 메뉴"
+                                                        aria-haspopup="menu"
+                                                        aria-expanded={isContextTemplateMenuOpen}
+                                                        aria-controls="context-template-menu"
+                                                        disabled={generatingKind !== null || organizeOutputIsGenerating}
+                                                    />
+                                                    {isContextTemplateMenuOpen && (
+                                                        <div
+                                                            id="context-template-menu"
+                                                            className="detail-context-menu"
+                                                            role="menu"
+                                                            aria-labelledby="context-template-menu-button"
+                                                        >
+                                                            <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewContextTemplate}>
+                                                                <Plus size={14} />
+                                                                추가
+                                                            </button>
+                                                            <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditContextTemplate} disabled={!canEditActiveContextTemplate}>
+                                                                <Edit3 size={14} />
+                                                                변경
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                role="menuitem"
+                                                                tabIndex={-1}
+                                                                className="detail-context-menu-danger"
+                                                                onClick={handleDeleteContextTemplate}
+                                                                disabled={!canEditActiveContextTemplate}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                                삭제
+                                                            </button>
+                                                            {!canCreateContextTemplate && (
+                                                                <div className="detail-context-menu-note">
+                                                                    최대 {MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                                </div>
+                                                            )}
                                                         </div>
                                                     )}
                                                 </div>
-                                            )}
+                                                {organizeTab === 'summary' && (
+                                                    <OrganizeRunButton
+                                                        className="detail-context-button"
+                                                        ariaLabel="전체 요약 정리"
+                                                        disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
+                                                        onClick={handleGenerateSummary}
+                                                        title={summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
+                                                        icon={renderRunIcon('summary', summaryGenerationStatus)}
+                                                        label={summaryActionButtonLabel}
+                                                    />
+                                                )}
+                                                {organizeTab === 'topics' && (
+                                                    <OrganizeRunButton
+                                                        className="detail-context-button"
+                                                        ariaLabel={topicActionButtonAriaLabel}
+                                                        disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                        onClick={handleGenerateTopicSections}
+                                                        title={topicActionButtonTitle}
+                                                        icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
+                                                        label={topicActionButtonLabel}
+                                                    />
+                                                )}
+                                                {organizeTab === 'speakers' && (
+                                                    <OrganizeRunButton
+                                                        className="detail-context-button"
+                                                        ariaLabel="참석자별 정리"
+                                                        disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
+                                                        onClick={handleGenerateSpeakerContext}
+                                                        title={speakerActionButtonTitle}
+                                                        icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
+                                                        label={speakerActionButtonLabel}
+                                                    />
+                                                )}
+                                                <MeetingDownloadControl
+                                                    meeting={selectedMeeting}
+                                                    scope="organized"
+                                                    presentation="button"
+                                                    label="기록 정리 파일 저장"
+                                                    className="detail-context-button"
+                                                    onNotice={setNoticeMessage}
+                                                    onError={message => showDetailError('summary', message, 'warning')}
+                                                    onSaved={showSavedFileToast}
+                                                    onDownloadingChange={setIsDownloading}
+                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'summary')}
+                                                    disabled={isDownloading || !hasGeneratedSummary}
+                                                />
+                                            </div>
                                         </div>
-                                        {organizeTab === 'summary' && (
-                                            <OrganizeRunButton
-                                                className="detail-context-button"
-                                                ariaLabel="전체 요약 정리"
-                                                disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
-                                                onClick={handleGenerateSummary}
-                                                title={summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
-                                                icon={renderRunIcon('summary', summaryGenerationStatus)}
-                                                label={summaryActionButtonLabel}
-                                            />
-                                        )}
-                                        {organizeTab === 'topics' && (
-                                            <OrganizeRunButton
-                                                className="detail-context-button"
-                                                ariaLabel={topicActionButtonAriaLabel}
-                                                disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
-                                                onClick={handleGenerateTopicSections}
-                                                title={topicActionButtonTitle}
-                                                icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
-                                                label={topicActionButtonLabel}
-                                            />
-                                        )}
-                                        {organizeTab === 'speakers' && (
-                                            <OrganizeRunButton
-                                                className="detail-context-button"
-                                                ariaLabel="참석자별 정리"
-                                                disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
-                                                onClick={handleGenerateSpeakerContext}
-                                                title={speakerActionButtonTitle}
-                                                icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
-                                                label={speakerActionButtonLabel}
-                                            />
-                                        )}
-                                        <MeetingDownloadControl
-                                            meeting={selectedMeeting}
-                                            scope="organized"
-                                            presentation="button"
-                                            label="기록 정리 파일 저장"
-                                            className="detail-context-button"
-                                            onNotice={setNoticeMessage}
-                                            onError={message => showDetailError('summary', message, 'warning')}
-                                            onSaved={showSavedFileToast}
-                                            onDownloadingChange={setIsDownloading}
-                                            beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'summary')}
-                                            disabled={isDownloading || !hasGeneratedSummary}
-                                        />
-                                    </div>
-                                </div>
-                                {contextTemplateError && (
-                                    <div className="detail-context-inline-error" role="status">
-                                        {contextTemplateError}
-                                    </div>
-                                )}
-                                {/* Same reserved line as the report tab: starting, finishing or failing never moves the body. */}
-                                <DetailStatusLine status={organizeStatus} action={organizeGeneratingKind ? undefined : renderModelSetupAction('summary')} />
-                                {shouldShowContextPreview && (
-                                    <div className="detail-context-preview" aria-label="선택한 정리 기준 설명">
-                                        <div className="min-w-0">
-                                            <div className="detail-context-title">이번 정리 기준: {activeContextTemplate.name}</div>
-                                            <p>{activeContextTemplate.prompt || activeContextTemplate.purpose}</p>
-                                        </div>
-                                        {!!activeContextTemplate.focus.length && (
-                                            <div className="detail-context-tags" aria-label="정리 초점">
-                                                {activeContextTemplate.focus.map(item => (
-                                                    <span key={item}>{item}</span>
-                                                ))}
+                                        {contextTemplateError && (
+                                            <div className="detail-context-inline-error" role="status">
+                                                {contextTemplateError}
                                             </div>
                                         )}
-                                    </div>
-                                )}
-                                {appliedContextLabel && (
-                                    <div className="detail-applied-context" aria-label="현재 결과에 적용된 정리 기준">
-                                        현재 결과 기준: {appliedContextLabel}
-                                    </div>
-                                )}
-
-                                {organizeTab === 'summary' && (
-                                    <div
-                                        id="organize-mode-panel-summary"
-                                        role="tabpanel"
-                                        aria-labelledby="organize-mode-tab-summary"
-                                        className="space-y-5"
-                                        data-summary-section="overview"
-                                    >
-                                        {summaryOutdated && hasGeneratedSummary && (
-                                            <InlineStateNote>
-                                                회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 전체 요약은 이전 기준일 수 있습니다.
-                                            </InlineStateNote>
-                                        )}
-                                        {hasGeneratedSummary ? (
-                                            summaryMatches ? (
-                                                <div className="detail-callout">{renderSearchText(toParticipantCopy(selectedMeeting.summary))}</div>
-                                            ) : (
-                                                <InlineStateNote>검색과 일치하는 전체 요약이 없습니다.</InlineStateNote>
-                                            )
-                                        ) : summaryModelUnavailable ? null : (
-                                            // Same one-line note while 정리 runs, so the body keeps its height; the status line says what is happening.
-                                            <InlineStateNote>
-                                                {summaryGenerationStatus === 'generating' ? '전체 요약이 아직 없습니다.' : '전체 요약이 없습니다. 정리를 실행해 주세요.'}
-                                            </InlineStateNote>
-                                        )}
-                                        {hasResultHighlights && (
-                                            <div className="grid gap-6">
-                                                {!!visibleTopics.length && (
-                                                    <div className="summary-topic-row">
-                                                        <h3 className="text-xs font-semibold text-muted-foreground">주요 주제</h3>
-                                                        <ul className="summary-topic-list">
-                                                            {visibleTopics.map((topic, index) => (
-                                                                <li key={`${topic}-${index}`}>
-                                                                    {topicSectionKeySet.has(normalizeTopicKey(topic)) ? (
-                                                                        <button
-                                                                            type="button"
-                                                                            className="topic-chip"
-                                                                            title={toParticipantCopy(topic)}
-                                                                            onClick={() => handleOpenTopicSection(topic)}
-                                                                        >
-                                                                            {renderSearchText(toParticipantCopy(topic))}
-                                                                        </button>
-                                                                    ) : (
-                                                                        <span className="topic-chip topic-chip-static" title={toParticipantCopy(topic)}>{renderSearchText(toParticipantCopy(topic))}</span>
-                                                                    )}
-                                                                </li>
-                                                            ))}
-                                                        </ul>
-                                                    </div>
-                                                )}
-                                                {!!visibleDecisions.length && (
-                                                    <div className="detail-subtle-card">
-                                                        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">결정사항</h3>
-                                                        <ul className="detail-list">
-                                                            {visibleDecisions.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
-                                                        </ul>
-                                                    </div>
-                                                )}
-                                                {!!visibleActions.length && (
-                                                    <div className="detail-subtle-card">
-                                                        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">할 일</h3>
-                                                        <ul className="detail-list">
-                                                            {visibleActions.map((action, index) => <li key={`${action}-${index}`}>{renderSearchText(toParticipantCopy(action))}</li>)}
-                                                        </ul>
-                                                    </div>
-                                                )}
-                                            </div>
-                                        )}
-                                        {hasNeedsCheckContent && (
-                                            <div className="detail-subtle-card detail-needs-check">
-                                                <h3 className="mb-2 text-xs font-semibold text-muted-foreground">추가 확인</h3>
-                                                <ul className="detail-list">
-                                                    {visibleNeedsCheck.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
-                                                </ul>
-                                            </div>
-                                        )}
-                                    </div>
-                                )}
-
-                                {organizeTab === 'topics' && (
-                                    <div
-                                        id="organize-mode-panel-topics"
-                                        role="tabpanel"
-                                        aria-labelledby="organize-mode-tab-topics"
-                                        className="space-y-3"
-                                        ref={topicSectionsSectionRef}
-                                    >
-                                        {topicActionBlockedMessage && (
-                                            <InlineStateNote>
-                                                {topicActionBlockedMessage}
-                                            </InlineStateNote>
-                                        )}
-                                        {topicSectionsOutdated && (
-                                            <InlineStateNote>
-                                                회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 주제별 정리는 이전 기준일 수 있습니다.
-                                            </InlineStateNote>
-                                        )}
-                                        {visibleTopicSections.length ? (
-                                            <>
-                                                {!!visibleTopicSectionTopics.length && (
-                                                    <div className="flex flex-wrap gap-2">
-                                                        <button
-                                                            type="button"
-                                                            className={`topic-chip ${selectedTopicKey === null ? 'topic-chip-active' : ''}`}
-                                                            onClick={() => setSelectedTopicKey(null)}
-                                                            title="전체 주제 보기"
-                                                            aria-pressed={selectedTopicKey === null}
-                                                        >
-                                                            {renderSearchText('전체')}
-                                                        </button>
-                                                        {visibleTopicSectionTopics.map(topic => (
-                                                            <button
-                                                                key={topic}
-                                                                type="button"
-                                                                className={`topic-chip ${selectedTopicKey === normalizeTopicKey(topic) ? 'topic-chip-active' : ''}`}
-                                                                onClick={() => handleSelectTopic(topic)}
-                                                                title="해당 주제 위치로 이동"
-                                                                aria-pressed={selectedTopicKey === normalizeTopicKey(topic)}
-                                                            >
-                                                                {renderSearchText(topic)}
-                                                            </button>
+                                        {/* Same reserved line as the report tab: starting, finishing or failing never moves the body. */}
+                                        <DetailStatusLine status={organizeStatus} action={organizeGeneratingKind ? undefined : renderModelSetupAction('summary')} />
+                                        {shouldShowContextPreview && (
+                                            <div className="detail-context-preview" aria-label="선택한 정리 기준 설명">
+                                                <div className="min-w-0">
+                                                    <div className="detail-context-title">이번 정리 기준: {activeContextTemplate.name}</div>
+                                                    <p>{activeContextTemplate.prompt || activeContextTemplate.purpose}</p>
+                                                </div>
+                                                {!!activeContextTemplate.focus.length && (
+                                                    <div className="detail-context-tags" aria-label="정리 초점">
+                                                        {activeContextTemplate.focus.map(item => (
+                                                            <span key={item}>{item}</span>
                                                         ))}
                                                     </div>
                                                 )}
-                                                <div className="grid gap-3">
-                                                    {displayedTopicSections.map((section, index) => (
-                                                        <article
-                                                            key={`${section.topic}-${index}`}
-                                                            ref={node => {
-                                                                const key = normalizeTopicKey(section.topic ?? '');
-                                                                if (!key) return;
-                                                                // Keep the first section per key, but replace nodes detached by a tab switch.
-                                                                if (node && !topicSectionRefs.current[key]?.isConnected) {
-                                                                    topicSectionRefs.current[key] = node;
+                                            </div>
+                                        )}
+                                        {appliedContextLabel && (
+                                            <div className="detail-applied-context" aria-label="현재 결과에 적용된 정리 기준">
+                                                현재 결과 기준: {appliedContextLabel}
+                                            </div>
+                                        )}
+
+                                        {organizeTab === 'summary' && (
+                                            <div
+                                                id="organize-mode-panel-summary"
+                                                role="tabpanel"
+                                                aria-labelledby="organize-mode-tab-summary"
+                                                className="space-y-5"
+                                                data-summary-section="overview"
+                                            >
+                                                {summaryOutdated && hasGeneratedSummary && (
+                                                    <InlineStateNote>
+                                                        회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 전체 요약은 이전 기준일 수 있습니다.
+                                                    </InlineStateNote>
+                                                )}
+                                                {hasGeneratedSummary ? (
+                                                    summaryMatches ? (
+                                                        <div className="detail-callout">{renderSearchText(toParticipantCopy(selectedMeeting.summary))}</div>
+                                                    ) : (
+                                                        <InlineStateNote>검색과 일치하는 전체 요약이 없습니다.</InlineStateNote>
+                                                    )
+                                                ) : summaryModelUnavailable ? null : (
+                                                    // Same one-line note while 정리 runs, so the body keeps its height; the status line says what is happening.
+                                                    <InlineStateNote>
+                                                        {summaryGenerationStatus === 'generating' ? '전체 요약이 아직 없습니다.' : '전체 요약이 없습니다. 정리를 실행해 주세요.'}
+                                                    </InlineStateNote>
+                                                )}
+                                                {hasResultHighlights && (
+                                                    <div className="grid gap-6">
+                                                        {!!visibleTopics.length && (
+                                                            <div className="summary-topic-row">
+                                                                <h3 className="text-xs font-semibold text-muted-foreground">주요 주제</h3>
+                                                                <ul className="summary-topic-list">
+                                                                    {visibleTopics.map((topic, index) => (
+                                                                        <li key={`${topic}-${index}`}>
+                                                                            {topicSectionKeySet.has(normalizeTopicKey(topic)) ? (
+                                                                                <button
+                                                                                    type="button"
+                                                                                    className="topic-chip"
+                                                                                    title={toParticipantCopy(topic)}
+                                                                                    onClick={() => handleOpenTopicSection(topic)}
+                                                                                >
+                                                                                    {renderSearchText(toParticipantCopy(topic))}
+                                                                                </button>
+                                                                            ) : (
+                                                                                <span className="topic-chip topic-chip-static" title={toParticipantCopy(topic)}>{renderSearchText(toParticipantCopy(topic))}</span>
+                                                                            )}
+                                                                        </li>
+                                                                    ))}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                        {!!visibleDecisions.length && (
+                                                            <div className="detail-subtle-card">
+                                                                <h3 className="mb-2 text-xs font-semibold text-muted-foreground">결정사항</h3>
+                                                                <ul className="detail-list">
+                                                                    {visibleDecisions.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                        {!!visibleActions.length && (
+                                                            <div className="detail-subtle-card">
+                                                                <h3 className="mb-2 text-xs font-semibold text-muted-foreground">할 일</h3>
+                                                                <ul className="detail-list">
+                                                                    {visibleActions.map((action, index) => <li key={`${action}-${index}`}>{renderSearchText(toParticipantCopy(action))}</li>)}
+                                                                </ul>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                                {hasNeedsCheckContent && (
+                                                    <div className="detail-subtle-card detail-needs-check">
+                                                        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">추가 확인</h3>
+                                                        <ul className="detail-list">
+                                                            {visibleNeedsCheck.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
+                                                        </ul>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        )}
+
+                                        {organizeTab === 'topics' && (
+                                            <div
+                                                id="organize-mode-panel-topics"
+                                                role="tabpanel"
+                                                aria-labelledby="organize-mode-tab-topics"
+                                                className="space-y-3"
+                                                ref={topicSectionsSectionRef}
+                                            >
+                                                {topicActionBlockedMessage && (
+                                                    <InlineStateNote>
+                                                        {topicActionBlockedMessage}
+                                                    </InlineStateNote>
+                                                )}
+                                                {topicSectionsOutdated && (
+                                                    <InlineStateNote>
+                                                        회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 주제별 정리는 이전 기준일 수 있습니다.
+                                                    </InlineStateNote>
+                                                )}
+                                                {visibleTopicSections.length ? (
+                                                    <>
+                                                        {!!visibleTopicSectionTopics.length && (
+                                                            <div className="flex flex-wrap gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    className={`topic-chip ${selectedTopicKey === null ? 'topic-chip-active' : ''}`}
+                                                                    onClick={() => setSelectedTopicKey(null)}
+                                                                    title="전체 주제 보기"
+                                                                    aria-pressed={selectedTopicKey === null}
+                                                                >
+                                                                    {renderSearchText('전체')}
+                                                                </button>
+                                                                {visibleTopicSectionTopics.map(topic => (
+                                                                    <button
+                                                                        key={topic}
+                                                                        type="button"
+                                                                        className={`topic-chip ${selectedTopicKey === normalizeTopicKey(topic) ? 'topic-chip-active' : ''}`}
+                                                                        onClick={() => handleSelectTopic(topic)}
+                                                                        title="해당 주제 위치로 이동"
+                                                                        aria-pressed={selectedTopicKey === normalizeTopicKey(topic)}
+                                                                    >
+                                                                        {renderSearchText(topic)}
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                        <div className="grid gap-3">
+                                                            {displayedTopicSections.map((section, index) => (
+                                                                <article
+                                                                    key={`${section.topic}-${index}`}
+                                                                    ref={node => {
+                                                                        const key = normalizeTopicKey(section.topic ?? '');
+                                                                        if (!key) return;
+                                                                        // Keep the first section per key, but replace nodes detached by a tab switch.
+                                                                        if (node && !topicSectionRefs.current[key]?.isConnected) {
+                                                                            topicSectionRefs.current[key] = node;
+                                                                        }
+                                                                    }}
+                                                                    className={`detail-subtle-card ${selectedTopicKey === normalizeTopicKey(section.topic ?? '') ? 'topic-chip-active' : ''}`}
+                                                                >
+                                                                    <h4 className="topic-section-heading font-semibold text-foreground" tabIndex={-1}>{renderSearchText(toParticipantCopy(section.topic))}</h4>
+                                                                    <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(toParticipantCopy(section.summary))}</p>
+                                                                    {!!section.evidence?.length && (
+                                                                        <ul className="detail-list mt-3">
+                                                                            {section.evidence.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
+                                                                        </ul>
+                                                                    )}
+                                                                </article>
+                                                            ))}
+                                                        </div>
+                                                    </>
+                                                ) : !topicActionBlockedMessage ? (
+                                                    <InlineStateNote>
+                                                        {isFiltering
+                                                            ? '검색과 일치하는 주제별 정리가 없습니다.'
+                                                            : hasCompletedEmptyTopicSections
+                                                                ? '주제별 정리 내용이 없습니다. 대화록을 확인해 주세요.'
+                                                                : '주제별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
+                                                    </InlineStateNote>
+                                                ) : null}
+                                                {shouldShowCustomTopicInput && (
+                                                    <div className="detail-control-card">
+                                                        <Input
+                                                            value={customTopicTitle}
+                                                            onChange={event => setCustomTopicTitle(event.target.value)}
+                                                            onKeyDown={event => {
+                                                                if (event.key === 'Enter') {
+                                                                    event.preventDefault();
+                                                                    void handleGenerateCustomTopicSection();
                                                                 }
                                                             }}
-                                                            className={`detail-subtle-card ${selectedTopicKey === normalizeTopicKey(section.topic ?? '') ? 'topic-chip-active' : ''}`}
-                                                        >
-                                                            <h4 className="topic-section-heading font-semibold text-foreground" tabIndex={-1}>{renderSearchText(toParticipantCopy(section.topic))}</h4>
-                                                            <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(toParticipantCopy(section.summary))}</p>
-                                                            {!!section.evidence?.length && (
-                                                                <ul className="detail-list mt-3">
-                                                                    {section.evidence.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
-                                                                </ul>
-                                                            )}
-                                                        </article>
-                                                    ))}
-                                                </div>
-                                            </>
-                                        ) : !topicActionBlockedMessage ? (
-                                            <InlineStateNote>
-                                                {isFiltering
-                                                    ? '검색과 일치하는 주제별 정리가 없습니다.'
-                                                    : hasCompletedEmptyTopicSections
-                                                        ? '주제별 정리 내용이 없습니다. 대화록을 확인해 주세요.'
-                                                        : '주제별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
-                                            </InlineStateNote>
-                                        ) : null}
-                                        {shouldShowCustomTopicInput && (
-                                            <div className="detail-control-card">
-                                                <Input
-                                                    value={customTopicTitle}
-                                                    onChange={event => setCustomTopicTitle(event.target.value)}
-                                                    onKeyDown={event => {
-                                                        if (event.key === 'Enter') {
-                                                            event.preventDefault();
-                                                            void handleGenerateCustomTopicSection();
-                                                        }
-                                                    }}
-                                                    placeholder="추가로 정리할 주제 제목"
-                                                    aria-label="추가로 정리할 주제 제목"
-                                                    disabled={generatingKind !== null}
-                                                />
-                                                <OrganizeRunButton
-                                                    className="h-10 sm:w-24"
-                                                    variant="outline"
-                                                    ariaLabel={customTopicButtonAriaLabel}
-                                                    disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
-                                                    onClick={handleGenerateCustomTopicSection}
-                                                    title={customTopicButtonTitle}
-                                                    icon={renderRunIcon('topicSections', topicGenerationStatus, isCustomTopicGenerationRunning)}
-                                                    label={customTopicButtonLabel}
-                                                />
+                                                            placeholder="추가로 정리할 주제 제목"
+                                                            aria-label="추가로 정리할 주제 제목"
+                                                            disabled={generatingKind !== null}
+                                                        />
+                                                        <OrganizeRunButton
+                                                            className="h-10 sm:w-24"
+                                                            variant="outline"
+                                                            ariaLabel={customTopicButtonAriaLabel}
+                                                            disabled={!customTopicTitle.trim() || !canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                            onClick={handleGenerateCustomTopicSection}
+                                                            title={customTopicButtonTitle}
+                                                            icon={renderRunIcon('topicSections', topicGenerationStatus, isCustomTopicGenerationRunning)}
+                                                            label={customTopicButtonLabel}
+                                                        />
+                                                    </div>
+                                                )}
                                             </div>
                                         )}
-                                    </div>
-                                )}
 
-                                {organizeTab === 'speakers' && (
-                                    <div
-                                        id="organize-mode-panel-speakers"
-                                        role="tabpanel"
-                                        aria-labelledby="organize-mode-tab-speakers"
-                                        className="space-y-3"
-                                        ref={speakerSummarySectionRef}
-                                    >
-                                        <InlineStateNote>
-                                            AI가 참석자별로 정리한 초안입니다. 이름은 필요하면 수정해 주세요.
-                                        </InlineStateNote>
-                                        {speakerContextOutdated && (
-                                            <InlineStateNote>
-                                                회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 참석자별 정리는 이전 기준일 수 있습니다.
-                                            </InlineStateNote>
+                                        {organizeTab === 'speakers' && (
+                                            <div
+                                                id="organize-mode-panel-speakers"
+                                                role="tabpanel"
+                                                aria-labelledby="organize-mode-tab-speakers"
+                                                className="space-y-3"
+                                                ref={speakerSummarySectionRef}
+                                            >
+                                                <InlineStateNote>
+                                                    AI가 참석자별로 정리한 초안입니다. 이름은 필요하면 수정해 주세요.
+                                                </InlineStateNote>
+                                                {speakerContextOutdated && (
+                                                    <InlineStateNote>
+                                                        회의 정보, 대화록 또는 정리 맥락이 바뀌어 현재 참석자별 정리는 이전 기준일 수 있습니다.
+                                                    </InlineStateNote>
+                                                )}
+                                                {speakerActionBlockedMessage && (
+                                                    <InlineStateNote>
+                                                        {speakerActionBlockedMessage}
+                                                    </InlineStateNote>
+                                                )}
+                                                {filteredSpeakerSummaries.length ? (
+                                                    <>
+                                                        {filteredSpeakerSummaries.length > 1 && (
+                                                            <div className="flex flex-wrap gap-2">
+                                                                <button
+                                                                    type="button"
+                                                                    className={`topic-chip ${selectedSpeakerSummaryKey === 'all' ? 'topic-chip-active' : ''}`}
+                                                                    onClick={() => setSelectedSpeakerSummaryKey('all')}
+                                                                    aria-pressed={selectedSpeakerSummaryKey === 'all'}
+                                                                >
+                                                                    {renderSearchText('전체')}
+                                                                </button>
+                                                                {filteredSpeakerSummaries.map(item => {
+                                                                    const chipLabel = getSpeakerSummaryChipLabel(item);
+                                                                    return (
+                                                                    <button
+                                                                        key={item.key}
+                                                                        type="button"
+                                                                        className={`topic-chip ${selectedSpeakerSummaryKey === item.key ? 'topic-chip-active' : ''}`}
+                                                                        onClick={() => setSelectedSpeakerSummaryKey(item.key)}
+                                                                        aria-pressed={selectedSpeakerSummaryKey === item.key}
+                                                                        aria-label={chipLabel}
+                                                                    >
+                                                                        {renderSearchText(chipLabel)}
+                                                                    </button>
+                                                                );
+                                                                })}
+                                                            </div>
+                                                        )}
+                                                        <div className="grid gap-3">
+                                                            {visibleSpeakerSummaries.map(item => (
+                                                                <article key={item.key} className="detail-subtle-card">
+                                                                    <button
+                                                                        type="button"
+                                                                        className="speaker-summary-toggle"
+                                                                        onClick={() => setCollapsedSpeakerSummaryKeys(current => ({
+                                                                            ...current,
+                                                                            [item.key]: !current[item.key],
+                                                                        }))}
+                                                                        aria-expanded={!collapsedSpeakerSummaryKeys[item.key]}
+                                                                    >
+                                                                        <div className="min-w-0">
+                                                                            <div className="flex flex-wrap items-center gap-2">
+                                                                                <h4 className="font-semibold text-foreground">{renderSearchText(item.name)}</h4>
+                                                                                {item.role && (
+                                                                                    <span className="speaker-summary-role">
+                                                                                        {renderSearchText(item.role)}
+                                                                                    </span>
+                                                                                )}
+                                                                            </div>
+                                                                            {item.contributionLabel && (
+                                                                                <div
+                                                                                    className="speaker-summary-contribution"
+                                                                                    title="대화록 글자 수 기준입니다. 발언 시간이나 중요도 비율은 아닙니다."
+                                                                                >
+                                                                                    {renderSearchText(item.contributionLabel)}
+                                                                                </div>
+                                                                            )}
+                                                                        </div>
+                                                                        <span className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true">
+                                                                            {collapsedSpeakerSummaryKeys[item.key] ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
+                                                                        </span>
+                                                                    </button>
+                                                                    {!collapsedSpeakerSummaryKeys[item.key] && (
+                                                                        <>
+                                                                            <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(item.summary)}</p>
+                                                                            {!!item.keyPoints.length && (
+                                                                                <div className="mt-3">
+                                                                                    <div className="mb-2 text-xs font-semibold text-muted-foreground">핵심 발언</div>
+                                                                                    <ul className="detail-list">
+                                                                                        {item.keyPoints.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{renderSearchText(point)}</li>)}
+                                                                                    </ul>
+                                                                                </div>
+                                                                            )}
+                                                                        </>
+                                                                    )}
+                                                                </article>
+                                                            ))}
+                                                        </div>
+                                                    </>
+                                                ) : !speakerActionBlockedMessage ? (
+                                                    <InlineStateNote>
+                                                        {isFiltering
+                                                            ? '검색과 일치하는 참석자별 정리가 없습니다.'
+                                                            : hasCompletedEmptySpeakerContext
+                                                                ? '참석자별 정리 내용이 없습니다. 참석자 구분을 확인해 주세요.'
+                                                                : '참석자별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
+                                                    </InlineStateNote>
+                                                ) : null}
+                                            </div>
                                         )}
-                                        {speakerActionBlockedMessage && (
-                                            <InlineStateNote>
-                                                {speakerActionBlockedMessage}
-                                            </InlineStateNote>
-                                        )}
-                                        {filteredSpeakerSummaries.length ? (
-                                            <>
-                                                {filteredSpeakerSummaries.length > 1 && (
-                                                    <div className="flex flex-wrap gap-2">
+                                    </section>
+
+                                </section>
+                            )}
+
+                            {detailTab === 'report' && (
+                                <section
+                                    id="meeting-detail-panel-report"
+                                    role="tabpanel"
+                                    aria-labelledby="meeting-detail-tab-report"
+                                    className="detail-work-surface"
+                                >
+                                    <div className="detail-command-bar detail-command-bar-actions-only" inert={analysisLocked || undefined}>
+                                        <div className="detail-command-actions">
+                                            <label className="detail-inline-select">
+                                                <span>보고 양식</span>
+                                                <select
+                                                    value={reportOutputTemplate.id}
+                                                    onChange={event => void handleSelectReportTemplate(event.target.value)}
+                                                    disabled={generatingKind !== null || meetingReportIsGenerating}
+                                                    aria-label="보고 양식 선택"
+                                                >
+                                                    {reportTemplates.map(template => (
+                                                        <option key={template.id} value={template.id}>
+                                                            {template.name}
+                                                        </option>
+                                                    ))}
+                                                </select>
+                                            </label>
+                                            <div className="detail-context-menu-wrap" ref={reportTemplateMenuRef}>
+                                                <IconButton
+                                                    id="report-template-menu-button"
+                                                    variant="outline"
+                                                    className="detail-context-menu-button"
+                                                    icon={<MoreVertical size={16} />}
+                                                    onClick={() => setIsReportTemplateMenuOpen(value => !value)}
+                                                    aria-label="보고 양식 메뉴"
+                                                    title="보고 양식 메뉴"
+                                                    aria-haspopup="menu"
+                                                    aria-expanded={isReportTemplateMenuOpen}
+                                                    aria-controls="report-template-menu"
+                                                    disabled={generatingKind !== null || meetingReportIsGenerating}
+                                                />
+                                                {isReportTemplateMenuOpen && (
+                                                    <div
+                                                        id="report-template-menu"
+                                                        className="detail-context-menu"
+                                                        role="menu"
+                                                        aria-labelledby="report-template-menu-button"
+                                                    >
+                                                        <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewReportTemplate}>
+                                                            <Plus size={14} />
+                                                            추가
+                                                        </button>
+                                                        <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditReportTemplate} disabled={!canEditActiveReportTemplate}>
+                                                            <Edit3 size={14} />
+                                                            변경
+                                                        </button>
                                                         <button
                                                             type="button"
-                                                            className={`topic-chip ${selectedSpeakerSummaryKey === 'all' ? 'topic-chip-active' : ''}`}
-                                                            onClick={() => setSelectedSpeakerSummaryKey('all')}
-                                                            aria-pressed={selectedSpeakerSummaryKey === 'all'}
+                                                            role="menuitem"
+                                                            tabIndex={-1}
+                                                            className="detail-context-menu-danger"
+                                                            onClick={handleDeleteReportTemplate}
+                                                            disabled={!canEditActiveReportTemplate}
                                                         >
-                                                            {renderSearchText('전체')}
+                                                            <Trash2 size={14} />
+                                                            삭제
                                                         </button>
-                                                        {filteredSpeakerSummaries.map(item => {
-                                                            const chipLabel = getSpeakerSummaryChipLabel(item);
-                                                            return (
-                                                            <button
-                                                                key={item.key}
-                                                                type="button"
-                                                                className={`topic-chip ${selectedSpeakerSummaryKey === item.key ? 'topic-chip-active' : ''}`}
-                                                                onClick={() => setSelectedSpeakerSummaryKey(item.key)}
-                                                                aria-pressed={selectedSpeakerSummaryKey === item.key}
-                                                                aria-label={chipLabel}
-                                                            >
-                                                                {renderSearchText(chipLabel)}
-                                                            </button>
-                                                        );
-                                                        })}
-                                                    </div>
-                                                )}
-                                                <div className="grid gap-3">
-                                                    {visibleSpeakerSummaries.map(item => (
-                                                        <article key={item.key} className="detail-subtle-card">
-                                                            <button
-                                                                type="button"
-                                                                className="speaker-summary-toggle"
-                                                                onClick={() => setCollapsedSpeakerSummaryKeys(current => ({
-                                                                    ...current,
-                                                                    [item.key]: !current[item.key],
-                                                                }))}
-                                                                aria-expanded={!collapsedSpeakerSummaryKeys[item.key]}
-                                                            >
-                                                                <div className="min-w-0">
-                                                                    <div className="flex flex-wrap items-center gap-2">
-                                                                        <h4 className="font-semibold text-foreground">{renderSearchText(item.name)}</h4>
-                                                                        {item.role && (
-                                                                            <span className="speaker-summary-role">
-                                                                                {renderSearchText(item.role)}
-                                                                            </span>
-                                                                        )}
-                                                                    </div>
-                                                                    {item.contributionLabel && (
-                                                                        <div
-                                                                            className="speaker-summary-contribution"
-                                                                            title="대화록 글자 수 기준입니다. 발언 시간이나 중요도 비율은 아닙니다."
-                                                                        >
-                                                                            {renderSearchText(item.contributionLabel)}
-                                                                        </div>
-                                                                    )}
-                                                                </div>
-                                                                <span className="mt-0.5 shrink-0 text-muted-foreground" aria-hidden="true">
-                                                                    {collapsedSpeakerSummaryKeys[item.key] ? <ChevronRight size={18} /> : <ChevronDown size={18} />}
-                                                                </span>
-                                                            </button>
-                                                            {!collapsedSpeakerSummaryKeys[item.key] && (
-                                                                <>
-                                                                    <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(item.summary)}</p>
-                                                                    {!!item.keyPoints.length && (
-                                                                        <div className="mt-3">
-                                                                            <div className="mb-2 text-xs font-semibold text-muted-foreground">핵심 발언</div>
-                                                                            <ul className="detail-list">
-                                                                                {item.keyPoints.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{renderSearchText(point)}</li>)}
-                                                                            </ul>
-                                                                        </div>
-                                                                    )}
-                                                                </>
-                                                            )}
-                                                        </article>
-                                                    ))}
-                                                </div>
-                                            </>
-                                        ) : !speakerActionBlockedMessage ? (
-                                            <InlineStateNote>
-                                                {isFiltering
-                                                    ? '검색과 일치하는 참석자별 정리가 없습니다.'
-                                                    : hasCompletedEmptySpeakerContext
-                                                        ? '참석자별 정리 내용이 없습니다. 참석자 구분을 확인해 주세요.'
-                                                        : '참석자별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
-                                            </InlineStateNote>
-                                        ) : null}
-                                    </div>
-                                )}
-                            </section>
-
-                        </section>
-                    )}
-
-                    {detailTab === 'report' && (
-                        <section
-                            id="meeting-detail-panel-report"
-                            role="tabpanel"
-                            aria-labelledby="meeting-detail-tab-report"
-                            className="detail-work-surface"
-                        >
-                            <div className="detail-command-bar detail-command-bar-actions-only" inert={analysisLocked || undefined}>
-                                <div className="detail-command-actions">
-                                    <label className="detail-inline-select">
-                                        <span>보고 양식</span>
-                                        <select
-                                            value={reportOutputTemplate.id}
-                                            onChange={event => void handleSelectReportTemplate(event.target.value)}
-                                            disabled={generatingKind !== null || meetingReportIsGenerating}
-                                            aria-label="보고 양식 선택"
-                                        >
-                                            {reportTemplates.map(template => (
-                                                <option key={template.id} value={template.id}>
-                                                    {template.name}
-                                                </option>
-                                            ))}
-                                        </select>
-                                    </label>
-                                    <div className="detail-context-menu-wrap" ref={reportTemplateMenuRef}>
-                                        <IconButton
-                                            id="report-template-menu-button"
-                                            variant="outline"
-                                            className="detail-context-menu-button"
-                                            icon={<MoreVertical size={16} />}
-                                            onClick={() => setIsReportTemplateMenuOpen(value => !value)}
-                                            aria-label="보고 양식 메뉴"
-                                            title="보고 양식 메뉴"
-                                            aria-haspopup="menu"
-                                            aria-expanded={isReportTemplateMenuOpen}
-                                            aria-controls="report-template-menu"
-                                            disabled={generatingKind !== null || meetingReportIsGenerating}
-                                        />
-                                        {isReportTemplateMenuOpen && (
-                                            <div
-                                                id="report-template-menu"
-                                                className="detail-context-menu"
-                                                role="menu"
-                                                aria-labelledby="report-template-menu-button"
-                                            >
-                                                <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewReportTemplate}>
-                                                    <Plus size={14} />
-                                                    추가
-                                                </button>
-                                                <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditReportTemplate} disabled={!canEditActiveReportTemplate}>
-                                                    <Edit3 size={14} />
-                                                    변경
-                                                </button>
-                                                <button
-                                                    type="button"
-                                                    role="menuitem"
-                                                    tabIndex={-1}
-                                                    className="detail-context-menu-danger"
-                                                    onClick={handleDeleteReportTemplate}
-                                                    disabled={!canEditActiveReportTemplate}
-                                                >
-                                                    <Trash2 size={14} />
-                                                    삭제
-                                                </button>
-                                                {!canCreateReportTemplate && (
-                                                    <div className="detail-context-menu-note">
-                                                        최대 {MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                        {!canCreateReportTemplate && (
+                                                            <div className="detail-context-menu-note">
+                                                                최대 {MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
                                             </div>
-                                        )}
+                                            <OrganizeRunButton
+                                                ariaLabel="회의록 보고서 생성"
+                                                disabled={!canRunMeetingReportGeneration || generatingKind !== null || meetingReportGenerationStatus === 'generating'}
+                                                onClick={handleGenerateMeetingReport}
+                                                title={reportActionButtonTitle}
+                                                icon={renderRunIcon('meetingReport', meetingReportGenerationStatus)}
+                                                label={reportActionButtonLabel}
+                                            />
+                                            <MeetingDownloadControl
+                                                meeting={selectedMeeting}
+                                                scope="report"
+                                                presentation="button"
+                                                label="보고서 파일 저장"
+                                                className="detail-context-button"
+                                                onNotice={setNoticeMessage}
+                                                onError={message => showDetailError('report', message, 'warning')}
+                                                onSaved={showSavedFileToast}
+                                                onDownloadingChange={setIsDownloading}
+                                                beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'report')}
+                                                disabled={isDownloading || !hasGeneratedMeetingReport || meetingReportIsGenerating}
+                                            />
+                                        </div>
                                     </div>
-                                    <OrganizeRunButton
-                                        ariaLabel="회의록 보고서 생성"
-                                        disabled={!canRunMeetingReportGeneration || generatingKind !== null || meetingReportGenerationStatus === 'generating'}
-                                        onClick={handleGenerateMeetingReport}
-                                        title={reportActionButtonTitle}
-                                        icon={renderRunIcon('meetingReport', meetingReportGenerationStatus)}
-                                        label={reportActionButtonLabel}
-                                    />
-                                    <MeetingDownloadControl
-                                        meeting={selectedMeeting}
-                                        scope="report"
-                                        presentation="button"
-                                        label="보고서 파일 저장"
-                                        className="detail-context-button"
-                                        onNotice={setNoticeMessage}
-                                        onError={message => showDetailError('report', message, 'warning')}
-                                        onSaved={showSavedFileToast}
-                                        onDownloadingChange={setIsDownloading}
-                                        beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'report')}
-                                        disabled={isDownloading || !hasGeneratedMeetingReport || meetingReportIsGenerating}
-                                    />
-                                </div>
-                            </div>
-                            {reportTemplateError && (
-                                <div className="detail-context-inline-error" role="status">
-                                    {reportTemplateError}
-                                </div>
-                            )}
-                            {/* One reserved status line: starting or finishing a report never pushes the body. */}
-                            <DetailStatusLine status={reportStatus} action={meetingReportIsGenerating ? undefined : renderModelSetupAction('report')} />
-                            {canShowAnyMeetingReport && selectedMeeting?.meetingReport ? (
-                                <div className="detail-report-result">
-                                    {meetingReportTemplateName && (
-                                        <div className="detail-report-meta">생성 양식: {meetingReportTemplateName}</div>
-                                    )}
-                                    {meetingReportIsStoredButNotCurrent && !meetingReportIsGenerating && (
-                                        <div className="detail-report-archived">
-                                            현재 보고서는 이전 기록 정리 또는 보고 양식 기준으로 생성되었습니다. 아래 기존 보고서는 보관용으로 표시됩니다.
+                                    {reportTemplateError && (
+                                        <div className="detail-context-inline-error" role="status">
+                                            {reportTemplateError}
                                         </div>
                                     )}
-                                    {(selectedMeeting.meetingReport.sections?.length ?? 0) > 0 ? (
-                                        selectedMeeting.meetingReport.sections?.map(section => (
-                                            <section key={section.title} className="detail-report-result-section">
-                                                <h4>{section.title}</h4>
-                                                <p>{renderSearchText(section.content)}</p>
-                                            </section>
-                                        ))
-                                    ) : (
-                                        <p className="detail-report-content">{renderSearchText(selectedMeeting.meetingReport.content)}</p>
-                                    )}
-                                </div>
-                            ) : (
-                                <div className="detail-report-outline">
-                                    <div>
-                                        <div className="detail-report-title">{reportOutputTemplate.name}</div>
-                                        <p>{reportOutputTemplate.purpose}</p>
-                                    </div>
-                                    <div className="detail-report-sections" aria-label="보고서 구성">
-                                        {reportOutputTemplate.sections.map(section => (
-                                            <span key={section}>{section}</span>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </section>
-                    )}
-
-                    {detailTab === 'script' && (
-                        <section
-                            id="meeting-detail-panel-script"
-                            role="tabpanel"
-                            aria-labelledby="meeting-detail-tab-script"
-                            className="detail-work-surface"
-                        >
-                            <div className="mb-4 flex flex-col gap-3">
-                                <div className="detail-command-bar detail-command-bar-script" inert={analysisLocked || undefined}>
-                                    <div className="detail-command-primary">
-                                        {!!speakersInTranscript.length && !isTranscriptEditing && (
-                                            isSpeakerLabelPanelOpen || hasSpeakerLabelChanges ? (
-                                                <>
-                                                    <Button variant="outline" onClick={handleSaveSpeakerLabels} disabled={!hasSpeakerLabelChanges}>
-                                                        <Save size={15} />
-                                                        참석자 이름 저장
-                                                    </Button>
-                                                    <Button variant="ghost" onClick={handleCancelSpeakerLabelEdit}>
-                                                        취소
-                                                    </Button>
-                                                </>
+                                    {/* One reserved status line: starting or finishing a report never pushes the body. */}
+                                    <DetailStatusLine status={reportStatus} action={meetingReportIsGenerating ? undefined : renderModelSetupAction('report')} />
+                                    {canShowAnyMeetingReport && selectedMeeting?.meetingReport ? (
+                                        <div className="detail-report-result">
+                                            {meetingReportTemplateName && (
+                                                <div className="detail-report-meta">생성 양식: {meetingReportTemplateName}</div>
+                                            )}
+                                            {meetingReportIsStoredButNotCurrent && !meetingReportIsGenerating && (
+                                                <div className="detail-report-archived">
+                                                    현재 보고서는 이전 기록 정리 또는 보고 양식 기준으로 생성되었습니다. 아래 기존 보고서는 보관용으로 표시됩니다.
+                                                </div>
+                                            )}
+                                            {(selectedMeeting.meetingReport.sections?.length ?? 0) > 0 ? (
+                                                selectedMeeting.meetingReport.sections?.map(section => (
+                                                    <section key={section.title} className="detail-report-result-section">
+                                                        <h4>{section.title}</h4>
+                                                        <p>{renderSearchText(section.content)}</p>
+                                                    </section>
+                                                ))
                                             ) : (
-                                                <Button variant="ghost" onClick={() => setIsSpeakerLabelPanelOpen(true)}>
-                                                    <Edit3 size={15} />
-                                                    참석자 이름 변경
-                                                </Button>
-                                            )
-                                        )}
-                                    </div>
-                                    <div className="detail-command-actions">
-                                        {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
-                                            <Button variant="outline" onClick={handleRevertTranscript}>
-                                                원본 복원
-                                            </Button>
-                                        )}
-                                        {isTranscriptEditing ? (
-                                            <>
-                                                <Button onClick={handleSaveTranscriptEdit}>
-                                                    <Save size={15} />
-                                                    저장
-                                                </Button>
-                                                <Button variant="outline" onClick={handleCancelTranscriptEdit}>
-                                                    취소
-                                                </Button>
-                                            </>
-                                        ) : !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
-                                            <>
-                                                <Button variant="outline" onClick={() => void handleCopyEditableTranscript()} disabled={!displaySegments.length}>
-                                                    <Copy size={15} />
-                                                    복사
-                                                </Button>
-                                                <MeetingDownloadControl
-                                                    meeting={selectedMeeting}
-                                                    scope="transcript"
-                                                    presentation="button"
-                                                    label="대화록"
-                                                    className="detail-secondary-action"
-                                                    onNotice={setNoticeMessage}
-                                                    onError={message => showDetailError('script', message, 'warning')}
-                                                    onSaved={showSavedFileToast}
-                                                    onDownloadingChange={setIsDownloading}
-                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'script')}
-                                                    disabled={isDownloading || !displaySegments.length}
-                                                />
-                                                <Button onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
-                                                    <Edit3 size={15} />
-                                                    편집
-                                                </Button>
-                                            </>
-                                        )}
-                                    </div>
-                                </div>
-                                {/* Appears only after an action in this tab; the tabs and command bar above stay put. */}
-                                <DetailStatusLine status={placedDetailError('script')} reserve={false} />
-                                {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && (
-                                    <InlineStateNote>
-                                        현재 화면은 수정본 대화록입니다. 원본은 별도로 보존됩니다.
-                                    </InlineStateNote>
-                                )}
-                                {!!speakersInTranscript.length && (isSpeakerLabelPanelOpen || hasSpeakerLabelChanges) && (
-                                    <SpeakerLabelPanel
-                                        panelRef={speakerLabelsPanelRef}
-                                        speakers={speakersInTranscript}
-                                        drafts={speakerLabelDrafts}
-                                        hasChanges={hasSpeakerLabelChanges}
-                                        getTone={getSpeakerTone}
-                                        getName={defaultSpeakerName}
-                                        onChange={(speaker, value) => setSpeakerLabelDrafts(prev => ({
-                                            ...prev,
-                                            [speaker]: value,
-                                        }))}
-                                        onSave={handleSaveSpeakerLabels}
-                                        onClear={handleClearSpeakerLabel}
-                                    />
-                                )}
-                            </div>
-                            {(isTranscriptEditing ? transcriptSegmentDrafts.length : visibleSegments.length) ? (
-                                <div className="script-list">
-                                    {(isTranscriptEditing ? transcriptSegmentDrafts : visibleSegments).map((segment, index) => {
-                                        const warning = looksLikeKoreanMisrecognition(segment.text);
-                                        const reviewIssues = getTranscriptReviewIssues(segment, selectedMeeting.segments ?? []);
-                                        const speakerTone = getSegmentSpeakerTone(segment, index);
-                                        return (
-                                            <article key={`${segment.start}-${index}`} className={`speaker-turn script-row ${speakerTone} ${warning ? 'speaker-turn-warning' : ''}`}>
-                                                <div className="script-time-range" title={`${segment.start} - ${segment.end}`}>
-                                                    {segment.start}<span className="sr-only"> - {segment.end}</span>
-                                                </div>
-                                                <div className="speaker-meta script-meta">
-                                                    <div className="speaker-label">
-                                                        <span className="speaker-dot" />
-                                                        <span>{renderSearchText(isUnassignedSpeaker(segment.speaker) ? '참석자 미확인' : segment.displaySpeaker || segment.speaker || '참석자')}</span>
-                                                    </div>
-                                                    <div className="script-badge-row">
-                                                        <TranscriptReviewBadges key={`${selectedMeeting.id}:${segment.start}:${index}`} issues={reviewIssues} audioAvailable={Boolean(audioSourceUrl)} onListen={(start, end) => {
-                                                            const audio = reviewAudioRef.current;
-                                                            if (!audio) return;
-                                                            const request = ++reviewAudioRequestRef.current;
-                                                            const meetingId = selectedMeeting.id;
-                                                            reviewAudioEndRef.current = end;
-                                                            void (async () => {
-                                                                try {
-                                                                    audio.currentTime = start;
-                                                                    await audio.play();
-                                                                } catch {
-                                                                    if (reviewAudioRequestRef.current !== request || reviewAudioRef.current !== audio || currentSelectedMeetingIdRef.current !== meetingId) return;
-                                                                    reviewAudioEndRef.current = null;
-                                                                    showDetailError('script', '해당 구간을 재생하지 못했습니다. 상단 음성 재생기를 확인해 주세요.');
-                                                                }
-                                                            })();
-                                                        }} />
-                                                    </div>
-                                                </div>
-                                                {isTranscriptEditing ? (
-                                                    <textarea
-                                                        value={segment.text}
-                                                        onChange={event => handleTranscriptDraftChange(index, event.target.value)}
-                                                        className="script-edit-textarea"
-                                                        aria-label={`${segment.displaySpeaker || segment.speaker || '참석자'} 대화록 수정`}
-                                                    />
-                                                ) : (
-                                                    <p className="speaker-text script-text">{renderSearchText(segment.text)}</p>
-                                                )}
-                                            </article>
-                                        );
-                                    })}
-                                </div>
-                            ) : (
-                                <InlineStateNote>
-                                    {isFiltering ? '검색과 일치하는 대화록이 없습니다.' : analysisRunning ? '대화록을 만들고 있습니다.' : '대화록 내용이 없습니다.'}
-                                </InlineStateNote>
+                                                <p className="detail-report-content">{renderSearchText(selectedMeeting.meetingReport.content)}</p>
+                                            )}
+                                        </div>
+                                    ) : (
+                                        <div className="detail-report-outline">
+                                            <div>
+                                                <div className="detail-report-title">{reportOutputTemplate.name}</div>
+                                                <p>{reportOutputTemplate.purpose}</p>
+                                            </div>
+                                            <div className="detail-report-sections" aria-label="보고서 구성">
+                                                {reportOutputTemplate.sections.map(section => (
+                                                    <span key={section}>{section}</span>
+                                                ))}
+                                            </div>
+                                        </div>
+                                    )}
+                                </section>
                             )}
-                        </section>
-                    )}
+
+                            {detailTab === 'script' && (
+                                <section
+                                    id="meeting-detail-panel-script"
+                                    role="tabpanel"
+                                    aria-labelledby="meeting-detail-tab-script"
+                                    className="detail-work-surface"
+                                >
+                                    <div className="mb-4 flex flex-col gap-3">
+                                        <div className="detail-command-bar detail-command-bar-script" inert={analysisLocked || undefined}>
+                                            <div className="detail-command-primary">
+                                                {!!speakersInTranscript.length && !isTranscriptEditing && (
+                                                    isSpeakerLabelPanelOpen || hasSpeakerLabelChanges ? (
+                                                        <>
+                                                            <Button variant="outline" onClick={handleSaveSpeakerLabels} disabled={!hasSpeakerLabelChanges}>
+                                                                <Save size={15} />
+                                                                참석자 이름 저장
+                                                            </Button>
+                                                            <Button variant="ghost" onClick={handleCancelSpeakerLabelEdit}>
+                                                                취소
+                                                            </Button>
+                                                        </>
+                                                    ) : (
+                                                        <Button variant="ghost" onClick={() => setIsSpeakerLabelPanelOpen(true)}>
+                                                            <Edit3 size={15} />
+                                                            참석자 이름 변경
+                                                        </Button>
+                                                    )
+                                                )}
+                                            </div>
+                                            <div className="detail-command-actions">
+                                                {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
+                                                    <Button variant="outline" onClick={handleRevertTranscript}>
+                                                        원본 복원
+                                                    </Button>
+                                                )}
+                                                {isTranscriptEditing ? (
+                                                    <>
+                                                        <Button onClick={handleSaveTranscriptEdit}>
+                                                            <Save size={15} />
+                                                            저장
+                                                        </Button>
+                                                        <Button variant="outline" onClick={handleCancelTranscriptEdit}>
+                                                            취소
+                                                        </Button>
+                                                    </>
+                                                ) : !isSpeakerLabelPanelOpen && !hasSpeakerLabelChanges && (
+                                                    <>
+                                                        <Button variant="outline" onClick={() => void handleCopyEditableTranscript()} disabled={!displaySegments.length}>
+                                                            <Copy size={15} />
+                                                            복사
+                                                        </Button>
+                                                        <MeetingDownloadControl
+                                                            meeting={selectedMeeting}
+                                                            scope="transcript"
+                                                            presentation="button"
+                                                            label="대화록"
+                                                            className="detail-secondary-action"
+                                                            onNotice={setNoticeMessage}
+                                                            onError={message => showDetailError('script', message, 'warning')}
+                                                            onSaved={showSavedFileToast}
+                                                            onDownloadingChange={setIsDownloading}
+                                                            beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'script')}
+                                                            disabled={isDownloading || !displaySegments.length}
+                                                        />
+                                                        <Button onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
+                                                            <Edit3 size={15} />
+                                                            편집
+                                                        </Button>
+                                                    </>
+                                                )}
+                                            </div>
+                                        </div>
+                                        {/* Appears only after an action in this tab; the tabs and command bar above stay put. */}
+                                        <DetailStatusLine status={placedDetailError('script')} reserve={false} />
+                                        {!!selectedMeeting.editedDisplaySegments?.length && !isTranscriptEditing && (
+                                            <InlineStateNote>
+                                                현재 화면은 수정본 대화록입니다. 원본은 별도로 보존됩니다.
+                                            </InlineStateNote>
+                                        )}
+                                        {!!speakersInTranscript.length && (isSpeakerLabelPanelOpen || hasSpeakerLabelChanges) && (
+                                            <SpeakerLabelPanel
+                                                panelRef={speakerLabelsPanelRef}
+                                                speakers={speakersInTranscript}
+                                                drafts={speakerLabelDrafts}
+                                                hasChanges={hasSpeakerLabelChanges}
+                                                getTone={getSpeakerTone}
+                                                getName={defaultSpeakerName}
+                                                onChange={(speaker, value) => setSpeakerLabelDrafts(prev => ({
+                                                    ...prev,
+                                                    [speaker]: value,
+                                                }))}
+                                                onSave={handleSaveSpeakerLabels}
+                                                onClear={handleClearSpeakerLabel}
+                                            />
+                                        )}
+                                    </div>
+                                    {(isTranscriptEditing ? transcriptSegmentDrafts.length : visibleSegments.length) ? (
+                                        <div className="script-list">
+                                            {(isTranscriptEditing ? transcriptSegmentDrafts : visibleSegments).map((segment, index) => {
+                                                const warning = looksLikeKoreanMisrecognition(segment.text);
+                                                const reviewIssues = getTranscriptReviewIssues(segment, selectedMeeting.segments ?? []);
+                                                const speakerTone = getSegmentSpeakerTone(segment, index);
+                                                return (
+                                                    <article key={`${segment.start}-${index}`} className={`speaker-turn script-row ${speakerTone} ${warning ? 'speaker-turn-warning' : ''}`}>
+                                                        <div className="script-time-range" title={`${segment.start} - ${segment.end}`}>
+                                                            {segment.start}<span className="sr-only"> - {segment.end}</span>
+                                                        </div>
+                                                        <div className="speaker-meta script-meta">
+                                                            <div className="speaker-label">
+                                                                <span className="speaker-dot" />
+                                                                <span>{renderSearchText(isUnassignedSpeaker(segment.speaker) ? '참석자 미확인' : segment.displaySpeaker || segment.speaker || '참석자')}</span>
+                                                            </div>
+                                                            <div className="script-badge-row">
+                                                                <TranscriptReviewBadges key={`${selectedMeeting.id}:${segment.start}:${index}`} issues={reviewIssues} audioAvailable={Boolean(audioSourceUrl)} onListen={(start, end) => {
+                                                                    const audio = reviewAudioRef.current;
+                                                                    if (!audio) return;
+                                                                    const request = ++reviewAudioRequestRef.current;
+                                                                    const meetingId = selectedMeeting.id;
+                                                                    reviewAudioEndRef.current = end;
+                                                                    void (async () => {
+                                                                        try {
+                                                                            audio.currentTime = start;
+                                                                            await audio.play();
+                                                                        } catch {
+                                                                            if (reviewAudioRequestRef.current !== request || reviewAudioRef.current !== audio || currentSelectedMeetingIdRef.current !== meetingId) return;
+                                                                            reviewAudioEndRef.current = null;
+                                                                            showDetailError('script', '해당 구간을 재생하지 못했습니다. 음성 재생기를 확인해 주세요.');
+                                                                        }
+                                                                    })();
+                                                                }} />
+                                                            </div>
+                                                        </div>
+                                                        {isTranscriptEditing ? (
+                                                            <textarea
+                                                                value={segment.text}
+                                                                onChange={event => handleTranscriptDraftChange(index, event.target.value)}
+                                                                className="script-edit-textarea"
+                                                                aria-label={`${segment.displaySpeaker || segment.speaker || '참석자'} 대화록 수정`}
+                                                            />
+                                                        ) : (
+                                                            <p className="speaker-text script-text">{renderSearchText(segment.text)}</p>
+                                                        )}
+                                                    </article>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : (
+                                        <InlineStateNote>
+                                            {isFiltering ? '검색과 일치하는 대화록이 없습니다.' : analysisRunning ? '대화록을 만들고 있습니다.' : '대화록 내용이 없습니다.'}
+                                        </InlineStateNote>
+                                    )}
+                                </section>
+                            )}
+                        </div>
+                    </div>
                 </div>
             </article>
             {isContextTemplateModalOpen && (

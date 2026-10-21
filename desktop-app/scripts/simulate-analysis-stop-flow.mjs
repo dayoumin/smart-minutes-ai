@@ -1290,7 +1290,7 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
     await page.getByRole('button', { name: '분석 시작', exact: true }).click();
     await page.getByRole('heading', { name: title, exact: true }).waitFor();
     const preparing = await anchors();
-    assert.equal(await page.locator('.meeting-detail-overview-main').evaluate(el => getComputedStyle(el).borderTopWidth), '1px', 'meeting information has the approved quiet border');
+    assert.equal(await page.locator('.meeting-detail-overview').evaluate(el => getComputedStyle(el).borderBottomWidth), '1px', 'the detail header closes with the approved hairline');
     const fileMetadata = await page.locator('.meeting-meta-value-source').innerText();
     assert.match(fileMetadata, /MP4/);
     assert.ok(!fileMetadata.includes(fixture.name), 'the source row shows metadata instead of repeating its title');

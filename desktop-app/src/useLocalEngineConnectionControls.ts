@@ -40,18 +40,20 @@ const MIN_MANUAL_CHECK_MS = 700;
 // check in progress, and the `?` help. The connection step itself is getLocalEngineConnectionView.
 export const useLocalEngineConnectionControls = ({
     installerUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_INSTALLER_URL),
-    updateUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_UPDATE_URL),
+    updateUrl: configuredUpdateUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_UPDATE_URL),
     connectionRequested = false,
     checkRequested = false,
     onProbeCompleted,
 }: LocalEngineConnectionControlsOptions = {}): LocalEngineConnectionControls => {
     const {
         snapshot,
+        latestRelease,
         pairingState,
         probeLocalEngine,
         startPairing,
         resetPairing,
     } = useLocalEngineConnection();
+    const updateUrl = latestRelease?.downloadUrl ?? configuredUpdateUrl;
     const [connectionStarted, setConnectionStarted] = useState(false);
     const [manualCheckPending, setManualCheckPending] = useState(false);
     const [showHelp, setShowHelp] = useState(false);
@@ -75,10 +77,11 @@ export const useLocalEngineConnectionControls = ({
         connectionStarted: connectionStarted || connectionRequested,
         installerAvailable: Boolean(installerUrl),
         updateAvailable: Boolean(updateUrl),
+        latestRelease,
         // The cause survives the 'checking' state, so it tells whether the prompt may be up now.
         permissionPromptPending: userCheckPending && snapshot.blockedBy === 'permission-prompt',
         pairingErrorReason: pairingState.phase === 'error' ? pairingState.reason : undefined,
-    }), [connectionRequested, connectionStarted, installerUrl, pairingState.phase, pairingState.reason, settledTransport, snapshot, updateUrl, userCheckPending]);
+    }), [connectionRequested, connectionStarted, installerUrl, latestRelease, pairingState.phase, pairingState.reason, settledTransport, snapshot, updateUrl, userCheckPending]);
 
     useEffect(() => {
         if (pairingState.phase !== 'awaiting-code') return;

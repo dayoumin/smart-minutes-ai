@@ -114,7 +114,7 @@ const getShortModelLabel = (model: WriterMissingModel): string => {
 };
 
 const withInstallerNotice = (row: WriterStatusRow, notice: string | undefined): WriterStatusRow => {
-    if (!notice || !row.actions.some(action => action.kind === 'download')) return row;
+    if (!notice || !row.actions.some(action => action.kind === 'download' || action.kind === 'update')) return row;
     // With a `?`, the warning moves into its help so the line stays short.
     return row.help
         ? { ...row, help: `${row.help} ${notice}` }
@@ -381,5 +381,12 @@ export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): Writer
             actions: [],
             blocksStart: false,
         });
+    if (row.state === 'ready' && input.connection?.scene === 'update-available') {
+        return withInstallerNotice({
+            ...connectionRow(input.connection),
+            stage: 'ready',
+            blocksStart: false,
+        }, input.installerNotice);
+    }
     return withInstallerNotice(row, input.installerNotice);
 };

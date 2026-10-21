@@ -21,12 +21,14 @@ import {
 } from './localEngineSession';
 import { LocalEngineConnectionContext } from './LocalEngineConnectionContext';
 import { getLocalEngineBrowserAccessState } from './localEngineBrowserAccess';
+import { fetchLocalEngineRelease, isNewerEngineVersion, type LocalEngineRelease } from './localEngineRelease';
 
 export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = ({ children }) => {
     const environment = useMemo(() => getRuntimeEnvironment(), []);
     const [snapshot, setSnapshot] = useState<LocalEngineConnectionSnapshot>(() => (
         createInitialLocalEngineConnection(environment.kind)
     ));
+    const [latestRelease, setLatestRelease] = useState<LocalEngineRelease | null>(null);
     const [pairingState, setPairingState] = useState<LocalEnginePairingState>({
         phase: 'idle',
         challenge: null,
@@ -95,6 +97,61 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
     ), [coordinator]);
     useEffect(() => {
         if (environment.kind !== 'web-local-engine') return;
+        const controller = new AbortController();
+        let checking = false;
+        let lastCheckedAt = 0;
+        const checkRelease = async () => {
+            if (checking || Date.now() - lastCheckedAt < 60000) return;
+            checking = true;
+            lastCheckedAt = Date.now();
+            const release = await fetchLocalEngineRelease(window.location.origin, controller.signal);
+            // A temporary metadata outage keeps the last verified release and never blocks analysis.
+            if (!controller.signal.aborted && release) setLatestRelease(release);
+            checking = false;
+        };
+        void checkRelease();
+        window.addEventListener('focus', checkRelease);
+        return () => {
+            controller.abort();
+            window.removeEventListener('focus', checkRelease);
+        };
+    }, [environment.kind]);
+    useEffect(() => {
+        if (environment.kind !== 'web-local-engine' || snapshot.authorization !== 'authenticated'
+            || !snapshot.engineVersion || !latestRelease
+            || !isNewerEngineVersion(latestRelease.version, snapshot.engineVersion)) return;
+        const controller = new AbortController();
+        let checking = false;
+        const checkInstalledVersion = async () => {
+            if (checking) return;
+            checking = true;
+            const startedAt = Date.now();
+            try {
+                // A public version check keeps the authenticated working state steady and does not pair.
+                const response = await localEngineClient.probe({ signal: controller.signal, timeoutMs: 5000, cache: 'no-store' });
+                const probe = response.ok ? parseLocalEngineProbe(await response.json()) : null;
+                if (!controller.signal.aborted && probe) {
+                    setSnapshot(previous => previous.authorization === 'authenticated'
+                        && (previous.checkedAt ?? 0) <= startedAt
+                        ? applyLocalEngineProbe(previous, probe)
+                        : previous);
+                }
+            } catch {
+                // Installation may temporarily stop the engine; normal connection recovery owns that state.
+            } finally {
+                checking = false;
+            }
+        };
+        const timer = window.setInterval(checkInstalledVersion, 10000);
+        window.addEventListener('focus', checkInstalledVersion);
+        return () => {
+            controller.abort();
+            window.clearInterval(timer);
+            window.removeEventListener('focus', checkInstalledVersion);
+        };
+    }, [environment.kind, latestRelease, snapshot.authorization, snapshot.engineVersion]);
+    useEffect(() => {
+        if (environment.kind !== 'web-local-engine') return;
         const unregister = registerLocalEngineAuthorizationRecovery(
             authorization => coordinator.captureAuthorizationRecovery(authorization),
         );
@@ -132,6 +189,7 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
     }, [coordinator, environment.kind, snapshot.authorization]);
     const value = useMemo(() => ({
         snapshot,
+        latestRelease,
         beginTransportCheck,
         reportTransport,
         pairingState,
@@ -151,6 +209,7 @@ export const LocalEngineConnectionProvider: React.FC<React.PropsWithChildren> = 
         renewSession,
         revokeSession,
         snapshot,
+        latestRelease,
         startPairing,
     ]);
 

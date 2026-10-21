@@ -22,6 +22,7 @@ export type LocalEngineCapability =
 
 export interface LocalEngineConnectionSnapshot {
     runtime: RuntimeKind;
+    engineVersion?: string;
     transport: LocalEngineTransportState;
     authorization: LocalEngineAuthorizationState;
     capabilities: ReadonlySet<LocalEngineCapability>;
@@ -125,6 +126,7 @@ export const applyLocalEngineProbe = (
         : supportedCapabilities;
     return {
         ...previous,
+        engineVersion: payload.engine_version,
         transport: compatible ? 'reachable' : 'incompatible',
         authorization,
         capabilities: compatible ? capabilities : new Set(),

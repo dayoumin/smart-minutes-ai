@@ -5,6 +5,7 @@ import type {
 import type {
     LocalEnginePairingPhase,
 } from './localEngineConnectionCoordinator';
+import { isNewerEngineVersion, type LocalEngineRelease } from './localEngineRelease.ts';
 
 export type LocalEngineConnectionScene =
     | 'intro'
@@ -15,6 +16,7 @@ export type LocalEngineConnectionScene =
     | 'pairing-required'
     | 'pairing'
     | 'connected'
+    | 'update-available'
     | 'session-ended'
     | 'update-required'
     | 'capability-missing';
@@ -51,6 +53,7 @@ export interface GetLocalEngineConnectionViewInput {
     connectionStarted: boolean;
     installerAvailable?: boolean;
     updateAvailable?: boolean;
+    latestRelease?: LocalEngineRelease | null;
     /** The user's check is running while the browser may be showing its allow prompt. */
     permissionPromptPending?: boolean;
     /** Why the last browser connection failed, when the coordinator knows. */
@@ -79,6 +82,7 @@ export const getLocalEngineConnectionView = ({
     connectionStarted,
     installerAvailable = false,
     updateAvailable = false,
+    latestRelease,
     permissionPromptPending = false,
     pairingErrorReason,
 }: GetLocalEngineConnectionViewInput): LocalEngineConnectionViewModel => {
@@ -89,8 +93,31 @@ export const getLocalEngineConnectionView = ({
     const installer = installerAvailable
         ? { secondaryAction: 'download' as const, secondaryLabel: '설치 파일' }
         : {};
+    const updateView = (ready: boolean): LocalEngineConnectionViewModel | null => {
+        if (latestRelease && snapshot.engineVersion && isNewerEngineVersion(latestRelease.version, snapshot.engineVersion)) {
+            const installedCore = snapshot.engineVersion.split(/[+-]/)[0];
+            const latestCore = latestRelease.version.split(/[+-]/)[0];
+            return view({
+                scene: 'update-available',
+                tone: 'info',
+                title: '새 버전이 있습니다',
+                message: installedCore === latestCore
+                    ? `${snapshot.engineVersion} → ${latestRelease.version}`
+                    : `${installedCore} → ${latestCore}`,
+                help: `설치된 버전 ${snapshot.engineVersion}, 최신 버전 ${latestRelease.version}. 다운로드한 설치 파일을 실행해 주세요. 설치가 끝나면 자동으로 다시 확인합니다. 분석 중이라면 끝난 뒤 설치해 주세요.`,
+                primaryAction: 'update',
+                primaryLabel: '최신 설치 파일 받기',
+                secondaryAction: 'probe',
+                secondaryLabel: '다시 확인',
+                analysisReady: ready,
+            });
+        }
+        return null;
+    };
 
     if (analysisReady) {
+        const update = updateView(true);
+        if (update) return update;
         // Model and device checks come next; the writer, not this view, says whether analysis can start.
         return view({
             scene: 'connected',
@@ -187,6 +214,8 @@ export const getLocalEngineConnectionView = ({
     }
 
     if (pairingPhase === 'awaiting-code') {
+        const update = snapshot.transport === 'reachable' ? updateView(false) : null;
+        if (update) return update;
         return view({
             scene: 'pairing-required',
             tone: 'info',
@@ -195,6 +224,11 @@ export const getLocalEngineConnectionView = ({
             primaryAction: 'open-code',
             primaryLabel: '코드 입력',
         });
+    }
+
+    if (snapshot.transport === 'reachable') {
+        const update = updateView(false);
+        if (update) return update;
     }
 
     if (pairingPhase === 'error') {

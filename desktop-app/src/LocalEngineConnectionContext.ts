@@ -4,9 +4,11 @@ import type {
 } from './localEngineConnection';
 import type { LocalEnginePairingState } from './localEngineConnectionCoordinator';
 import type { LocalEnginePairingStart } from './localEngineSession';
+import type { LocalEngineRelease } from './localEngineRelease';
 
 export interface LocalEngineConnectionContextValue {
     snapshot: LocalEngineConnectionSnapshot;
+    latestRelease: LocalEngineRelease | null;
     beginTransportCheck: () => number;
     reportTransport: (checkId: number, transport: LocalEngineTransportState) => void;
     pairingState: LocalEnginePairingState;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import net from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1262,6 +1262,51 @@ const verifyIntroDismissals = async browser => {
     await intro.waitFor({ state: 'visible' });
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '시작하기');
     assert.equal(await seen(), null);
+    await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
+    assert.deepEqual(await intro.locator('dt').allTextContents(), ['처리', '인터넷', '보관', '삭제']);
+    assert.equal(await intro.getByRole('button', { name: /자세히|간단히/ }).count(), 0, 'the notice has one complete version');
+    await intro.getByText(`‘${LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 받기는 다음 화면에서 진행합니다.`, { exact: true }).waitFor();
+    for (const key of ['Tab', 'Shift+Tab']) {
+      await page.keyboard.press(key);
+      assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용');
+      await page.keyboard.press(key);
+      assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '시작하기');
+    }
+    const screenshots = process.env.LOCAL_PROCESSING_SCREENSHOTS;
+    if (screenshots) await mkdir(screenshots, { recursive: true });
+    for (const [width, height] of [[1280, 720], [760, 720], [760, 420]]) {
+      await page.setViewportSize({ width, height });
+      const geometry = await intro.evaluate(element => {
+        const content = element.querySelector('.local-processing-content');
+        const action = element.querySelector('button').getBoundingClientRect();
+        const box = element.getBoundingClientRect();
+        return {
+          top: box.top, bottom: box.bottom, actionBottom: action.bottom,
+          overflowX: content.scrollWidth - content.clientWidth,
+          overflowY: content.scrollHeight - content.clientHeight,
+          footerOutsideScroll: !content.contains(element.querySelector('button')),
+        };
+      });
+      assert.ok(geometry.top >= 16 && geometry.bottom <= height - 15, 'the dialog fits the viewport');
+      assert.ok(geometry.actionBottom <= height - 16, 'the primary action remains visible');
+      assert.equal(geometry.overflowX, 0, 'no horizontal scrolling');
+      assert.equal(geometry.footerOutsideScroll, true, 'the primary action stays outside scrolling content');
+      if (height === 720) assert.ok(geometry.overflowY <= 1, 'all details fit the supported desktop height');
+      if (screenshots) await page.screenshot({ path: join(screenshots, `intro-${width}x${height}.png`) });
+      if (height === 420) {
+        const content = intro.getByRole('region', { name: '처리 방식 안내 내용' });
+        await page.keyboard.press('Tab');
+        await page.keyboard.press('End');
+        await page.waitForFunction(() => {
+          const element = document.querySelector('.local-processing-content');
+          return element.scrollTop > 0 && element.scrollHeight - element.clientHeight - element.scrollTop < 2;
+        });
+        assert.ok(await content.evaluate(element => element.scrollHeight - element.clientHeight - element.scrollTop < 2), 'keyboard scroll reaches the deletion guidance');
+        await page.keyboard.press('Tab');
+        assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '시작하기');
+      }
+    }
+    await page.setViewportSize({ width: 1280, height: 720 });
     await page.keyboard.press('Escape');
     await intro.waitFor({ state: 'hidden' });
     assert.equal(await seen(), '1', 'Escape counts as having read the notice');
@@ -1277,6 +1322,21 @@ const verifyIntroDismissals = async browser => {
     await page.mouse.click(8, 8);
     await intro.waitFor({ state: 'hidden' });
     assert.equal(await seen(), '1', 'a backdrop click counts as having read the notice');
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    assert.equal(await intro.count(), 0, 'the first-visit notice does not repeat after reload');
+    const helpButton = page.getByRole('button', { name: '처리 방식', exact: true });
+    await helpButton.click();
+    await intro.waitFor({ state: 'visible' });
+    await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
+    assert.equal(await intro.locator('.local-processing-setup').count(), 0, 'help omits first-use preparation');
+    assert.equal(await intro.getByRole('button', { name: /자세히|간단히/ }).count(), 0);
+    await intro.getByRole('button', { name: '확인', exact: true }).click();
+    await intro.waitFor({ state: 'hidden' });
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리 방식');
+    await page.evaluate(() => window.localStorage.removeItem('localProcessingIntroSeen'));
+    await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
+    await intro.getByRole('button', { name: '시작하기', exact: true }).click();
+    assert.equal(await seen(), '1', 'the primary action also remembers the notice');
     console.log('ok - first-visit notice is remembered after Escape or a backdrop click');
   } finally {
     await context.close();
@@ -1446,26 +1506,18 @@ const run = async () => {
     await intro.waitFor({ state: 'visible' });
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'opening the notice is not yet a confirmation');
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '시작하기');
-    await intro.getByText(`이를 위해 처음 한 번 ‘${LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.`, { exact: true }).waitFor();
-    const introFootnote = intro.getByText('웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.', { exact: true });
-    assert.equal(await introFootnote.count(), 1);
-    assert.equal(await intro.locator('#local-processing-details').count(), 0, 'first visit keeps the details folded');
-    const detailsToggle = intro.getByRole('button', { name: '처리 방식 자세히 보기', exact: true });
-    assert.equal(await detailsToggle.getAttribute('aria-expanded'), 'false');
-    // Focus that left the dialog comes back on Tab: forward to the first button, backward to the last.
+    await intro.getByText(`‘${LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 받기는 다음 화면에서 진행합니다.`, { exact: true }).waitFor();
+    await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
+    assert.equal(await intro.getByRole('button', { name: /자세히|간단히/ }).count(), 0);
+    // Focus that left the dialog comes back on Tab: forward to the reading region, backward to the button.
     const activeText = () => page.evaluate(() => document.activeElement?.textContent?.trim());
     const blurActive = () => page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
     await blurActive();
     await page.keyboard.press('Tab');
-    assert.equal(await activeText(), '처리 방식 자세히 보기', 'Tab from outside the notice returns to its first button');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용', 'Tab from outside the notice returns to the reading region');
     await blurActive();
     await page.keyboard.press('Shift+Tab');
     assert.equal(await activeText(), '시작하기', 'Shift+Tab from outside the notice returns to its last button');
-    await detailsToggle.click();
-    await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
-    const foldToggle = intro.getByRole('button', { name: '간단히 보기', exact: true });
-    assert.equal(await foldToggle.getAttribute('aria-expanded'), 'true');
-    assert.equal(await introFootnote.count(), 0, 'the internet row replaces the footnote while details are open');
     await intro.locator('dd').getByText(`웹사이트 접속과 ${LOCAL_ENGINE_NAME}·모델 받기에만 씁니다.`, { exact: true }).waitFor();
     // The dialog's height is capped to the window, so its box always fits; content that does not fit scrolls inside it.
     await page.setViewportSize({ width: 1280, height: 720 });

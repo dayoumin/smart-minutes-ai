@@ -1,5 +1,41 @@
 # Frontend Simulation Testing
 
+## Full local-processing notice — 2026-10-21
+
+Removed the compact intro and its expand/collapse control. Intro and help show
+the same four detail rows; only the web intro explains first-use preparation.
+The footer stays visible while the body scrolls. Independent review found a
+keyboard access gap in the new scroll body; a named focusable region and focus
+ring resolved it, and source re-review found no remaining blocker.
+
+Follow-up copy review matched the local-processing, internet and setting-aware
+storage claims to the relevant source. Deletion now includes deferred cleanup
+when disconnected and separately saved files (including automatic copies).
+Detail labels align with the first line of their descriptions, including the
+longer deletion row; measured top offsets were0px at1280px and760px. The
+`intro-dismissal` and `processing-help` scenarios cover the updated layout.
+
+Passed from `D:\Projects\audio` using `corepack pnpm --dir desktop-app`:
+
+- `typecheck`
+- `exec eslint src/LocalProcessingNotice.tsx scripts/simulate-local-engine-connection-ui.mjs scripts/simulate-new-record-home-flow.mjs`
+- `exec node --experimental-strip-types scripts/simulate-local-engine-connection-ui.mjs`
+  with `LOCAL_ENGINE_UI_SCENARIO=intro-dismissal` and
+  `APP_URL=http://127.0.0.1:5202/?view=minutes&localEngineConnection=1`
+- `exec node scripts/simulate-new-record-home-flow.mjs` with
+  `NEW_RECORD_HOME_SCENARIO=processing-help` and `APP_URL=http://127.0.0.1:5202/`
+
+Both browser checks use `PLAYWRIGHT_BROWSERS_PATH=D:/Projects/audio/.cache/ms-playwright`
+and mocked/unavailable engine APIs. They cover full details on arrival,
+1280×720 and760×720 fit,760×420 scrolling and persistent action, keyboard
+scroll to the last row, focus containment/return, all three dismissal paths,
+reload suppression, and help without first-use preparation. These checks do
+not verify a deployed build or actual local-engine processing.
+Screenshots: `.tmp/local-processing-20261021/` (set `LOCAL_PROCESSING_SCREENSHOTS`
+to capture them). Preview server: `corepack pnpm --dir desktop-app exec vite
+--host 127.0.0.1 --port 5202 --strictPort`, cwd `D:\Projects\audio`; left running
+for review. `git diff --check` passed.
+
 ## Folder move focus and resume checks — 2026-10-21
 
 The folder scenario now deterministically delays the meetings+folders readonly

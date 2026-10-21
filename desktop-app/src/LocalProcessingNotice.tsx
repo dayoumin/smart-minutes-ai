@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef } from 'react';
 import { Globe, HardDrive, Laptop, ShieldCheck, Trash2 } from 'lucide-react';
 import { LOCAL_ENGINE_NAME } from './brand';
 import { Button } from './components/common';
@@ -8,7 +8,7 @@ import type { RuntimeKind } from './runtimeEnvironment';
 export type LocalProcessingNoticeMode = 'intro' | 'help';
 
 interface LocalProcessingNoticeProps {
-    /** `intro` is the one-time first-visit notice; `help` opens straight to the processing details. */
+    /** Both modes show the full notice; only `intro` includes first-use preparation. */
     mode: LocalProcessingNoticeMode;
     runtime: RuntimeKind;
     /** Setting-aware storage sentence, so the help never promises a retention the engine does not apply. */
@@ -22,7 +22,6 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
     storageMessage,
     onClose,
 }) => {
-    const [showDetails, setShowDetails] = useState(mode === 'help');
     const dialogRef = useRef<HTMLDivElement>(null);
     const primaryRef = useRef<HTMLButtonElement>(null);
     // Any way of closing the intro (button, Escape, backdrop) counts as having read it.
@@ -94,28 +93,26 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                 aria-describedby="local-processing-summary"
                 className="local-processing-dialog"
             >
-                <div className="local-processing-header">
-                    <span className="icon-badge" aria-hidden="true">
-                        <ShieldCheck size={20} />
-                    </span>
-                    <h3 id="local-processing-title">회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다</h3>
-                </div>
-                <div id="local-processing-summary" className="local-processing-summary">
-                    <p>외부 AI 서버 없이 이 PC에서 분석하고 요약합니다.</p>
+                <div className="local-processing-content" role="region" aria-label="처리 방식 안내 내용" tabIndex={0}>
+                    <div className="local-processing-header">
+                        <span className="icon-badge" aria-hidden="true">
+                            <ShieldCheck size={20} />
+                        </span>
+                        <h2 id="local-processing-title">회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다</h2>
+                    </div>
+                    <p id="local-processing-summary" className="local-processing-summary">
+                        외부 AI 서버 없이 이 PC에서 분석하고 요약합니다.
+                    </p>
                     {isWeb && mode === 'intro' && (
-                        <p>이를 위해 처음 한 번 ‘{LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 다운로드가 필요합니다.</p>
+                        <section className="local-processing-setup" aria-labelledby="local-processing-setup-title">
+                            <h3 id="local-processing-setup-title">처음 한 번 준비해 주세요</h3>
+                            <p>‘{LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 받기는 다음 화면에서 진행합니다.</p>
+                        </section>
                     )}
-                </div>
-                {showDetails && (
-                    /* One short line per row; the title already says files and transcripts stay on this PC. */
                     <dl id="local-processing-details" className="local-processing-details">
                         <div>
                             <dt><Laptop size={15} aria-hidden="true" />처리</dt>
                             <dd>음성 인식, 참석자 구분, 요약까지 모두 이 PC에서 합니다.</dd>
-                        </div>
-                        <div>
-                            <dt><HardDrive size={15} aria-hidden="true" />보관</dt>
-                            <dd>{storageMessage}</dd>
                         </div>
                         <div>
                             <dt><Globe size={15} aria-hidden="true" />인터넷</dt>
@@ -126,30 +123,20 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                             </dd>
                         </div>
                         <div>
+                            <dt><HardDrive size={15} aria-hidden="true" />보관</dt>
+                            <dd>{storageMessage}</dd>
+                        </div>
+                        <div>
                             <dt><Trash2 size={15} aria-hidden="true" />삭제</dt>
-                            <dd>회의록을 지우면 분석 결과도 지워집니다. 내려받은 파일은 직접 지워 주세요.</dd>
+                            <dd>회의록을 지우면 분석 결과도 지웁니다. 연결이 꺼져 있으면 다음 연결 때 지웁니다. 따로 저장한 파일은 직접 지워 주세요.</dd>
                         </div>
                     </dl>
-                )}
+                </div>
                 <div className="local-processing-actions">
-                    {mode === 'intro' && (
-                        <button
-                            type="button"
-                            className="local-processing-link"
-                            aria-expanded={showDetails}
-                            aria-controls="local-processing-details"
-                            onClick={() => setShowDetails(previous => !previous)}
-                        >
-                            {showDetails ? '간단히 보기' : '처리 방식 자세히 보기'}
-                        </button>
-                    )}
                     <Button ref={primaryRef} onClick={close}>
                         {mode === 'intro' ? '시작하기' : '확인'}
                     </Button>
                 </div>
-                {!showDetails && isWeb && (
-                    <p className="local-processing-footnote">웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.</p>
-                )}
             </div>
         </div>
     );

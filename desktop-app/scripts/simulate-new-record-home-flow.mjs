@@ -435,14 +435,15 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     const help = page.getByRole('dialog', { name: helpTitle });
     await help.waitFor({ state: 'visible', timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '확인');
-    // Help opens straight to the details; the first-visit toggle and footnote are intro-only.
+    // Help and the intro share the complete details; neither has a compact version.
     for (const term of ['처리', '보관', '인터넷', '삭제']) {
       assert.equal(await help.locator('dt').getByText(term, { exact: true }).count(), 1, `help must explain ${term}`);
     }
-    // Each row leads with its symbol and stays short: at most two lines in the dialog.
+    // Each row leads with its symbol. Deletion also explains delayed cleanup and separate copies.
     assert.equal(await help.locator('dt svg').count(), 4, 'every help row starts with a symbol');
-    for (const box of await help.locator('dd').evaluateAll(rows => rows.map(row => ({ text: row.textContent, height: row.getBoundingClientRect().height })))) {
-      assert.ok(box.height <= 48, `help row must stay within two lines: "${box.text}" (${box.height}px)`);
+    for (const box of await help.locator('dd').evaluateAll(rows => rows.map(row => ({ label: row.previousElementSibling.textContent, text: row.textContent, height: row.getBoundingClientRect().height })))) {
+      const maxHeight = box.label === '삭제' ? 72 : 48;
+      assert.ok(box.height <= maxHeight, `help row must stay concise: "${box.text}" (${box.height}px)`);
     }
     assert.equal(await help.getByRole('button', { name: '처리 방식 자세히 보기' }).count(), 0);
     assert.equal(await help.getByRole('button', { name: '시작하기' }).count(), 0);
@@ -456,10 +457,12 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     const helpOverflow = await help.evaluate(element => element.scrollHeight - element.clientHeight);
     assert.ok(helpOverflow <= 0, `help must show all four rows without scrolling at 1280x720 (overflow ${helpOverflow}px)`);
     await page.keyboard.press('Tab');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용', 'the scrollable help content is keyboard accessible');
+    await page.keyboard.press('Tab');
     assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'focus must stay inside the help dialog');
     await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
     await page.keyboard.press('Tab');
-    assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'Tab from outside the help returns focus to it');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용', 'Tab from outside the help returns to the reading region');
     await page.keyboard.press('Escape');
     await help.waitFor({ state: 'hidden', timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리 방식');
@@ -625,6 +628,10 @@ const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'processing-help') {
+      await runPrivacyNoteWithoutEngineScene(browser);
+      return;
+    }
     await runEmptyHomeScene(browser);
     await runRecentListScene(browser);
     await runRecoveryScene(browser);

@@ -2241,7 +2241,7 @@
   }
 
   .local-processing-dialog {
-    @apply w-full max-w-lg overflow-y-auto border bg-background p-6 text-foreground;
+    @apply flex w-full max-w-xl flex-col overflow-hidden border bg-background text-foreground;
     max-height: calc(100dvh - 2rem);
     word-break: keep-all;
     border-radius: var(--radius-dialog);
@@ -2249,26 +2249,54 @@
     box-shadow: var(--shadow-overlay);
   }
 
-  .local-processing-header {
-    @apply flex items-center gap-3;
+  .local-processing-content {
+    @apply min-h-0 overflow-y-auto p-6 sm:p-8;
+    overscroll-behavior: contain;
+    overflow-wrap: anywhere;
   }
 
-  .local-processing-header h3 {
-    @apply text-lg font-semibold leading-snug;
+  .local-processing-content:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: -4px;
+  }
+
+  .local-processing-header {
+    @apply flex items-start gap-3;
+  }
+
+  .local-processing-header .icon-badge {
+    @apply shrink-0;
+  }
+
+  .local-processing-header h2 {
+    @apply text-xl font-semibold leading-snug;
+    text-wrap: balance;
   }
 
   .local-processing-summary {
-    @apply mt-4 grid gap-2 text-sm leading-relaxed;
+    @apply mt-3 text-sm leading-relaxed;
     color: var(--text-default);
   }
 
-  .local-processing-details {
-    @apply mt-4 grid gap-3 border-t pt-4 text-sm leading-relaxed;
+  .local-processing-setup {
+    @apply mt-6 border-y py-4 text-sm leading-relaxed;
     border-color: var(--border-default);
   }
 
+  .local-processing-setup h3 {
+    @apply mb-1 font-semibold;
+  }
+
+  .local-processing-setup p {
+    color: var(--text-muted);
+  }
+
+  .local-processing-details {
+    @apply mt-6 grid gap-4 text-sm leading-relaxed;
+  }
+
   .local-processing-details > div {
-    @apply grid gap-1 sm:grid-cols-[5.25rem_minmax(0,1fr)] sm:gap-3;
+    @apply grid items-start gap-1 sm:grid-cols-[5.25rem_minmax(0,1fr)] sm:gap-3;
   }
 
   .local-processing-details dt {
@@ -2285,29 +2313,8 @@
   }
 
   .local-processing-actions {
-    @apply mt-6 flex flex-wrap items-center justify-end gap-3;
-  }
-
-  .local-processing-link {
-    @apply mr-auto rounded-sm p-0 text-sm font-medium;
-    border: 0;
-    background: transparent;
-    color: var(--brand-primary);
-  }
-
-  .local-processing-link:hover {
-    color: var(--brand-primary-hover);
-    text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-
-  .local-processing-link:focus-visible {
-    outline: 2px solid var(--focus-ring-color);
-    outline-offset: 2px;
-  }
-
-  .local-processing-footnote {
-    @apply mt-4 text-xs leading-5 text-muted-foreground;
+    @apply flex shrink-0 items-center justify-end border-t px-6 py-4 sm:px-8;
+    border-color: var(--border-default);
   }
 
   @container writer (max-width: 39.99rem) {

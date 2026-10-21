@@ -1,5 +1,102 @@
 # Frontend Simulation Testing
 
+## Folder move focus and resume checks — 2026-10-21
+
+The folder scenario now deterministically delays the meetings+folders readonly
+IndexedDB transaction after `meetings:updated` while allowing the folders-only
+transaction to complete and render first. Before the source fix, the moved row
+disappeared and the final keyboard-focus assertion failed. With the fix, focus
+returns to the remaining row's menu after the refreshed meeting list commits.
+The temporary transaction hook is restored after release. Existing content,
+folder assignment, reopen, removal and independent pagination checks remain.
+
+The resume scripts used a removed `.meeting-analysis-complete` class and timed
+out even though analysis had completed. They now wait on the current analysis
+status; the selected fresh-start scenario also waits for meeting detail. Existing
+resume job ID/request flags and final transcript checks remain intact.
+
+Passed serially using `corepack pnpm --dir desktop-app`:
+
+| Command suffix | Verified scope |
+| --- | --- |
+| `test:meeting-archive-flow` (`ARCHIVE_FLOW_SCENARIO=folders`) | 2 folder scenarios, including controlled focus race |
+| `test:resume-flow` | 2 reuse/fallback scenarios |
+| `test:resume-draft-flow -- suppressed-resume-candidate selected-resume-fresh-start` | 2 draft/fresh-start scenarios |
+| `exec node node_modules/typescript/bin/tsc --noEmit` | TypeScript |
+| `exec node node_modules/eslint/bin/eslint.js src/Sidebar.tsx scripts/simulate-meeting-archive-flow.mjs scripts/simulate-resume-flow.mjs scripts/simulate-resume-draft-flow.mjs` | Changed source/scripts |
+
+The existing `.bin` shims, TypeScript, ESLint and Babel package were present on
+this PC; no dependency install or lockfile change was needed. Independent review
+found no blocking issue in the source change or the updated resume assertions.
+
+Environment: `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`,
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`,
+`APP_URL=http://127.0.0.1:5198/`. The session-owned server command from
+`D:\Projects\LMO_audio` was `corepack pnpm --dir desktop-app exec vite
+--host 127.0.0.1 --port 5198 --strictPort --configLoader runner`.
+The first sandboxed server announced readiness but was unreachable from separate
+checks; the simulation timed out before entering its scenario. That server was
+stopped and a focused elevated start made HTML, main module and CSS return 200.
+Only the replacement session-owned server is used for the passing runs.
+After verification, that server was stopped through its own terminal session;
+the selected URL was confirmed unreachable. The same command restores it when needed.
+
+These are Chromium source-UI simulations with mocked APIs and isolated browser
+storage. They do not prove real local-engine inference, installed-engine behavior,
+production HTTPS permissions or other-PC installation.
+
+## Merged-source browser verification and startup timeout — 2026-10-21
+
+Verified merged source `8451d701` in `D:\Projects\LMO_audio` after the earlier
+engine-update simulation timed out at its first `page.goto(..., networkidle)` with
+zero scenarios executed. The earlier report had no request-level trace, so the
+exact request responsible for that timeout cannot be identified retrospectively.
+
+The fresh diagnostic Vite server needed 21,598ms to become ready. An initial
+`/src/index.css` request exceeded a 15-second HTTP deadline; after loading, HTML,
+`/src/main.jsx`, and CSS returned 200 in 834ms, 58ms, and 26ms respectively. This
+establishes slow initial development-server loading, while the initial HTML-only
+readiness check does not establish that the UI modules/styles are ready. Available
+physical memory was 14.2% during the check; this alone does not establish memory
+pressure as the cause. No dependency reinstall, product change, test assertion
+change, or timeout increase was needed.
+
+The unchanged engine-update script passed all seven scenarios against the prepared
+server, with no page errors. A second run without `APP_URL` also passed all seven
+scenarios through its original automatic-server startup and cleanup path
+(`cleanupExit: 0`). The original failure did not recur in these runs.
+
+The following checks ran serially with `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`,
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`, Node 22.22.2,
+and Corepack pnpm 10.33.2. The session-owned server command, from the repository
+root, was `corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5197
+--strictPort --configLoader runner`. Its title was confirmed as `LMO 회의록`.
+`APP_URL` used this server's root, `/?view=minutes`, or
+`/?view=minutes&localEngineConnection=1` as appropriate.
+
+| Command after `corepack pnpm --dir desktop-app` | Passed scenarios |
+| --- | --- |
+| `exec node scripts/simulate-local-engine-update.mjs` | 7: old/unpaired/latest/newer engines, missing metadata, engine off, browser block; download/model priority and stable 1280/760px controls |
+| `test:analysis-stop-flow detail-continuity` | 4: preparation/running/completion/reopen at 1280/760px, background completion, narrow-window audio-source failure |
+| `test:analysis-stop-flow diarization-continuity` | 2: participant progress, stop choice, completion and reopen at 1280/760px |
+| `test:meeting-archive-flow` with `ARCHIVE_FLOW_SCENARIO=folders` | 2: keyboard move/reopen/removal and folder pagination/content preservation |
+| `test:folder-recovery` | 3: initial read failure, refresh failure/focus recovery, explicit retry and stored assignment preservation |
+| `test:meeting-cleanup-flow` | 3: selected cleanup, unresponsive record deletion, unresponsive PC-file deletion and settings unlock |
+
+All 21 distinct scenarios passed; the seven update scenarios additionally passed
+the automatic-server rerun. Evidence is under `.tmp/browser-verification-20261021/`:
+`engine-update/simulation-report.json`, `engine-update-auto/simulation-report.json`,
+update screenshots, and the `analysis/` screenshots. The 760px update and completed
+detail screenshots were also visually inspected. The dedicated server was stopped
+after verification; the automatic run stopped only its own server.
+
+These checks use isolated Chromium storage and mocked engine/download responses.
+They do not analyze user audio, execute an installer, or delete user files. Actual
+HTTPS Chrome/Edge permission prompts, organization policy, other-PC installation,
+and the existing long-summary failure remain in the existing release QA table in
+`docs/web-runtime-separation-implementation-plan.md`; these source UI passes do not
+close those gates.
+
 ## Local engine update notice — 2026-10-21
 
 Run `corepack pnpm --dir desktop-app exec node --experimental-strip-types --test scripts/test-local-engine-release.mjs`

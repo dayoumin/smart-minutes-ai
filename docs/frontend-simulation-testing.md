@@ -1,5 +1,43 @@
 # Frontend Simulation Testing
 
+## Local engine update notice — 2026-10-21
+
+Run `corepack pnpm --dir desktop-app exec node --experimental-strip-types --test scripts/test-local-engine-release.mjs`
+for version ordering, prereleases, unknown versions, same-origin installer validation, omitted credentials,
+unavailable/invalid/cancelled metadata, and connection/model/input priority. Run
+`corepack pnpm --dir desktop-app exec node scripts/simulate-local-engine-update.mjs` with
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright` for the focused UI simulation.
+The default starts its own Vite server on an available port and records its command, directory, port,
+PID and cleanup result. `APP_URL` selects an existing URL; `EVIDENCE_DIR` selects the evidence folder.
+
+Production verification passed on Worker `1b1c30f7-5a82-4e12-9522-2feb013f71c4` from isolated source
+commit `a88fcf9348281f2a40feebfb5c184c248fb15288`, based on the previously deployed `6e509fe` source.
+Only the update notice changes and the already public 0.1.10 release metadata were included; unrelated
+working-tree font/folder/UI changes were excluded. The six served asset SHA256 values matched the
+built files; installer HEAD/Range and four previous download redirects passed.
+
+The production UI simulation used API/installer-response mocks for seven cases: connected old engine,
+old engine before browser connection, latest, newer, metadata unavailable, engine off, and browser block.
+It verified the latest download target, uninterrupted compatible-engine use, model readiness priority,
+notice disappearance on focus after the simulated install (without clicking `다시 확인`), retained meeting
+title, no horizontal overflow, and unchanged `분석 시작` coordinates at 1280px/760px. No audio was analyzed
+and the simulated installer was not executed. The pre-deploy local simulation covered six cases before
+the old-unpaired case was added. Screenshots/reports: `.tmp/engine-update-20261021/{evidence,public-simulation}`.
+
+Separate actual-runtime evidence used the public website and the installed Windows engine with no API
+mocks: 0.1.10 was ready, no update notice appeared, and reload restored the connection. The isolated
+Chromium test granted local-network access and revoked its own temporary browser approval afterward;
+this does not close the existing human Chrome/Edge/organization-policy QA gate.
+
+The unchanged public `0.1.10-beta-20261021` installer was actually reinstalled over the same version:
+exit 0 in 51.05s, installed payload 4,957 file hashes matched, existing settings/results/database 278
+observed paths retained SHA256, and models 146 observed paths retained file sizes (not full model hashes;
+virtualized aliases may overlap). Restart, automatic connection, exact-Origin rejection and approval
+revocation passed. The engine was left running; no inference jobs were submitted. Evidence root:
+`.tmp/engine-update-20261021/{release-manifest,installed-verification,public-verification}.json`.
+Rollback Worker version: `a2374e43-5d04-40e6-a24a-1be785be30f0`. The engine remains an unsigned test release;
+existing signing/other-PC/policy release QA gates are unchanged.
+
 ## Folder read recovery — 2026-10-20
 
 Run `corepack pnpm --dir desktop-app test:folder-recovery` with `APP_URL` set to a dedicated

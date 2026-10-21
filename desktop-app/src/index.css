@@ -1,6 +1,14 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+@font-face {
+  font-family: 'Pretendard Variable';
+  font-style: normal;
+  font-weight: 45 920;
+  font-display: swap;
+  src: url('/fonts/pretendard/PretendardVariable.woff2') format('woff2');
+}
+
 /* ============================================================
    DESIGN TOKEN SYSTEM - LMO 스마트 회의시스템
    ============================================================
@@ -47,6 +55,13 @@
   --color-neutral-800: #292927;
   --color-neutral-900: #1c1c1b;
   --color-neutral-950: #0f0f0e;
+
+  /* UI typography: list/menu items and supporting labels share these roles. */
+  --font-ui: 'Pretendard Variable', 'Segoe UI', 'Malgun Gothic', sans-serif;
+  --type-ui-size: 0.875rem;
+  --type-ui-line-height: 1.25rem;
+  --type-meta-size: 0.75rem;
+  --type-meta-line-height: 1rem;
 }
 
 /* ── 2. SEMANTIC TOKENS (Light Mode) ──────────────────────── */
@@ -229,6 +244,7 @@
 
 /* ── 4. TAILWIND THEME MAPPING ────────────────────────────── */
 @theme inline {
+  --font-sans: var(--font-ui);
   /* Colors → Tailwind utilities (bg-*, text-*, border-*) */
   --color-background: var(--bg-page);
   --color-foreground: var(--text-default);
@@ -279,7 +295,7 @@
     isolation: isolate;
     background: var(--color-neutral-0);
     color: var(--text-default);
-    font-family: 'Pretendard', 'Inter', system-ui, sans-serif;
+    font-family: var(--font-ui);
     @apply antialiased transition-colors duration-300;
   }
 
@@ -303,6 +319,22 @@
 @layer components {
 
   /* Typography Hierarchy */
+  .ui-item-text,
+  .sidebar-create-button,
+  .sidebar-utility-button,
+  .sidebar-folder-button,
+  .menu-panel,
+  .menu-item {
+    font-size: var(--type-ui-size);
+    line-height: var(--type-ui-line-height);
+  }
+
+  .ui-meta-text,
+  .sidebar-section-header {
+    font-size: var(--type-meta-size);
+    line-height: var(--type-meta-line-height);
+  }
+
   .text-h1 {
     @apply text-3xl font-bold tracking-tight text-foreground;
   }
@@ -816,7 +848,7 @@
   }
 
   .sidebar-utility-button {
-    @apply flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal text-foreground transition-colors;
+    @apply flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left font-normal text-foreground transition-colors;
   }
 
   .sidebar-utility-button:hover {
@@ -837,7 +869,7 @@
   }
 
   .sidebar-create-button {
-    @apply flex min-h-9 w-full items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-1.5 text-left text-sm font-medium text-foreground shadow-none transition-colors;
+    @apply flex min-h-9 w-full items-center gap-2.5 rounded-md border border-transparent bg-transparent px-2.5 py-1.5 text-left font-medium text-foreground shadow-none transition-colors;
   }
 
   .sidebar-create-button:hover {
@@ -864,7 +896,7 @@
   }
 
   .sidebar-section-header {
-    @apply flex min-h-8 items-center justify-between px-2.5 pb-1 pt-4 text-[11px] font-medium text-muted-foreground;
+    @apply flex min-h-8 items-center justify-between px-2.5 pb-1 pt-4 font-medium text-muted-foreground;
   }
 
   /* Fixed status area above settings: analysis progress and unfinished drafts. */
@@ -892,6 +924,18 @@
 
   .sidebar-content-scroll {
     @apply min-h-0 flex-1 overflow-y-auto pr-1;
+  }
+
+  .sidebar-folder-records {
+    @apply ml-3 border-l border-border pl-1;
+  }
+
+  .sidebar-folder-more {
+    @apply mt-1 w-full rounded-md px-2 py-2 text-left text-xs font-medium text-primary;
+  }
+
+  .sidebar-folder-more:hover {
+    background: var(--barorok-navigation-hover);
   }
 
   .sidebar-folder-row {
@@ -922,7 +966,7 @@
   }
 
   .sidebar-folder-button {
-    @apply flex min-w-0 cursor-grab items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm font-normal text-foreground transition-colors active:cursor-grabbing;
+    @apply flex min-w-0 cursor-grab items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left font-normal text-foreground transition-colors active:cursor-grabbing;
   }
 
   .sidebar-folder-button svg {
@@ -980,7 +1024,7 @@
   }
 
   .sidebar-folder-menu {
-    @apply fixed z-30 w-36 p-1 text-xs;
+    @apply fixed z-30 w-36 p-1;
   }
 
   .sidebar-folder-menu-trigger,
@@ -1005,6 +1049,7 @@
 
   .sidebar-record-age {
     @apply absolute inset-y-0 right-0 flex items-center;
+    pointer-events: none;
     opacity: 1;
     transition: opacity 0.15s ease;
   }
@@ -1030,12 +1075,17 @@
     pointer-events: auto;
   }
 
-  .sidebar-record-folder-field {
-    @apply grid gap-1 border-y border-border px-2 py-2 text-[11px] font-semibold text-muted-foreground;
+  .sidebar-record-move {
+    @apply border-y border-border py-1;
   }
 
-  .sidebar-record-folder-field .select-field {
-    @apply h-8 w-full py-1 text-[11px];
+  .sidebar-record-move > button[aria-expanded="true"] {
+    background-color: var(--surface-action-hover-bg);
+  }
+
+  .sidebar-record-move-menu {
+    @apply fixed z-30 w-44 overflow-y-auto;
+    max-height: min(18rem, calc(100dvh - 16px));
   }
 
   .barorok-app-frame {
@@ -3200,7 +3250,7 @@
   }
 
   .menu-panel {
-    @apply rounded-[var(--radius-card)] border border-border bg-background p-1 text-sm;
+    @apply rounded-[var(--radius-card)] border border-border bg-background p-1 font-normal;
     box-shadow: var(--shadow-overlay);
   }
 

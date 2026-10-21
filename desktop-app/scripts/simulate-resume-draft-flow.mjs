@@ -1875,15 +1875,13 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.getByLabel('회의 목적', { exact: true }).fill('재개 후보 숨김 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
-    const completionPanel = page.locator('.writer-panel .writer-completion-panel');
+    const completionPanel = page.locator('.meeting-analysis-complete');
     await completionPanel.waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the ready command bar must not compete with the completed result');
-    await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
-    await page.getByText('기록 정리에서 핵심 결과를 확인하세요.', { exact: false }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '결과 보기', exact: true }).count(), 0, 'completion already shows the detail');
     assert.equal(dialogShown, false);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\nfalse/);
-    await page.getByRole('button', { name: '결과 보기' }).click();
+    await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
     await page.getByRole('tab', { name: '기록 정리' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('tab', { name: '기록 정리' }).getAttribute('aria-selected'), 'true');
     await page.locator('.meeting-detail-shell').getByText('fresh summary', { exact: true }).waitFor({ timeout: 10000 });
@@ -2050,16 +2048,15 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByRole('button', { name: '새 분석', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-analysis-complete').waitFor({ timeout: 10000 });
     await page.getByText('대화록을 확인하고 필요한 정리를 실행하세요.', { exact: false }).waitFor({ timeout: 10000 });
-    const completionPanel = page.locator('.writer-panel .writer-completion-panel');
+    const completionPanel = page.locator('.meeting-analysis-complete');
     await completionPanel.waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the completed result should stay in the writer action slot');
-    await completionPanel.getByRole('button', { name: '결과 보기' }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '결과 보기', exact: true }).count(), 0, 'completion already shows the detail');
     assert.equal(dialogShown, false);
     assert.doesNotMatch(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\nfresh-choice-draft-job/);
     assert.match(analyzeRequestSnapshot ?? '', /name="resume_requested"\r\n\r\nfalse/);
-    await page.getByRole('button', { name: '결과 보기' }).click();
     await page.getByRole('tab', { name: '대화록' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByRole('tab', { name: '대화록' }).getAttribute('aria-selected'), 'true');
     await page.getByText('후속 회의를 시작합니다.', { exact: true }).waitFor({ timeout: 10000 });
@@ -2880,6 +2877,8 @@ const run = async () => {
   } finally {
     await browser.close();
     await stopServer(server);
+    server?.stdout?.destroy();
+    server?.stderr?.destroy();
   }
 };
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronRight, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import { AnalysisResumeDraft } from './analysisResumeDrafts';
 import type { AppView } from './appView';
 import { selectVisibleRecoveryDrafts, useAnalysisResumeSnapshot } from './analysisResumeState';
@@ -22,6 +22,7 @@ import { deleteMeetingWithAnalysis } from './meetingDeletion';
 import { isTauriRuntime } from './apiBase';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
 import { AppToast, ProgressBar, type AppToastMessage } from './components/common';
+import { SidebarRecordMoveMenu } from './SidebarRecordMoveMenu';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 
 export interface SidebarProps {
@@ -162,7 +163,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const [folderLoadFailed, setFolderLoadFailed] = useState(false);
     const [isLoadingFolders, setIsLoadingFolders] = useState(false);
     const folderLoadSequence = useRef(0);
-    const [activeFolderId, setActiveFolderId] = useState<string | null>(null);
+    const [expandedFolderIds, setExpandedFolderIds] = useState<Set<string>>(() => new Set());
+    const [folderVisibleCounts, setFolderVisibleCounts] = useState<Record<string, number>>({});
     const [showFolderForm, setShowFolderForm] = useState(false);
     const [openFolderMenuId, setOpenFolderMenuId] = useState<string | null>(null);
     const [isCreatingFolder, setIsCreatingFolder] = useState(false);
@@ -180,7 +182,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         }, 5000);
         return () => window.clearTimeout(timerId);
     }, [deletionToast]);
-    const [showAllRecords, setShowAllRecords] = useState(false);
     const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null);
     const [folderDropTarget, setFolderDropTarget] = useState<{ folderId: string; position: 'before' | 'after' } | null>(null);
     const [isReorderingFolders, setIsReorderingFolders] = useState(false);
@@ -197,7 +198,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const pendingRecordMenuFocusRef = useRef<{ recordId: string; fallbackRecordId: string | null } | null>(null);
     const draggedFolderIdRef = useRef<string | null>(null);
     const folderOrderSavingRef = useRef(false);
-    const recordsListRef = useRef<HTMLDivElement | null>(null);
 
     const loadRecords = async () => {
         try {
@@ -278,16 +278,28 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         }),
         [records],
     );
-    const filteredRecords = useMemo(
-        () => sortedRecords.filter(record => {
-            if (!activeFolderId) return true;
-            return record.folderId === activeFolderId;
-        }),
-        [activeFolderId, sortedRecords],
+    const folderRecords = useMemo(() => {
+        const grouped = new Map<string, MeetingRecord[]>();
+        for (const record of sortedRecords) {
+            if (!record.folderId) continue;
+            const group = grouped.get(record.folderId) ?? [];
+            group.push(record);
+            grouped.set(record.folderId, group);
+        }
+        return grouped;
+    }, [sortedRecords]);
+    const unfiledRecords = useMemo(
+        () => sortedRecords.filter(record => !record.folderId),
+        [sortedRecords],
     );
     const visibleRecords = useMemo(
-        () => showAllRecords ? filteredRecords : filteredRecords.slice(0, 10),
-        [filteredRecords, showAllRecords],
+        () => [
+            ...folders.flatMap(folder => expandedFolderIds.has(folder.id)
+                ? (folderRecords.get(folder.id) ?? []).slice(0, folderVisibleCounts[folder.id] ?? 5)
+                : []),
+            ...unfiledRecords,
+        ],
+        [folders, expandedFolderIds, folderRecords, folderVisibleCounts, unfiledRecords],
     );
     const analysisElapsedMs = now - (analysisStatus?.startedAt || now);
     const analysisRawMessage = analysisStatus?.rawMessage || analysisStatus?.message || '';
@@ -379,10 +391,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     useEffect(() => {
         if (!openMenuId || !recordMenuPosition) return;
         const frame = window.requestAnimationFrame(() => {
-            recordMenuPanelRefs.current
-                .get(openMenuId)
-                ?.querySelector<HTMLButtonElement>('button:not([disabled])')
-                ?.focus();
+            const panel = recordMenuPanelRefs.current.get(openMenuId);
+            if (panel?.contains(document.activeElement)) return;
+            panel?.querySelector<HTMLButtonElement>('button:not([disabled])')?.focus();
         });
         return () => window.cancelAnimationFrame(frame);
     }, [openMenuId, recordMenuPosition]);
@@ -417,7 +428,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         if (event.key === 'Tab') {
             const focusableItems = Array.from(
                 event.currentTarget.querySelectorAll<HTMLElement>(
-                    'button:not([disabled]), select:not([disabled])',
+                    'button:not([disabled]):not([tabindex="-1"]), select:not([disabled])',
                 ),
             );
             const currentIndex = focusableItems.indexOf(document.activeElement as HTMLElement);
@@ -511,9 +522,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         setFolderError('');
         setIsCreatingFolder(true);
         try {
-            const folder = await addMeetingFolder(nextName);
+            await addMeetingFolder(nextName);
             await loadFolders();
-            setActiveFolderId(folder.id);
             setFolderName('');
             setShowFolderForm(false);
         } catch (error) {
@@ -527,10 +537,17 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const handleMoveRecord = async (record: MeetingRecord, folderId: string) => {
         const recordIndex = visibleRecords.findIndex(item => item.id === record.id);
         const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
-        pendingRecordMenuFocusRef.current = { recordId: record.id, fallbackRecordId };
-        await moveMeetingToFolder(record.id, folderId || undefined);
-        setOpenMenuId(null);
-        window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
+        try {
+            await moveMeetingToFolder(record.id, folderId || undefined);
+            pendingRecordMenuFocusRef.current = { recordId: record.id, fallbackRecordId };
+            setOpenMenuId(null);
+            window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
+        } catch (error) {
+            setOpenMenuId(null);
+            window.alert(error instanceof Error ? error.message : '회의록 폴더를 변경하지 못했습니다.');
+            await loadRecords();
+            focusRecordMenuTrigger(record.id);
+        }
     };
 
     const handleToggleFolderPinned = async (folder: MeetingFolder) => {
@@ -670,7 +687,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         const folderIndex = folders.findIndex(item => item.id === folder.id);
         const fallbackFolderId = folders[folderIndex + 1]?.id ?? folders[folderIndex - 1]?.id ?? null;
         await deleteMeetingFolder(folder.id);
-        if (activeFolderId === folder.id) setActiveFolderId(null);
         setOpenFolderMenuId(null);
         window.dispatchEvent(new Event('meetings:updated'));
         window.requestAnimationFrame(() => {
@@ -707,6 +723,129 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     : `회의록을 삭제했습니다. 이 PC의 분석 파일은 ${withJosa(LOCAL_ENGINE_NAME, '이/가')} 실행되면 지웁니다.`,
             });
         }
+    };
+
+    const renderRecord = (record: MeetingRecord) => {
+        const isSelected = (activeTab === 'history' || activeTab === 'minutes' && analysisStatus?.completionVisible)
+            && selectedMeetingId === record.id;
+        const analysisStateLabel = record.analysisStatus === 'diarization_in_progress'
+            ? '참석자 구분 중'
+            : record.analysisStatus === 'diarization_failed'
+                ? '참석자 구분 실패'
+                : record.analysisStatus === 'diarization_stopped'
+                    ? '구분 중지'
+                    : '';
+
+        return (
+            <div
+                key={record.id}
+                className={`group sidebar-record-row ${isSelected ? 'sidebar-record-row-active' : ''}`}
+            >
+                <div className="flex items-center gap-1 px-2 py-1.5">
+                    <button
+                        type="button"
+                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+                        onClick={() => handleSelectRecord(record.id)}
+                        title={record.title}
+                        aria-current={isSelected ? 'page' : undefined}
+                    >
+                        <Pin
+                            size={12}
+                            className={`shrink-0 ${record.pinned ? 'text-primary' : 'hidden'}`}
+                        />
+                        <div className={`ui-item-text min-w-0 flex-1 truncate text-foreground ${isSelected ? 'font-medium' : 'font-normal'}`}>
+                            {record.title}
+                        </div>
+                    </button>
+                    <div
+                        className={`sidebar-record-meta-slot ${analysisStateLabel ? 'sidebar-record-meta-slot-status' : ''}`}
+                        title={analysisStateLabel ? `${analysisStateLabel} · ${record.date}` : record.date}
+                    >
+                        <span
+                            className="sidebar-record-age ui-meta-text truncate text-muted-foreground"
+                            data-sidebar-record-age
+                        >
+                            {analysisStateLabel || formatRecordElapsedTime(record)}
+                        </span>
+                        <button
+                            ref={element => {
+                                if (element) recordMenuTriggerRefs.current.set(record.id, element);
+                                else recordMenuTriggerRefs.current.delete(record.id);
+                            }}
+                            type="button"
+                            className="icon-button btn-ghost sidebar-record-menu-trigger h-6 w-6"
+                            onClick={() => {
+                                setOpenFolderMenuId(null);
+                                setOpenMenuId(openMenuId === record.id ? null : record.id);
+                            }}
+                            onKeyDown={event => {
+                                if (event.key !== 'Escape' || openMenuId !== record.id) return;
+                                event.preventDefault();
+                                event.stopPropagation();
+                                closeRecordMenu(record.id, true);
+                            }}
+                            data-sidebar-record-menu-trigger
+                            aria-haspopup="dialog"
+                            aria-expanded={openMenuId === record.id}
+                            aria-controls={`sidebar-record-menu-${record.id}`}
+                            title={`${record.title}, ${record.date} 회의록 메뉴`}
+                            aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
+                        >
+                            <MoreVertical size={14} />
+                        </button>
+                    </div>
+                </div>
+                {openMenuId === record.id && (
+                    <div
+                        ref={element => {
+                            if (element) recordMenuPanelRefs.current.set(record.id, element);
+                            else recordMenuPanelRefs.current.delete(record.id);
+                        }}
+                        id={`sidebar-record-menu-${record.id}`}
+                        role="dialog"
+                        aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
+                        className="menu-panel fixed z-20 w-44"
+                        style={recordMenuPosition
+                            ? { top: recordMenuPosition.top, left: recordMenuPosition.left }
+                            : { top: 0, left: 0, visibility: 'hidden' }}
+                        data-sidebar-record-menu
+                        onKeyDown={event => handleRecordMenuKeyDown(event, record.id)}
+                    >
+                        <button
+                            type="button"
+                            className="menu-item px-2 py-1.5"
+                            onClick={() => handleTogglePinned(record)}
+                        >
+                            {record.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                            {record.pinned ? '고정 해제' : '상단 고정'}
+                        </button>
+                        <button
+                            type="button"
+                            className="menu-item px-2 py-1.5"
+                            onClick={() => handleRenameRecord(record)}
+                        >
+                            <Pencil size={13} />
+                            이름 변경
+                        </button>
+                        <SidebarRecordMoveMenu
+                            recordId={record.id}
+                            folderId={record.folderId}
+                            folders={folders}
+                            onMove={folderId => void handleMoveRecord(record, folderId)}
+                            onClose={() => closeRecordMenu(record.id, true)}
+                        />
+                        <button
+                            type="button"
+                            className="menu-item menu-item-danger px-2 py-1.5"
+                            onClick={() => handleDeleteRecord(record)}
+                        >
+                            <Trash2 size={13} />
+                            삭제
+                        </button>
+                    </div>
+                )}
+            </div>
+        );
     };
 
     return (
@@ -786,7 +925,9 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 {folders.length > 0 && (
                     <div className="sidebar-folder-list" aria-label="폴더" aria-busy={isReorderingFolders}>
                         {folders.map(folder => {
-                            const isActive = activeFolderId === folder.id;
+                            const isExpanded = expandedFolderIds.has(folder.id);
+                            const recordsInFolder = folderRecords.get(folder.id) ?? [];
+                            const visibleCount = folderVisibleCounts[folder.id] ?? 5;
                             const folderIndex = folders.findIndex(item => item.id === folder.id);
                             const canMoveUp = folderIndex > 0
                                 && Boolean(folders[folderIndex - 1]?.pinned) === Boolean(folder.pinned);
@@ -796,147 +937,178 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                                 ? folderDropTarget.position
                                 : null;
                             return (
-                                <div
-                                    key={folder.id}
-                                    className={[
-                                        'group sidebar-folder-row',
-                                        draggedFolderId === folder.id ? 'sidebar-folder-row-dragging' : '',
-                                        dropPosition ? `sidebar-folder-row-drop-${dropPosition}` : '',
-                                    ].filter(Boolean).join(' ')}
-                                    data-sidebar-folder-row={folder.id}
-                                    data-folder-drop-position={dropPosition ?? undefined}
-                                    onDragOver={event => handleFolderDragOver(event, folder)}
-                                    onDragLeave={event => {
-                                        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
-                                        if (folderDropTarget?.folderId === folder.id) setFolderDropTarget(null);
-                                    }}
-                                    onDrop={event => void handleFolderDrop(event, folder)}
-                                >
-                                    <button
-                                        type="button"
-                                        className={`sidebar-folder-button ${isActive ? 'sidebar-folder-button-active' : ''}`}
-                                        aria-pressed={isActive}
-                                        draggable={!isReorderingFolders}
-                                        title={`${folder.name} · 같은 고정 그룹 안에서 끌어서 순서 이동`}
-                                        onDragStart={event => handleFolderDragStart(event, folder)}
-                                        onDragEnd={handleFolderDragEnd}
-                                        onClick={() => {
-                                            setActiveFolderId(current => current === folder.id ? null : folder.id);
-                                            setOpenFolderMenuId(null);
-                                            setShowAllRecords(false);
-                                            window.requestAnimationFrame(() => {
-                                                recordsListRef.current?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
-                                            });
+                                <div key={folder.id} className="sidebar-folder-group">
+                                    <div
+                                        className={[
+                                            'group sidebar-folder-row',
+                                            draggedFolderId === folder.id ? 'sidebar-folder-row-dragging' : '',
+                                            dropPosition ? `sidebar-folder-row-drop-${dropPosition}` : '',
+                                        ].filter(Boolean).join(' ')}
+                                        data-sidebar-folder-row={folder.id}
+                                        data-folder-drop-position={dropPosition ?? undefined}
+                                        onDragOver={event => handleFolderDragOver(event, folder)}
+                                        onDragLeave={event => {
+                                            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+                                            if (folderDropTarget?.folderId === folder.id) setFolderDropTarget(null);
                                         }}
+                                        onDrop={event => void handleFolderDrop(event, folder)}
                                     >
-                                        <Folder size={15} aria-hidden="true" />
-                                        <span>{folder.name}</span>
-                                        {folder.pinned && <Pin size={11} className="sidebar-folder-pin" aria-hidden="true" />}
-                                    </button>
-                                    <button
-                                        ref={element => {
-                                            if (element) folderMenuTriggerRefs.current.set(folder.id, element);
-                                            else folderMenuTriggerRefs.current.delete(folder.id);
-                                        }}
-                                        type="button"
-                                        className="icon-button btn-ghost sidebar-folder-menu-trigger h-6 w-6"
-                                        aria-label={`${folder.name} 폴더 메뉴`}
-                                        title={`${folder.name} 폴더 메뉴`}
-                                        aria-haspopup="menu"
-                                        aria-expanded={openFolderMenuId === folder.id}
-                                        aria-controls={`sidebar-folder-menu-${folder.id}`}
-                                        data-sidebar-folder-menu-trigger
-                                        onClick={event => {
-                                            setOpenMenuId(null);
-                                            if (openFolderMenuId === folder.id) {
-                                                setOpenFolderMenuId(null);
-                                                return;
-                                            }
-                                            const rowBounds = event.currentTarget
-                                                .closest('[data-sidebar-folder-row]')
-                                                ?.getBoundingClientRect();
-                                            if (rowBounds) {
-                                                const menuWidth = 144;
-                                                const menuHeight = 190;
-                                                const viewportPadding = 8;
-                                                const spaceBelow = window.innerHeight - rowBounds.bottom;
-                                                const preferredTop = spaceBelow >= menuHeight + viewportPadding
-                                                    ? rowBounds.bottom + 4
-                                                    : rowBounds.top - menuHeight - 4;
-                                                setFolderMenuPosition({
-                                                    top: Math.min(
-                                                        Math.max(viewportPadding, preferredTop),
-                                                        window.innerHeight - menuHeight - viewportPadding,
-                                                    ),
-                                                    left: Math.min(
-                                                        Math.max(viewportPadding, rowBounds.right - menuWidth),
-                                                        window.innerWidth - menuWidth - viewportPadding,
-                                                    ),
+                                        <button
+                                            type="button"
+                                            className={`sidebar-folder-button ${isExpanded ? 'sidebar-folder-button-active' : ''}`}
+                                            aria-expanded={isExpanded}
+                                            aria-controls={`sidebar-folder-records-${folder.id}`}
+                                            draggable={!isReorderingFolders}
+                                            title={`${folder.name} · 같은 고정 그룹 안에서 끌어서 순서 이동`}
+                                            onDragStart={event => handleFolderDragStart(event, folder)}
+                                            onDragEnd={handleFolderDragEnd}
+                                            onClick={() => {
+                                                setExpandedFolderIds(current => {
+                                                    const next = new Set(current);
+                                                    if (next.has(folder.id)) next.delete(folder.id);
+                                                    else next.add(folder.id);
+                                                    return next;
                                                 });
-                                            }
-                                            setOpenFolderMenuId(folder.id);
-                                        }}
-                                        onKeyDown={event => {
-                                            if (event.key !== 'Escape' || openFolderMenuId !== folder.id) return;
-                                            event.preventDefault();
-                                            event.stopPropagation();
-                                            closeFolderMenu(folder.id, true);
-                                        }}
-                                    >
-                                        <MoreVertical size={14} />
-                                    </button>
-                                    {openFolderMenuId === folder.id && (
-                                        <div
-                                            ref={element => {
-                                                if (element) folderMenuPanelRefs.current.set(folder.id, element);
-                                                else folderMenuPanelRefs.current.delete(folder.id);
+                                                setOpenMenuId(null);
+                                                setOpenFolderMenuId(null);
                                             }}
-                                            id={`sidebar-folder-menu-${folder.id}`}
-                                            className="menu-panel sidebar-folder-menu"
-                                            style={{ top: folderMenuPosition.top, left: folderMenuPosition.left }}
-                                            role="menu"
-                                            aria-label={`${folder.name} 폴더 메뉴`}
-                                            data-sidebar-folder-menu
-                                            onKeyDown={event => handleFolderMenuKeyDown(event, folder.id)}
                                         >
-                                            <button type="button" role="menuitem" tabIndex={-1} className="menu-item" onClick={() => void handleToggleFolderPinned(folder)}>
-                                                {folder.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-                                                {folder.pinned ? '고정 해제' : '상단 고정'}
-                                            </button>
-                                            <button
-                                                type="button"
-                                                role="menuitem"
-                                                tabIndex={-1}
-                                                className="menu-item"
-                                                disabled={isReorderingFolders || !canMoveUp}
-                                                title={!canMoveUp ? '고정 상태가 같은 폴더끼리 이동할 수 있습니다.' : undefined}
-                                                onClick={() => void handleMoveFolder(folder, -1)}
+                                            <Folder size={15} aria-hidden="true" />
+                                            <span>{folder.name}</span>
+                                            {folder.pinned && <Pin size={11} className="sidebar-folder-pin" aria-hidden="true" />}
+                                            {isExpanded ? <ChevronDown size={12} className="ml-auto" aria-hidden="true" /> : <ChevronRight size={12} className="ml-auto" aria-hidden="true" />}
+                                        </button>
+                                        <button
+                                            ref={element => {
+                                                if (element) folderMenuTriggerRefs.current.set(folder.id, element);
+                                                else folderMenuTriggerRefs.current.delete(folder.id);
+                                            }}
+                                            type="button"
+                                            className="icon-button btn-ghost sidebar-folder-menu-trigger h-6 w-6"
+                                            aria-label={`${folder.name} 폴더 메뉴`}
+                                            title={`${folder.name} 폴더 메뉴`}
+                                            aria-haspopup="menu"
+                                            aria-expanded={openFolderMenuId === folder.id}
+                                            aria-controls={`sidebar-folder-menu-${folder.id}`}
+                                            data-sidebar-folder-menu-trigger
+                                            onClick={event => {
+                                                setOpenMenuId(null);
+                                                if (openFolderMenuId === folder.id) {
+                                                    setOpenFolderMenuId(null);
+                                                    return;
+                                                }
+                                                const rowBounds = event.currentTarget
+                                                    .closest('[data-sidebar-folder-row]')
+                                                    ?.getBoundingClientRect();
+                                                if (rowBounds) {
+                                                    const menuWidth = 144;
+                                                    const menuHeight = 190;
+                                                    const viewportPadding = 8;
+                                                    const spaceBelow = window.innerHeight - rowBounds.bottom;
+                                                    const preferredTop = spaceBelow >= menuHeight + viewportPadding
+                                                        ? rowBounds.bottom + 4
+                                                        : rowBounds.top - menuHeight - 4;
+                                                    setFolderMenuPosition({
+                                                        top: Math.min(
+                                                            Math.max(viewportPadding, preferredTop),
+                                                            window.innerHeight - menuHeight - viewportPadding,
+                                                        ),
+                                                        left: Math.min(
+                                                            Math.max(viewportPadding, rowBounds.right - menuWidth),
+                                                            window.innerWidth - menuWidth - viewportPadding,
+                                                        ),
+                                                    });
+                                                }
+                                                setOpenFolderMenuId(folder.id);
+                                            }}
+                                            onKeyDown={event => {
+                                                if (event.key !== 'Escape' || openFolderMenuId !== folder.id) return;
+                                                event.preventDefault();
+                                                event.stopPropagation();
+                                                closeFolderMenu(folder.id, true);
+                                            }}
+                                        >
+                                            <MoreVertical size={14} />
+                                        </button>
+                                        {openFolderMenuId === folder.id && (
+                                            <div
+                                                ref={element => {
+                                                    if (element) folderMenuPanelRefs.current.set(folder.id, element);
+                                                    else folderMenuPanelRefs.current.delete(folder.id);
+                                                }}
+                                                id={`sidebar-folder-menu-${folder.id}`}
+                                                className="menu-panel sidebar-folder-menu"
+                                                style={{ top: folderMenuPosition.top, left: folderMenuPosition.left }}
+                                                role="menu"
+                                                aria-label={`${folder.name} 폴더 메뉴`}
+                                                data-sidebar-folder-menu
+                                                onKeyDown={event => handleFolderMenuKeyDown(event, folder.id)}
                                             >
-                                                <ArrowUp size={13} />
-                                                위로 이동
-                                            </button>
-                                            <button
-                                                type="button"
-                                                role="menuitem"
-                                                tabIndex={-1}
-                                                className="menu-item"
-                                                disabled={isReorderingFolders || !canMoveDown}
-                                                title={!canMoveDown ? '고정 상태가 같은 폴더끼리 이동할 수 있습니다.' : undefined}
-                                                onClick={() => void handleMoveFolder(folder, 1)}
-                                            >
-                                                <ArrowDown size={13} />
-                                                아래로 이동
-                                            </button>
-                                            <button type="button" role="menuitem" tabIndex={-1} className="menu-item" onClick={() => void handleRenameFolder(folder)}>
-                                                <Pencil size={13} />
-                                                이름 변경
-                                            </button>
-                                            <button type="button" role="menuitem" tabIndex={-1} className="menu-item menu-item-danger" onClick={() => void handleDeleteFolder(folder)}>
-                                                <Trash2 size={13} />
-                                                삭제
-                                            </button>
-                                        </div>
-                                    )}
+                                                <button type="button" role="menuitem" tabIndex={-1} className="menu-item" onClick={() => void handleToggleFolderPinned(folder)}>
+                                                    {folder.pinned ? <PinOff size={13} /> : <Pin size={13} />}
+                                                    {folder.pinned ? '고정 해제' : '상단 고정'}
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    role="menuitem"
+                                                    tabIndex={-1}
+                                                    className="menu-item"
+                                                    disabled={isReorderingFolders || !canMoveUp}
+                                                    title={!canMoveUp ? '고정 상태가 같은 폴더끼리 이동할 수 있습니다.' : undefined}
+                                                    onClick={() => void handleMoveFolder(folder, -1)}
+                                                >
+                                                    <ArrowUp size={13} />
+                                                    위로 이동
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    role="menuitem"
+                                                    tabIndex={-1}
+                                                    className="menu-item"
+                                                    disabled={isReorderingFolders || !canMoveDown}
+                                                    title={!canMoveDown ? '고정 상태가 같은 폴더끼리 이동할 수 있습니다.' : undefined}
+                                                    onClick={() => void handleMoveFolder(folder, 1)}
+                                                >
+                                                    <ArrowDown size={13} />
+                                                    아래로 이동
+                                                </button>
+                                                <button type="button" role="menuitem" tabIndex={-1} className="menu-item" onClick={() => void handleRenameFolder(folder)}>
+                                                    <Pencil size={13} />
+                                                    이름 변경
+                                                </button>
+                                                <button type="button" role="menuitem" tabIndex={-1} className="menu-item menu-item-danger" onClick={() => void handleDeleteFolder(folder)}>
+                                                    <Trash2 size={13} />
+                                                    삭제
+                                                </button>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div
+                                        id={`sidebar-folder-records-${folder.id}`}
+                                        className="sidebar-folder-records"
+                                        role="group"
+                                        aria-label={`${folder.name} 회의록`}
+                                        hidden={!isExpanded}
+                                    >
+                                        {isExpanded && <>
+                                            {recordsInFolder.slice(0, visibleCount).map(renderRecord)}
+                                            {recordsInFolder.length === 0 && <p className="px-2 py-2 text-xs text-muted-foreground">회의록이 없습니다.</p>}
+                                            {recordsInFolder.length > visibleCount && (
+                                                <button
+                                                    type="button"
+                                                    className="sidebar-folder-more"
+                                                    onClick={event => {
+                                                        const focusNext = event.detail === 0 && recordsInFolder.length <= visibleCount + 5;
+                                                        const group = event.currentTarget.parentElement;
+                                                        setFolderVisibleCounts(current => ({ ...current, [folder.id]: visibleCount + 5 }));
+                                                        if (focusNext) window.requestAnimationFrame(() => {
+                                                            group?.querySelectorAll<HTMLElement>('.sidebar-record-row')[visibleCount]?.querySelector('button')?.focus();
+                                                        });
+                                                    }}
+                                                >더 보기</button>
+                                            )}
+                                        </>}
+                                    </div>
                                 </div>
                             );
                         })}
@@ -969,149 +1141,15 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     </form>
                 )}
                 <div className="sidebar-section-header">
-                    <span>회의록</span>
+                    <span className="inline-flex h-6 items-center">회의록</span>
                 </div>
-                <div ref={recordsListRef} className="flex flex-col" data-sidebar-records>
-                    {visibleRecords.length ? (
-                        visibleRecords.map(record => {
-                            const isSelected = (activeTab === 'history' || activeTab === 'minutes' && analysisStatus?.completionVisible) && selectedMeetingId === record.id;
-                            const analysisStateLabel = record.analysisStatus === 'diarization_in_progress'
-                                ? '참석자 구분 중'
-                                : record.analysisStatus === 'diarization_failed'
-                                    ? '참석자 구분 실패'
-                                    : record.analysisStatus === 'diarization_stopped'
-                                        ? '구분 중지'
-                                        : '';
-
-                            return (
-                                <div
-                                    key={record.id}
-                                    className={`group sidebar-record-row ${isSelected ? 'sidebar-record-row-active' : ''}`}
-                                >
-                                <div className="flex items-center gap-1 px-2 py-1.5">
-                                    <button
-                                        type="button"
-                                        className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-                                        onClick={() => handleSelectRecord(record.id)}
-                                        title={record.title}
-                                        aria-current={isSelected ? 'page' : undefined}
-                                    >
-                                        <Pin
-                                            size={12}
-                                            className={`shrink-0 ${record.pinned ? 'text-primary' : 'hidden'}`}
-                                        />
-                                        <div className={`min-w-0 flex-1 truncate text-sm text-foreground ${isSelected ? 'font-medium' : 'font-normal'}`}>
-                                            {record.title}
-                                        </div>
-                                    </button>
-                                    <div className={`sidebar-record-meta-slot ${analysisStateLabel ? 'sidebar-record-meta-slot-status' : ''}`}>
-                                        <span
-                                            className="sidebar-record-age truncate text-xs text-muted-foreground"
-                                            data-sidebar-record-age
-                                            title={analysisStateLabel ? `${analysisStateLabel} · ${record.date}` : record.date}
-                                        >
-                                            {analysisStateLabel || formatRecordElapsedTime(record)}
-                                        </span>
-                                        <button
-                                            ref={element => {
-                                                if (element) recordMenuTriggerRefs.current.set(record.id, element);
-                                                else recordMenuTriggerRefs.current.delete(record.id);
-                                            }}
-                                            type="button"
-                                            className="icon-button btn-ghost sidebar-record-menu-trigger h-6 w-6"
-                                            onClick={() => {
-                                                setOpenFolderMenuId(null);
-                                                setOpenMenuId(openMenuId === record.id ? null : record.id);
-                                            }}
-                                            onKeyDown={event => {
-                                                if (event.key !== 'Escape' || openMenuId !== record.id) return;
-                                                event.preventDefault();
-                                                event.stopPropagation();
-                                                closeRecordMenu(record.id, true);
-                                            }}
-                                            data-sidebar-record-menu-trigger
-                                            aria-haspopup="dialog"
-                                            aria-expanded={openMenuId === record.id}
-                                            aria-controls={`sidebar-record-menu-${record.id}`}
-                                            title={`${record.title}, ${record.date} 회의록 메뉴`}
-                                            aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
-                                        >
-                                            <MoreVertical size={14} />
-                                        </button>
-                                    </div>
-                                </div>
-                                {openMenuId === record.id && (
-                                    <div
-                                        ref={element => {
-                                            if (element) recordMenuPanelRefs.current.set(record.id, element);
-                                            else recordMenuPanelRefs.current.delete(record.id);
-                                        }}
-                                        id={`sidebar-record-menu-${record.id}`}
-                                        role="dialog"
-                                        aria-label={`${record.title}, ${record.date} 회의록 메뉴`}
-                                        className="menu-panel fixed z-20 w-44 text-xs"
-                                        style={recordMenuPosition
-                                            ? { top: recordMenuPosition.top, left: recordMenuPosition.left }
-                                            : { top: 0, left: 0, visibility: 'hidden' }}
-                                        data-sidebar-record-menu
-                                        onKeyDown={event => handleRecordMenuKeyDown(event, record.id)}
-                                    >
-                                        <button
-                                            type="button"
-                                            className="menu-item px-2 py-1.5"
-                                            onClick={() => handleTogglePinned(record)}
-                                        >
-                                            {record.pinned ? <PinOff size={13} /> : <Pin size={13} />}
-                                            {record.pinned ? '고정 해제' : '상단 고정'}
-                                        </button>
-                                        <button
-                                            type="button"
-                                            className="menu-item px-2 py-1.5"
-                                            onClick={() => handleRenameRecord(record)}
-                                        >
-                                            <Pencil size={13} />
-                                            이름 변경
-                                        </button>
-                                        <label className="sidebar-record-folder-field">
-                                            <span>폴더</span>
-                                            <select
-                                                className="select-field"
-                                                aria-label={`${record.title} 폴더`}
-                                                value={record.folderId ?? ''}
-                                                onChange={event => void handleMoveRecord(record, event.target.value)}
-                                            >
-                                                <option value="">폴더 없음</option>
-                                                {folders.map(folder => <option key={folder.id} value={folder.id}>{folder.name}</option>)}
-                                            </select>
-                                        </label>
-                                        <button
-                                            type="button"
-                                            className="menu-item menu-item-danger px-2 py-1.5"
-                                            onClick={() => handleDeleteRecord(record)}
-                                        >
-                                            <Trash2 size={13} />
-                                            삭제
-                                        </button>
-                                    </div>
-                                )}
-                                </div>
-                            );
-                        })
+                <div className="flex flex-col" data-sidebar-records>
+                    {unfiledRecords.length ? (
+                        unfiledRecords.map(renderRecord)
                     ) : (
                         <div className="px-3 py-2 text-xs leading-relaxed text-muted-foreground">
-                            {activeFolderId
-                                ? '이 폴더에는 회의록이 없습니다.'
-                                : '아직 저장된 회의록이 없습니다.'}
+                            {records.length ? '폴더 없는 회의록이 없습니다.' : '아직 저장된 회의록이 없습니다.'}
                         </div>
-                    )}
-                    {filteredRecords.length > 10 && (
-                        <button
-                            type="button"
-                            className="mt-2 rounded-md px-3 py-2 text-left text-xs font-medium text-primary hover:bg-primary/5"
-                            onClick={() => setShowAllRecords(current => !current)}
-                        >
-                            {showAllRecords ? '접기' : '더 보기'}
-                        </button>
                     )}
                 </div>
                 </div>

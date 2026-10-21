@@ -1,0 +1,23 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "backend-dev",
+      "runtimeExecutable": "D:\\Projects\\audio\\backend\\.venv\\Scripts\\python.exe",
+      "runtimeArgs": ["-m", "uvicorn", "main:app", "--host", "127.0.0.1", "--port", "17863", "--app-dir", "D:\\Projects\\audio\\backend"],
+      "port": 17863
+    },
+    {
+      "name": "web-ui",
+      "runtimeExecutable": "corepack",
+      "runtimeArgs": ["pnpm", "--dir", "desktop-app", "dev", "--host", "127.0.0.1", "--port", "5173", "--strictPort"],
+      "port": 5173
+    },
+    {
+      "name": "web-ui-sim",
+      "runtimeExecutable": "corepack",
+      "runtimeArgs": ["pnpm", "--dir", "desktop-app", "exec", "vite", "--host", "127.0.0.1", "--port", "5196", "--strictPort"],
+      "port": 5196
+    }
+  ]
+}

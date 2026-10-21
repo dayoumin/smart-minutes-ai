@@ -38,6 +38,265 @@ revocation passed. The engine was left running; no inference jobs were submitted
 Rollback Worker version: `a2374e43-5d04-40e6-a24a-1be785be30f0`. The engine remains an unsigned test release;
 existing signing/other-PC/policy release QA gates are unchanged.
 
+## Analysis detail continuity — 2026-10-21
+
+Run `corepack pnpm --dir desktop-app test:analysis-stop-flow detail-continuity` with
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`. It checks that preparation,
+running, completion, and reopening use the same detail element and keep the title, tabs,
+search, and transcript controls at the same coordinates. It also verifies that a temporary
+preview is not saved, meeting input/report choice survives, unsaved result edits remain guarded,
+and background completion does not replace another open meeting. Set
+`ANALYSIS_CONTINUITY_SCREENSHOT_DIR` to an existing folder for 1280px/760px screenshots.
+Run the existing stop/cancel cases narrowly with `test:analysis-stop-flow stop-actions`;
+`preparation` covers stopping before the engine accepts a job. These use mocked API responses
+and isolated browser storage, and do not prove installed-engine analysis quality.
+
+The same focused scenario also checks the bordered information group, metadata-only source row,
+persisted elapsed time, the full participant list, and the conditional back-to-top control.
+The control must stay absent before one viewport of scrolling and on short records, appear on
+long records after that threshold, and restore the title's keyboard focus when returning.
+Both 1280px and 760px cases exercise this against the actual workspace scroll container.
+
+### Actual speech verification — 2026-10-21
+
+The real-input run used the registered `real_detail_continuity_wav_3m_20261021` sample:
+180.001125 seconds of genuine speech, mono 16kHz WAV, 5,760,184 bytes. The source Windows
+engine ran actual speech recognition and speaker separation without API mocks, producing
+37 raw segments / 6 display segments in 172,854ms. Job ID:
+`02a0fe52-84cd-49d4-ba0b-a02091d709bb`. Automatic summary generation was disabled; this
+does not assess transcript/speaker accuracy or summary quality.
+
+The initial run captured preparation/running at 1280×720 and 760×720 and saved the real
+result, then correctly failed its coordinate assertion: the audio-check error's retry button
+expanded a 36px row to 40px, moving the tabs/search/actions down 4px. The audio row now
+reserves 40px in every state, with a 32px retry control. The focused
+`corepack pnpm --dir desktop-app test:analysis-stop-flow detail-continuity` regression passed
+all four mocked cases: foreground 1280/760, background 1280, and audio failure 760.
+`corepack pnpm --dir desktop-app typecheck` and independent review also passed.
+
+After the correction, the same real saved result was reopened against the real source engine,
+without another transcription or response mocks. Native audio playback advanced, with HEAD
+200 / GET 206. Reload and sidebar reopening preserved the stored meeting fields, report
+template, segments, elapsed time and source metadata, and kept the title/tabs/search/actions
+at identical coordinates in both widths. Fonts and resize rendering were allowed to settle
+before measuring. The long-content threshold was met by the actual unmodified transcript:
+1445px / 1986px of detail content against a 720px workspace at 1280px / 760px respectively.
+The back-to-top control was absent at the top and before one viewport of scrolling, appeared
+after that threshold, stayed inside the viewport, returned to scroll position zero, disappeared,
+and focused the meeting title. Reduced-motion operation and absence of horizontal overflow
+also passed. Reopening made zero new `/api/analyze` POST requests.
+
+Evidence is under `.tmp/real-detail-continuity-20261021`: `verify.mjs`, `continue.mjs`,
+`serve.py`, initial `evidence/report.json` (the retained 4px failure), actual SSE/record and
+running screenshots, plus `evidence/followup/report.json` (`status: passed`) and saved,
+reopened and scrolled screenshots. The focused mock regression verifies the corrected full
+state transition; the real-result follow-up verifies playback/storage/reopening/scrolling.
+The full three-minute recognition was not repeated after the CSS-only correction.
+
+Commands were `node .tmp/real-detail-continuity-20261021/verify.mjs` and then
+`node .tmp/real-detail-continuity-20261021/continue.mjs`, with
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`. These helpers launched
+Vite from `desktop-app` on `127.0.0.1:54352` and the isolated source engine from the repository
+root on `127.0.0.1:54351`, using `backend/.venv-desktop/Scripts/python.exe`; exact child
+commands are retained in `runtime.json`. Both helpers cleaned up their own servers/browser.
+The existing installed engine on port 17863 was left running. This verifies current Vite UI
+with actual local processing, not the public HTTPS UI or an updated installed executable.
+
+### Production HTTPS and installed engine — 2026-10-21
+
+The approved meeting-detail changes are deployed at `https://barorok.ecomarin.workers.dev`,
+Worker version `507b5d5c-e2d2-42da-8ccf-90773272e448`. The build snapshot starts from
+`02e30d3` and includes only the detail workflow, its dependencies and related Sidebar/CSS
+changes. Unrelated in-progress font/folder/menu changes are excluded. Candidate typecheck,
+changed-file ESLint, the four `test:analysis-stop-flow detail-continuity` cases, production
+web build, dry run and independent review passed. All six public files matched their local
+SHA256 values, and the existing 0.1.9 installer metadata, HEAD/Range and three old download
+redirects remained valid. No installer/backend update or Git commit/push was performed.
+
+The actual browser used the public HTTPS origin and the existing installed
+`barorok-local-engine-x86_64-pc-windows-msvc.exe`, PID 13700, version
+`0.1.9-beta-20261020`, with backend configuration in
+`C:\Users\MS\AppData\Local\Barorok\LocalEngine\config`. Existing settings were retained:
+CPU speech recognition, with speaker separation deferred until requested from the result.
+There were no API mocks. The isolated Chromium profile received an automated
+`local-network-access` grant; this is not evidence for a human permission dialog or Edge.
+
+The first real three-minute result completed in 76,744ms and preserved completion/reopening
+anchors and playback, but its 1392px detail was below the 1440px long-content threshold at
+1280×720. A registered genuine five-minute derivative then exercised the long threshold.
+Visual inspection of that first long run found the deferred-speaker and audio guidance
+clipped inside the 96px status reservation. All states now reserve 144px, and the four
+focused continuity cases passed again. The final deployed build was tested with a new
+actual five-minute analysis, not just a replay of the old result:
+
+- Input: `production_detail_continuity_wav_5m_20261021`, 300s mono 16kHz WAV,
+  9,600,148 bytes, SHA256 `6a068d76486baf2649d4422680fec9a06cc1ee27745545a30cdd54a8be7662ff`.
+- Job: `ccf8fdaa-a0f4-4abc-9dc8-ec3499f2caf0`; 128,975ms; 64 raw / 8 display segments,
+  2170 transcript characters. Speaker separation remained deferred; accuracy/summary quality
+  were not assessed.
+- At 1280×720 and 760×720, preparation, actual STT progress, completion and reload/sidebar
+  reopening retained the title/tab/search/action coordinates. The same detail DOM survived
+  completion. The completed guidance fit without internal clipping in both widths.
+- Reload/reopening preserved the complete tested record snapshot, including report template,
+  segments, purpose, elapsed time and source metadata. Saved backend text and timestamps
+  (normalized to the frontend format), job, purpose, report template and deferral state agreed.
+  There was exactly one analysis POST in the final journey; all API/write requests used
+  `http://127.0.0.1:17863`.
+- Genuine detail heights were 2016px / 2792px against a 720px workspace. The top button was
+  absent initially/before one viewport of scrolling, appeared beyond it, remained in view,
+  returned to position zero, disappeared and focused the title. Reduced motion and no
+  horizontal overflow passed. Native audio playback also advanced through the real HTTPS
+  browser bridge.
+
+Evidence root: `.tmp/production-detail-20261021`. Read `source-manifest-r2.json`,
+`deploy-r2.log`, `public-verification-r2.json`, `final-audit.json`, and
+`evidence/final-5m/{actual-report.json,completed-record.json,analysis-sse.txt,*-1280.png,*-760.png}`.
+The retained earlier reports include an unnecessary settings-200 wait before connection,
+an incorrect expectation of immediate speaker separation, and the below-threshold short
+record; these test assumptions are separate from product failures. The initial long-run
+captures and first deployment are retained to show the corrected guidance clipping.
+
+Execution used `node .tmp/production-detail-20261021/final.mjs` with the project-local
+`PLAYWRIGHT_BROWSERS_PATH`. Deployment used `node deploy/cloudflare/wrangler.mjs deploy
+--config D:/Projects/audio/.tmp/production-detail-20261021/wrangler-r2.jsonc`; exact build
+source/assets and rollback to `09a485ac-a9a0-45d7-9335-22d0fa7fd62c` are recorded in the
+manifests. The helper closed only its own browser and left the original installed engine
+running. No Vite/source engine was used in the final journey.
+
+### Short actions and actual speaker completion — 2026-10-21
+
+The next production revision, `78920e1e-5898-4fdd-8592-70825d30b3d0`, changes the visible
+transcript actions to `복사`, `대화록`, and `편집`. The download control retains its descriptive
+accessible name. Its isolated build extends the preceding approved snapshot; unrelated
+font/folder/menu changes remain excluded. All six public assets matched local SHA256 values,
+and the existing installer metadata, three download redirects and HEAD/Range checks passed.
+The installed engine and its settings were not updated.
+
+Actual on-demand speaker separation first completed for the existing five-minute job
+`ccf8fdaa-a0f4-4abc-9dc8-ec3499f2caf0`: 64 raw / 10 display segments, two model speaker IDs,
+`diarizationApplied=true`, `diarizationDeferred=false`. This exposed a running-state defect:
+the separate progress panel pushed shared navigation down. Progress now occupies the existing
+144px status reservation, with one icon-only stop control. Explicit stop choices can expand
+the region. Keyboard focus follows execute → stop → choice → continue; completion restores
+the title only if progress still owned focus, preserving the reading position otherwise.
+
+The final deployed revision then ran actual speaker separation on the existing three-minute
+job `ad1bae08-a4e2-440d-87a4-386e85f99395`, without new transcription or API mocks:
+
+- Real installed-engine progress changed from processing 30% to completed 100%; the result
+  contains 37 raw / 6 display segments and two model speaker IDs. The native progress interval
+  was about 43 seconds; the measured browser journey to result was 49,991ms.
+- At 1280×720 and 760×720, before/running/completed/reopened title, information group,
+  tabs, search and transcript actions retained their coordinates. Progress had one stop
+  control and fit inside the status region. Completion feedback used an overlay toast.
+- Reload/sidebar reopening preserved the entire canonical stored record, including speaker
+  segments/flags, source metadata, purpose, report template and original analysis elapsed
+  time; SHA256 `f75f450645d860fcf1a5a22cb6b0a71550ecb61db47411409c99073a850abe2c`.
+  Transcript text was unchanged after whitespace normalization.
+- The earlier five-minute speaker result also survived the final deployment unchanged
+  (record SHA256 `b0cad271c771747d80f0bdec4aa6e89c2891f061cc398f3f302a4f607040eceb`).
+  Its actual long transcript passed conditional top-button visibility, return-to-top and
+  title focus at both widths. All API/write traffic remained on `127.0.0.1:17863`.
+
+Focused checks passed: `corepack pnpm --dir desktop-app typecheck`, changed-component
+ESLint, `test:edit-guard-flow`, `test:analysis-stop-flow diarization-continuity` (both widths,
+including stop choices and completion focus/reading-position preservation), and the four
+`test:analysis-stop-flow detail-continuity` cases. These simulation cases use mocks and are
+distinct from the actual installed-engine runs above. Candidate web build, dry run and
+independent review passed. No new transcription POST occurred in either speaker-only run.
+These results verify execution and persistence, not human-reference speaker accuracy.
+
+Evidence root: `.tmp/participant-completion-20261021`. Deployment and source isolation are
+recorded in `source-manifest-r2.json`, `deploy-r2.log` and `public-verification-r2.json`.
+`actual.mjs` / `evidence/report.json` retain the first five-minute run;
+`final.mjs` / `evidence/final-3m/report.json` record the corrected production flow and both
+stored results, with running/completed/reopened/scrolled PNGs. `final-audit.json` summarizes
+the deployed revision and persisted backend results. Execution used the existing isolated
+Chromium profile with an automated local-network-access grant; Edge and human permission
+dialogs remain outside this evidence. Only the test browser was closed; original engine
+PID 13700 was left running. No Git commit/push or installer build was performed.
+
+### Transcript badges beside the speaker — 2026-10-21
+
+Production revision `0a0c4837-967b-495e-b3d8-f47467719fd6` moves `시간 추정` and
+`참석자 확인 필요` beside the speaker name. Only four transcript CSS rules differ from
+the preceding approved production snapshot; narrow layout wraps when needed. A candidate
+browser check at 1280/760 used the saved real five-minute transcript with mocked API replies,
+plus a synthetic long-name/two-badge boundary. Single badges shared the name line; names and
+badges did not overlap or overflow, including edit mode. Independent review and web build
+passed. The deployed six files matched local SHA256 values and installer links stayed valid.
+
+The public HTTPS UI then reopened both actual three/five-minute two-speaker records without
+API mocks. Badge placement passed at 1280/760, reload preserved both complete JSON-normalized
+records, and no new transcription/speaker generation was requested. The first check compared
+raw IndexedDB objects against JSON and stopped on extra `undefined` optional fields; the
+retained retry normalizes that serialization difference without removing substantive fields.
+Evidence: `.tmp/speaker-badges-20261021/{source-manifest.json,deploy.log,public-verification.json}`,
+`evidence/report.json` (candidate) and `production/report.json` (actual saved results), with
+screenshots. The helper closed its own browser/server; installed engine PID 13700 stayed running.
+
+### Precise review intervals and playback — 2026-10-21
+
+The installed/production follow-up is `.tmp/release-review-20261021/verify-actual.mjs`.
+It ran the genuine three-minute WAV through deployed HTTPS and installed engine
+`0.1.10-beta-20261021`, then on-demand native speaker separation (job
+`9e7f4212-a493-4d9b-b32e-282075098460`, 37 raw / 6 display, two speaker IDs).
+Both 1280/760 widths retained detail anchors, the 54.72–60.00 review interval/reason,
+native seek/play/end stop, full-record reload/reopen and long-transcript top navigation.
+The actual TXT note contains the same interval and reason; installed four-format exports
+were also checked with the earlier actual speech record payload. Backend result metadata
+matches browser storage and its SHA did not change after playback/export. Existing three
+test-profile records remain identical. Read the report, completed record and screenshots in
+`evidence/`, installer/public manifests and `final-preservation.json`. The latter distinguishes
+installer-time full preservation from an unattributed later change to a different existing
+meeting's five output files; no write to that job occurred in this browser trace. Do not
+claim the entire shared output directory stayed immutable during concurrent use.
+The helper records submission provenance and refuses duplicate inference or reuse without
+the matching input SHA, generating engine version and job ID. No API or media mocks were
+used. Chromium local-network permission was granted to the task profile; human Chrome/Edge
+permission prompts, naturally unassigned speakers and human accuracy calibration remain
+separate QA. The installed engine remains running; temporary uploader credentials/Worker
+and the verification browser were removed.
+
+`corepack pnpm --dir desktop-app test:meeting-detail-layout review` runs only the
+1280/760 review scenarios. It checks precise ranges/reasons after grouping, UNKNOWN with
+an explicit empty issue list, tiny-correction suppression, keyboard details, reload, and a
+held old-meeting play rejection while the next meeting plays/stops a fixture WAV. The audio
+endpoint is mocked; this does not assess native speaker accuracy. New-meeting details/audio
+are keyed to their owner, and source changes invalidate old playback requests before paint.
+`corepack pnpm --dir desktop-app exec node --experimental-strip-types scripts/test-transcript-review.mjs`
+checks pure adapters, including old/new mixed metadata, and `test:export-consistency` checks
+local text/payload parity. Both retained legacy flags and explicit v1 empty issue lists are
+covered. New records preserve numeric original `reviewIssues` through API, storage and export.
+
+The actual run `.tmp/review-intervals-native-20261021/verify.mjs` used isolated source engine
+51801 and Vite 51802 with the genuine registered three-minute sample. Job
+`0957c11c-237c-4b0f-a175-3beb11d0060c` completed real STT + speaker separation: 37 raw / 6 display
+segments, two speaker IDs, 208,296ms. The actual 40ms chunk correction did not create a badge;
+the 2.04s correction retained one `timestamp_adjusted` issue at 54.72–60.00 seconds. Both widths
+passed native seek/play/automatic stop, details fit, complete/reopen record preservation,
+stable shared controls, actual long-transcript top navigation and TXT review-note export.
+`followup.mjs` reran playback/reopening/export with the final UI and the same saved result,
+with zero new inference requests. The first follow-up used a different origin port and could
+not see the existing IndexedDB record; the retained `port-origin-attempt1.json` documents that
+test setup mistake. The helper then reused the verified-free original ports and passed.
+
+Read `evidence/report.json`, `evidence/followup/report.json`, completed JSON, actual SSE,
+`review-reasons-1280.png` / `review-reasons-760.png` and `actual-export.txt`. The backend and
+browser settings are isolated; only task-owned servers/browser were closed. The installed
+engine PID 13700 was unchanged. This is source-engine evidence; no installed binary update
+or public deployment was performed for this change. Human-reference speaker accuracy remains
+unassessed; the genuine sample has no unassigned turns, so that path has separate boundary
+and mocked UI evidence rather than an invented actual-audio case.
+
+On this Windows PC, some scenario assertions finish while browser-context shutdown remains
+pending. Keep the logged assertion results separate from the process exit status; inspect the
+test's own PID and Vite port before cleaning up only that run. If native `taskkill.exe` reports
+`Access denied` for the verified test tree, treat shutdown as a sandbox permission boundary:
+use a focused elevated cleanup/retry instead of changing product code or repeatedly rerunning
+the same sandboxed scenario. The scripts close inherited
+server output pipes during normal cleanup so exited launchers do not retain those handles.
+
 ## Folder read recovery — 2026-10-20
 
 Run `corepack pnpm --dir desktop-app test:folder-recovery` with `APP_URL` set to a dedicated
@@ -96,6 +355,21 @@ For the broader user-facing scenario matrix across file length, file type, stop/
 - `corepack pnpm --dir desktop-app test:topic-generation-ui`
 
 Without `APP_URL`, browser simulations start this checkout's Vite on a free port and stop it afterwards, so a server from another worktree on 5173 is never tested by mistake; set `APP_URL` only to reuse a server started from this checkout (`test:audio-playback` always needs it).
+
+## Folder list preservation — 2026-10-18
+
+`test:meeting-archive-flow` includes folder creation with other folders expanded or collapsed,
+later assignment/movement/removal through the record menu, persistent visibility of unfiled records,
+reload persistence and a failed move after another window deletes the target folder. The move
+submenu is exercised with mouse hover/click and keyboard Right/Up/Down/Enter, Left/Escape return,
+and focus restoration. It compares
+actual IndexedDB records to check content preservation; backend responses are mocked. Run only
+this scenario with `ARCHIVE_FLOW_SCENARIO=folders`, the intended Vite `APP_URL`, and the existing
+project-local `PLAYWRIGHT_BROWSERS_PATH`. This checks browser UI/storage, not the packaged engine.
+
+The folder scenario also checks independent expansion, 5/10/12 and 5/7 item batches,
+keyboard focus when the last `더 보기` disappears, an empty folder, all 11 unfiled records,
+and shared vertical scrolling above fixed settings at 760×480 (2026-10-19).
 
 ## Backend API contract integration
 

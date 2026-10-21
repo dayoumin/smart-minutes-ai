@@ -45,6 +45,16 @@ def _pcm_wav_fixture() -> bytes:
 
 
 class AnalyzeApiTest(unittest.TestCase):
+    def test_transcript_review_metadata_survives_ui_sync_and_export_normalization(self) -> None:
+        source = {'start': 77.76, 'end': 81.38, 'speaker': 'A', 'text': '본문', 'review_version': 1,
+                  'review_issues': [{'reason': 'short_speaker_overlap', 'start': 80.25, 'end': 80.75}]}
+        ui = main.segments_for_ui([source])[0]
+        normalized = main._normalize_payload_segments([ui], {})[0]
+        self.assertEqual(normalized['review_issues'], source['review_issues'])
+        self.assertEqual(normalized['review_version'], 1)
+        suppressed = {**source, 'timing_approximate': True, 'review_issues': []}
+        self.assertEqual(main._normalize_payload_segments(main.segments_for_ui([suppressed]), {})[0]['review_issues'], [])
+
     def setUp(self) -> None:
         self.client = TestClient(app)
 

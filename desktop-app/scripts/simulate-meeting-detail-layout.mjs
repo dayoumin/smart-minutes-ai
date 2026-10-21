@@ -242,7 +242,7 @@ const runTranscriptRowScenario = async browser => {
     ), textSelector);
     const [timeTop, metaTop, textTop] = await rowTops('.script-text');
     assert.ok(timeTop === metaTop && metaTop === textTop, `wide transcript row should share one line: ${timeTop}/${metaTop}/${textTop}`);
-    await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+    await page.getByRole('button', { name: '편집', exact: true }).click();
     const [editTimeTop, , editTextTop] = await rowTops('.script-edit-textarea');
     assert.ok(Math.abs(editTimeTop - editTextTop) <= 1, 'edit textarea should stay in the text column of the same row');
     console.log('ok - transcript rows keep time, speaker and text on one line');
@@ -330,7 +330,7 @@ const runErrorPlacementScenario = async browser => {
     const topBefore = await tabListTop();
 
     // Saved locally, but the engine is off: a warning in the 대화록 tab, never `Failed to fetch` or a banner on top.
-    await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+    await page.getByRole('button', { name: '편집', exact: true }).click();
     await page.locator('.script-edit-textarea').first().fill('3분기 자원조사 결과를 다시 정리하겠습니다.');
     await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '저장', exact: true }).click();
     const scriptStatus = page.locator('#meeting-detail-panel-script .detail-report-status');
@@ -381,14 +381,82 @@ const runErrorPlacementScenario = async browser => {
   }
 };
 
+const runTranscriptReviewScenario = async (browser, width) => {
+  const context = await browser.newContext({ viewport: { width, height: 720 } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  // Controlled playback promises exercise ownership; genuine audio is covered separately.
+  await page.addInitScript(() => {
+    window.__reviewPlayCalls = 0;
+    window.__reviewPauseCalls = 0;
+    const play = HTMLMediaElement.prototype.play;
+    HTMLMediaElement.prototype.play = function () {
+      window.__reviewPlayCalls += 1;
+      if (window.__reviewPlayCalls === 1) return new Promise((_, reject) => { window.__rejectOldReviewPlay = reject; });
+      return play.call(this);
+    };
+    const pause = HTMLMediaElement.prototype.pause;
+    HTMLMediaElement.prototype.pause = function () { window.__reviewPauseCalls += 1; pause.call(this); };
+  });
+  const audio = Buffer.alloc(44 + 8000 * 2 * 30);
+  audio.write('RIFF', 0); audio.writeUInt32LE(audio.length - 8, 4); audio.write('WAVEfmt ', 8);
+  audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24); audio.writeUInt32LE(16000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34);
+  audio.write('data', 36); audio.writeUInt32LE(audio.length - 44, 40);
+  await page.route('**/api/outputs/*/audio', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: audio }));
+  const raw = [
+    { start: '00:00:00', end: '00:00:10', speaker: 'SPEAKER_00', text: '경계 확인 발언', reviewVersion: 1, reviewIssues: [{ reason: 'short_speaker_overlap', start: 1.25, end: 1.8 }] },
+    { start: '00:00:10', end: '00:00:12', speaker: 'UNKNOWN', text: '미배정 발언', reviewVersion: 1, reviewIssues: [] },
+    { start: '00:00:12', end: '00:00:15', speaker: 'SPEAKER_00', text: '미세 보정 발언', timingApproximate: true, reviewVersion: 1, reviewIssues: [] },
+  ];
+  const meeting = { ...baseMeeting, id: 'review-A', jobId: 'review-job', title: '확인 구간 A', diarizationApplied: true,
+    segments: raw, displaySegments: [{ ...raw[0], reviewVersion: undefined, reviewIssues: undefined, shortSpeakerOverlap: true }, ...raw.slice(1)] };
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor();
+    await putMeetings(page, [meeting, { ...meeting, id: 'review-B', title: '확인 구간 B' }]);
+    await openMeeting(page, meeting.title);
+    const uncertain = page.locator('.script-row').filter({ hasText: '경계 확인 발언' });
+    const summary = uncertain.locator('summary');
+    await summary.focus(); await page.keyboard.press('Enter');
+    await uncertain.getByText('00:00:01.25–00:00:01.80', { exact: true }).waitFor();
+    await uncertain.getByText('짧은 다른 참석자 구간이 걸쳐 있는 부분', { exact: true }).waitFor();
+    const unknown = page.locator('.script-row').filter({ hasText: '미배정 발언' });
+    await unknown.getByText('참석자 미확인', { exact: true }).waitFor();
+    assert.equal(await unknown.locator('summary').innerText(), '참석자 확인 필요');
+    await unknown.locator('summary').click();
+    await unknown.getByText('참석자를 배정하지 못한 구간', { exact: true }).waitFor();
+    assert.equal(await page.locator('.script-row').filter({ hasText: '미세 보정 발언' }).locator('summary').count(), 0);
+    for (const row of [uncertain, unknown]) assert(await row.locator('.script-meta').evaluate(el => el.scrollWidth <= el.clientWidth + 1));
+    await page.locator('audio').evaluate(audio => { if (audio.readyState < 1) return new Promise(resolve => audio.addEventListener('loadedmetadata', resolve, { once: true })); });
+    await uncertain.getByRole('button', { name: '00:00:01.25부터 00:00:01.80까지 듣기', exact: true }).click();
+    await openMeeting(page, '확인 구간 B');
+    const next = page.locator('.script-row').filter({ hasText: '경계 확인 발언' });
+    await next.locator('summary').click();
+    await page.locator('audio').evaluate(audio => { if (audio.readyState < 1) return new Promise(resolve => audio.addEventListener('loadedmetadata', resolve, { once: true })); });
+    await next.getByRole('button').click();
+    await page.evaluate(async () => { window.__rejectOldReviewPlay(new DOMException('old source replaced', 'AbortError')); await Promise.resolve(); });
+    assert.equal(await page.getByText('해당 구간을 재생하지 못했습니다. 상단 음성 재생기를 확인해 주세요.', { exact: true }).count(), 0);
+    await page.waitForFunction(() => { const audio = document.querySelector('audio'); return audio.paused && audio.currentTime >= 1.8 && audio.currentTime < 2.6; }, null, { timeout: 10000 });
+    assert(await page.evaluate(() => window.__reviewPauseCalls) > 0, 'old failure must not disable the new meeting clip stop');
+    await page.reload({ waitUntil: 'domcontentloaded' }); await openMeeting(page, meeting.title);
+    assert.equal(await page.locator('.script-row').filter({ hasText: '미배정 발언' }).locator('summary').count(), 1);
+    console.log(`ok - precise reasons, UNKNOWN, tiny suppression, keyboard/reopen and playback ownership at ${width}px`);
+  } finally { await context.close(); }
+};
+
 const server = await startServer();
 const browser = await chromium.launch({ headless: true });
 try {
+  if (process.argv.includes('review')) {
+    for (const width of [1280, 760]) await runTranscriptReviewScenario(browser, width);
+  } else {
   await runTopicChipScenario(browser);
   await runNarrowMetaScenario(browser);
   await runTranscriptRowScenario(browser);
   await runAudioRowScenario(browser);
   await runErrorPlacementScenario(browser);
+  }
 } finally {
   await browser.close();
   await stopServer(server);

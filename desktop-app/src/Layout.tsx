@@ -4,6 +4,7 @@ import { AppView } from './appView';
 
 interface AnalysisStatus {
     active: boolean;
+    completionVisible?: boolean;
     progress: number;
     message: string;
     rawMessage?: string;

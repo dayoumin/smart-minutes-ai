@@ -5,6 +5,7 @@ import re
 import sys
 from pathlib import Path
 from typing import Dict, List
+from .transcript_review import issue
 
 
 _COHERE_PROCESSOR = None
@@ -356,7 +357,7 @@ def _split_text_into_timed_segments(text: str, duration: float, target_seconds: 
     for index, chunk in enumerate(chunks):
         start = index * segment_duration
         end = duration if index == len(chunks) - 1 and duration > 0 else (index + 1) * segment_duration
-        segments.append({"start": start, "end": end, "text": chunk, "timing_approximate": True})
+        segments.append({"start": start, "end": end, "text": chunk, "timing_approximate": True, "review_version": 1, "review_issues": [issue("timing_estimated", start, end)]})
     return segments
 
 

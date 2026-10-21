@@ -310,6 +310,9 @@ export const upsertMeetingRecord = async (record: MeetingRecord): Promise<string
             folderId: userEdited.folderId ?? existing.folderId,
             pinned: userEdited.pinned ?? existing.pinned,
             sourceFile: userEdited.sourceFile || existing.sourceFile || incomingRecord.sourceFile,
+            sourceFileMetadata: incomingRecord.sourceFileMetadata ?? existing.sourceFileMetadata,
+            analysisElapsedMs: incomingRecord.analysisElapsedMs ?? existing.analysisElapsedMs,
+            analysisNotes: incomingRecord.analysisNotes ?? existing.analysisNotes,
             speakerLabels: Object.keys(userEdited.speakerLabels || {}).length > 0
                 ? userEdited.speakerLabels
                 : existing.speakerLabels ?? incomingRecord.speakerLabels,

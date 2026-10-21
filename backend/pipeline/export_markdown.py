@@ -3,6 +3,7 @@ import re
 
 from pipeline.summary_display import get_display_topics
 from pipeline.transcript_display import get_transcript_segments
+from .transcript_review import format_review_notes
 
 
 def _format_time(value) -> str:
@@ -199,6 +200,8 @@ def export_markdown(result: dict, output_path: str, *, plain_text: bool = False)
                 md_content += f"{strong}{time_str} {speaker}:{strong} {text}\n\n"
             else:
                 md_content += f"{strong}{time_str}:{strong} {text}\n\n"
+            for note in format_review_notes(seg):
+                md_content += f"> {note}\n\n"
             
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(md_content)

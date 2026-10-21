@@ -1,5 +1,6 @@
 import html
 import os
+from .transcript_review import format_review_notes
 import re
 import zipfile
 from typing import Any
@@ -201,8 +202,8 @@ def _report_lines(result: dict) -> list[str]:
                 end = _format_time(segment.get("end", 0.0))
                 speaker = segment.get("speaker_name") or segment.get("speaker") or "Speaker"
                 text = segment.get("text", "")
-                timing = " 시간 추정" if segment.get("timing_approximate") else ""
-                lines.append(f"[{start}-{end}{timing}] {speaker}: {text}")
+                lines.append(f"[{start}-{end}] {speaker}: {text}")
+                lines.extend(format_review_notes(segment))
         else:
             lines.append("대화록 데이터가 없습니다.")
 

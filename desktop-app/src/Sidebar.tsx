@@ -42,6 +42,7 @@ export interface SidebarProps {
     onOpenAsrBenchmark?: () => void;
     analysisStatus?: {
         active: boolean;
+        completionVisible?: boolean;
         progress: number;
         message: string;
         rawMessage?: string;
@@ -725,7 +726,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     aria-describedby={newMeetingBlocked ? 'sidebar-create-blocked' : analysisStatus?.active ? 'sidebar-create-analysis-note' : undefined}
                     title={newMeetingBlocked
                         ? newMeetingBlockedReason
-                        : analysisStatus?.active ? '분석이 끝나면 새 회의록을 만들 수 있습니다. 진행 상황은 아래 분석 중 카드에서 볼 수 있습니다.' : undefined}
+                        : analysisStatus?.active ? '분석이 끝나면 새 회의록을 만들 수 있습니다. 로고를 누르면 진행 상황을 볼 수 있습니다.' : undefined}
                     onClick={() => {
                         setOpenMenuId(null);
                         onCreateMeeting?.();
@@ -735,7 +736,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     새 회의록
                 </button>
                 {analysisStatus?.active && !newMeetingBlocked && (
-                    <span id="sidebar-create-analysis-note" className="sr-only">분석이 끝나면 새 회의록을 만들 수 있습니다. 진행 상황은 분석 중 카드에서 볼 수 있습니다.</span>
+                    <span id="sidebar-create-analysis-note" className="sr-only">분석이 끝나면 새 회의록을 만들 수 있습니다. 로고를 누르면 진행 상황을 볼 수 있습니다.</span>
                 )}
                 {onOpenArchive && (
                     <button
@@ -973,7 +974,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                 <div ref={recordsListRef} className="flex flex-col" data-sidebar-records>
                     {visibleRecords.length ? (
                         visibleRecords.map(record => {
-                            const isSelected = activeTab === 'history' && selectedMeetingId === record.id;
+                            const isSelected = (activeTab === 'history' || activeTab === 'minutes' && analysisStatus?.completionVisible) && selectedMeetingId === record.id;
                             const analysisStateLabel = record.analysisStatus === 'diarization_in_progress'
                                 ? '참석자 구분 중'
                                 : record.analysisStatus === 'diarization_failed'
@@ -1192,7 +1193,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                             )}
                         </div>
                     )}
-                    {analysisStatus?.active && (
+                    {analysisStatus?.active && activeTab !== 'minutes' && (
                         <button
                             type="button"
                             className="sidebar-analysis-card"

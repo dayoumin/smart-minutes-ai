@@ -5,6 +5,7 @@ import wave
 from typing import Dict, List
 
 from process_utils import hidden_subprocess_kwargs
+from .transcript_review import REVIEW_TIME_TOLERANCE_SECONDS, issue, segment_review_issues, set_review_issues
 
 
 MIN_TRAILING_CHUNK_SECONDS = 1.0
@@ -99,6 +100,7 @@ def apply_time_offset(
     adjusted = []
     for segment in segments:
         item = dict(segment)
+        reviews = segment_review_issues(item)
         start = _finite_seconds(item.get("start", 0.0))
         end = _finite_seconds(item.get("end", start))
         if duration is not None:
@@ -106,8 +108,11 @@ def apply_time_offset(
             bounded_end = max(bounded_start, min(max(end, 0.0), duration))
             if bounded_start != start or bounded_end != end:
                 item["timing_approximate"] = True
+                if max(abs(bounded_start - start), abs(bounded_end - end)) > REVIEW_TIME_TOLERANCE_SECONDS:
+                    reviews.append(issue("timestamp_adjusted", bounded_start, bounded_end))
             start, end = bounded_start, bounded_end
         item["start"] = start + offset
         item["end"] = end + offset
+        set_review_issues(item, [{**entry, "start": entry["start"] + offset, "end": entry["end"] + offset} for entry in reviews if entry])
         adjusted.append(item)
     return adjusted

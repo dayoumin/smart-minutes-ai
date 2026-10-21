@@ -10,6 +10,7 @@ from docx.shared import RGBColor
 
 from pipeline.summary_display import get_display_topics
 from pipeline.transcript_display import get_transcript_segments
+from .transcript_review import format_review_notes
 
 
 def _format_time(value) -> str:
@@ -354,6 +355,8 @@ def export_docx(
             else:
                 p.add_run(f"{time_str} ").bold = True
             p.add_run(text)
+            for note in format_review_notes(seg):
+                doc.add_paragraph(note)
         
     doc.save(output_path)
     return output_path

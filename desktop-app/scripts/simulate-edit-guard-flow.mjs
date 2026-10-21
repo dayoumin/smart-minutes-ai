@@ -239,7 +239,7 @@ const run = async () => {
     assert.equal(await detailTabs.locator('[role="tab"][tabindex="0"]').count(), 1);
 
     await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
-    await page.getByRole('button', { name: '대화록 편집' }).click();
+    await page.getByRole('button', { name: '편집' }).click();
     await page.getByLabel('참석자01 대화록 수정').fill('사용자가 수정 중인 대화록입니다.');
 
     await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();

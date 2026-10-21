@@ -1173,7 +1173,7 @@
     @apply grid gap-3;
   }
 
-  /* Direction A meeting detail: an open document column, not a card. */
+  /* Keep the document open; only its stable meeting information has a quiet boundary. */
   .meeting-detail-frame {
     @apply rounded-none border-0 bg-transparent shadow-none;
   }
@@ -1183,7 +1183,7 @@
   }
 
   .meeting-detail-overview-main {
-    @apply grid gap-4 px-0 pb-0 pt-1;
+    @apply grid gap-4 rounded-[var(--radius-card)] border border-border bg-background p-5;
   }
 
   .meeting-detail-title-row {
@@ -1216,15 +1216,19 @@
 
   /* Reserve the audio row while the source is checked so rows below do not jump. */
   .meeting-audio-slot {
-    @apply flex min-h-9 items-center;
+    @apply flex min-h-10 items-center;
   }
 
   .meeting-meta-item-audio .meeting-meta-label {
-    @apply min-h-9;
+    @apply min-h-10;
   }
 
   .meeting-audio-error {
-    @apply inline-flex flex-wrap items-center gap-x-2 text-[13px] text-muted-foreground;
+    @apply inline-flex min-w-0 items-center gap-x-2 text-[13px] leading-5 text-muted-foreground;
+  }
+
+  .meeting-audio-error .btn {
+    @apply h-8 shrink-0 px-2 text-xs;
   }
 
   .meeting-meta-item-purpose .meeting-meta-value {
@@ -1235,16 +1239,42 @@
     @apply block truncate text-[13px] text-muted-foreground;
   }
 
-  .meeting-participant-chips {
-    @apply m-0 flex list-none flex-wrap gap-1.5 p-0;
+  .meeting-participants {
+    @apply relative flex w-full min-w-0 items-center gap-3;
   }
 
-  .meeting-participant-chip {
-    @apply rounded-md bg-[var(--surface-action-hover-bg)] px-2 py-0.5 text-xs text-foreground;
+  .meeting-participant-preview {
+    @apply min-w-0 truncate;
+  }
+
+  .meeting-participant-count {
+    @apply ml-auto inline-flex shrink-0 items-center gap-1 rounded-[var(--radius-btn)] border border-border bg-[var(--surface-action-hover-bg)] px-2 py-0.5 text-xs text-muted-foreground;
+  }
+
+  .meeting-participant-count:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 2px;
+  }
+
+  .meeting-participant-popover {
+    @apply absolute right-0 top-[calc(100%+0.5rem)] z-30 w-60 max-w-full rounded-[var(--radius-card)] border border-border bg-background p-4 text-xs;
+    box-shadow: var(--shadow-overlay);
+  }
+
+  .meeting-participant-popover ul {
+    @apply mt-3 grid max-h-60 list-none grid-cols-2 gap-3 overflow-auto p-0;
+  }
+
+  .meeting-participant-popover li {
+    @apply min-w-0 break-words;
+  }
+
+  .meeting-meta-item-participants .meeting-meta-value {
+    @apply flex h-6 items-center;
   }
 
   .meeting-status-grid {
-    @apply flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2;
+    @apply mt-2 flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2;
   }
 
   .meeting-status-item {
@@ -1260,7 +1290,11 @@
   }
 
   .meeting-detail-actions {
-    @apply relative flex shrink-0 flex-wrap items-center justify-end gap-2;
+    @apply relative flex min-w-20 shrink-0 flex-wrap items-center justify-end gap-2;
+  }
+
+  .meeting-meta-item-status .meeting-meta-value {
+    @apply min-w-0;
   }
 
   .meeting-diarization-guidance {
@@ -1353,6 +1387,15 @@
     container-type: inline-size;
   }
 
+  .meeting-scroll-to-top {
+    @apply fixed bottom-6 right-6 z-20 h-10 w-10 bg-background text-muted-foreground;
+    box-shadow: var(--shadow-control);
+  }
+
+  .meeting-scroll-to-top:hover {
+    @apply text-primary;
+  }
+
   .meeting-skeleton-line,
   .meeting-skeleton-pill,
   .meeting-skeleton-search,
@@ -1427,11 +1470,11 @@
   }
 
   .detail-main-nav .tab-list {
-    @apply border-b-0;
+    @apply shrink-0 whitespace-nowrap border-b-0;
   }
 
   .detail-main-nav .detail-search-field {
-    @apply mb-2 sm:max-w-[15rem];
+    @apply mb-2 min-w-0 sm:flex-1 sm:max-w-[15rem];
   }
 
   .detail-search-field {
@@ -2291,6 +2334,135 @@
     @apply flex min-w-0 items-center justify-between gap-3;
   }
 
+  .writer-analysis-progress {
+    display: grid;
+    grid-template-columns: 2.25rem minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 0.25rem 0.75rem;
+  }
+
+  .writer-header .page-title:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 4px;
+  }
+
+  .meeting-detail-title:focus-visible {
+    outline: 2px solid var(--focus-ring-color);
+    outline-offset: 4px;
+  }
+
+  .meeting-analysis-status {
+    width: 100%;
+    height: 9rem;
+    overflow-y: auto;
+    padding-block: 0.125rem;
+  }
+
+  .meeting-analysis-status:has(.analysis-stop-panel, .diarization-stop-panel, .writer-analysis-panel-error) {
+    height: auto;
+    min-height: 9rem;
+  }
+
+  .meeting-analysis-status .writer-analysis-panel {
+    padding: 0;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .meeting-analysis-status :is(.writer-analysis-file, .writer-analysis-local-note) {
+    display: none;
+  }
+
+  .meeting-analysis-summary {
+    @apply flex min-h-5 items-center gap-2 text-sm font-medium;
+  }
+
+  .meeting-analysis-duration {
+    @apply ml-auto shrink-0 text-xs font-normal tabular-nums text-muted-foreground;
+  }
+
+  .meeting-analysis-note {
+    @apply mt-1 text-xs leading-5 text-muted-foreground;
+  }
+
+  .meeting-detail-frame [inert] :is(button, input) {
+    @apply border-border bg-[var(--surface-action-hover-bg)] text-muted-foreground;
+    opacity: 1;
+  }
+
+  .meeting-analysis-status .writer-analysis-progress {
+    grid-template-columns: 1.125rem minmax(0, 1fr) auto;
+    gap: 0.25rem 0.5rem;
+  }
+
+  .meeting-analysis-status .writer-analysis-status-icon {
+    @apply h-auto w-auto rounded-none bg-transparent;
+    color: var(--brand-primary);
+  }
+
+  .meeting-analysis-status .writer-analysis-status-icon-warning {
+    color: var(--status-warning-fg);
+  }
+
+  .meeting-analysis-status .writer-analysis-status-icon-error {
+    color: var(--status-error-fg);
+  }
+
+  .meeting-analysis-status .writer-analysis-state-note:empty {
+    display: none;
+  }
+
+  .meeting-analysis-status .writer-analysis-bar {
+    grid-column: 1 / 3;
+  }
+
+  .writer-analysis-timing {
+    @apply inline-flex flex-wrap items-center justify-end gap-x-2 text-xs tabular-nums text-muted-foreground;
+  }
+
+  .meeting-analysis-status .writer-analysis-timing {
+    @apply col-span-2 col-start-2;
+    grid-row: 2;
+  }
+
+  .meeting-analysis-status .writer-analysis-bar,
+  .meeting-analysis-status .writer-analysis-control {
+    grid-row: 3;
+  }
+
+  .writer-analysis-bar {
+    grid-column: 2;
+  }
+
+  .writer-analysis-control {
+    @apply flex h-9 items-center justify-end;
+  }
+
+  .writer-analysis-stop-button,
+  .writer-analysis-stop-requested {
+    @apply inline-flex h-9 w-9 items-center justify-center p-0;
+    color: var(--brand-primary);
+  }
+
+  .writer-analysis-stop-button:hover {
+    color: var(--brand-primary-hover);
+  }
+
+  .writer-analysis-stop-symbol {
+    animation: analysis-stop-breathe 2s ease-in-out infinite;
+  }
+
+  @keyframes analysis-stop-breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(0.82); }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .writer-analysis-stop-symbol {
+      animation: none;
+    }
+  }
+
   .writer-analysis-state-note {
     @apply mt-1 min-h-4 text-xs leading-4;
     color: var(--status-warning-fg);
@@ -2302,14 +2474,7 @@
   }
 
   .writer-analysis-elapsed {
-    @apply mt-1 text-sm font-semibold tabular-nums text-foreground;
-  }
-
-  .writer-analysis-stop-requested {
-    @apply inline-flex min-h-8 items-center gap-1.5 rounded-[var(--radius-btn)] border px-3 text-xs font-medium;
-    border-color: var(--status-warning-border);
-    background-color: var(--status-warning-bg);
-    color: var(--status-warning-fg);
+    @apply text-xs font-normal tabular-nums text-muted-foreground;
   }
 
   .writer-analysis-result {
@@ -2326,11 +2491,6 @@
 
   .writer-analysis-result-actions {
     @apply mt-4 flex flex-wrap gap-2;
-  }
-
-  .writer-completion-record {
-    @apply mb-3 flex min-w-0 flex-col gap-0.5 border-b pb-3;
-    border-color: color-mix(in srgb, var(--status-success-border) 72%, var(--border-default));
   }
 
   @media (max-height: 800px) {
@@ -3268,7 +3428,7 @@
   @container meeting-detail (min-width: 40rem) {
     .script-row {
       @apply gap-x-4;
-      grid-template-columns: 4.5rem 7.5rem minmax(0, 1fr);
+      grid-template-columns: 4.5rem 14rem minmax(0, 1fr);
       grid-template-areas: "time meta text";
     }
   }
@@ -3282,7 +3442,7 @@
   }
 
   .script-meta {
-    @apply flex min-w-0 flex-col items-start gap-1;
+    @apply flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1;
   }
 
   .script-meta .speaker-label {
@@ -3294,7 +3454,7 @@
     color: var(--speaker-meta);
   }
   .script-badge-row {
-    @apply flex flex-wrap gap-1.5;
+    display: contents;
   }
 
   .script-badge-row:empty {
@@ -3302,8 +3462,26 @@
   }
 
   .script-badge {
-    @apply inline-flex items-center rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground;
+    @apply inline-flex shrink-0 items-center rounded-full border border-border bg-background px-2 py-0.5 text-[11px] font-semibold text-muted-foreground;
   }
+
+  .script-review-details {
+    @apply min-w-0 max-w-full;
+  }
+
+  .script-review-details > summary {
+    @apply cursor-pointer;
+    list-style: none;
+  }
+
+  .script-review-details > summary::-webkit-details-marker { display: none; }
+  .script-review-details > summary:focus-visible { outline: 2px solid var(--brand-primary); outline-offset: 2px; }
+  .script-review-details[open] { flex-basis: 100%; }
+  .script-review-list { @apply mt-2 grid gap-3 rounded-md border border-border bg-background p-2 text-xs leading-5; }
+  .script-review-list li { @apply grid min-w-0 gap-1; overflow-wrap: anywhere; }
+  .script-review-range { @apply font-mono tabular-nums; }
+  .script-review-listen { @apply w-fit rounded px-1 py-0.5 text-xs font-medium underline underline-offset-2; color: var(--brand-primary); }
+  .script-review-listen:disabled { @apply cursor-not-allowed opacity-50; }
 
   .script-text {
     @apply min-h-0 whitespace-pre-wrap rounded-none px-0 py-0 text-[15px] leading-7;

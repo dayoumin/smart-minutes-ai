@@ -1,5 +1,6 @@
 import re
 from typing import List, Dict
+from .transcript_review import REVIEW_TIME_TOLERANCE_SECONDS, issue, segment_review_issues, set_review_issues
 
 
 SHORT_SPEAKER_TURN_SECONDS = 1.2
@@ -142,9 +143,9 @@ def _split_time_ranges_preserving_transcript_bounds(
     for index in range(len(meaningful) - 1):
         current_end = meaningful[index][2]
         next_start = meaningful[index + 1][1]
-        if next_start > current_end:
+        if next_start - current_end > REVIEW_TIME_TOLERANCE_SECONDS:
             has_gap = True
-        elif next_start < current_end:
+        elif current_end - next_start > REVIEW_TIME_TOLERANCE_SECONDS:
             has_overlap = True
         boundary = current_end + ((next_start - current_end) / 2.0)
         boundaries.append(min(max(boundary, transcript_start), transcript_end))
@@ -194,12 +195,15 @@ def align_segments_with_speakers(
             aligned_seg = t_seg.copy()
             aligned_seg["speaker"] = "UNKNOWN"
             aligned_seg["speaker_name"] = "UNKNOWN"
+            aligned_seg["speaker_needs_review"] = True
+            set_review_issues(aligned_seg, [*segment_review_issues(t_seg), issue("speaker_unassigned", t_start, t_end)])
             aligned_segments.append(aligned_seg)
             continue
 
         overlaps.sort(key=lambda item: item[1])
         meaningful = [item for item in overlaps if item[0] >= 1.0]
-        has_short_speaker_overlap = any(item[0] < 1.0 for item in overlaps)
+        short_overlaps = [item for item in overlaps if REVIEW_TIME_TOLERANCE_SECONDS < item[0] < 1.0]
+        has_short_speaker_overlap = bool(short_overlaps)
         if _should_split_for_speaker_change(t_seg, meaningful, t_duration):
             text_chunks = _split_text_by_weights(t_seg.get("text", ""), [item[0] for item in meaningful])
             time_ranges, has_coverage_gap, has_coverage_overlap = _split_time_ranges_preserving_transcript_bounds(meaningful, t_start, t_end)
@@ -212,6 +216,18 @@ def align_segments_with_speakers(
                 aligned_seg["speaker"] = speaker
                 aligned_seg["speaker_name"] = _display_speaker_name(speaker)
                 aligned_seg["mixed_speaker_split"] = True
+                reviews = [*segment_review_issues(t_seg), issue("speaker_split", start, end)]
+                for overlap, overlap_start, overlap_end, other_speaker in short_overlaps:
+                    if other_speaker != speaker:
+                        reviews.append(issue("short_speaker_overlap", overlap_start, overlap_end))
+                for left, right in zip(meaningful, meaningful[1:]):
+                    if left[3] == right[3]:
+                        continue
+                    if right[1] - left[2] > REVIEW_TIME_TOLERANCE_SECONDS:
+                        reviews.append(issue("speaker_coverage_gap", left[2], right[1]))
+                    elif left[2] - right[1] > REVIEW_TIME_TOLERANCE_SECONDS:
+                        reviews.append(issue("speaker_coverage_overlap", right[1], left[2]))
+                set_review_issues(aligned_seg, [entry for entry in reviews if entry and entry["end"] > start and entry["start"] < end])
                 if has_coverage_gap or has_coverage_overlap or has_short_speaker_overlap:
                     aligned_seg["speaker_needs_review"] = True
                 if has_coverage_gap:
@@ -227,9 +243,11 @@ def align_segments_with_speakers(
         aligned_seg = t_seg.copy()
         aligned_seg["speaker"] = best_speaker
         aligned_seg["speaker_name"] = _display_speaker_name(best_speaker)
-        if has_short_speaker_overlap and len({item[3] for item in overlaps}) > 1:
+        other_short_overlaps = [item for item in short_overlaps if item[3] != best_speaker]
+        if other_short_overlaps:
             aligned_seg["speaker_needs_review"] = True
             aligned_seg["short_speaker_overlap"] = True
+        set_review_issues(aligned_seg, [*segment_review_issues(t_seg), *[issue("short_speaker_overlap", start, end) for _, start, end, _ in other_short_overlaps]])
         aligned_segments.append(aligned_seg)
         
     return aligned_segments

@@ -1,3 +1,10 @@
+export interface TranscriptReviewIssue {
+    reason: 'timing_estimated' | 'timing_legacy' | 'timestamp_adjusted' | 'speaker_unassigned' | 'speaker_split'
+        | 'short_speaker_overlap' | 'speaker_coverage_gap' | 'speaker_coverage_overlap' | 'speaker_review';
+    start: number;
+    end: number;
+}
+
 export interface MeetingSegment {
     start: string;
     end: string;
@@ -5,6 +12,8 @@ export interface MeetingSegment {
     displaySpeaker?: string;
     text: string;
     timingApproximate?: boolean;
+    reviewVersion?: 1;
+    reviewIssues?: TranscriptReviewIssue[];
     speakerNeedsReview?: boolean;
     speaker_needs_review?: boolean;
     speakerSplitCoverageGap?: boolean;
@@ -101,6 +110,13 @@ export interface MeetingRecord {
     transcriptEditMeta?: TranscriptEditMeta;
     speakerLabels?: Record<string, string>;
     sourceFile?: string;
+    sourceFileMetadata?: {
+        kind: 'audio' | 'video' | 'unknown';
+        sizeBytes: number;
+        durationSeconds?: number;
+    };
+    analysisElapsedMs?: number;
+    analysisNotes?: string[];
     jobId?: string;
     pinned?: boolean;
     analysisStatus?: 'diarization_in_progress' | 'diarization_failed' | 'diarization_stopped' | 'completed';

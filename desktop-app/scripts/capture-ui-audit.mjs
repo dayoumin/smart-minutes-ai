@@ -597,7 +597,7 @@ const captures = [
     steps: async page => {
       await seedAndReload(page);
       await openMeeting(page, completeMeeting.title);
-      await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+      await page.getByRole('button', { name: '편집', exact: true }).click();
       await page.locator('.script-edit-textarea').first().fill('3분기 연근해 자원조사 결과를 다시 공유하겠습니다.');
       await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '저장', exact: true }).click();
       await page.locator('#meeting-detail-panel-script .detail-report-status').waitFor({ timeout: 10000 });
@@ -624,7 +624,7 @@ const captures = [
   },
   {
     id: 'D4', note: '대화록 편집',
-    steps: async page => { await seedAndReload(page); await openMeeting(page, completeMeeting.title); await page.getByRole('button', { name: '대화록 편집', exact: true }).click(); await page.waitForTimeout(400); },
+    steps: async page => { await seedAndReload(page); await openMeeting(page, completeMeeting.title); await page.getByRole('button', { name: '편집', exact: true }).click(); await page.waitForTimeout(400); },
   },
   {
     id: 'D5', note: '현재 회의에서 검색',

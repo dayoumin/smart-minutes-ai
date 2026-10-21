@@ -1467,9 +1467,11 @@ const run = async () => {
     await page.keyboard.press('Tab');
     assert.equal(await sidebarMenuItems.nth(1).evaluate(element => document.activeElement === element), true);
     await page.keyboard.press('Tab');
-    const sidebarFolderSelect = sidebarRecordMenu.getByLabel('오래된 고정 회의 폴더');
-    assert.equal(await sidebarFolderSelect.evaluate(element => document.activeElement === element), true);
-    await sidebarFolderSelect.selectOption('sidebar-review-folder');
+    const sidebarFolderMove = sidebarRecordMenu.getByRole('button', { name: '폴더 이동', exact: true });
+    assert.equal(await sidebarFolderMove.evaluate(element => document.activeElement === element), true);
+    await sidebarFolderMove.press('ArrowRight');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     await waitForSidebarMenuTriggerFocus();
     assert.equal(await page.evaluate(async () => {
@@ -1493,7 +1495,8 @@ const run = async () => {
     sidebarMenuItems = await openSidebarRecordMenu();
     await page.keyboard.press('Tab');
     await page.keyboard.press('Tab');
-    await sidebarRecordMenu.getByLabel('오래된 고정 회의 폴더').selectOption('');
+    await sidebarRecordMenu.getByRole('button', { name: '폴더 이동', exact: true }).press('ArrowRight');
+    await page.keyboard.press('Enter');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
     const createMeetingButton = page.getByRole('button', { name: '새 회의록', exact: true });
     await page.waitForFunction(element => document.activeElement === element, await createMeetingButton.elementHandle());
@@ -2193,7 +2196,7 @@ const run = async () => {
     assert.equal(exportBodies[1]?.exportScope, 'transcript');
     assert.match(exportBodies[1]?.title ?? '', /_대화록$/);
 
-    await page.getByRole('button', { name: '대화록 편집' }).click();
+    await page.getByRole('button', { name: '편집' }).click();
     const unsavedTranscriptDraft = page.getByLabel('김검토 대화록 수정').first();
     await unsavedTranscriptDraft.fill('저장하지 않은 대화록 편집 내용');
     await unsavedTranscriptDraft.focus();
@@ -2537,7 +2540,7 @@ const run = async () => {
     await page.getByText('시뮬레이션 회의록', { exact: true }).first().click();
     await page.getByRole('heading', { name: '시뮬레이션 회의록', exact: true }).waitFor();
     await page.locator('.tab-list').getByRole('tab', { name: '대화록', exact: true }).click();
-    await page.getByRole('button', { name: '대화록 편집', exact: true }).click();
+    await page.getByRole('button', { name: '편집', exact: true }).click();
     const reopenedText = '재열기 검증: 화면에서 저장한 최신 발언입니다.';
     await page.getByLabel('김검토 대화록 수정').first().fill(reopenedText);
     await Promise.all([

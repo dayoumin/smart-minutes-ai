@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Layout } from './Layout';
 import { MeetingWriter } from './MeetingWriter';
+import type { AnalysisMeetingView } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
 import type { MeetingDetailOpenRequest, MeetingDetailTab } from './MeetingHistory';
 import { Settings } from './Settings';
@@ -173,6 +174,15 @@ export const App: React.FC = () => {
     const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection | undefined>(undefined);
     const leaveGuardRef = React.useRef<() => boolean>(() => true);
     const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
+    const writerSurfaceRef = useRef<HTMLDivElement>(null);
+    const meetingSurfaceRef = useRef<HTMLDivElement>(null);
+    const [analysisMeetingView, setAnalysisMeetingView] = useState<AnalysisMeetingView | null>(null);
+    const [analysisStatusTarget, setAnalysisStatusTarget] = useState<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (activeTab === 'minutes' && analysisMeetingView?.meeting.analysisStatus === 'completed') {
+            setSelectedMeetingId(analysisMeetingView.meeting.id);
+        }
+    }, [activeTab, analysisMeetingView]);
     const [analysisStatus, setAnalysisStatus] = useState<AnalysisStatus>({
         active: false,
         progress: 0,
@@ -190,11 +200,13 @@ export const App: React.FC = () => {
         : '다른 실행에서 진행 중인 분석이 끝난 뒤 새 회의록을 만들 수 있습니다.';
     const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
-    const canLeaveCurrentMeeting = () => {
-        if (activeTab === 'minutes') return writerLeaveGuardRef.current();
+    const canLeaveCurrentMeeting = React.useCallback(() => {
+        if (activeTab === 'minutes') {
+            return (!analysisMeetingView || leaveGuardRef.current()) && writerLeaveGuardRef.current();
+        }
         if (activeTab === 'history') return leaveGuardRef.current();
         return true;
-    };
+    }, [activeTab, analysisMeetingView]);
 
     const handleCreateMeeting = () => {
         if (!canLeaveCurrentMeeting()) return;
@@ -217,12 +229,21 @@ export const App: React.FC = () => {
     const handleDeleteMeeting = (id: string, fallbackId: string | null) => {
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(current => current === id ? fallbackId : current);
+        if (activeTab === 'minutes' && analysisMeetingView?.meeting.id === id && !analysisMeetingView.running) {
+            setAnalysisMeetingView(null);
+            setWriterSessionKey(current => current + 1);
+            setActiveTab(fallbackId ? 'history' : 'minutes');
+        }
     };
     // 회의록 정리 deletes many at once; an open meeting among them leaves for the new-record page.
     const handleMeetingsDeleted = (ids: string[]) => {
         if (!selectedMeetingId || !ids.includes(selectedMeetingId)) return;
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
+        if (analysisMeetingView && ids.includes(analysisMeetingView.meeting.id) && !analysisMeetingView.running) {
+            setAnalysisMeetingView(null);
+            setWriterSessionKey(current => current + 1);
+        }
         setActiveTab('minutes');
     };
     const openSettings = (tab: SettingsTab = 'general', section?: SettingsSection) => {
@@ -303,7 +324,7 @@ export const App: React.FC = () => {
             if (!detail?.id || !detail.openHistory) return;
             const changesWorkSurface = activeTab !== 'history' || detail.id !== selectedMeetingId;
             if (changesWorkSurface) {
-                const canOpenMeeting = activeTab === 'minutes' ? writerLeaveGuardRef.current() : leaveGuardRef.current();
+                const canOpenMeeting = canLeaveCurrentMeeting();
                 if (!canOpenMeeting) return;
             }
             setMeetingDetailOpenRequest({
@@ -316,7 +337,7 @@ export const App: React.FC = () => {
 
         window.addEventListener('meetings:updated', handleMeetingsUpdated);
         return () => window.removeEventListener('meetings:updated', handleMeetingsUpdated);
-    }, [activeTab, selectedMeetingId]);
+    }, [activeTab, canLeaveCurrentMeeting, selectedMeetingId]);
 
     useEffect(() => {
         if (!showAsrBenchmark) return;
@@ -373,7 +394,14 @@ export const App: React.FC = () => {
                     }
                     handleTabChange('minutes');
                 }}
-                onOpenAnalysis={() => handleTabChange('minutes')}
+                onOpenAnalysis={() => {
+                    if (!canLeaveCurrentMeeting()) return;
+                    setActiveTab('minutes');
+                    window.requestAnimationFrame(() => {
+                        const surface = analysisMeetingView ? meetingSurfaceRef.current : writerSurfaceRef.current;
+                        surface?.querySelector<HTMLElement>('.meeting-detail-title, .writer-header .page-title')?.focus();
+                    });
+                }}
                 newMeetingBlocked={analysisStartBlocked}
                 newMeetingBlockedReason={newMeetingBlockedReason}
                 resumeSelectionBlocked={analysisStartBlocked}
@@ -390,9 +418,11 @@ export const App: React.FC = () => {
                     setActiveTab('history');
                 }}
             >
-                <div className={activeTab === 'minutes' ? 'contents' : 'hidden'}>
+                <div ref={writerSurfaceRef} className={activeTab === 'minutes' && !analysisMeetingView ? 'contents' : 'hidden'}>
                     <MeetingWriter
                         key={writerSessionKey}
+                        onAnalysisViewChange={setAnalysisMeetingView}
+                        analysisStatusTarget={activeTab === 'minutes' ? analysisStatusTarget : null}
                         onOpenSettings={() => openSettings('models')}
                         analysisStartBlocked={analysisStartBlocked}
                         analysisStartBlockedReason={newMeetingBlockedReason}
@@ -416,10 +446,13 @@ export const App: React.FC = () => {
                         )}
                     />
                 </div>
-                <div className={activeTab === 'history' ? 'contents' : 'hidden'}>
+                <div ref={meetingSurfaceRef} className={activeTab === 'history' || activeTab === 'minutes' && analysisMeetingView ? 'contents' : 'hidden'}>
                     <MeetingHistory
-                        selectedMeetingId={selectedMeetingId}
-                        detailOpenRequest={meetingDetailOpenRequest}
+                        selectedMeetingId={activeTab === 'minutes' && analysisMeetingView ? analysisMeetingView.meeting.id : selectedMeetingId}
+                        analysisMeeting={activeTab === 'minutes' ? analysisMeetingView?.meeting : null}
+                        analysisRunning={activeTab === 'minutes' && Boolean(analysisMeetingView?.running)}
+                        analysisStatusRef={activeTab === 'minutes' && analysisMeetingView ? setAnalysisStatusTarget : undefined}
+                        detailOpenRequest={activeTab === 'history' ? meetingDetailOpenRequest : null}
                         onOpenSettings={() => openSettings('models')}
                         onCreateMeeting={handleCreateMeeting}
                         newMeetingBlocked={analysisStartBlocked}

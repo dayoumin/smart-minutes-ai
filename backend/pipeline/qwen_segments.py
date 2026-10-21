@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
+from .transcript_review import issue
 
 
 DEFAULT_SENTENCE_ENDINGS = (".", "?", "!", "\u3002", "\uff1f", "\uff01")
@@ -253,7 +254,7 @@ def build_display_segments_from_transcript(
         if _segment_end(segment) > _segment_start(segment)
     ]
     if not timed:
-        return [{"start": 0.0, "end": 0.0, "text": sentence, "timing_approximate": True} for sentence in sentences]
+        return [{"start": 0.0, "end": 0.0, "text": sentence, "timing_approximate": True, "review_version": 1, "review_issues": [issue("timing_estimated", 0, 0)]} for sentence in sentences]
 
     start = min(_segment_start(segment) for segment in timed)
     end = max(_segment_end(segment) for segment in timed)
@@ -272,6 +273,8 @@ def build_display_segments_from_transcript(
             "end": sentence_end,
             "text": sentence,
             "timing_approximate": True,
+            "review_version": 1,
+            "review_issues": [issue("timing_estimated", cursor, sentence_end)],
             "display_only": True,
         })
         cursor = sentence_end

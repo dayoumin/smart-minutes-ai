@@ -1,6 +1,7 @@
 import os
 import json
 from typing import List, Dict, Any
+from .transcript_review import format_review_notes
 
 def save_result_json(result_data: Dict[str, Any], output_path: str) -> str:
     """Save the full intermediate result as JSON."""
@@ -48,5 +49,7 @@ def export_txt(segments: List[Dict], output_path: str) -> str:
                 f.write(f"{time_str} {speaker}: {text}\n")
             else:
                 f.write(f"{time_str} {text}\n")
+            for note in format_review_notes(seg):
+                f.write(f"  [{note}]\n")
             
     return output_path

@@ -11,6 +11,7 @@ import {
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 import { isTauriRuntime } from './apiBase';
 import { toUserFacingError } from './apiError';
+import { formatReviewTime, getTranscriptReviewIssues, reviewReasonLabels } from './transcriptReview';
 
 const extensionByKind: Record<DownloadFormat, string> = {
     hwpx: 'hwpx',
@@ -91,8 +92,8 @@ const participantLabel = (value?: string): string => {
 };
 
 const formatSegmentLine = (segment: MeetingSegment): string => {
-    const timingLabel = segment.timingApproximate ? ' 시간 추정' : '';
-    return `${segment.start}-${segment.end}${timingLabel} ${participantLabel(segment.displaySpeaker || segment.speaker)}: ${segment.text}`;
+    const notes = getTranscriptReviewIssues(segment, []).map(issue => `확인 ${formatReviewTime(issue.start)}–${formatReviewTime(issue.end)} · ${reviewReasonLabels[issue.reason]}`);
+    return [`${segment.start}-${segment.end} ${participantLabel(segment.displaySpeaker || segment.speaker)}: ${segment.text}`, ...notes].join('\n');
 };
 
 const exportParticipantLabel = (meeting: MeetingRecord, speaker: string, fallback?: string): string => (
@@ -106,7 +107,11 @@ const transcriptSegmentsForExport = (meeting: MeetingRecord): MeetingSegment[] =
         : meeting.displaySegments?.length
             ? meeting.displaySegments
             : meeting.segments ?? []
-);
+).map(segment => ({
+    ...segment,
+    reviewVersion: 1,
+    reviewIssues: getTranscriptReviewIssues(segment, meeting.segments ?? []),
+}));
 
 const buildTranscriptText = (meeting: MeetingRecord): string => {
     const lines = [

@@ -512,7 +512,7 @@ const runScenario = async (
     await modelStatusRequested;
     const analysisPanel = page.locator('.writer-analysis-panel');
     await analysisPanel.waitFor({ timeout: 10000 });
-    await page.getByRole('heading', { name: '분석 진행' }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: `${action} 분석 중지 테스트`, exact: true }).waitFor({ timeout: 10000 });
     assert.notEqual((await analysisPanel.innerText()).trim(), '', 'analysis panel should show the current step before model status responds');
     assert.equal(analyzeJobId, null, 'analysis request should wait for model status');
     releaseModelStatusResponse();
@@ -528,14 +528,13 @@ const runScenario = async (
     if (delayPartialDuringCancel) await partialRequested;
     const stopMenuButton = page.getByRole('button', { name: '중지/취소' });
     await stopMenuButton.waitFor({ timeout: 10000 });
-    // While the file is processed the card repeats the local promise once; the writer's title promise is input-only.
+    // The shared detail owns the meeting identity; the old progress file row stays hidden.
     const localNote = analysisPanel.locator('.writer-analysis-local-note');
-    await localNote.getByText('이 PC에서 분석하고 있습니다. 회의 파일과 대화록은 밖으로 나가지 않습니다.', { exact: true }).waitFor({ timeout: 10000 });
-    assert.equal(await localNote.evaluate(element => Boolean(element.closest('[aria-live]'))), false, 'the fixed promise must stay out of the progress live region');
+    assert.equal(await localNote.isVisible(), false, 'the shared detail does not add a second footer');
     assert.equal(await page.locator('.writer-local-promise').count(), 0, 'the title promise belongs to the input screen');
     const progressLayout = await page.evaluate(() => {
       const panel = document.querySelector('.writer-analysis-panel');
-      const stopButton = Array.from(document.querySelectorAll('button')).find(button => button.textContent?.includes('중지/취소'));
+      const stopButton = panel?.querySelector('button[aria-label="중지/취소"]');
       return {
         panelBottom: panel?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
         stopButtonBottom: stopButton?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
@@ -566,7 +565,7 @@ const runScenario = async (
     if (delayStopDecisionResponse) {
       releaseAnalyzeResponse();
       await page.waitForFunction(() => window.__meetingUpdateCount >= 1, undefined, { timeout: 10000 });
-      assert.equal(await page.locator('.writer-completion-panel').count(), 0);
+      assert.equal(await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).count(), 0);
       releaseStopDecisionResponse();
     }
     if (!cancelAccepted) {
@@ -575,7 +574,7 @@ const runScenario = async (
       if (!completedResultAfterStop) {
         await stopMenuButton.waitFor({ state: 'visible' });
         assert.equal(await page.evaluate(() => Array.from(document.querySelectorAll('button')).some(
-          button => button.textContent?.includes('중지/취소') && !button.disabled,
+          button => button.getAttribute('aria-label') === '중지/취소' && !button.disabled,
         )), true);
       }
       const rejectedStopDrafts = await readLocalStorageJson(page, 'analysisResumeDrafts') ?? [];
@@ -586,7 +585,7 @@ const runScenario = async (
       );
       releaseAnalyzeResponse();
       if (completedResultAfterStop) {
-        await page.locator('.writer-completion-panel').waitFor({ timeout: 10000 });
+        await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
         const completedMeetings = await page.evaluate(() => new Promise((resolve, reject) => {
           const request = indexedDB.open('MeetingHistoryDB');
           request.onerror = () => reject(request.error);
@@ -634,7 +633,7 @@ const runScenario = async (
       assert.equal(drafts.length, 1);
       assert.equal(drafts[0].status, 'stopped');
       assert.equal(drafts[0].jobId, analyzeJobId);
-      assert.equal(await page.locator('.writer-completion-panel').count(), 0, 'accepted stop must not show completion UI');
+      assert.equal(await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).count(), 0, 'accepted stop must not claim completion');
       assert.equal(
         (await page.evaluate(() => window.__meetingStatusesWritten)).includes('completed'),
         false,
@@ -752,7 +751,7 @@ const runFailureScenario = async (browser, fixture) => {
     const originalTitle = await page.getByLabel('회의 제목', { exact: true }).inputValue();
     await page.getByRole('button', { name: '분석 시작' }).click();
 
-    await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+    await page.locator('.writer-analysis-panel-error').waitFor({ timeout: 10000 });
     const failurePanel = page.locator('.writer-analysis-panel-error');
     await failurePanel.getByText('테스트 분석 오류가 발생했습니다.', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await failurePanel.locator('.writer-analysis-local-note').count(), 0, 'a failed run does not say it is still analyzing');
@@ -768,10 +767,10 @@ const runFailureScenario = async (browser, fixture) => {
     assert.equal(overflowX, 0, 'failure state should not create horizontal overflow');
 
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+    await page.locator('.writer-analysis-panel-error').waitFor({ timeout: 10000 });
     await page.locator('.writer-analysis-panel-error').getByRole('button', { name: '다시 시도' }).click();
-    await page.getByRole('heading', { name: '분석 완료' }).waitFor({ timeout: 10000 });
-    await page.locator('.writer-completion-panel').getByText(originalTitle, { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('heading', { name: originalTitle, exact: true }).waitFor({ timeout: 10000 });
     assert.equal(analyzeAttempt, 3, 'retry should start one new analysis request');
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).count(), 0, 'retry completion should replace the input form');
 
@@ -911,7 +910,7 @@ const runAdmissionScenario = async (browser, fixture, action, { terminalFirst = 
       releaseAnalyze();
     }
     if (missingTerminal) {
-      await page.getByRole('heading', { name: '분석을 마치지 못했습니다', exact: true }).waitFor();
+      await page.locator('.writer-analysis-panel-error').waitFor();
       await page.getByRole('button', { name: '입력 확인', exact: true }).click();
     } else {
       await page.getByRole('status').getByText(action === 'stop'
@@ -1068,7 +1067,7 @@ const runFailureCauseScenarios = async (browser, fixture) => {
       const meetingTitle = await page.getByLabel('회의 제목', { exact: true }).inputValue();
       await page.getByRole('button', { name: '분석 시작' }).click();
 
-      await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+      await page.locator('.writer-analysis-panel-error').waitFor({ timeout: 10000 });
       const failurePanel = page.locator('.writer-analysis-panel-error');
       await failurePanel.getByText(scenario.message, { exact: true }).waitFor({ timeout: 10000 });
       const panelText = await failurePanel.innerText();
@@ -1226,11 +1225,292 @@ const runEngineCheckingScenario = async (browser, fixture) => {
   }
 };
 
+const runDetailContinuityScenario = async (browser, fixture, background = false, viewportWidth = 1280, audioFailure = false) => {
+  const context = await browser.newContext({ viewport: { width: viewportWidth, height: 720 } });
+  const page = await context.newPage();
+  let releaseSettings;
+  let releaseResult;
+  const settingsReady = new Promise(resolve => { releaseSettings = resolve; });
+  const resultReady = new Promise(resolve => { releaseResult = resolve; });
+  let markAnalyzeStarted;
+  const analyzeStarted = new Promise(resolve => { markAnalyzeStarted = resolve; });
+  const title = '진행부터 같은 회의록';
+  let jobId;
+  const anchors = () => page.evaluate(() => Object.fromEntries(
+    ['.meeting-detail-title', '.detail-main-nav', '.detail-search-field', '.detail-command-bar-script'].map(selector => {
+      const element = document.querySelector(selector);
+      if (!element) throw new Error(`Missing continuity anchor ${selector}; title=${document.querySelector('.meeting-detail-title')?.textContent}`);
+      const box = element.getBoundingClientRect();
+      return [selector, { x: box.x, y: box.y }];
+    }),
+  ));
+  const assertSameAnchors = (before, after, phase) => {
+    for (const selector of Object.keys(before)) {
+      assert.ok(Math.abs(before[selector].x - after[selector].x) <= 1, `${phase}: ${selector} stays in the same column`);
+      assert.ok(Math.abs(before[selector].y - after[selector].y) <= 1, `${phase}: ${selector} stays at the same height (${before[selector].y} -> ${after[selector].y})`);
+    }
+  };
+  const captureState = async state => {
+    if (background || !process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR) return;
+    await page.locator('.meeting-detail-title').focus();
+    await page.mouse.move(viewportWidth - 8, 712);
+    await page.screenshot({ path: join(process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR, `detail-${state}-${viewportWidth}.png`), animations: 'disabled' });
+  };
+  try {
+    await installBaseRoutes(page);
+    if (audioFailure) await page.route('**/api/outputs/*/audio', route => route.fulfill({status: 403, contentType: 'application/json', body: JSON.stringify({detail: 'audio unavailable in this session'})}));
+    await page.route('**/api/analyze', async route => {
+      jobId = multipartField(route.request().postDataBuffer().toString('utf8'), 'job_id');
+      assert.ok(jobId);
+      markAnalyzeStarted();
+      await resultReady;
+      const result = {
+        type: 'result', status: 'completed', progress: 100,
+        segments: Array.from({ length: 12 }, (_, index) => ({
+          start: `00:00:${String(index).padStart(2, '0')}`,
+          end: `00:00:${String(index + 1).padStart(2, '0')}`,
+          speaker: `SPEAKER_${String(index).padStart(2, '0')}`,
+          text: index === 0 ? '같은 화면에서 준비된 첫 대화입니다.' : `화면 위치를 유지한 ${index + 1}번째 대화입니다. 긴 대화록에서도 제목과 회의 정보를 다시 확인할 수 있어야 합니다. `.repeat(6),
+        })),
+        summary: '', diarization_applied: true, diarization_requested: true,
+        meeting: { job_id: jobId, source_file: fixture.name },
+        outputs: { job_id: jobId, json: `/api/outputs/${jobId}/json`, audio: audioFailure ? `/api/outputs/${jobId}/audio` : null },
+      };
+      await route.fulfill({ status: 200, contentType: 'text/event-stream', body: `event: result\ndata: ${JSON.stringify(result)}\n\nevent: done\ndata: [DONE]\n\n` });
+    });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await assertProjectPage(page);
+    await page.setInputFiles('#meeting-file-input', fixture.path);
+    await page.getByLabel('회의 제목', { exact: true }).fill(title);
+    await page.getByLabel('회의 목적', { exact: true }).fill('분석 전 입력한 목적을 결과에서도 유지');
+    await page.route('**/api/settings', async route => {
+      await settingsReady;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ privacy: { preserve_extracted_audio: false }, diarization: { generate_during_analysis: true } }) });
+    });
+    await page.getByRole('button', { name: '분석 시작', exact: true }).click();
+    await page.getByRole('heading', { name: title, exact: true }).waitFor();
+    const preparing = await anchors();
+    assert.equal(await page.locator('.meeting-detail-overview-main').evaluate(el => getComputedStyle(el).borderTopWidth), '1px', 'meeting information has the approved quiet border');
+    const fileMetadata = await page.locator('.meeting-meta-value-source').innerText();
+    assert.match(fileMetadata, /MP4/);
+    assert.ok(!fileMetadata.includes(fixture.name), 'the source row shows metadata instead of repeating its title');
+    await page.evaluate(() => { window.__continuityFrame = document.querySelector('.meeting-detail-frame'); });
+    assert.notEqual(await page.locator('.detail-command-bar-script').getAttribute('inert'), null, 'result editing is locked while preparing');
+    const beforeSave = await page.evaluate(async () => (await import('/src/meetingRepository.ts')).getAllMeetings());
+    assert.equal(beforeSave.length, 0, 'the preview is not persisted as a finished meeting');
+    releaseSettings();
+    await analyzeStarted;
+    assertSameAnchors(preparing, await anchors(), 'running');
+    await page.locator('.meeting-analysis-status').getByRole('button', { name: '중지/취소', exact: true }).waitFor();
+    await captureState('running');
+    assert.equal(await page.locator('.sidebar-analysis-card').count(), 0, 'the open analysis does not repeat in the sidebar');
+    if (background) {
+      await page.evaluate(async () => {
+        const { addMeeting } = await import('/src/meetingRepository.ts');
+        await addMeeting({ id: 'continuity-other', title: '다른 회의록', date: '2026-10-20', summary: '', participants: '', segments: [] });
+        window.dispatchEvent(new CustomEvent('meetings:updated'));
+      });
+      page.once('dialog', dialog => dialog.accept());
+      await page.locator('.sidebar-record-row').getByRole('button', { name: '다른 회의록', exact: true }).click();
+      await page.getByRole('heading', { name: '다른 회의록', exact: true }).waitFor();
+    }
+    releaseResult();
+    await page.waitForFunction(async id => (await (await import('/src/meetingRepository.ts')).getMeetingById(id))?.analysisStatus === 'completed', jobId);
+    if (background) {
+      assert.equal(await page.getByRole('heading', { name: '다른 회의록', exact: true }).count(), 1, 'background completion preserves the current meeting');
+      await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+    }
+    await page.locator('.meeting-analysis-status').getByText('분석 완료', { exact: false }).waitFor();
+    await page.getByText('같은 화면에서 준비된 첫 대화입니다.', { exact: true }).waitFor();
+    if (audioFailure) await page.locator('.meeting-audio-error').waitFor();
+    if (!background) {
+      assert.equal(await page.evaluate(() => window.__continuityFrame === document.querySelector('.meeting-detail-frame')), true, 'completion keeps the same detail element');
+      assertSameAnchors(preparing, await anchors(), 'completed');
+      await page.locator('.sidebar-record-row-active').getByRole('button', { name: title, exact: true }).waitFor();
+      assert.equal(await page.locator('.detail-command-bar-script').getAttribute('inert'), null, 'completion has unlocked result controls before capture');
+      await captureState('completed');
+      await page.getByRole('button', { name: '회의 정보 수정', exact: true }).click();
+      await page.getByLabel('회의 제목', { exact: true }).fill('아직 저장하지 않은 제목');
+      page.once('dialog', dialog => dialog.dismiss());
+      await page.getByRole('button', { name: '새 회의록', exact: true }).click();
+      assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '아직 저장하지 않은 제목', 'navigation preserves an unsaved completed-result edit');
+      await page.getByRole('button', { name: '수정 취소', exact: true }).click();
+      await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+      await page.locator('.meeting-analysis-status').getByText('분석 완료', { exact: true }).waitFor();
+      assertSameAnchors(preparing, await anchors(), 'reopened result');
+      await captureState('reopened');
+    }
+    assert.equal(await page.locator('.detail-command-bar-script').getAttribute('inert'), null, 'saved results can be edited');
+    await page.getByText('분석 전 입력한 목적을 결과에서도 유지', { exact: true }).waitFor();
+    const saved = await page.evaluate(async id => (await import('/src/meetingRepository.ts')).getMeetingById(id), jobId);
+    assert.equal(saved.title, title);
+    assert.ok(saved.selectedReportTemplateId, 'the report choice survives analysis');
+    assert.equal(saved.segments.length, 12);
+    assert.equal(typeof saved.analysisElapsedMs, 'number');
+    assert.ok(saved.sourceFileMetadata.sizeBytes > 0);
+    assert.equal(await page.locator('.meeting-meta-value-source').innerText(), fileMetadata, 'metadata survives completion and reopening');
+    const elapsedText = await page.locator('.meeting-analysis-duration').innerText();
+    assert.match(elapsedText, /^소요 /);
+    if (!background) {
+      const workspace = page.locator('.barorok-workspace');
+      const topButton = page.getByRole('button', { name: '맨 위로', exact: true });
+      await page.emulateMedia({ reducedMotion: 'reduce' });
+      assert.equal(await topButton.count(), 0, 'top button is absent at the top');
+      await workspace.evaluate(el => { el.scrollTop = el.clientHeight - 10; });
+      assert.equal(await topButton.count(), 0, 'top button stays absent before one viewport');
+      await workspace.evaluate(el => { el.scrollTop = el.clientHeight + 30; });
+      await topButton.waitFor();
+      const topBounds = await topButton.boundingBox();
+      const workspaceBounds = await workspace.boundingBox();
+      assert.ok(topBounds.y >= workspaceBounds.y && topBounds.y + topBounds.height <= workspaceBounds.y + workspaceBounds.height, 'top button is inside the visible workspace, not at the end of the long document');
+      assert.ok(topBounds.x >= workspaceBounds.x && topBounds.x + topBounds.width <= workspaceBounds.x + workspaceBounds.width, 'top button stays inside the workspace width');
+      if (process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR, `detail-scrolled-${viewportWidth}.png`) });
+      await topButton.click();
+      await page.waitForFunction(() => document.querySelector('.barorok-workspace').scrollTop === 0);
+      await topButton.waitFor({ state: 'detached' });
+      assert.equal(await page.locator('.meeting-detail-title').evaluate(el => el === document.activeElement), true, 'returning to the top retains keyboard focus');
+      await page.evaluate(async () => {
+        const { addMeeting } = await import('/src/meetingRepository.ts');
+        await addMeeting({ id: 'continuity-short', title: '짧은 회의록', date: '2026-10-20', summary: '', participants: '', segments: [] });
+        window.dispatchEvent(new CustomEvent('meetings:updated'));
+      });
+      await page.locator('.sidebar-record-row').getByRole('button', { name: '짧은 회의록', exact: true }).click();
+      await page.getByRole('heading', { name: '짧은 회의록', exact: true }).waitFor();
+      await workspace.evaluate(el => { el.scrollTop = el.scrollHeight; });
+      assert.equal(await topButton.count(), 0, 'short records do not show the top button');
+      await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+      await page.locator('.meeting-analysis-duration').waitFor();
+      await workspace.evaluate(el => { el.scrollTop = 0; });
+      assert.equal(await page.locator('.meeting-analysis-duration').innerText(), elapsedText);
+      await page.getByRole('button', { name: '참석자 12명 전체 보기' }).click();
+      assert.equal(await page.locator('.meeting-participant-popover li').count(), 12);
+      await page.keyboard.press('Escape');
+      assert.equal(await page.locator('.meeting-participant-popover').count(), 0);
+    }
+    for (const width of [1280, 760]) {
+      await page.setViewportSize({ width, height: 720 });
+      assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0, 'detail has no horizontal overflow');
+      if (process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR, `detail-${background ? 'background' : 'foreground'}-${width}.png`) });
+    }
+  } catch (error) {
+    if (process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR) await page.screenshot({ path: join(process.env.ANALYSIS_CONTINUITY_SCREENSHOT_DIR, 'continuity-failure.png') });
+    throw error;
+  } finally {
+    releaseSettings();
+    releaseResult();
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await context.close();
+  }
+  console.log(`ok - analysis detail continuity (${background ? 'background completion' : 'preparation, running, completed, reopened result'}, ${viewportWidth}px)`);
+};
+
+const runDiarizationContinuityScenario = async (browser, width) => {
+  const context = await browser.newContext({ viewport: { width, height: 720 } });
+  const page = await context.newPage();
+  let finish;
+  const ready = new Promise(resolve => { finish = resolve; });
+  let processing = false;
+  const id = `speaker-continuity-${width}`;
+  const title = '참석자 구분도 같은 화면';
+  const segments = [{ start: '00:00:00', end: '00:00:03', speaker: '참석자', text: '첫 번째 발화입니다.' }, { start: '00:00:03', end: '00:00:06', speaker: '참석자', text: '두 번째 발화입니다.' }];
+  const audio = Buffer.alloc(16044);
+  audio.write('RIFF'); audio.writeUInt32LE(audio.length - 8, 4); audio.write('WAVEfmt ', 8);
+  audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24); audio.writeUInt32LE(16000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34);
+  audio.write('data', 36); audio.writeUInt32LE(16000, 40);
+  const anchors = () => page.evaluate(() => Object.fromEntries(['.meeting-detail-title', '.detail-main-nav', '.detail-search-field', '.detail-command-bar-script'].map(selector => {
+    const { x, y } = document.querySelector(selector).getBoundingClientRect();
+    return [selector, { x, y }];
+  })));
+  const same = (a, b, phase) => {
+    for (const key of Object.keys(a)) for (const axis of ['x', 'y']) assert.ok(Math.abs(a[key][axis] - b[key][axis]) <= 1, `${phase}: ${key} ${axis}`);
+  };
+  try {
+    await installBaseRoutes(page);
+    await page.route('**/api/outputs/*/audio', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: audio }));
+    await page.route('**/api/outputs/*/generation-progress/diarization', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ active: processing, progress: processing ? 30 : 0, status: processing ? 'processing' : 'not_started', message: processing ? '참석자 음성 구간 분석 중' : '' }) }));
+    await page.route('**/api/outputs/*/generate-diarization', async route => {
+      processing = true;
+      await ready;
+      processing = false;
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ segments: segments.map((s, i) => ({ ...s, speaker: `SPEAKER_0${i}` })), diarizationApplied: true, diarizationDeferred: false, diarizationRequested: true }) });
+    });
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await assertProjectPage(page);
+    await page.evaluate(async ({ id, title, segments }) => {
+      const { addMeeting } = await import('/src/meetingRepository.ts');
+      await addMeeting({ id, jobId: id, title, date: '2026-10-21', participants: '', meetingPurpose: '실행 전후 위치와 결과 보존', summary: '', segments, sourceFile: 'sample.wav', outputFiles: { job_id: id, audio: `/api/outputs/${id}/audio` }, sourceFileMetadata: { kind: 'audio', sizeBytes: 1000, durationSeconds: 6 }, analysisStatus: 'completed', analysisElapsedMs: 12000, diarizationDeferred: true, diarizationRequested: true });
+      window.dispatchEvent(new CustomEvent('meetings:updated'));
+    }, { id, title, segments });
+    const open = async () => { await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click(); await page.getByRole('heading', { name: title, exact: true }).waitFor(); };
+    await open();
+    const before = await anchors();
+    await page.getByRole('button', { name: '참석자 구분 실행', exact: true }).click();
+    const stop = page.getByRole('button', { name: '참석자 구분 중지/취소', exact: true });
+    await stop.waitFor();
+    assert.ok(await stop.evaluate(el => document.activeElement === el), 'execution focus moves to the stop control');
+    assert.equal(await stop.count(), 1, 'one stop control');
+    assert.equal((await stop.innerText()).trim(), '', 'the stop control is an animated symbol');
+    same(before, await anchors(), 'running');
+    assert.equal(await page.locator('.meeting-analysis-status').getByRole('progressbar').count(), 1, 'progress stays inside the reserved status property');
+    assert.ok(await page.locator('.meeting-analysis-status').evaluate(el => el.scrollHeight <= el.clientHeight));
+    await stop.click();
+    assert.ok(await page.locator('.diarization-stop-panel').getByRole('button', { name: '중지', exact: true }).evaluate(el => document.activeElement === el), 'stop choice receives focus');
+    await page.locator('.diarization-stop-panel').getByRole('button', { name: '계속', exact: true }).click();
+    assert.ok(await stop.evaluate(el => document.activeElement === el), 'continue restores the stop control focus');
+    same(before, await anchors(), 'continue after stop choice');
+    let readingScroll;
+    if (width === 760) {
+      await page.getByText('첫 번째 발화입니다.', { exact: false }).last().click();
+      assert.ok(await page.evaluate(() => document.activeElement === document.body), 'reading the transcript leaves the progress control');
+      readingScroll = await page.locator('.barorok-workspace').evaluate(el => el.scrollTop);
+    }
+    finish();
+    await page.waitForFunction(async id => (await (await import('/src/meetingRepository.ts')).getMeetingById(id))?.diarizationApplied === true, id);
+    await stop.waitFor({ state: 'detached' });
+    if (width === 760) {
+      assert.ok(await page.evaluate(() => document.activeElement === document.body), 'completion must not steal transcript reading focus');
+      assert.ok(Math.abs(await page.locator('.barorok-workspace').evaluate(el => el.scrollTop) - readingScroll) <= 1, 'completion preserves the reading position');
+      await page.locator('.barorok-workspace').evaluate(el => { el.scrollTop = 0; });
+    } else {
+      assert.ok(await page.locator('.meeting-detail-title').evaluate(el => document.activeElement === el), 'completion returns owned progress focus to the title');
+    }
+    same(before, await anchors(), 'completed');
+    const completed = await page.evaluate(async id => (await import('/src/meetingRepository.ts')).getMeetingById(id), id);
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await open();
+    same(before, await anchors(), 'reopened');
+    const reopened = await page.evaluate(async id => (await import('/src/meetingRepository.ts')).getMeetingById(id), id);
+    assert.deepEqual(reopened.segments, completed.segments);
+    assert.equal(reopened.diarizationApplied, true);
+    assert.equal(reopened.diarizationDeferred, false);
+    console.log(`ok - on-demand speaker progress, stop choice, completion and reopen stay stable (${width}px)`);
+  } catch (error) {
+    console.error((await page.locator('body').innerText()).slice(0, 1800));
+    throw error;
+  } finally {
+    finish();
+    await page.unrouteAll({ behavior: 'ignoreErrors' });
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const fixture = await createFixtureFile();
 const browser = await chromium.launch();
 try {
-  if (process.argv.includes('admission-preservation')) {
+  if (process.argv.includes('diarization-continuity')) {
+    await runDiarizationContinuityScenario(browser, 1280);
+    await runDiarizationContinuityScenario(browser, 760);
+  } else if (process.argv.includes('detail-continuity')) {
+    await runDetailContinuityScenario(browser, fixture);
+    await runDetailContinuityScenario(browser, fixture, false, 760);
+    await runDetailContinuityScenario(browser, fixture, true);
+    await runDetailContinuityScenario(browser, fixture, false, 760, true);
+  } else if (process.argv.includes('stop-actions')) {
+    await runScenario(browser, fixture, 'stop');
+    await runScenario(browser, fixture, 'cancel', { delayPartialDuringCancel: true });
+  } else if (process.argv.includes('admission-preservation')) {
     await runAdmissionScenario(browser, fixture, 'stop');
     await runAdmissionScenario(browser, fixture, 'cancel');
     await runAdmissionScenario(browser, fixture, 'cancel', { terminalFirst: true });
@@ -1275,4 +1555,7 @@ try {
 } finally {
   await browser.close();
   await stopServer(server);
+  // Descendants can retain inherited Windows pipes after the launcher has exited.
+  server?.stdout?.destroy();
+  server?.stderr?.destroy();
 }

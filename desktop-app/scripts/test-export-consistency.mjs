@@ -20,11 +20,24 @@ runInNewContext(ts.transpileModule(displayTopicsHelper.getText(generationTree) +
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
 }).outputText, { exports: generationExports });
 const exports = {};
+const reviewExports = {};
+runInNewContext(ts.transpileModule(readFileSync(new URL('../src/transcriptReview.ts', import.meta.url), 'utf8'), {
+  compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
+}).outputText, { exports: reviewExports });
 runInNewContext(ts.transpileModule(builders.map(node => node.getText(tree)).join('\n')
   + '\nexport { buildFallbackText, buildExportPayload };', {
   compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022 },
-}).outputText, { exports, getDisplayTopics: generationExports.getDisplayTopics });
+}).outputText, { exports, getDisplayTopics: generationExports.getDisplayTopics, formatReviewTime: reviewExports.formatReviewTime,
+  getTranscriptReviewIssues: reviewExports.getTranscriptReviewIssues, reviewReasonLabels: reviewExports.reviewReasonLabels });
 const { buildFallbackText, buildExportPayload } = exports;
+await test('review ranges and reasons survive local TXT and export payload grouping', () => {
+  const meeting={id:'reviews',title:'확인 구간',date:'2026-10-21',segments:[{start:'00:01:17',end:'00:01:21',speaker:'A',text:'확인',shortSpeakerOverlap:true}],displaySegments:[{start:'00:01:00',end:'00:03:34',speaker:'A',text:'전체 문단',shortSpeakerOverlap:true}]};
+  const text=buildFallbackText(meeting,'transcript');
+  assert.ok(text.includes('00:01:17.00–00:01:21.00'));
+  assert.ok(text.includes('짧은 다른 참석자 구간'));
+  const payload=JSON.parse(JSON.stringify(buildExportPayload(meeting,'transcript','확인')));
+  assert.deepEqual(payload.displaySegments[0].reviewIssues,[{reason:'short_speaker_overlap',start:77,end:81}]);
+});
 const displayTopicCases = JSON.parse(readFileSync(new URL('../../tests/fixtures/display-topics.json', import.meta.url), 'utf8'));
 for (const fixture of displayTopicCases) {
   await test(`shared display topics and local TXT: ${fixture.name}`, () => {

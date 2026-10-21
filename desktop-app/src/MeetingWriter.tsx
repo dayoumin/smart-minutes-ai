@@ -5,7 +5,8 @@ import {
 } from './analysisMeetingPersistence';
 import type { AnalyzeResult } from './analysisMeetingPersistence';
 
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Info, Loader2, ChevronUp, Plus, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
@@ -152,7 +153,7 @@ const getAnalysisProgressGuidance = (
     if (isTranscriptReady) {
         return includeDiarizationDuringAnalysis
             ? '대화록은 저장되었습니다. 참석자 구분을 계속 진행합니다. 문제가 생겨도 저장된 대화록은 남습니다.'
-            : '대화록은 저장되었습니다. 결과 보기를 누르면 음성 파일이 보관된 경우 참석자 구분과 정리를 실행할 수 있습니다.';
+            : '대화록은 저장되었습니다. 이 화면에서 음성 파일이 보관된 경우 참석자 구분과 정리를 실행할 수 있습니다.';
     }
     if (!durationSeconds || durationSeconds < LONG_MEDIA_NOTICE_SECONDS) return null;
     if (durationSeconds >= VERY_LONG_MEDIA_NOTICE_SECONDS) {
@@ -224,11 +225,7 @@ type AnalysisStopAction = 'stop' | 'cancel';
 type AudioExtractNotice = { tone: 'success' | 'error'; message: string; savedPath?: string | null; elapsedMs?: number };
 
 interface CompletionNotice {
-    meetingId: string;
-    detailTab: 'summary' | 'script';
     elapsedMs: number;
-    title: string;
-    sourceFilename: string;
     note?: string;
     autoSaveNote?: string;
 }
@@ -572,7 +569,14 @@ const toResumeDraftFileKey = (selectedFile: File): AnalysisResumeDraftFileKey =>
     sourceLastModified: selectedFile.lastModified,
 });
 
+export interface AnalysisMeetingView {
+    meeting: MeetingRecord;
+    running: boolean;
+}
+
 interface MeetingWriterProps {
+    onAnalysisViewChange?: (view: AnalysisMeetingView | null) => void;
+    analysisStatusTarget?: HTMLElement | null;
     onOpenSettings?: () => void;
     analysisStartBlocked?: boolean;
     analysisStartBlockedReason?: string;
@@ -586,7 +590,7 @@ interface MeetingWriterProps {
     idleCompanion?: React.ReactNode;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, onOpenAnalysisSettings, idleCompanion }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChange, analysisStatusTarget, onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, onOpenAnalysisSettings, idleCompanion }) => {
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport, probeLocalEngine } = useLocalEngineConnection();
     const [webConnectionRecoveryStarted, setWebConnectionRecoveryStarted] = useState(false);
     const [webConnectionCheckPending, setWebConnectionCheckPending] = useState(false);
@@ -685,6 +689,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
     const [readinessLoopKey, setReadinessLoopKey] = useState(0);
     const [modelsPayload, setModelsPayload] = useState<ModelsPayload | null>(null);
     const [completionNotice, setCompletionNotice] = useState<CompletionNotice | null>(null);
+    const [analysisViewMeeting, setAnalysisViewMeeting] = useState<MeetingRecord | null>(null);
     const [audioExtractFile, setAudioExtractFile] = useState<File | null>(null);
     const [isExtractingAudio, setIsExtractingAudio] = useState(false);
     const [audioExtractNotice, setAudioExtractNotice] = useState<AudioExtractNotice | null>(null);
@@ -1757,6 +1762,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
 
         analysisInFlightRef.current = true;
+        const initialAnalysisId = selectedResumeDraft?.jobId || crypto.randomUUID();
+        setAnalysisViewMeeting({
+            id: initialAnalysisId,
+            title: title.trim(),
+            date: date.replace('T', ' '),
+            meetingPurpose: meetingPurpose.trim(),
+            participants: participants.trim(),
+            sourceFile: file?.name,
+            sourceFileMetadata: file ? { kind: getFileKind(file), sizeBytes: file.size, durationSeconds: fileDurationSeconds ?? undefined } : undefined,
+            selectedReportTemplateId: selectedReportTemplate.id,
+            reportTemplate: selectedReportTemplate,
+            summary: '',
+            segments: [],
+        });
         analysisCancelledRef.current = false;
         analysisPreparationStoppedRef.current = false;
         transcriptMeetingSavePromiseRef.current = null;
@@ -1806,7 +1825,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             const modelsReady = await ensureModelsReady();
             if (!modelsReady) return;
             if (analysisCancelledRef.current) return;
-            let analysisJobId: string = crypto.randomUUID();
+            let analysisJobId: string = initialAnalysisId;
             let resumeRequested = false;
             let resumePayload: ResumeCandidatesPayload | null = null;
             const currentFileResumeKey = getResumeDraftKey({
@@ -1937,6 +1956,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             }
             if (analysisCancelledRef.current) return;
             analysisJobIdRef.current = analysisJobId;
+            setAnalysisViewMeeting(current => current ? { ...current, id: analysisJobId } : current);
             analysisResumeDraftIdRef.current = analysisJobId;
             if (!claimAnalysisJob(analysisJobId)) {
                 throw new Error('분석 기록을 정리하고 있습니다. 잠시 후 다시 시도해 주세요.');
@@ -2045,6 +2065,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     displaySegments: partialData.displaySegments || partialData.display_segments || [],
                     speakerLabels: {},
                     sourceFile: partialData.source_file || file?.name,
+                    sourceFileMetadata: file ? { kind: getFileKind(file), sizeBytes: file.size, durationSeconds: fileDurationSeconds ?? undefined } : undefined,
                     jobId: partialData.job_id || analysisJobId,
                     topics: [],
                     topicSections: [],
@@ -2068,6 +2089,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         analysisJobId,
                         () => upsertMeetingRecord(partialRecord),
                     );
+                    if (!analysisCancelledRef.current) setAnalysisViewMeeting({ ...partialRecord, id: savedMeetingId });
                     window.dispatchEvent(new CustomEvent('meetings:updated', {
                         detail: { id: savedMeetingId, openHistory: false },
                     }));
@@ -2209,6 +2231,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 displaySegments: finalData.displaySegments || finalData.display_segments || [],
                 speakerLabels: {},
                 sourceFile: finalData.meeting?.source_file || file?.name,
+                sourceFileMetadata: file ? { kind: getFileKind(file), sizeBytes: file.size, durationSeconds: fileDurationSeconds ?? undefined } : undefined,
+                analysisElapsedMs: Math.max(0, getNowMs() - startedAt),
+                analysisNotes: [getCompletionResumeNote(finalData.resume), getAutoSaveCompletionNote(finalData)].filter((note): note is string => Boolean(note)),
                 jobId: finalData.outputs?.job_id || finalData.meeting?.job_id,
                 topics: finalData.topics || [],
                 topicSections: finalData.topicSections || finalData.topic_sections || [],
@@ -2272,24 +2297,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 },
             );
             window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: savedMeetingId, openHistory: false } }));
-            const completedElapsedMs = getNowMs() - startedAt;
+            const completedElapsedMs = newRecord.analysisElapsedMs ?? 0;
+            setAnalysisViewMeeting({ ...newRecord, id: savedMeetingId });
             setProgress(100);
             setRawStatusMessage('');
             updateAnalysisEtaSeconds(null);
             setStatusMessage('회의록을 저장했습니다.');
             setCompletionNotice({
-                meetingId: savedMeetingId,
-                detailTab: (() => {
-                    const summary = finalData.summary?.trim();
-                    const summaryStatus = finalData.generationStatus?.summary
-                        ?? finalData.generation_status?.summary;
-                    return summary && (!summaryStatus || summaryStatus === 'completed')
-                        ? 'summary'
-                        : 'script';
-                })(),
                 elapsedMs: completedElapsedMs,
-                title: newRecord.title,
-                sourceFilename: file?.name || newRecord.sourceFile || '음성 파일',
                 note: getCompletionResumeNote(finalData.resume),
                 autoSaveNote: getAutoSaveCompletionNote(finalData),
             });
@@ -2304,6 +2319,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             setInitialDateValue(nextInitialDate);
             setDate(nextInitialDate);
             clearResumeDraftSelection();
+            clearSelectedFileState();
         } catch (error) {
             // A terminal response can arrive before its cancel ACK. Keep ownership until
             // the ACK identifies whether this attempt ever took over the existing job.
@@ -2639,19 +2655,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
         }
     };
 
-    const handleOpenCompletedMeeting = () => {
-        if (!completionNotice) return;
-        window.dispatchEvent(new CustomEvent('meetings:updated', {
-            detail: {
-                id: completionNotice.meetingId,
-                openHistory: true,
-                detailTab: completionNotice.detailTab,
-            },
-        }));
-        setCompletionNotice(null);
-        setStatusMessage('');
-    };
-
     const handleReturnToAnalysisInput = () => {
         setAnalysisPhase('idle');
         setAnalysisFailure(null);
@@ -2739,6 +2742,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 ? 'choose-file'
                 : 'retry';
     const showAnalysisPanel = isAnalyzing || showAnalysisFailure;
+    const analysisView = useMemo<AnalysisMeetingView | null>(() => (
+        analysisViewMeeting && (showAnalysisPanel || completionNotice)
+            ? { meeting: analysisViewMeeting, running: isAnalyzing }
+            : null
+    ), [analysisViewMeeting, showAnalysisPanel, completionNotice, isAnalyzing]);
+    useLayoutEffect(() => {
+        onAnalysisViewChange?.(analysisView);
+    }, [analysisView, onAnalysisViewChange]);
+    const renderAnalysisContent = (content: React.ReactNode) => (
+        analysisStatusTarget ? createPortal(content, analysisStatusTarget) : content
+    );
     const progressPercent = Math.min(100, Math.max(0, progress));
     const elapsedMs = analysisStartedAt ? analysisNow - analysisStartedAt : 0;
     const elapsedLabel = formatAnalysisDuration(elapsedMs);
@@ -2843,7 +2857,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
             )}
             <div className={`writer-header ${showInputForm ? 'writer-header-promise' : ''}`}>
                 <div>
-                    <h2 className="page-title">{writerHeading}</h2>
+                    <h2 className="page-title" tabIndex={-1}>{writerHeading}</h2>
                     {/* The product promise, said where people decide whether to hand over a work file. */}
                     {showInputForm && (
                         <p className="writer-local-promise">
@@ -3188,7 +3202,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                     )}
                 </div>)}
 
-                {showAnalysisPanel && (
+                {showAnalysisPanel && renderAnalysisContent(
                 <div className={`writer-analysis-panel ${showAnalysisFailure ? 'writer-analysis-panel-error' : ''}`}>
                     <div className="writer-analysis-file">
                         <div className="icon-badge">
@@ -3197,7 +3211,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         <div className="min-w-0 flex-1">
                             <div className="writer-analysis-title">{title || '새 회의록'}</div>
                             <div className="writer-analysis-meta">
-                                {file?.name ? `${file.name} · ${selectedFileMeta}` : selectedFileMeta}
+                                {selectedFileMeta}
                             </div>
                         </div>
                     </div>
@@ -3266,72 +3280,66 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                         </div>
                     ) : (
                     <>
-                    <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between" aria-live="polite">
-                        <div className="flex min-w-0 flex-1 gap-3">
-                            <div className={`writer-analysis-status-icon ${analysisStalled ? 'writer-analysis-status-icon-warning' : ''}`}>
-                                {analysisStalled
-                                    ? <AlertCircle size={18} aria-hidden="true" />
-                                    : progressPercent >= 100
-                                        ? <CheckCircle2 size={18} aria-hidden="true" />
-                                        : <Loader2 size={18} className="animate-spin" aria-hidden="true" />}
+                    <div className="writer-analysis-progress" aria-live="polite">
+                        <div className={`writer-analysis-status-icon ${analysisStalled ? 'writer-analysis-status-icon-warning' : ''}`}>
+                            {analysisStalled
+                                ? <AlertCircle size={18} aria-hidden="true" />
+                                : progressPercent >= 100
+                                    ? <CheckCircle2 size={18} aria-hidden="true" />
+                                    : <Loader2 size={18} className="animate-spin" aria-hidden="true" />}
+                        </div>
+                        <div className="min-w-0">
+                            <div className="writer-analysis-status-row">
+                                <div className="text-sm font-semibold text-foreground">
+                                    {currentStatusMessage}
+                                </div>
                             </div>
-                            <div className="min-w-0 flex-1">
-                                <div className="writer-analysis-status-row">
-                                    <div className="text-sm font-semibold text-foreground">
-                                        {currentStatusMessage}
-                                    </div>
-                                    <span className="writer-analysis-percent">{Math.round(transcriptProgressPercent)}%</span>
-                                </div>
-                                <div className="writer-analysis-state-note">
-                                    {analysisStalled && (
-                                        <span>현재 단계가 예상보다 오래 걸리고 있습니다. 진행 상태가 바뀌는지 잠시 확인해 주세요.</span>
-                                    )}
-                                </div>
-                                <ProgressBar
-                                    value={transcriptProgressPercent}
-                                    size="sm"
-                                    tone={errorMessage ? 'error' : 'primary'}
-                                    className="mt-3"
-                                    label="대화록 생성률"
-                                />
+                            <div className="writer-analysis-state-note">
+                                {analysisStalled && (
+                                    <span>현재 단계가 예상보다 오래 걸리고 있습니다. 진행 상태가 바뀌는지 잠시 확인해 주세요.</span>
+                                )}
                             </div>
                         </div>
-                        <div className="flex shrink-0 flex-col gap-3 text-left sm:min-w-[6.5rem] sm:text-right">
-                            <div className="flex flex-wrap gap-5 sm:justify-end">
-                                <div>
-                                    <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                                        <span>경과 시간</span>
-                                    </div>
-                                    <div className="writer-analysis-elapsed">{elapsedLabel}</div>
-                                </div>
-                            </div>
+                        <div className="writer-analysis-timing" aria-hidden="true">
+                            <span className="writer-analysis-elapsed">경과 {elapsedLabel}</span>
+                            <span className="writer-analysis-percent">{Math.round(transcriptProgressPercent)}%</span>
+                        </div>
+                        <ProgressBar
+                            value={transcriptProgressPercent}
+                            size="sm"
+                            tone={errorMessage ? 'error' : 'primary'}
+                            className="writer-analysis-bar"
+                            label="대화록 생성률"
+                        />
+                        <div className="writer-analysis-control">
                             {/* Before the stream starts there is nothing to keep or cancel, so 중지 acts at once. */}
                             {analysisPhase !== 'analyzing' && !analysisStopRequestedAction && (
                                 <Button
-                                    variant="outline"
-                                    className="h-8 px-3 text-xs sm:self-end"
+                                    variant="ghost"
+                                    className="writer-analysis-stop-button"
                                     onClick={handleStopPreparation}
+                                    aria-label="중지"
+                                    title="분석 준비 중지"
                                 >
-                                    <Square size={13} aria-hidden="true" />
-                                    중지
+                                    <Square size={14} className="writer-analysis-stop-symbol" fill="currentColor" aria-hidden="true" />
                                 </Button>
                             )}
                             {analysisPhase === 'analyzing' && !isAnalysisStopConfirmOpen && !analysisStopRequestedAction && (
                                 <Button
-                                    variant="outline"
-                                    className="h-8 px-3 text-xs sm:self-end"
+                                    variant="ghost"
+                                    className="writer-analysis-stop-button"
                                     onClick={handleOpenAnalysisStopConfirm}
                                     disabled={isRequestingAnalysisStop}
+                                    aria-label="중지/취소"
                                     title="분석을 중지하거나 취소합니다."
                                 >
-                                    <Square size={13} aria-hidden="true" />
-                                    중지/취소
+                                    <Square size={14} className="writer-analysis-stop-symbol" fill="currentColor" aria-hidden="true" />
                                 </Button>
                             )}
                             {analysisStopRequestedAction && (
-                                <div className="writer-analysis-stop-requested sm:self-end">
-                                    <Loader2 size={13} className="animate-spin" aria-hidden="true" />
-                                    {analysisStopRequestedAction === 'stop' ? '중지 중' : '취소 중'}
+                                <div className="writer-analysis-stop-requested" role="status">
+                                    <Loader2 size={16} className="motion-safe:animate-spin" aria-hidden="true" />
+                                    <span className="sr-only">{analysisStopRequestedAction === 'stop' ? '중지 중' : '취소 중'}</span>
                                 </div>
                             )}
                         </div>
@@ -3390,34 +3398,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onOpenSettings, an
                 </div>
             )}
 
-                {completionNotice && (
-                    <StatusBanner
-                        tone="success"
-                        heading={completionNotice.title}
-                        className="writer-completion-panel"
-                        action={(
-                            <Button onClick={handleOpenCompletedMeeting}>
-                                결과 보기
-                            </Button>
-                        )}
-                    >
-                        <div className="writer-completion-record">
-                            <span className="break-all text-sm text-muted-foreground">{completionNotice.sourceFilename}</span>
-                        </div>
-                        <div>
-                            소요 시간 {formatAnalysisDuration(completionNotice.elapsedMs)}.{' '}
-                            {completionNotice.detailTab === 'summary'
-                                ? '기록 정리에서 핵심 결과를 확인하세요.'
-                                : '대화록을 확인하고 필요한 정리를 실행하세요.'}
-                        </div>
-                        {completionNotice.note && (
-                            <div className="mt-2 text-sm text-muted-foreground">{completionNotice.note}</div>
-                        )}
-                        {completionNotice.autoSaveNote && (
-                            <div className="mt-2 text-sm text-muted-foreground">{completionNotice.autoSaveNote}</div>
-                        )}
-                    </StatusBanner>
-                )}
                 {SHOW_AUDIO_EXTRACT_TOOL && audioExtractStatusVisible && (
                     <StatusBanner
                         tone={audioExtractStatusTone}

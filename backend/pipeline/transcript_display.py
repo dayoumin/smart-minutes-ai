@@ -1,6 +1,7 @@
 import copy
 import re
 from typing import Any
+from .transcript_review import issue, normalize_issues, review_fields, segment_review_issues
 
 
 SENTENCE_END_RE = re.compile(
@@ -68,6 +69,9 @@ def looks_incomplete_sentence_end(text: str) -> bool:
 
 def _copy_segment(segment: dict) -> dict:
     copied = copy.deepcopy(segment)
+    copied.update(review_fields(copied))
+    copied.pop("reviewVersion", None)
+    copied.pop("reviewIssues", None)
     copied.update(speaker_review_flags(copied))
     for alias in SPEAKER_REVIEW_FLAG_ALIASES.values():
         copied.pop(alias, None)
@@ -100,6 +104,10 @@ def _split_punctuated_segment(segment: dict, *, min_chars: int = 40) -> list[dic
         item["end"] = next_cursor
         item["text"] = part
         item["timing_approximate"] = True
+        item["review_issues"] = normalize_issues([
+            *[entry for entry in segment_review_issues(segment) if entry["end"] >= cursor and entry["start"] <= next_cursor],
+            issue("timing_estimated", cursor, next_cursor),
+        ])
         item["display_only"] = True
         split_segments.append(item)
         cursor = next_cursor
@@ -147,6 +155,7 @@ def build_display_segments(
         )
 
         if can_merge:
+            previous["review_issues"] = normalize_issues([*segment_review_issues(previous), *segment_review_issues(segment)])
             previous["end"] = current_end
             previous["text"] = combined_text
             previous["display_only"] = True

@@ -8,6 +8,7 @@ import tempfile
 import unittest
 import wave
 import zipfile
+from contextlib import nullcontext
 from io import BytesIO
 from pathlib import Path
 from unittest.mock import patch
@@ -45,6 +46,58 @@ def _pcm_wav_fixture() -> bytes:
 
 
 class AnalyzeApiTest(unittest.TestCase):
+    def test_summary_and_sync_preserve_display_precision_and_source_count(self) -> None:
+        display = [
+            {"start": 77.76, "end": 81.38, "speaker": "A", "text": "첫 문단", "source_segment_count": 3,
+             "review_version": 1, "review_issues": []},
+            {"start": 81.38, "end": 84.98, "speaker": "B", "text": "다음 문단", "source_segment_count": 4,
+             "review_version": 1, "review_issues": []},
+        ]
+        payload = {"displaySegments": main.segments_for_ui(display)}
+        for endpoint in ("sync-record", "generate-summary"):
+            with self.subTest(endpoint=endpoint), tempfile.TemporaryDirectory() as tmp:
+                job_id = "unit_display_metadata"
+                result_path = Path(tmp) / f"{job_id}_result.json"
+                original = {"segments": copy.deepcopy(display), "display_segments": copy.deepcopy(display), "summary": {}}
+                result_path.write_text(json.dumps(original), encoding="utf-8")
+                with (
+                    patch.object(main, "_get_output_dir", return_value=tmp),
+                    patch.object(main, "_refresh_transcript_and_summary_exports", return_value={}) as exports,
+                    patch.object(main, "_summary_model_readiness", return_value={"ready": True}),
+                    patch.object(main, "prepared_ollama_runtime", return_value=nullcontext()),
+                    patch("pipeline.summarize.summarize_meeting", return_value={"overview": "정리 결과"}),
+                ):
+                    response = self.client.post(f"/api/outputs/{job_id}/{endpoint}", json=payload)
+                self.assertEqual(response.status_code, 200, response.text)
+                saved = json.loads(result_path.read_text(encoding="utf-8"))
+                for actual in (saved["display_segments"], exports.call_args.args[1]["display_segments"]):
+                    self.assertEqual([(s["start"], s["end"], s["source_segment_count"]) for s in actual],
+                                     [(s["start"], s["end"], s["source_segment_count"]) for s in display])
+                self.assertEqual(saved["segments"], original["segments"])
+                # A repeated sync must not degrade metadata after the first save.
+                repeated = main._apply_payload_transcript_override(copy.deepcopy(saved), payload)
+                self.assertEqual(repeated["display_segments"], saved["display_segments"])
+
+    def test_display_metadata_preservation_allows_edits_and_resegmentation(self) -> None:
+        original = [{"start": 25.09, "end": 30.98, "speaker": "A", "text": "원문", "source_segment_count": 5}]
+        ui = main.segments_for_ui(original)
+        edited = [{**ui[0], "text": "수정한 본문", "speaker": "B"}]
+        saved = main._apply_payload_transcript_override(
+            {"display_segments": copy.deepcopy(original)}, {"displaySegments": ui, "editedDisplaySegments": edited})
+        self.assertEqual(saved["display_segments"][0]["text"], "수정한 본문")
+        self.assertEqual(saved["display_segments"][0]["speaker"], "B")
+        self.assertEqual((saved["display_segments"][0]["start"], saved["display_segments"][0]["end"],
+                          saved["display_segments"][0]["source_segment_count"]), (25.09, 30.98, 5))
+        for changed in (
+            [{**edited[0], "start": 26.25, "end": 29.75, "sourceSegmentCount": 2}],
+            [{**edited[0], "end": "00:00:27"}, {**edited[0], "start": "00:00:27"}],
+        ):
+            with self.subTest(changed=changed):
+                normalized = main._normalize_payload_segments(changed, {}, original_segments=original)
+                self.assertEqual(len(normalized), len(changed))
+                self.assertEqual(normalized[0]["start"], main._time_to_seconds(changed[0]["start"]))
+                self.assertNotEqual(normalized[0].get("source_segment_count"), 5)
+
     def test_transcript_review_metadata_survives_ui_sync_and_export_normalization(self) -> None:
         source = {'start': 77.76, 'end': 81.38, 'speaker': 'A', 'text': '본문', 'review_version': 1,
                   'review_issues': [{'reason': 'short_speaker_overlap', 'start': 80.25, 'end': 80.75}]}

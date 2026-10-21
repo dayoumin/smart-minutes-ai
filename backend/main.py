@@ -5467,9 +5467,10 @@ def _normalize_payload_segments(
     speaker_labels: dict[str, str],
     *,
     speaker_fallback_when_unlabeled: bool = False,
+    original_segments: list[dict] | None = None,
 ) -> list[dict]:
     segments = []
-    for segment in items or []:
+    for index, segment in enumerate(items or []):
         speaker = (
             segment.get("speaker")
             or segment.get("speaker_id")
@@ -5488,7 +5489,7 @@ def _normalize_payload_segments(
             )
         )
         display_speaker = _speaker_label_for_export(speaker_labels, speaker, str(fallback_speaker or ""))
-        segments.append({
+        normalized = {
             "start": _time_to_seconds(segment.get("start", 0.0)),
             "end": _time_to_seconds(segment.get("end", 0.0)),
             "speaker": speaker,
@@ -5498,7 +5499,28 @@ def _normalize_payload_segments(
             "display_only": bool(segment.get("displayOnly") or segment.get("display_only")),
             **speaker_review_flags(segment),
             **review_fields(segment),
-        })
+        }
+        source_count = segment.get("sourceSegmentCount", segment.get("source_segment_count"))
+        if isinstance(source_count, int) and not isinstance(source_count, bool) and source_count > 0:
+            normalized["source_segment_count"] = source_count
+        if original_segments is not None and len(original_segments) == len(items):
+            original = original_segments[index]
+            # The same paragraph position and displayed bounds can retain its
+            # metadata even when its text/name is edited. Changed boundaries or
+            # a different paragraph count use the supplied values instead.
+            same_bounds = all(
+                segment.get(key) == original.get(key)
+                or (
+                    isinstance(segment.get(key), str)
+                    and segment[key] == seconds_to_timestamp(_time_to_seconds(original.get(key, 0.0)))
+                )
+                for key in ("start", "end")
+            )
+            if same_bounds:
+                for key in ("start", "end", "source_segment_count"):
+                    if key in original:
+                        normalized[key] = copy.deepcopy(original[key])
+        segments.append(normalized)
     return segments
 
 
@@ -5676,6 +5698,7 @@ def _apply_payload_transcript_override(result_data: dict, payload: dict | None) 
         display_source_segments,
         speaker_labels,
         speaker_fallback_when_unlabeled=has_speaker_labels,
+        original_segments=result_data.get("display_segments", []),
     )
 
     if has_display_override:

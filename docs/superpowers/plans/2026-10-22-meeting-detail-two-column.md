@@ -261,3 +261,13 @@
 - [ ] **Step 5: 독립 리뷰 후 Commit**
 
   AGENTS.md의 iterative-dev-loop·engineering-reviewer 절차대로 독립 agent 리뷰를 한 번 받는다. 막는 문제만 고친 뒤 `docs: record two-column meeting detail and collapsible menu`로 커밋한다. 푸시하지 않는다.
+
+---
+
+## 이어하기 메모 (2026-10-22 집 PC)
+
+- 브랜치 `feat/meeting-detail-two-column`, 시작점 `4320cec`(main). 집 PC 작업 폴더: `D:\Projects\audio\.claude\worktrees\meeting-detail-two-column`.
+- 진행 방식: Subagent-driven(작업마다 구현 agent → 리뷰 agent). 집 PC의 진행 기록(`.superpowers/sdd/…/progress.md`)은 git에 올라가지 않으므로, 회사에서는 이 브랜치의 커밋 목록으로 진행 상황을 판단한다.
+- 커밋 제목으로 끝난 작업 확인: Task 1 `feat(detail): split meeting detail…`, Task 2 `feat(shell): collapsible app menu…`, Task 3 `fix(detail): keep progress and stop panels…`, Task 4 `docs: record two-column…`. 없는 첫 Task부터 이어서 한다.
+- 결정 사항: 재생기는 정보 칸에 둔다. 좁은 창은 앱 메뉴를 아이콘 줄로 접고 정보 칸은 고정. Task 2의 Layout은 `<main className="barorok-workspace">`의 React 위치를 바꾸지 않도록 Sidebar와 56px 자리를 항상 있는 감싸개 하나(`div.barorok-sidebar-slot`) 안에 둔다.
+- main 작업 폴더(`D:\Projects\audio`)에는 같은 design.md 절과 이 계획 파일이 커밋 안 된 변경으로도 남아 있다(다른 세션 변경과 섞여 있음). 브랜치를 main에 합칠 때 중복을 정리한다.

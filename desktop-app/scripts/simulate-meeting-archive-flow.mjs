@@ -323,7 +323,45 @@ const runFolderFlow = async browser => {
     };
     let stored = await readStored();
     const folderAId = stored.folders.find(folder => folder.name === '첫 폴더').id;
+    // Let the folder refresh render while the meeting refresh is still pending.
+    // The moved row must not receive focus before it disappears from the list.
+    await page.evaluate(() => {
+      const descriptor = Object.getOwnPropertyDescriptor(IDBTransaction.prototype, 'oncomplete');
+      const gate = { active: false, held: [], folderCompletions: 0 };
+      window.__folderMoveRefreshGate = gate;
+      window.addEventListener('meetings:updated', () => { gate.active = true; }, { once: true });
+      Object.defineProperty(IDBTransaction.prototype, 'oncomplete', {
+        ...descriptor,
+        set(handler) {
+          descriptor.set.call(this, typeof handler !== 'function' ? handler : function (event) {
+            const stores = Array.from(this.objectStoreNames);
+            if (gate.active && this.mode === 'readonly' && stores.includes('meetings') && stores.includes('folders')) {
+              gate.held.push(() => handler.call(this, event));
+              return;
+            }
+            handler.call(this, event);
+            if (gate.active && this.mode === 'readonly' && stores.length === 1 && stores[0] === 'folders') {
+              gate.folderCompletions += 1;
+            }
+          });
+        },
+      });
+      gate.release = () => {
+        gate.active = false;
+        Object.defineProperty(IDBTransaction.prototype, 'oncomplete', descriptor);
+        gate.held.splice(0).forEach(complete => complete());
+      };
+    });
     await moveRecord('첫 폴더', true);
+    await page.waitForFunction(() => window.__folderMoveRefreshGate.held.length > 0
+      && window.__folderMoveRefreshGate.folderCompletions > 0);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    await page.evaluate(() => window.__folderMoveRefreshGate.release());
+    await recordButton.waitFor({ state: 'detached' });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await otherButton.locator('xpath=..').locator('[data-sidebar-record-menu-trigger]')
+      .evaluate(element => element === document.activeElement), true,
+    'folder-first refresh restores focus to the remaining record after the moved row disappears');
     const firstMoved = (await readStored()).meetings.find(record => record.id === original.id);
     assert.equal(firstMoved.folderId, folderAId);
     await recordButton.waitFor({ state: 'detached' });

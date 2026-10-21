@@ -219,14 +219,29 @@ def _require_model_runs_here(model_name: str) -> None:
         raise failure_for_code("summary_model_not_local")
 
 
+def _needs_non_thinking_json(model_name: str) -> bool:
+    # Qwen 3.5 4B on Ollama 0.34.2 can put JSON entirely in `thinking`,
+    # leaving `response` empty. Only the verified stock model is opted out;
+    # other models (including ones with mandatory thinking) keep their defaults.
+    name = model_name.strip().lower()
+    return name in {
+        "qwen3.5:4b",
+        "library/qwen3.5:4b",
+        "registry.ollama.ai/library/qwen3.5:4b",
+    }
+
+
 def _generate_with_http(model_name: str, prompt: str) -> str:
     _ensure_runtime(model_name)
-    payload = json.dumps({
+    options = {
         "model": model_name,
         "prompt": prompt,
         "stream": False,
         "format": _GENERATION_RESPONSE_SCHEMA.get() or "json",
-    }).encode("utf-8")
+    }
+    if _needs_non_thinking_json(model_name):
+        options["think"] = False
+    payload = json.dumps(options).encode("utf-8")
     request = urllib.request.Request(
         f"{get_ollama_base_url()}/api/generate",
         data=payload,
@@ -273,8 +288,11 @@ def _generate_with_cli(model_name: str, prompt: str) -> str:
     executable = find_ollama_executable()
     if not executable:
         raise failure_for_code("runtime_missing")
+    command = [executable, "run", model_name]
+    if _needs_non_thinking_json(model_name):
+        command.append("--think=false")
     response = run_hidden(
-        [executable, "run", model_name],
+        command,
         input=prompt,
         check=True,
         capture_output=True,

@@ -154,6 +154,61 @@ class GenerationGatewayTest(unittest.TestCase):
         self.assertIn("status=failed code=request_timeout", output)
         self.assertNotIn("PRIVATE", output)
 
+    def test_verified_qwen_model_requests_final_json_without_thinking(self) -> None:
+        models = ("qwen3.5:4b", "library/qwen3.5:4b", "registry.ollama.ai/library/qwen3.5:4b")
+        schema = {"type": "object", "required": ["notes"]}
+        for model in models:
+            with (
+                self.subTest(model=model),
+                patch.object(generation_gateway, "_ensure_runtime"),
+                patch.object(generation_gateway.urllib.request, "urlopen",
+                             return_value=BytesIO(b'{"response":"final JSON","thinking":"not final"}')) as request,
+                generation_gateway.generation_response_schema(schema),
+            ):
+                self.assertEqual(generation_gateway._generate_with_http(model, "prompt"), "final JSON")
+                payload = json.loads(request.call_args.args[0].data)
+                self.assertIs(payload["think"], False)
+                self.assertEqual(payload["format"], schema)
+                self.assertEqual(payload["model"], model)
+
+    def test_other_models_keep_default_thinking_behavior(self) -> None:
+        for model in ("gemma4:e2b", "gpt-oss:20b", "qwen3.5:9b", "custom/qwen3.5:4b", "my-qwen"):
+            with (
+                self.subTest(model=model),
+                patch.object(generation_gateway, "_ensure_runtime"),
+                patch.object(generation_gateway.urllib.request, "urlopen",
+                             return_value=BytesIO(b'{"response":"final"}')) as request,
+            ):
+                self.assertEqual(generation_gateway._generate_with_http(model, "prompt"), "final")
+                self.assertNotIn("think", json.loads(request.call_args.args[0].data))
+
+    def test_thinking_only_response_is_still_rejected(self) -> None:
+        with (
+            patch.object(generation_gateway, "_ensure_runtime"),
+            patch.object(generation_gateway.urllib.request, "urlopen",
+                         return_value=BytesIO(b'{"response":"","thinking":"{\\"title\\":\\"not final\\"}"}')),
+        ):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway._generate_with_http("qwen3.5:4b", "prompt")
+        self.assertEqual(raised.exception.code, "invalid_model_response")
+
+    def test_cli_uses_same_verified_qwen_thinking_option(self) -> None:
+        for model in ("qwen3.5:4b", "gemma4:e2b", "gpt-oss:20b"):
+            with (
+                self.subTest(model=model),
+                patch.object(generation_gateway, "_ensure_runtime"),
+                patch.object(generation_gateway, "find_ollama_executable", return_value="ollama.exe"),
+                patch.object(generation_gateway, "ollama_subprocess_env", return_value={}),
+                patch.object(generation_gateway, "run_hidden",
+                             return_value=subprocess.CompletedProcess([], 0, stdout="final")) as run,
+            ):
+                self.assertEqual(generation_gateway._generate_with_cli(model, "prompt"), "final")
+                command = ["ollama.exe", "run", model]
+                if model == "qwen3.5:4b":
+                    command.append("--think=false")
+                self.assertEqual(run.call_args.args[0], command)
+                self.assertEqual(run.call_args.kwargs["input"], "prompt")
+
     def test_timeout_does_not_retry_with_cli(self) -> None:
         with (
             patch.object(generation_gateway, "_generate_with_http", side_effect=TimeoutError("late")),

@@ -1875,8 +1875,8 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.getByLabel('회의 목적', { exact: true }).fill('재개 후보 숨김 동작을 확인');
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
-    const completionPanel = page.locator('.meeting-analysis-complete');
-    await completionPanel.waitFor({ timeout: 10000 });
+    await page.getByLabel('분석 상태', { exact: true }).getByRole('status')
+      .getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the ready command bar must not compete with the completed result');
     assert.equal(await page.getByRole('button', { name: '결과 보기', exact: true }).count(), 0, 'completion already shows the detail');
     assert.equal(dialogShown, false);
@@ -2048,11 +2048,10 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByRole('button', { name: '새 분석', exact: true }).click();
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.locator('.meeting-analysis-complete').waitFor({ timeout: 10000 });
-    await page.getByText('대화록을 확인하고 필요한 정리를 실행하세요.', { exact: false }).waitFor({ timeout: 10000 });
-    const completionPanel = page.locator('.meeting-analysis-complete');
-    await completionPanel.waitFor({ timeout: 10000 });
-    assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the completed result should stay in the writer action slot');
+    await page.getByLabel('분석 상태', { exact: true }).getByRole('status')
+      .getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-detail-shell').waitFor({ timeout: 10000 });
+    assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the completed meeting detail replaces the writer controls');
     assert.equal(await page.getByRole('button', { name: '결과 보기', exact: true }).count(), 0, 'completion already shows the detail');
     assert.equal(dialogShown, false);
     assert.doesNotMatch(analyzeRequestSnapshot ?? '', /name="job_id"\r\n\r\nfresh-choice-draft-job/);

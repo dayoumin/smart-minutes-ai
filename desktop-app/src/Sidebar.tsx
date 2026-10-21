@@ -159,6 +159,8 @@ const focusSidebarFallback = (createButton: HTMLButtonElement | null, sidebar: H
 
 export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
+    const recordLoadSequence = useRef(0);
+    const [loadedRecordsSequence, setLoadedRecordsSequence] = useState(0);
     const [folders, setFolders] = useState<MeetingFolder[]>([]);
     const [folderLoadFailed, setFolderLoadFailed] = useState(false);
     const [isLoadingFolders, setIsLoadingFolders] = useState(false);
@@ -195,18 +197,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const pendingFolderMenuFocusRef = useRef<string | null>(null);
     const recordMenuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const recordMenuPanelRefs = useRef(new Map<string, HTMLDivElement>());
-    const pendingRecordMenuFocusRef = useRef<{ recordId: string; fallbackRecordId: string | null } | null>(null);
+    const pendingRecordMenuFocusRef = useRef<{
+        recordId: string;
+        fallbackRecordId: string | null;
+        afterRecordsSequence: number;
+    } | null>(null);
     const draggedFolderIdRef = useRef<string | null>(null);
     const folderOrderSavingRef = useRef(false);
 
     const loadRecords = async () => {
+        const sequence = ++recordLoadSequence.current;
         try {
             const data = await getAllMeetings();
+            if (sequence !== recordLoadSequence.current) return;
             setRecords(data);
+            setLoadedRecordsSequence(sequence);
         } catch {
+            if (sequence !== recordLoadSequence.current) return;
             const pendingFocus = pendingRecordMenuFocusRef.current;
+            if (!pendingFocus || sequence < pendingFocus.afterRecordsSequence) return;
             pendingRecordMenuFocusRef.current = null;
-            if (!pendingFocus) return;
             window.requestAnimationFrame(() => {
                 const recordTrigger = recordMenuTriggerRefs.current.get(pendingFocus.recordId);
                 const fallbackTrigger = pendingFocus.fallbackRecordId
@@ -400,7 +410,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
 
     useEffect(() => {
         const pendingFocus = pendingRecordMenuFocusRef.current;
-        if (!pendingFocus) return;
+        if (!pendingFocus || loadedRecordsSequence < pendingFocus.afterRecordsSequence) return;
         pendingRecordMenuFocusRef.current = null;
         const focusRecordId = visibleRecords.some(record => record.id === pendingFocus.recordId)
             ? pendingFocus.recordId
@@ -415,7 +425,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
             }
             focusSidebarFallback(createMeetingButtonRef.current, sidebarRef.current);
         });
-    }, [visibleRecords]);
+    }, [visibleRecords, loadedRecordsSequence]);
 
 
     const handleRecordMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>, recordId: string) => {
@@ -500,7 +510,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
         try {
             await updateMeetingPinned(record.id, !record.pinned);
-            pendingRecordMenuFocusRef.current = { recordId: record.id, fallbackRecordId };
+            pendingRecordMenuFocusRef.current = {
+                recordId: record.id, fallbackRecordId,
+                afterRecordsSequence: recordLoadSequence.current + 1,
+            };
             setOpenMenuId(null);
             window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
         } catch (error) {
@@ -539,7 +552,10 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
         const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
         try {
             await moveMeetingToFolder(record.id, folderId || undefined);
-            pendingRecordMenuFocusRef.current = { recordId: record.id, fallbackRecordId };
+            pendingRecordMenuFocusRef.current = {
+                recordId: record.id, fallbackRecordId,
+                afterRecordsSequence: recordLoadSequence.current + 1,
+            };
             setOpenMenuId(null);
             window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
         } catch (error) {

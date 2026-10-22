@@ -27,6 +27,16 @@ function Assert-PortableDataLayout([string]$PortableRoot, [switch]$ForRuntimeSmo
     foreach ($key in @('stt_model', 'diarization_model', 'segmentation_model', 'llm_model')) {
         if ($config.paths -and $config.paths.$key) { $resources += [string]$config.paths.$key }
     }
+    # The backend checks for an existing summary.model file before interpreting
+    # it as an Ollama name, including files without an extension.
+    $summaryModel = ([string]$config.summary.model).Trim()
+    if ($summaryModel) {
+        $resolvedSummaryModel = if ([System.IO.Path]::IsPathRooted($summaryModel)) { $summaryModel } else { Join-Path $backendRoot $summaryModel }
+        # Names such as gemma4:e2b are not filesystem paths on Windows.
+        if (Test-Path -LiteralPath $resolvedSummaryModel -PathType Leaf -ErrorAction SilentlyContinue) {
+            $resources += $summaryModel
+        }
+    }
     if ($config.export_templates -and $config.export_templates.use_custom_template) {
         $resources += @($config.export_templates.hwpx_template_path, $config.export_templates.docx_template_path)
     }

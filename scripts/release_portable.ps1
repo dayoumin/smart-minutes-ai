@@ -466,9 +466,9 @@ Write-Host "Wrote target manifest: $targetManifest"
 & (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $TargetPortableDir -AllowDirty:$AllowDirty -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
 
 Sync-PortableToDeploy $TargetPortableDir $DeployPath
-$deployManifest = Write-ReleaseManifest $DeployPath
-Write-Host "Wrote deploy manifest: $deployManifest"
-
+# Sync copies the verified build manifest. Keep that trusted reference: hashing
+# the destination again would bless files robocopy skipped (same size/time).
+# ExistingInstallation permits user config changes without relaxing code hashes.
 & (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -ExistingInstallation -AllowDirty:$AllowDirty -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
 
 Write-Host "Portable release is ready:" -ForegroundColor Green

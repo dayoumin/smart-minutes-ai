@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -33,6 +34,18 @@ def _run_powershell(command: str, timeout: int = 60) -> subprocess.CompletedProc
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _release_function(name: str) -> str:
+    source = (ROOT / "scripts/release_portable.ps1").read_text(encoding="utf-8")
+    match = re.search(
+        rf"^function {re.escape(name)}\b[\s\S]+?(?=^function |^\$DeployPath =|\Z)",
+        source,
+        re.MULTILINE,
+    )
+    if match is None:
+        raise AssertionError(f"Could not find release helper: {name}")
+    return match.group(0)
 
 
 class PortableReleaseScriptTest(unittest.TestCase):
@@ -689,6 +702,147 @@ catch {{ if ($_.Exception.Message -notlike '*Unsupported portable data layout*')
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("Unsupported portable data layout", result.stdout + result.stderr)
             self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
+
+    def test_selected_summary_model_is_rejected_before_update_or_handoff(self):
+        for reference in ("./private-model.gguf", "private-model.gguf", ".\\private-model.bin", "absolute",
+                          "private-model", "models/private-model", "  ./private-model.gguf  "):
+            with self.subTest(reference=reference), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                portable, other = root / "lmo_audio", root / "other"
+                backend = portable / "backend"
+                backend.mkdir(parents=True)
+                other.mkdir()
+                model = backend / ("private-model.gguf" if reference == "absolute" else reference.strip())
+                model.parent.mkdir(parents=True, exist_ok=True)
+                model.write_text("private model fixture", encoding="utf-8")
+                config = {"paths": {"llm_model": "./models/llm/gemma.gguf"}, "summary": {
+                    "model": str(model) if reference == "absolute" else reference,
+                }}
+                (backend / "config.json").write_text(json.dumps(config), encoding="utf-8")
+                (portable / "personal-backup.json").write_text("keep", encoding="utf-8")
+                before = {path: _sha256(path) for path in portable.rglob("*") if path.is_file()}
+                for source, destination in ((other, portable), (portable, other)):
+                    result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$PortableAppExeName = "lmo_audio.exe"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+{_release_function('Sync-PortableToDeploy')}
+Sync-PortableToDeploy '{source}' '{destination}'
+''')
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertIn("Unsupported portable data layout", result.stdout + result.stderr)
+                    self.assertEqual(list(other.iterdir()), [])
+                    self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
+                # The real handoff entry must refuse before even validating or
+                # creating an output root; this test never writes to releases/.
+                output = root / "handoff"
+                result = _run_powershell(
+                    f"& '{ROOT / 'scripts/create_handoff_package.ps1'}' -PortableDir '{portable}' "
+                    f"-OutputRoot '{output}' -AllowStale -PackageName 'private-model-must-not-be-packaged'"
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("Unsupported portable data layout", result.stdout + result.stderr)
+                self.assertFalse(output.exists())
+                self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
+
+    def test_summary_models_outside_backend_and_ollama_names_are_allowed(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            portable = root / "lmo_audio"
+            (portable / "backend").mkdir(parents=True)
+            for model in (portable / "models/user.gguf", root / "external/model.bin"):
+                model.parent.mkdir(parents=True, exist_ok=True)
+                model.write_text("user model", encoding="utf-8")
+            for reference in ("gemma4:e2b", "library/gemma4:e2b", "../models/user.gguf", str(root / "external/model.bin")):
+                with self.subTest(reference=reference):
+                    (portable / "backend/config.json").write_text(json.dumps({"summary": {"model": reference}}), encoding="utf-8")
+                    before = {path: _sha256(path) for path in root.rglob("*") if path.is_file()}
+                    result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+Assert-PortableDataLayout '{portable}'
+''')
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertEqual(before, {path: _sha256(path) for path in root.rglob("*") if path.is_file()})
+
+    def test_deploy_completion_uses_build_manifest_and_rejects_skipped_wrong_code(self):
+        release = (ROOT / "scripts/release_portable.ps1").read_text(encoding="utf-8")
+        completion = release[release.index("\nSync-PortableToDeploy $TargetPortableDir $DeployPath"):]
+        # Exercise the actual completion sequence, including any manifest writes,
+        # with the real read-only verifier and fake, never executable PE headers.
+        completion = completion.replace(
+            '(Join-Path $PSScriptRoot "verify_portable.ps1")',
+            f"'{ROOT / 'scripts/verify_portable.ps1'}'",
+        )
+        helpers = "\n".join(_release_function(name) for name in (
+            "Normalize-FullPath", "Get-FileHashValue", "Get-PortablePayloadFiles",
+            "Write-ReleaseManifest", "Sync-PortableToDeploy",
+        ))
+        for wrong_code in (False, True):
+            with self.subTest(wrong_code=wrong_code), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source, destination = root / "source/lmo_audio", root / "destination/lmo_audio"
+                pe = bytearray(4096)
+                pe[0x3c:0x40] = (128).to_bytes(4, "little")
+                pe[128 + 24 + 68:128 + 24 + 70] = (2).to_bytes(2, "little")
+                packaged = {
+                    "lmo_audio.exe": pe, "binaries/meeting-backend-x86_64-pc-windows-msvc.exe": pe,
+                    "backend/main.py": b"NEW CODE", "backend/config.json": b"{}",
+                    "backend/ffmpeg.exe": b"fake", "runtime/ollama/README.txt": b"download later",
+                    "START_HERE.txt": b"help",
+                }
+                for relative, content in packaged.items():
+                    path = source / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                for model in json.loads(MODEL_LAYOUT_PATH.read_text(encoding="utf-8"))["models"]:
+                    for marker in model["requiredMarkers"]:
+                        path = source / "models" / model["portableDir"] / marker
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(b"model fixture")
+                protected = {
+                    "backend/config.json": b'{"user_setting":true}',
+                    "backend/outputs/meeting.json": b"private record",
+                    "models/downloaded/user.bin": b"user model",
+                    "runtime/ollama/ollama.exe": b"downloaded runtime",
+                }
+                for relative, content in protected.items():
+                    path = destination / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(content)
+                if wrong_code:
+                    stale = destination / "backend/main.py"
+                    stale.write_bytes(b"OLD CODE")
+                    stamp = (source / "backend/main.py").stat().st_mtime_ns
+                    os.utime(stale, ns=(stamp, stamp))
+                    self.assertEqual(stale.stat().st_size, (source / "backend/main.py").stat().st_size)
+                    self.assertEqual(stale.stat().st_mtime_ns, stamp)
+                    self.assertNotEqual(_sha256(stale), _sha256(source / "backend/main.py"))
+                result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$RepoRoot = Resolve-Path '{ROOT}'
+$PortableAppExeName = "lmo_audio.exe"
+$ModelLayout = Get-Content '{MODEL_LAYOUT_PATH}' -Raw | ConvertFrom-Json
+$TargetPortableDir = '{source}'
+$DeployPath = '{destination}'
+$AllowDirty = $false
+$AllowMissingEmbeddedOllama = $false
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+{helpers}
+function Get-GitValue([string]$Command) {{ if ($Command -like 'status*') {{ return '' }}; return 'fixture' }}
+function Get-FrontendAssets {{ return @() }}
+Write-ReleaseManifest $TargetPortableDir | Out-Null
+{completion}
+''')
+                self.assertEqual(result.returncode, 1 if wrong_code else 0, result.stdout + result.stderr)
+                self.assertIn("integrity verification failed" if wrong_code else "runtime smoke deferred", result.stdout + result.stderr)
+                self.assertEqual((destination / "backend/main.py").read_bytes(), b"OLD CODE" if wrong_code else b"NEW CODE")
+                # The trusted build manifest must survive the completion sequence
+                # byte for byte, even when a mismatched deploy is rejected.
+                self.assertEqual((source / "release-manifest.json").read_bytes(),
+                                 (destination / "release-manifest.json").read_bytes())
+                for relative, content in protected.items():
+                    self.assertEqual((destination / relative).read_bytes(), content)
 
     def test_external_data_paths_are_allowed_but_runtime_smoke_is_refused(self):
         with tempfile.TemporaryDirectory() as temp_dir:

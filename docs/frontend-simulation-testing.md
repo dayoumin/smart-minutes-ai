@@ -1,5 +1,47 @@
 # Frontend Simulation Testing
 
+## Remote integration with local work preserved — 2026-10-22
+
+Integrated `4320cec..77555e3` (14 origin/main commits) in `D:\Projects\audio`.
+The original local edits remain uncommitted and the recovery stash is retained.
+Independent deployment, update/data-protection and UI reviewers found one UI
+merge defect: the local column direction overrode the wide information panel's
+label/action rows. The wide container now explicitly restores row alignment;
+`columns` checks the actual label/action positions. Conflicting design and QA
+records retain the newer remote UI decisions and the local experiment/release
+history; an old deploy status is explicitly marked historical.
+
+Checks passed, run serially with the installed dependencies:
+
+- `corepack pnpm --dir desktop-app typecheck` and affected TSX/JS ESLint.
+- `corepack pnpm --dir desktop-app test:meeting-detail-layout columns`, `meta`,
+  and `summary-review`: two column sizes, one narrow metadata case and two
+  guidance/keyboard/reopen cases.
+- `corepack pnpm --dir desktop-app test:analysis-stop-flow detail-continuity`:
+  all four foreground/background/audio-error cases. The first narrow run sent
+  Escape before menu focus was ready. The final test waits for automatic focus
+  and the scrim to disappear; it does not force focus or bypass pointer blocking.
+- `corepack pnpm --dir desktop-app test:sidebar-collapse narrow`: passed after
+  its mode helper also waited for automatic focus inside the overlay, including
+  Escape, Settings focus return, resizing, unsaved edits and audio continuity.
+- Seven selected `tests.test_portable_release_scripts` cases and four selected
+  `tests.test_update_package_scripts` cases passed with
+  `backend/.venv-desktop/Scripts/python.exe -B -X utf8 -m unittest` and
+  `TEMP`/`TMP=D:\Projects\audio\.tmp\merge-origin-20261022\temp`.
+  They cover manifest trust, preserved data, Ollama replacement/guide recovery,
+  live-target refusal and untrusted update lists. Rust's four actual port/socket
+  tests also passed (`.tmp/merge-origin-20261022/backend-port-tests.exe`).
+
+The dedicated server was started from the repository root with
+`corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5197
+--strictPort --configLoader runner`; HTTP200 and title `LMO 회의록` identified it.
+`APP_URL=http://127.0.0.1:5197/` and
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright` were used.
+Only this session's server is cleaned up after checks; the same command restores
+it. Browser checks mock the engine. Native executable/update/handoff QA remains
+open in the existing release checklist and release QA table. No build, push or
+production deployment was performed.
+
 ## Separate web/desktop records — 2026-10-22
 
 `simulate-dual-runtime-isolation.mjs` requires an explicit local `APP_URL` and
@@ -187,6 +229,48 @@ Screenshots: `.tmp/local-processing-20261021/` (set `LOCAL_PROCESSING_SCREENSHOT
 to capture them). Preview server: `corepack pnpm --dir desktop-app exec vite
 --host 127.0.0.1 --port 5202 --strictPort`, cwd `D:\Projects\audio`; left running
 for review. `git diff --check` passed.
+
+## Processing status alignment — 2026-10-21
+
+The analysis, transcript and participant-separation items now share a three-column
+layout with each status below its label. Verified with `corepack pnpm --dir
+desktop-app typecheck`, changed-file ESLint, the layout simulation's `meta`
+scenario at760px, and the analysis-stop simulation's `detail-continuity` selection
+(four preparation/completion/reopen/background/audio-error scenarios at1280px
+and760px). All passed; independent source review found no blockers.
+These are mocked browser checks. The verification server used port5201 in
+`D:\Projects\audio` and was stopped after checks.
+
+## Summary review guidance — 2026-10-21
+
+The focused `summary-review` scenario in `simulate-meeting-detail-layout.mjs`
+verifies the persistent accuracy notice across summary/topic/speaker views,
+keyboard activation of `대화록 확인` and focus on the transcript tab, empty
+summary and saved-record reopen states, and stable tab positions/no notice
+overflow at1280px and860px. It uses synthetic records and mocked APIs; it does
+not verify model accuracy or the installed app. Unsaved-edit round trips were
+reviewed in source, not exercised by this scenario.
+
+Commands from `D:\Projects\audio`:
+
+```powershell
+$env:APP_URL='http://127.0.0.1:5199/'
+$env:PLAYWRIGHT_BROWSERS_PATH='D:/Projects/audio/.cache/ms-playwright'
+$env:SUMMARY_REVIEW_SCREENSHOTS='D:/Projects/audio/.tmp/summary-review-ui-20261021'
+corepack pnpm --dir desktop-app exec node --experimental-strip-types scripts/simulate-meeting-detail-layout.mjs summary-review
+corepack pnpm --dir desktop-app typecheck
+corepack pnpm --dir desktop-app exec eslint src/MeetingHistory.tsx scripts/simulate-meeting-detail-layout.mjs
+```
+
+The documented older `D:\Projects\LMO_audio\.cache\ms-playwright` path had no
+browser on this checkout. The matching1217 browser already existed under the
+current project's `.cache`; no download or dependency reinstall was needed.
+Port5198 was occupied and its unknown owner was left untouched. The session
+started `corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5199
+--strictPort --configLoader runner`
+and confirmed `/`, `/src/main.jsx` and `/src/index.css` return200. The UI server
+is left running at the user's request. Typecheck, changed-file ESLint and both
+focused browser scenarios pass; independent review found no blocking defect.
 
 ## Folder move focus and resume checks — 2026-10-21
 

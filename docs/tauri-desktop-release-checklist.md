@@ -222,6 +222,8 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 
 ### 알려진 한계
 
+- **PC별 후보 확인 — 2026-10-22 병합 후 `D:\Projects\audio`**: 이 PC의 `releases\lmo_audio`는 `7cb39ac`/dirty=false(2026-06-08)이고 현재 HEAD `77555e3`보다206커밋 이전이다. `verify_portable.ps1 -PortableDir releases/lmo_audio -ExistingInstallation`의 읽기 전용15검사는 모두 통과했으나 최신 소스의 실행 검증은 아니다. 다른 PC에서 작성한 아래 `a150589b`·전용 시험 복사본/프로필·재포장 재개 이력은 이 PC에 존재하는 후보로 해석하지 않는다. 이 PC의 중간 sidecar도6월 빌드이며 target 실행 파일은 없어 `-SkipSidecarBuild -SkipTauriBuild`로 최신 후보를 만들 수 없다. 전용 Python3.12.14·필수 빌드 모듈·Rust 도구와 모델 표식은 준비됐으며, 릴리스에 포함할 미커밋 요약 실험의 범위를 정한 뒤 검증된 소스의 clean 전체 빌드가 필요하다. 기존 설치본·설정·회의 자료는 변경하지 않았다.
+
 2026-10-22 빌드 전 검토에서 나온 업데이트 패키지·전달 ZIP 위험(backend 로그·DB·알 수 없는 파일 삭제와 유출, 앱으로 Ollama를 받은 설치본의 README 실패, 전달 ZIP의 비교 기준, Whisper를 넣은 전달 ZIP 검사)은 같은 날 위 규칙으로 고쳤다. 남은 한계는 다음과 같다.
 
 - **빌드 목록이 없는 설치본**: 2026-06-01 이전 빌드처럼 manifest에 `portablePayloadFiles`가 없거나, 2026-10-22 이전에 만든 전달 ZIP으로 설치해 목록이 빌드 것이 아니면(`handoff.payloadList`가 `build`가 아님), 새 빌드에 없는 backend 파일을 지우지 않고 경고만 한다. 예전 전달 ZIP의 목록은 폴더를 훑어 만든 것이라 사용자 복사본이 섞여 있을 수 있기 때문이다. 오래된 코드 파일이 남을 수 있지만 사용자 자료는 지우지 않는다.

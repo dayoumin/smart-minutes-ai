@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronRight, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronRight, ChevronUp, Clock3, Folder, FolderPlus, List, Loader2, MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import { AnalysisResumeDraft } from './analysisResumeDrafts';
 import type { AppView } from './appView';
 import { selectVisibleRecoveryDrafts, useAnalysisResumeSnapshot } from './analysisResumeState';
@@ -24,8 +24,13 @@ import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
 import { AppToast, ProgressBar, type AppToastMessage } from './components/common';
 import { SidebarRecordMoveMenu } from './SidebarRecordMoveMenu';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
+import type { SidebarMode } from './useSidebarCollapse';
 
 export interface SidebarProps {
+    mode?: SidebarMode;
+    onCollapse?: () => void;
+    onExpand?: () => void;
+    onRequestClose?: () => void;
     activeTab?: AppView;
     selectedMeetingId?: string | null;
     onSelectMeeting?: (id: string) => void;
@@ -149,7 +154,7 @@ const focusSidebarFallback = (createButton: HTMLButtonElement | null, sidebar: H
         createButton.focus();
         return;
     }
-    const analysisCard = sidebar?.querySelector<HTMLElement>('.sidebar-analysis-card');
+    const analysisCard = sidebar?.querySelector<HTMLElement>('.sidebar-analysis-card, .sidebar-rail-analysis');
     if (analysisCard) {
         analysisCard.focus();
         return;
@@ -157,7 +162,7 @@ const focusSidebarFallback = (createButton: HTMLButtonElement | null, sidebar: H
     sidebar?.querySelector<HTMLElement>('.sidebar-brand')?.focus();
 };
 
-export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
+export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse, onExpand, onRequestClose, activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const recordLoadSequence = useRef(0);
     const [loadedRecordsSequence, setLoadedRecordsSequence] = useState(0);
@@ -191,6 +196,26 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     const [recordMenuPosition, setRecordMenuPosition] = useState<{ top: number; left: number } | null>(null);
     const [now, setNow] = useState(() => Date.now());
     const sidebarRef = useRef<HTMLElement | null>(null);
+    const sidebarHadFocus = useRef(false);
+    const previousMode = useRef(mode);
+    useEffect(() => {
+        const track = (event: FocusEvent) => { sidebarHadFocus.current = Boolean(sidebarRef.current?.contains(event.target as Node)); };
+        document.addEventListener('focusin', track);
+        return () => document.removeEventListener('focusin', track);
+    }, []);
+    useEffect(() => {
+        if (previousMode.current === mode) return;
+        previousMode.current = mode;
+        const restore = sidebarHadFocus.current;
+        const frame = requestAnimationFrame(() => {
+            setOpenMenuId(null);
+            setOpenFolderMenuId(null);
+            if (restore && document.activeElement === document.body) {
+                sidebarRef.current?.querySelector<HTMLElement>(mode === 'rail' ? '.sidebar-rail-expand' : '.sidebar-collapse-button')?.focus();
+            }
+        });
+        return () => cancelAnimationFrame(frame);
+    }, [mode]);
     const createMeetingButtonRef = useRef<HTMLButtonElement | null>(null);
     const folderMenuTriggerRefs = useRef(new Map<string, HTMLButtonElement>());
     const folderMenuPanelRefs = useRef(new Map<string, HTMLDivElement>());
@@ -865,14 +890,42 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
     };
 
     return (
-        <aside ref={sidebarRef} className="barorok-navigation relative z-10 flex h-full max-h-none w-60 shrink-0 flex-col border-r px-3 py-3.5">
+        <aside ref={sidebarRef} data-settings-focus-scope data-mode={mode} aria-label="앱 메뉴" role={mode === 'overlay' ? 'dialog' : undefined} aria-modal={mode === 'overlay' ? true : undefined}
+            onKeyDown={event => {
+                if (mode !== 'overlay' || event.defaultPrevented) return;
+                if (event.key === 'Escape') { event.preventDefault(); onRequestClose?.(); }
+                if (event.key === 'Tab') {
+                    const buttons = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), [tabindex="0"]')].filter(node => node.getClientRects().length);
+                    const first = buttons[0]; const last = buttons.at(-1);
+                    if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+                    else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+                }
+            }}
+            className="barorok-navigation flex h-full max-h-none shrink-0 flex-col border-r">
+            {mode === 'rail' ? <div className="sidebar-rail">
+                <button type="button" className="sidebar-brand sidebar-rail-button" aria-label={`${BRAND_NAME} 첫 화면`} title={`${BRAND_NAME} 첫 화면`} onClick={onOpenStart}>
+                    <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
+                </button>
+                <button ref={createMeetingButtonRef} type="button" className="sidebar-rail-button" aria-label="새 회의록" title={newMeetingBlocked ? newMeetingBlockedReason : '새 회의록'} disabled={newMeetingBlocked || Boolean(analysisStatus?.active)} aria-describedby={newMeetingBlocked || analysisStatus?.active ? 'sidebar-rail-create-note' : undefined} onClick={onCreateMeeting}><Plus size={18} aria-hidden="true" /></button>
+                {(newMeetingBlocked || analysisStatus?.active) && <span id="sidebar-rail-create-note" className="sr-only">{newMeetingBlocked ? newMeetingBlockedReason : '분석이 끝나면 새 회의록을 만들 수 있습니다.'}</span>}
+                <button type="button" className="sidebar-rail-button" aria-label="회의록 목록" title="회의록 목록" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}><List size={18} aria-hidden="true" />{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
+                {onOpenArchive && <button type="button" className="sidebar-rail-button" aria-label="기록 찾기" title="기록 찾기" onClick={onOpenArchive}><Search size={18} aria-hidden="true" /></button>}
+                {analysisStatus?.active && <button type="button" className="sidebar-rail-button sidebar-rail-analysis" aria-label="분석 진행 화면 열기" title="분석 진행 화면 열기" onClick={onOpenAnalysis}><Loader2 size={18} className="animate-spin" aria-hidden="true" /></button>}
+                <div className="flex-1" />
+                {onOpenSettings && <button type="button" data-settings-focus-fallback className="sidebar-rail-button sidebar-rail-settings" aria-label="설정" title="설정" onClick={onOpenSettings}><Settings size={18} aria-hidden="true" /></button>}
+                {onOpenAsrBenchmark && <button type="button" className="sidebar-rail-button" aria-label="ASR 테스트 결과" title="ASR 테스트 결과" onClick={onOpenAsrBenchmark}><BarChart3 size={18} aria-hidden="true" /></button>}
+                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴 펼치기" title="메뉴 펼치기" aria-expanded={false} onClick={onExpand}><PanelLeftOpen size={18} aria-hidden="true" /></button>
+            </div> : <>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                <div className="sidebar-brand-row">
                 <button type="button" className="sidebar-brand" aria-label={`${BRAND_NAME} 첫 화면`} aria-current={activeTab === 'minutes' ? 'page' : undefined} onClick={onOpenStart}>
                     <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
                     <span className="app-brand-copy">
                         <strong>{BRAND_NAME}</strong>
                     </span>
                 </button>
+                <button type="button" className="sidebar-collapse-button sidebar-rail-button" aria-label="메뉴 접기" title="메뉴 접기" aria-expanded={true} onClick={onCollapse}><PanelLeftClose size={17} aria-hidden="true" /></button>
+                </div>
                 <button
                     ref={createMeetingButtonRef}
                     type="button"
@@ -1283,6 +1336,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                             <button
                                 type="button"
                                 className="sidebar-utility-button"
+                                data-settings-focus-fallback
                                 onClick={() => {
                                     setOpenMenuId(null);
                                     onOpenSettings();
@@ -1305,6 +1359,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ activeTab, selectedMeetingId, 
                     </div>
                 )}
             </div>
+            </>}
             {deletionToast && createPortal(
                 <AppToast
                     message={deletionToast.message}

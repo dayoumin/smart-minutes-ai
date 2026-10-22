@@ -143,18 +143,22 @@ const narrowMeeting = {
 };
 
 const openMeeting = async (page, title) => {
+  const expand = page.getByRole('button', { name: '메뉴 펼치기', exact: true });
+  if (await expand.isVisible()) await expand.click();
   await page.locator('.barorok-navigation').getByText(title, { exact: true }).click();
   await page.locator('.meeting-detail-shell').getByRole('heading', { name: title }).waitFor({ timeout: 10000 });
 };
 
-const runTopicChipScenario = async browser => {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+const runTopicChipScenario = async (browser, width) => {
+  const context = await browser.newContext({ viewport: { width, height: 720 } });
   const page = await context.newPage();
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
-    await putMeetings(page, [topicMeeting]);
+    await putMeetings(page, [{ ...topicMeeting, topicSections: topicMeeting.topicSections.map(section => ({
+      ...section, summary: section.summary.repeat(300),
+    })) }]);
     await openMeeting(page, topicMeeting.title);
     await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
 
@@ -179,7 +183,12 @@ const runTopicChipScenario = async browser => {
       return rect.bottom > 0 && rect.top < window.innerHeight;
     });
     assert.ok(sectionInViewport, 'the selected topic section should be connected and visible');
-    console.log('ok - summary topic chip dedupes and opens the topic after a tab round-trip');
+    await page.waitForFunction(() => {
+      const heading = document.activeElement?.getBoundingClientRect();
+      const nav = document.querySelector('.detail-main-nav')?.getBoundingClientRect();
+      return heading && nav && heading.top >= nav.bottom + 8 && heading.bottom <= innerHeight;
+    });
+    console.log(`ok - summary topic chip opens a long topic below the sticky navigation (${width}px)`);
   } finally {
     await context.close();
   }
@@ -258,7 +267,9 @@ const runAudioRowScenario = async browser => {
   // Hold the audio check so the 확인 중 state can be measured before the 404 arrives.
   let releaseAudioCheck = () => undefined;
   let audioCheckGate = new Promise(resolve => { releaseAudioCheck = resolve; });
+  const audioRequests = [];
   await page.route('**/api/outputs/*/audio', async route => {
+    audioRequests.push(route.request().url());
     await audioCheckGate;
     return route.fulfill({ status: 404, contentType: 'application/json', body: '{}' });
   });
@@ -282,14 +293,17 @@ const runAudioRowScenario = async browser => {
     await audioRow.getByText('음성 없음', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await tabListTop(), topWhileChecking, 'a missing audio file should not collapse the row and shift the tabs');
 
-    // A full output list without audio means the engine kept none: no row, not even while checking.
+    // A full output list without audio keeps the stable row, without requesting audio.
     audioCheckGate = new Promise(resolve => { releaseAudioCheck = resolve; });
     await openMeeting(page, '음성 미보관 회의');
-    assert.equal(await page.locator('.meeting-meta-item-audio').count(), 0, 'no audio row should show while the check is pending');
+    await audioRow.getByText('음성 없음', { exact: true }).waitFor();
+    assert.equal(await audioRow.count(), 1, 'the audio row stays mounted when no audio was kept');
+    assert.equal(await tabListTop(), topWhileChecking, 'records without stored audio keep the same tab position');
     releaseAudioCheck();
     await page.waitForTimeout(500);
-    assert.equal(await page.locator('.meeting-meta-item-audio').count(), 0, 'a record whose outputs list no audio should not show the audio row');
-    console.log('ok - the audio row keeps its place through the check and stays hidden when no audio was kept');
+    await audioRow.getByText('음성 없음', { exact: true }).waitFor();
+    assert.equal(audioRequests.some(url => url.includes('layout-audio-none-job')), false, 'a full output list without audio skips the audio request');
+    console.log('ok - the audio row stays stable through checking and when no audio was kept');
   } finally {
     releaseAudioCheck();
     await context.close();
@@ -492,7 +506,8 @@ const runColumnsScenario = async (browser, { width, height }) => {
         title: box('.meeting-detail-title'),
         actions: box('.meeting-detail-actions'),
         audio: box('.meeting-audio-player'),
-        workspaceTop: box('.barorok-workspace').top,
+        nav: box('.detail-main-nav'),
+        stickyTop: box('.barorok-workspace').top + parseFloat(getComputedStyle(document.querySelector('.barorok-workspace')).paddingTop),
         innerHeight: window.innerHeight,
         documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       };
@@ -508,7 +523,8 @@ const runColumnsScenario = async (browser, { width, height }) => {
     await page.waitForTimeout(200);
     const after = await measure();
     assert.ok(after.audio.top >= 0 && after.audio.bottom <= after.innerHeight, 'audio player stays visible while reading');
-    assert.ok(after.tablist.top >= after.workspaceTop - 1 && after.tablist.top <= after.workspaceTop + 2, `tab bar sticks to the top: ${after.tablist.top} vs ${after.workspaceTop}`);
+    assert.ok(Math.abs(after.nav.top - after.stickyTop) <= 1, `navigation sticks to the padded workspace top: ${after.nav.top} vs ${after.stickyTop}`);
+    assert.ok(after.tablist.top >= after.nav.top && after.tablist.bottom <= after.nav.bottom, 'tabs stay inside the sticky navigation');
     assert.ok(after.documentOverflow <= 0, `document overflowed by ${after.documentOverflow}px`);
     console.log(`ok - header, 280px info panel and sticky tab column at ${width}x${height}`);
   } finally {
@@ -524,7 +540,7 @@ try {
   } else if (process.argv.includes('review')) {
     for (const width of [1280, 760]) await runTranscriptReviewScenario(browser, width);
   } else {
-  await runTopicChipScenario(browser);
+  for (const width of [1280, 760]) await runTopicChipScenario(browser, width);
   await runNarrowMetaScenario(browser);
   await runTranscriptRowScenario(browser);
   await runAudioRowScenario(browser);

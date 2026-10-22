@@ -22,6 +22,7 @@
     "test:folder-recovery": "node scripts/simulate-folder-recovery.mjs",
     "test:meeting-cleanup-flow": "node scripts/simulate-meeting-cleanup-flow.mjs",
     "test:meeting-detail-layout": "node scripts/simulate-meeting-detail-layout.mjs",
+    "test:sidebar-collapse": "node --experimental-strip-types scripts/simulate-sidebar-collapse.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",
     "test:close-guard-flow": "node scripts/simulate-close-guard-flow.mjs",
     "test:writer-model-readiness": "node scripts/simulate-writer-model-readiness.mjs",

@@ -1381,8 +1381,8 @@ const run = async () => {
     const getSidebarMenuTrigger = () => page.getByRole('button', { name: sidebarMenuTriggerLabel, exact: true });
     const sidebarRecordMenu = page.locator('[data-sidebar-record-menu]');
     const waitForSidebarMenuTriggerFocus = async () => {
-      const trigger = getSidebarMenuTrigger();
-      await page.waitForFunction(element => document.activeElement === element, await trigger.elementHandle());
+      // Moving between folder and unfiled lists replaces the trigger node.
+      await page.waitForFunction(label => document.activeElement?.getAttribute('aria-label') === label, sidebarMenuTriggerLabel);
     };
     const openSidebarRecordMenu = async () => {
       const trigger = getSidebarMenuTrigger();
@@ -1473,7 +1473,9 @@ const run = async () => {
     await page.keyboard.press('End');
     await page.keyboard.press('Enter');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
-    await waitForSidebarMenuTriggerFocus();
+    await getSidebarMenuTrigger().waitFor({ state: 'detached' });
+    const movedRowFallback = page.getByRole('button', { name: sidebarMenuFallbackLabel, exact: true });
+    await page.waitForFunction(element => document.activeElement === element, await movedRowFallback.elementHandle());
     assert.equal(await page.evaluate(async () => {
       const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
@@ -1498,8 +1500,7 @@ const run = async () => {
     await sidebarRecordMenu.getByRole('button', { name: '폴더 이동', exact: true }).press('ArrowRight');
     await page.keyboard.press('Enter');
     await sidebarRecordMenu.waitFor({ state: 'detached' });
-    const createMeetingButton = page.getByRole('button', { name: '새 회의록', exact: true });
-    await page.waitForFunction(element => document.activeElement === element, await createMeetingButton.elementHandle());
+    await waitForSidebarMenuTriggerFocus();
     await reviewFolderButton.click();
 
     sidebarMenuItems = await openSidebarRecordMenu();
@@ -1539,9 +1540,12 @@ const run = async () => {
     sidebarMenuItems = await openSidebarRecordMenu();
     await sidebarMenuItems.first().click();
     await sidebarRecordMenu.waitFor({ state: 'detached' });
-    await getSidebarMenuTrigger().waitFor({ state: 'detached' });
-    const sidebarMenuFallbackTrigger = page.getByRole('button', { name: sidebarMenuFallbackLabel, exact: true });
-    await page.waitForFunction(element => document.activeElement === element, await sidebarMenuFallbackTrigger.elementHandle());
+    await waitForSidebarMenuTriggerFocus();
+    assert.equal(await page.evaluate(async () => (await (await import('/src/meetingRepository.ts')).getMeetingById('sidebar-old-pinned'))?.pinned), false, 'unpinning persists without hiding the record from the unfiled list');
+    assert.ok(await getSidebarMenuTrigger().evaluate(element => {
+      const row = element.closest('.sidebar-record-row');
+      return row === row.parentElement.lastElementChild;
+    }), 'the older unpinned record moves to the end of the list');
     sidebarMenuTriggerLabel = sidebarMenuFallbackLabel;
 
     sidebarMenuItems = await openSidebarRecordMenu();
@@ -1583,6 +1587,7 @@ const run = async () => {
     });
     await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).waitFor({ state: 'attached' });
     await page.setViewportSize({ width: 800, height: 720 });
+    await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).click();
     const sidebarContentScroll = page.locator('.sidebar-content-scroll');
     assert.equal(await sidebarContentScroll.evaluate(element => element.scrollHeight > element.clientHeight), true);
     const lastOverflowFolderMenuTrigger = page.getByRole('button', {
@@ -1619,9 +1624,7 @@ const run = async () => {
     await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).click();
     await page.waitForFunction(() => {
       const scroll = document.querySelector('.sidebar-content-scroll')?.getBoundingClientRect();
-      const emptyState = Array.from(document.querySelectorAll('[data-sidebar-records] div'))
-        .find(element => element.textContent?.trim() === '이 폴더에는 회의록이 없습니다.')
-        ?.getBoundingClientRect();
+      const emptyState = document.querySelector('.sidebar-folder-records[aria-label="스크롤 검수 폴더 18 회의록"] p')?.getBoundingClientRect();
       return Boolean(scroll && emptyState && emptyState.top >= scroll.top && emptyState.bottom <= scroll.bottom);
     });
     await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).click();
@@ -1874,7 +1877,7 @@ const run = async () => {
 
     await page.getByText('최초 분석 진행 회의록').first().click();
     await page.getByText('최초 분석 상태 보존').waitFor({ timeout: 10000 });
-    await page.getByText('진행 중', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-analysis-status').getByRole('progressbar').waitFor({ timeout: 10000 });
     assert.equal(await page.evaluate(async ({ initialAnalysisMeetingId }) => {
       const request = indexedDB.open('MeetingHistoryDB', 2);
       const db = await new Promise((resolve, reject) => {
@@ -1931,7 +1934,7 @@ const run = async () => {
     }, { cancelMeetingId }), 'diarization_stopped');
     await reconciledDiarizationButton.click();
     await cancelDiarizationRequested;
-    const cancelRunningButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
+    const cancelRunningButton = page.locator('.meeting-analysis-status').getByRole('button', { name: '참석자 구분 중지/취소' });
     await cancelRunningButton.waitFor({ timeout: 10000 });
     assert.equal(await cancelRunningButton.isDisabled(), false);
     await cancelRunningButton.click();
@@ -2030,19 +2033,17 @@ const run = async () => {
     await diarizationButton.click();
     await diarizationRequested;
     await page.locator('.tab-list').getByRole('tab', { name: '대화록' }).click();
-    await page.getByText('경과 시간').waitFor({ timeout: 10000 });
-    const stopDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지/취소' });
+    await page.locator('.writer-analysis-timing').getByText(/^경과 /).waitFor({ timeout: 10000 });
+    const stopDiarizationButton = page.locator('.meeting-analysis-status').getByRole('button', { name: '참석자 구분 중지/취소' });
     await stopDiarizationButton.waitFor({ timeout: 10000 });
     assert.equal(await stopDiarizationButton.isDisabled(), false);
     await stopDiarizationButton.click();
     await page.getByText('참석자 구분을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
-    await page.getByText('경과 시간').waitFor({ timeout: 10000 });
-    await page.getByText('추정 남은 시간').waitFor({ timeout: 10000 });
+    await page.locator('.writer-analysis-timing').getByText(/^경과 /).waitFor({ timeout: 10000 });
+    await page.locator('.writer-analysis-timing').getByText(/(?:추정|예상) 남은 시간/).waitFor({ timeout: 10000 });
     await page.locator('.diarization-stop-panel').getByRole('button', { name: '중지', exact: true }).click();
     await page.getByText('참석자 구분을 중지하고 있습니다. 원본 음성이 남아 있으면 이 회의록에서 다시 실행할 수 있습니다.').first().waitFor({ timeout: 10000 });
-    const stoppingDiarizationButton = page.locator('.meeting-status-grid').getByRole('button', { name: '참석자 구분 중지 중' });
-    await stoppingDiarizationButton.waitFor({ timeout: 10000 });
-    assert.equal(await stoppingDiarizationButton.isDisabled(), true);
+    assert.equal(await stopDiarizationButton.count(), 0, 'accepted stop requests cannot be submitted a second time');
     releaseDiarizationResponse();
     assert.deepEqual(diarizationStopBodies, [{ action: 'defer' }]);
     const deferredRecord = await page.evaluate(async ({ meetingId }) => {

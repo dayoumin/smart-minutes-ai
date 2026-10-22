@@ -548,6 +548,7 @@ const runScenario = async (
     await stopMenuButton.click();
     await page.getByText('분석을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
     await page.locator('.analysis-stop-panel').getByText('취소하면 이번 분석의 임시 대화록은 삭제합니다. 완료·중지·실패한 회의록, 본문을 수정·확정한 대화록과 정리 결과는 남깁니다.', { exact: false }).waitFor({ timeout: 10000 });
+    await assertStopPanelLayout(page, '.analysis-stop-panel');
 
     if (action === 'stop') {
       await page.locator('.analysis-stop-panel').getByRole('button', { name: '이어하기 기록을 남기고 분석 중지' }).click();
@@ -1301,6 +1302,10 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
     releaseSettings();
     await analyzeStarted;
     assertSameAnchors(preparing, await anchors(), 'running');
+    if (viewportWidth === 760) {
+      assert.ok(await page.locator('.sidebar-rail-analysis').isVisible(), 'narrow navigation keeps an entrance to the running analysis');
+      assert.ok(await page.locator('.barorok-navigation').getByRole('button', { name: '새 회의록', exact: true }).isDisabled(), 'new meetings stay blocked during analysis');
+    }
     await page.locator('.meeting-analysis-status').getByRole('button', { name: '중지/취소', exact: true }).waitFor();
     await captureState('running');
     assert.equal(await page.locator('.sidebar-analysis-card').count(), 0, 'the open analysis does not repeat in the sidebar');
@@ -1311,14 +1316,14 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
         window.dispatchEvent(new CustomEvent('meetings:updated'));
       });
       page.once('dialog', dialog => dialog.accept());
-      await page.locator('.sidebar-record-row').getByRole('button', { name: '다른 회의록', exact: true }).click();
+      await selectSidebarMeeting(page, '다른 회의록');
       await page.getByRole('heading', { name: '다른 회의록', exact: true }).waitFor();
     }
     releaseResult();
     await page.waitForFunction(async id => (await (await import('/src/meetingRepository.ts')).getMeetingById(id))?.analysisStatus === 'completed', jobId);
     if (background) {
       assert.equal(await page.getByRole('heading', { name: '다른 회의록', exact: true }).count(), 1, 'background completion preserves the current meeting');
-      await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+      await selectSidebarMeeting(page, title);
     }
     await page.locator('.meeting-analysis-status').getByText('분석 완료', { exact: false }).waitFor();
     await page.getByText('같은 화면에서 준비된 첫 대화입니다.', { exact: true }).waitFor();
@@ -1326,7 +1331,11 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
     if (!background) {
       assert.equal(await page.evaluate(() => window.__continuityFrame === document.querySelector('.meeting-detail-frame')), true, 'completion keeps the same detail element');
       assertSameAnchors(preparing, await anchors(), 'completed');
+      const expandMenu = page.getByRole('button', { name: '메뉴 펼치기', exact: true });
+      const collapsed = await expandMenu.isVisible();
+      if (collapsed) await expandMenu.click();
       await page.locator('.sidebar-record-row-active').getByRole('button', { name: title, exact: true }).waitFor();
+      if (collapsed) await page.keyboard.press('Escape');
       assert.equal(await page.locator('.detail-command-bar-script').getAttribute('inert'), null, 'completion has unlocked result controls before capture');
       await captureState('completed');
       await page.getByRole('button', { name: '회의 정보 수정', exact: true }).click();
@@ -1335,7 +1344,7 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
       await page.getByRole('button', { name: '새 회의록', exact: true }).click();
       assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '아직 저장하지 않은 제목', 'navigation preserves an unsaved completed-result edit');
       await page.getByRole('button', { name: '수정 취소', exact: true }).click();
-      await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+      await selectSidebarMeeting(page, title);
       await page.locator('.meeting-analysis-status').getByText('분석 완료', { exact: true }).waitFor();
       assertSameAnchors(preparing, await anchors(), 'reopened result');
       await captureState('reopened');
@@ -1358,7 +1367,9 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
       assert.equal(await topButton.count(), 0, 'top button is absent at the top');
       await workspace.evaluate(el => { el.scrollTop = el.clientHeight - 10; });
       assert.equal(await topButton.count(), 0, 'top button stays absent before one viewport');
-      await workspace.evaluate(el => { el.scrollTop = el.clientHeight + 30; });
+      // Click well beyond the visibility threshold: late content reflow may
+      // adjust scroll anchoring by a few pixels after completion/reopening.
+      await workspace.evaluate(el => { el.scrollTop = el.clientHeight * 1.5; });
       await topButton.waitFor();
       const topBounds = await topButton.boundingBox();
       const workspaceBounds = await workspace.boundingBox();
@@ -1374,11 +1385,11 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
         await addMeeting({ id: 'continuity-short', title: '짧은 회의록', date: '2026-10-20', summary: '', participants: '', segments: [] });
         window.dispatchEvent(new CustomEvent('meetings:updated'));
       });
-      await page.locator('.sidebar-record-row').getByRole('button', { name: '짧은 회의록', exact: true }).click();
+      await selectSidebarMeeting(page, '짧은 회의록');
       await page.getByRole('heading', { name: '짧은 회의록', exact: true }).waitFor();
       await workspace.evaluate(el => { el.scrollTop = el.scrollHeight; });
       assert.equal(await topButton.count(), 0, 'short records do not show the top button');
-      await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+      await selectSidebarMeeting(page, title);
       await page.locator('.meeting-analysis-duration').waitFor();
       await workspace.evaluate(el => { el.scrollTop = 0; });
       assert.equal(await page.locator('.meeting-analysis-duration').innerText(), elapsedText);
@@ -1442,7 +1453,7 @@ const runDiarizationContinuityScenario = async (browser, width) => {
       await addMeeting({ id, jobId: id, title, date: '2026-10-21', participants: '', meetingPurpose: '실행 전후 위치와 결과 보존', summary: '', segments, sourceFile: 'sample.wav', outputFiles: { job_id: id, audio: `/api/outputs/${id}/audio` }, sourceFileMetadata: { kind: 'audio', sizeBytes: 1000, durationSeconds: 6 }, analysisStatus: 'completed', analysisElapsedMs: 12000, diarizationDeferred: true, diarizationRequested: true });
       window.dispatchEvent(new CustomEvent('meetings:updated'));
     }, { id, title, segments });
-    const open = async () => { await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click(); await page.getByRole('heading', { name: title, exact: true }).waitFor(); };
+    const open = async () => { await selectSidebarMeeting(page, title); await page.getByRole('heading', { name: title, exact: true }).waitFor(); };
     await open();
     const before = await anchors();
     await page.getByRole('button', { name: '참석자 구분 실행', exact: true }).click();
@@ -1456,6 +1467,7 @@ const runDiarizationContinuityScenario = async (browser, width) => {
     assert.ok(await page.locator('.meeting-analysis-status').evaluate(el => el.scrollHeight <= el.clientHeight));
     await stop.click();
     assert.ok(await page.locator('.diarization-stop-panel').getByRole('button', { name: '중지', exact: true }).evaluate(el => document.activeElement === el), 'stop choice receives focus');
+    await assertStopPanelLayout(page, '.diarization-stop-panel');
     await page.locator('.diarization-stop-panel').getByRole('button', { name: '계속', exact: true }).click();
     assert.ok(await stop.evaluate(el => document.activeElement === el), 'continue restores the stop control focus');
     same(before, await anchors(), 'continue after stop choice');
@@ -1493,6 +1505,31 @@ const runDiarizationContinuityScenario = async (browser, width) => {
     await page.unrouteAll({ behavior: 'ignoreErrors' });
     await context.close();
   }
+};
+
+const selectSidebarMeeting = async (page, title) => {
+  const expand = page.getByRole('button', { name: '메뉴 펼치기', exact: true });
+  if (await expand.isVisible()) await expand.click();
+  await page.locator('.sidebar-record-row').getByRole('button', { name: title, exact: true }).click();
+};
+
+const assertStopPanelLayout = async (page, selector) => {
+  const layout = await page.locator(selector).evaluate(panel => {
+    const info = panel.closest('.meeting-detail-info');
+    const bounds = panel.getBoundingClientRect();
+    return {
+      textWidth: panel.firstElementChild.getBoundingClientRect().width,
+      panelWidth: bounds.width,
+      overflow: info.scrollWidth - info.clientWidth,
+      buttonsFit: [...panel.querySelectorAll('button')].every(button => {
+        const rect = button.getBoundingClientRect();
+        return rect.left >= bounds.left && rect.right <= bounds.right && rect.bottom <= bounds.bottom;
+      }),
+    };
+  });
+  assert.ok(layout.textWidth >= Math.min(180, layout.panelWidth - 26), 'stop explanation keeps a readable line width');
+  assert.ok(layout.overflow <= 1, 'stop choices do not create horizontal scrolling in meeting information');
+  assert.ok(layout.buttonsFit, 'all stop choices stay inside their panel');
 };
 
 const server = await startServer();

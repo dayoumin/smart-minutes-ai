@@ -34,6 +34,14 @@ function Get-PeSubsystem {
     return [BitConverter]::ToUInt16($bytes, $optionalHeaderOffset + 68)
 }
 
+function Copy-PortableBackendResources([string]$Source, [string]$Destination) {
+    # Prepared resources can outlive a build. Ship code, never cached bytecode or runtime data.
+    robocopy $Source $Destination /E /XD __pycache__ outputs temp logs database /XF *.pyc *.db* *.sqlite* /R:2 /W:1 /NFL /NDL /NP | Out-Host
+    if ($LASTEXITCODE -gt 7) {
+        throw "robocopy failed while copying backend resources with exit code $LASTEXITCODE"
+    }
+}
+
 if (-not (Test-Path $AppExe)) {
     throw "App executable does not exist. Run `corepack pnpm run desktop:build` or `cargo build --release` first: $AppExe"
 }
@@ -64,7 +72,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $PortableDir "runtime") | O
 Copy-Item -Force $AppExe (Join-Path $PortableDir $PortableAppExeName)
 Copy-Item -Force $SidecarExe (Join-Path $PortableDir "binaries\meeting-backend-x86_64-pc-windows-msvc.exe")
 Copy-Item -Recurse -Force $SidecarDepsDir (Join-Path $PortableDir "binaries\_internal")
-Copy-Item -Recurse -Force $ResourceBackendDir (Join-Path $PortableDir "backend")
+Copy-PortableBackendResources $ResourceBackendDir (Join-Path $PortableDir "backend")
 
 $PortableOllamaRuntime = Join-Path $PortableDir "runtime\ollama"
 if (Test-Path -LiteralPath (Join-Path $OllamaRuntimeSource "ollama.exe")) {

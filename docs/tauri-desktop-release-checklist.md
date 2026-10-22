@@ -222,6 +222,8 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 
 ### 알려진 한계
 
+- **같은 PC의 포장 실패와 복구(2026-10-22)**: clean `7addaa7`의 전체 빌드에서 sidecar와 Tauri 실행 파일은 성공했으나, 오래된 `resources/backend/__pycache__`의 Python3.13 캐시3개가 그대로 복사되어 중간 runtime preflight가 거부했다. 배포 동기화 전이므로 기존 deploy는 변경하지 않았다. `package_desktop_portable.ps1`의 backend 복사 경계에서 캐시·결과·임시·로그·DB를 제외하고 복사 오류를 전파하도록 수정했다. 실제 복사 진입문을 격리 fixture에서 실행한 회귀 검사는 수정 전 실패·수정 후 통과, 원본 SHA 불변을 확인했고 독립 검토도 통과했다. 이 수정은 실행 코드나 화면 자산을 바꾸지 않으므로 검증된 sidecar·Tauri 산출물을 유지하고 `build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache`로 포장·manifest·smoke·deploy 검사를 다시 진행한다. 캐시를 지우거나 사용자 자료 정리를 해서 verifier를 우회하지 않는다.
+
 - **PC별 후보 확인 — 2026-10-22 병합 후 `D:\Projects\audio`**: 이 PC의 `releases\lmo_audio`는 `7cb39ac`/dirty=false(2026-06-08)이고 현재 HEAD `77555e3`보다206커밋 이전이다. `verify_portable.ps1 -PortableDir releases/lmo_audio -ExistingInstallation`의 읽기 전용15검사는 모두 통과했으나 최신 소스의 실행 검증은 아니다. 다른 PC에서 작성한 아래 `a150589b`·전용 시험 복사본/프로필·재포장 재개 이력은 이 PC에 존재하는 후보로 해석하지 않는다. 이 PC의 중간 sidecar도6월 빌드이며 target 실행 파일은 없어 `-SkipSidecarBuild -SkipTauriBuild`로 최신 후보를 만들 수 없다. 전용 Python3.12.14·필수 빌드 모듈·Rust 도구와 모델 표식은 준비됐으며, 릴리스에 포함할 미커밋 요약 실험의 범위를 정한 뒤 검증된 소스의 clean 전체 빌드가 필요하다. 기존 설치본·설정·회의 자료는 변경하지 않았다.
 
 2026-10-22 빌드 전 검토에서 나온 업데이트 패키지·전달 ZIP 위험(backend 로그·DB·알 수 없는 파일 삭제와 유출, 앱으로 Ollama를 받은 설치본의 README 실패, 전달 ZIP의 비교 기준, Whisper를 넣은 전달 ZIP 검사)은 같은 날 위 규칙으로 고쳤다. 남은 한계는 다음과 같다.

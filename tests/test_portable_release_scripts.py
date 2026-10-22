@@ -151,6 +151,27 @@ class PortableReleaseScriptTest(unittest.TestCase):
         self.assertIn('-SkipTauriBuild:$SkipTauriBuild', wrapper)
         self.assertNotIn('@releaseArgs', wrapper)
 
+    def test_packager_copies_backend_code_without_runtime_artifacts(self):
+        script = (ROOT / "scripts/package_desktop_portable.ps1").read_text(encoding="utf-8")
+        helper = re.search(r"^function Copy-PortableBackendResources[\s\S]+?(?=^function |^if \()", script, re.MULTILINE)
+        copy_line = next(line for line in script.splitlines() if line.startswith(("Copy-Item ", "Copy-PortableBackendResources ")) and "$ResourceBackendDir" in line)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, target = root / "resources", root / "portable" / "backend"
+            shipped = {"main.py": "code", "config.json": "{}", "pipeline/summary.py": "pipeline", "templates/report.xml": "template"}
+            excluded = {"__pycache__/main.cpython-313.pyc": "old cache", "pipeline/__pycache__/summary.cpython-312.pyc": "nested cache", "pipeline/orphan.pyc": "bytecode", "outputs/private.json": "private", "logs/analysis.log": "log", "temp/source.wav": "audio", "database/records.sqlite": "db", "records.db-wal": "wal"}
+            for relative, content in {**shipped, **excluded}.items():
+                file = source / relative
+                file.parent.mkdir(parents=True, exist_ok=True)
+                file.write_text(content, encoding="utf-8")
+            before = {str(file.relative_to(source)): _sha256(file) for file in source.rglob("*") if file.is_file()}
+            command = f"{helper.group(0) if helper else ''}\n$ResourceBackendDir = '{source}'\n$PortableDir = '{target.parent}'\nNew-Item -ItemType Directory -Force $PortableDir | Out-Null\n{copy_line}"
+            completed = _run_powershell(command)
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertEqual({file.relative_to(target).as_posix() for file in target.rglob("*") if file.is_file()}, set(shipped))
+            self.assertFalse(any(file.name == "__pycache__" for file in target.rglob("*")))
+            self.assertEqual({str(file.relative_to(source)): _sha256(file) for file in source.rglob("*") if file.is_file()}, before)
+
     def test_packager_rejects_missing_required_model_markers(self):
         script = (ROOT / "scripts" / "package_desktop_portable.ps1").read_text(encoding="utf-8")
         match = re.search(

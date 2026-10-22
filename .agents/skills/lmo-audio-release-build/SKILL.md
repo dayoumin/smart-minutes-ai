@@ -32,11 +32,13 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.p
 ```
 
 5. Treat only `releases\lmo_audio` as the user-ready output. Treat `desktop-app\dist`, `desktop-app\src-tauri\target`, and `desktop-app\src-tauri\target\release\portable\lmo_audio` as intermediate outputs.
-6. If verification did not already run, run:
+6. The build already runs the runtime smoke on its clean build folder and then checks `releases\lmo_audio` read-only. To recheck the deploy folder afterwards, run:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir releases\lmo_audio
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir releases\lmo_audio -ExistingInstallation
 ```
+
+Do not run the default runtime smoke against `releases\lmo_audio`: the folder can hold user records, and the smoke refuses it. Never delete records, logs, or settings to make a check pass.
 
 7. Inspect `releases\lmo_audio\release-manifest.json` and report:
    - `commit`

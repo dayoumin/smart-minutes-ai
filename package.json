@@ -11,7 +11,7 @@
     "package:handoff": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\create_handoff_package.ps1",
     "package:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\create_update_package.ps1",
     "verify:update": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_update.ps1",
-    "verify:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio",
+    "verify:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio -ExistingInstallation",
     "diagnose:portable": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\diagnose_portable.ps1"
   }
 }

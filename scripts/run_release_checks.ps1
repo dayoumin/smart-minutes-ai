@@ -183,7 +183,9 @@ elseif ($Tier -in @("release", "portable")) {
 }
 
 if (($Tier -eq "portable") -and (-not $SkipPortableVerify)) {
-    Invoke-Step "portable verify" {
+    # The release build already ran the runtime smoke on its clean build folder.
+    # The deploy folder may hold user records, so only check it read-only.
+    Invoke-Step "portable installation integrity" {
         $args = @(
             "-NoProfile",
             "-ExecutionPolicy",
@@ -192,6 +194,7 @@ if (($Tier -eq "portable") -and (-not $SkipPortableVerify)) {
             "scripts\verify_portable.ps1",
             "-PortableDir",
             "releases\lmo_audio",
+            "-ExistingInstallation",
             "-TimeoutSeconds",
             [string]$PortableTimeoutSeconds
         )

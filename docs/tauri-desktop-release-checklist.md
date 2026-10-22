@@ -137,7 +137,7 @@ corepack pnpm check:portable
 
 - `check:quick`: 수정 중 반복 실행한다. 프론트 타입체크/린트, 가벼운 백엔드 unittest, 배포 스크립트 계약 테스트를 실행한다.
 - `check:release`: 배포 후보에서 실행한다. `check:quick` 범위에 백엔드 API unittest, 업데이트 패키지 테스트, 프론트 사용자 흐름 시뮬레이션을 추가한다.
-- `check:portable`: 이미 `releases\lmo_audio`를 만든 뒤 실행한다. `check:release` 범위에 portable 폴더 검증을 추가한다.
+- `check:portable`: 이미 `releases\lmo_audio`를 만든 뒤 실행한다. `check:release` 범위에 portable 폴더의 읽기 전용 무결성 검사(`-ExistingInstallation`)를 추가한다. 앱 실행 smoke는 빌드 중 깨끗한 중간 빌드 폴더에서 이미 실행하며, 사용자 기록이 있을 수 있는 deploy 폴더에서는 다시 실행하지 않는다.
 - 실제 모델을 사용하는 STT smoke는 기본 자동 게이트에서 제외한다. 필요할 때 `scripts\run_release_checks.ps1 -Tier release -IncludeModelSmoke`로 별도 실행한다.
 - `check:release`·`check:portable`은 Node 22.6 이상이 필요하다(2026-10-20). `test:generation-flow`·`test:topic-generation-ui`가 `node --experimental-strip-types`로 TypeScript를 바로 불러오기 때문이고, 더 낮은 Node에서는 `bad option: --experimental-strip-types`로 실패한다. 빌드 PC에서 먼저 `node --version`을 확인한다.
 - 현재 `check:release`의 백엔드 API unittest는 Ollama 모델 받기/상태/삭제, 직접 입력 모델 저장, 참석자 구분 분석 중 실행 옵션을 포함한다. 프론트 시뮬레이션은 모델 탭 진입, 추천/직접 입력 표시, 참석자 구분 재실행 상태를 일부 확인한다.
@@ -169,8 +169,9 @@ corepack pnpm check:portable
 5. 배포 빌드 전에 변경 사항을 커밋한다. 최종 사용자용 manifest는 커밋된 HEAD를 가리켜야 한다.
 6. 루트에서 `corepack pnpm build`를 실행한다.
 7. 실패하면 레이어를 나눠 확인한다: sidecar packaging, Tauri exe build, portable packaging, deploy-folder verify.
-8. `scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`가 통과하는지 확인한다.
+8. 빌드 출력에서 중간 빌드 폴더의 smoke 통과와 `Portable installation integrity verified`를 확인한다. 다시 확인할 때는 `scripts\verify_portable.ps1 -PortableDir releases\lmo_audio -ExistingInstallation`(`corepack pnpm verify:portable`)을 사용한다.
    - 전체 자동 게이트로는 `corepack pnpm check:portable`을 사용한다.
+   - `-ExistingInstallation` 없이 deploy 폴더에 smoke를 실행하면 기록·로그가 있는 설치본에서는 실행 전에 거부된다. 검사를 통과시키려고 기록·로그·설정을 지우지 않는다.
 9. `releases\lmo_audio\release-manifest.json`의 `commit`이 `git rev-parse HEAD`와 같고 `dirty=false`인지 확인한다.
 10. 공유/전달 목적이면 `corepack pnpm package:handoff`를 실행하고 zip 경로, 크기, 포함/제외 모델 검수 결과를 기록한다.
 11. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다.
@@ -201,12 +202,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.p
 
 배포 스크립트가 하는 일:
 
-- 실행 중인 앱, sidecar, 관련 WebView 프로세스를 종료한다.
+- `releases\lmo_audio` 안의 실행 파일로 실행 중인 앱·sidecar만 종료한다. 다른 설치본이나 웹 엔진은 종료하지 않는다.
 - 필요 시 WebView 렌더 캐시만 지우고 IndexedDB 회의 기록은 보존한다.
-- Tauri 리소스와 portable 폴더를 다시 구성한다.
-- `releases\lmo_audio` 폴더로 동기화한다.
-- `release-manifest.json`에 exe, sidecar, backend, runtime 파일 해시를 기록한다.
-- `scripts\verify_portable.ps1`로 manifest 해시와 실행 smoke test를 확인한다.
+- Tauri 리소스와 중간 portable 폴더를 다시 구성하고 `release-manifest.json`에 exe, sidecar, backend, runtime 파일 해시를 기록한다.
+- 중간 portable 폴더에서 `scripts\verify_portable.ps1`로 manifest 해시와 실행 smoke test를 확인한다.
+- `releases\lmo_audio`에는 패키지 코드만 동기화하고 설정·기록·로그·다운로드 자원을 보존한다. 빌드 manifest를 그대로 복사한다.
+- `releases\lmo_audio`는 `-ExistingInstallation`으로 실행 없이 읽기 전용 검사한다.
 
 문제가 반복될 때는 먼저 진단 스크립트로 실제 실행 파일, 프로세스, 포트, 모델, manifest를 확인한다.
 

@@ -59,7 +59,7 @@ class PortableReleaseScriptTest(unittest.TestCase):
         )
         self.assertEqual(
             root_package["scripts"]["verify:portable"],
-            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio",
+            "powershell -NoProfile -ExecutionPolicy Bypass -File scripts\\verify_portable.ps1 -PortableDir releases\\lmo_audio -ExistingInstallation",
         )
         self.assertEqual(
             root_package["scripts"]["package:handoff"],
@@ -95,6 +95,9 @@ class PortableReleaseScriptTest(unittest.TestCase):
         self.assertIn('"backend.test_api"', check_script)
         self.assertIn('"test:analysis-stop-flow"', check_script)
         self.assertIn("verify_portable.ps1", check_script)
+        # The deploy folder may hold user records; its gate must stay read-only.
+        self.assertRegex(check_script, r'"releases\\lmo_audio",\s*"-ExistingInstallation"')
+        self.assertEqual(check_script.count("verify_portable.ps1"), 1)
         self.assertIn("PYTHONPATH", check_script)
         self.assertIn("IncludeModelSmoke", check_script)
 
@@ -104,6 +107,8 @@ class PortableReleaseScriptTest(unittest.TestCase):
         skill = skill_path.read_text(encoding="utf-8")
         self.assertIn("Use this skill only inside", skill)
         self.assertIn("corepack pnpm build", skill)
+        self.assertIn("-PortableDir releases\\lmo_audio -ExistingInstallation", skill)
+        self.assertNotRegex(skill, r"-PortableDir releases\\lmo_audio\s*\n")
         self.assertIn("git -c core.excludesFile= status --short --branch --untracked-files=all", skill)
         self.assertNotIn("C:\\Users\\User\\.codex\\skills", skill)
 

@@ -1,10 +1,15 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$TargetDir,
-    [string]$PackageDir = $PSScriptRoot
+    [string]$PackageDir = ""
 )
 
 $ErrorActionPreference = "Stop"
+
+# -File evaluates parameter defaults before PSScriptRoot is available.
+if ([string]::IsNullOrWhiteSpace($PackageDir)) {
+    $PackageDir = $PSScriptRoot
+}
 
 function Normalize-FullPath([string]$Path) {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)

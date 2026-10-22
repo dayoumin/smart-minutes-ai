@@ -1,11 +1,16 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$TargetDir,
-    [string]$PackageDir = $PSScriptRoot,
+    [string]$PackageDir = "",
     [switch]$SkipVerify
 )
 
 $ErrorActionPreference = "Stop"
+
+# -File evaluates parameter defaults before PSScriptRoot is available.
+if ([string]::IsNullOrWhiteSpace($PackageDir)) {
+    $PackageDir = $PSScriptRoot
+}
 
 $dataSafetyScript = Join-Path $PSScriptRoot "portable_data_safety.ps1"
 if (-not (Test-Path -LiteralPath $dataSafetyScript)) {

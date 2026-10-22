@@ -417,16 +417,19 @@ class UpdatePackageScriptTest(unittest.TestCase):
                 )
                 self.assertEqual(create_completed.returncode, 0, create_completed.stdout + create_completed.stderr)
 
-                apply_completed = _run_powershell(
-                    "& "
-                    + _ps_quote(package_root / "update_lmo_audio.ps1")
-                    + " -TargetDir "
-                    + _ps_quote(target)
-                    + " -PackageDir "
-                    + _ps_quote(package_root)
+                apply_completed = subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                     str(package_root / "update_lmo_audio.ps1"), "-TargetDir", str(target)],
+                    cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
                 )
                 self.assertEqual(apply_completed.returncode, 0, apply_completed.stdout + apply_completed.stderr)
                 self.assertIn("Update verification passed", apply_completed.stdout)
+                verify_completed = subprocess.run(
+                    ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                     str(package_root / "verify_update.ps1"), "-TargetDir", str(target)],
+                    cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=90,
+                )
+                self.assertEqual(verify_completed.returncode, 0, verify_completed.stdout + verify_completed.stderr)
 
                 self.assertEqual((target / "lmo_audio.exe").read_text(encoding="utf-8"), "new app exe")
                 self.assertEqual((target / "backend" / "main.py").read_text(encoding="utf-8"), "new backend")

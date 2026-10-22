@@ -249,7 +249,7 @@ const diarizationMissing = { key: 'diarization', label: 'pyannote', downloadable
 const readyRow = selectWriterStatusRow(rowInput({}));
 assert.deepEqual(
   { stage: readyRow.stage, state: readyRow.state, title: readyRow.title, message: readyRow.message, actions: readyRow.actions, blocksStart: readyRow.blocksStart },
-  { stage: 'ready', state: 'ready', title: '연결됨', message: null, actions: [], blocksStart: false },
+  { stage: 'ready', state: 'ready', title: '이 PC와 연결됨', message: null, actions: [], blocksStart: false },
 );
 const blockedConnectionRow = selectWriterStatusRow(rowInput({
   connection: unreachableWithInstaller, readinessState: 'missing-models', missingModels: [sttMissing], gpuUnavailable: true,
@@ -393,17 +393,17 @@ assert.equal(unreachableWithNotice.message, unreachableWithInstaller.message, 'w
 assert.ok(unreachableWithNotice.help.endsWith(notice));
 assert.equal(selectWriterStatusRow(rowInput({ connection: checkingView, installerNotice: notice })).message, null, 'no installer warning where no installer is offered');
 // Desktop app and development UI: no connection step. The desktop app calls its engine 분석 기능, offers 문제 해결
-// where the web shows `?`, and is reinstalled whole without a link; with nothing blocked both leave the line empty.
+// where the web shows `?`, and is reinstalled whole without a link; both share normal readiness copy.
 const desktopRow = overrides => selectWriterStatusRow(rowInput({
   connection: null, desktopApp: true, canOpenTroubleshooting: true, ...overrides,
 }));
 const devRow = overrides => selectWriterStatusRow(rowInput({ connection: null, ...overrides }));
 const emptyLine = {
-  stage: 'ready', state: 'ready', tone: 'neutral', busy: false, title: '', message: null,
+  stage: 'ready', state: 'ready', tone: 'success', busy: false, title: '이 PC와 연결됨', message: null,
   messageId: undefined, help: null, actions: [], blocksStart: false,
 };
-assert.deepEqual(rowSummary(desktopRow({})), emptyLine, 'desktop: nothing blocked leaves the line empty, without 연결됨');
-assert.deepEqual(rowSummary(devRow({})), emptyLine, 'development UI: no connection step, so no 연결됨 either');
+assert.deepEqual(rowSummary(desktopRow({})), emptyLine, 'desktop: readiness is adjacent to start');
+assert.deepEqual(rowSummary(devRow({})), emptyLine, 'development UI: readiness is adjacent to start');
 const readinessSummary = (state, tone, title, message, actions, extra = {}) => ({
   stage: 'readiness', state, tone, busy: false, title, message, messageId: undefined, help: null, actions, blocksStart: true, ...extra,
 });
@@ -449,7 +449,8 @@ assert.equal(selectWriterStatusRow(rowInput({ readinessState: 'error', connectio
   'the web connection build keeps its own readiness error (its connection step handles a refusal)');
 assert.equal(devRow({ readinessState: 'ready', connectionCheckRequired: true }).state, 'ready');
 for (const row of [desktopRow({}), desktopRow({ readinessState: 'missing-models', missingModels: [sttMissing] }), devRow({ readinessState: 'error' })]) {
-  assert.doesNotMatch(`${row.title} ${row.message ?? ''}`, /준비 필요|이어하기 불가|연결됨/);
+  assert.doesNotMatch(`${row.title} ${row.message ?? ''}`, /준비 필요|이어하기 불가/);
+  if (row.state !== 'ready') assert.doesNotMatch(`${row.title} ${row.message ?? ''}`, /연결됨/);
 }
 assert.equal(getLocalEngineConnectionView({
   snapshot: { ...viewSnapshot, transport: 'checking', updateRequired: true },

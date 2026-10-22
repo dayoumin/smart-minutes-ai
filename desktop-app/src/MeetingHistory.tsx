@@ -68,6 +68,23 @@ interface MeetingHistoryProps {
 }
 
 type OrganizeTab = 'summary' | 'topics' | 'speakers';
+// Preserve machine-readable preparation errors so a retryable wait never becomes a failed result.
+class GenerationResponseError extends Error {
+    readonly code?: string;
+    constructor(message: string, code?: string) {
+        super(message);
+        this.code = code;
+    }
+}
+const readGenerationResponseError = async (response: Response, fallback: string): Promise<GenerationResponseError> => {
+    const info = await getGenerationErrorInfo(response, fallback);
+    return new GenerationResponseError(info.message, info.code ?? info.detail);
+};
+const isGenerationPreparation = (error: unknown): boolean => error instanceof GenerationResponseError && error.code === 'runtime_preparing';
+const ORGANIZE_PREPARATION_NOTE = '요약 프로그램이 아직 준비되지 않았습니다. 잠시 후 정리를 다시 눌러 주세요.';
+
+const REPORT_PREPARATION_NOTE = '요약 프로그램이 아직 준비되지 않았습니다. 잠시 후 생성을 다시 눌러 주세요.';
+
 type GenerationKind = 'diarization' | 'summary' | 'topicSections' | 'speakerContextSummaries' | 'meetingReport';
 type DiarizationStopAction = 'cancel' | 'defer';
 type TemplateDeleteTarget = {
@@ -515,7 +532,8 @@ type DetailErrorPlace = 'meeting' | 'script' | 'summary' | 'report';
 interface DetailError {
     place: DetailErrorPlace;
     message: string;
-    /** warning: the main work was saved and only a follow-up step (sync, file refresh, file format) did not happen. */
+    /** warning: a retryable preparation wait, or saved work with an incomplete follow-up. */
+    reason?: 'runtime_preparing';
     tone: 'error' | 'warning';
 }
 
@@ -1169,8 +1187,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     useEffect(() => {
         detailTabRef.current = detailTab;
     }, [detailTab]);
-    const showDetailError = React.useCallback((place: DetailErrorPlace, message: string, tone: DetailError['tone'] = 'error') => {
-        setDetailError(message ? { place, message, tone } : null);
+    const showDetailError = React.useCallback((place: DetailErrorPlace, message: string, tone: DetailError['tone'] = 'error', reason?: DetailError['reason']) => {
+        setDetailError(message ? { place, message, tone, reason } : null);
         // A long generation can finish while another tab is open; its line is out of sight, so say it once in a toast.
         if (message && place !== 'meeting' && detailTabRef.current !== place) {
             showOperationToast(message, tone === 'error' ? 'error' : 'warning');
@@ -1317,6 +1335,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 const payload = await response.json() as ModelsStatusResponse;
                 if (cancelled) return;
                 setSummaryModelReady(Boolean(payload.summary_ready));
+                if (payload.summary_ready) {
+                    setDetailError(current => current?.reason === 'runtime_preparing' ? null : current);
+                }
                 setSummaryModelMessage(payload.summary_message || '');
                 const ollamaConnection = payload.ollama_connection;
                 setSummaryRuntimeCanAutoStart(Boolean(
@@ -2129,6 +2150,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const handleCancelSpeakerLabelEdit = () => {
         setSpeakerLabelDrafts(selectedMeeting?.speakerLabels ?? {});
         setIsSpeakerLabelPanelOpen(false);
+        window.requestAnimationFrame(() => document.getElementById('speaker-label-trigger')?.focus());
     };
 
     const handleGenerateDiarization = async () => {
@@ -2379,7 +2401,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `${summaryFailedMessage} ${ORGANIZE_RETRY_STEP}`));
+            if (!response.ok) throw await readGenerationResponseError(response, `${summaryFailedMessage} ${ORGANIZE_RETRY_STEP}`);
 
             const data = await response.json() as GenerateSummaryResponse;
             let inputChangedBeforeSave = false;
@@ -2436,15 +2458,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
+            const preparationPending = isGenerationPreparation(error);
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
                 ? 'not_started'
-                : hadCompletedSummaryBeforeRequest ? 'completed' : 'failed';
+                : hadCompletedSummaryBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { summary: nextState }),
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                showDetailError('summary', describeFailure(error, summaryFailedMessage));
+                showDetailError(
+                    'summary',
+                    preparationPending ? ORGANIZE_PREPARATION_NOTE : describeFailure(error, summaryFailedMessage),
+                    preparationPending ? 'warning' : 'error',
+                    preparationPending ? 'runtime_preparing' : undefined,
+                );
             }
         } finally {
             setGeneratingKind(null);
@@ -2630,7 +2658,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `주제별 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`));
+            if (!response.ok) throw await readGenerationResponseError(response, `주제별 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`);
 
             const data = await response.json() as GenerateTopicSectionsResponse;
             let inputChangedBeforeSave = false;
@@ -2680,15 +2708,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
+            const preparationPending = isGenerationPreparation(error);
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
                 ? 'not_started'
-                : hadCompletedTopicSectionsBeforeRequest ? 'completed' : 'failed';
+                : hadCompletedTopicSectionsBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { topicSections: nextState }),
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                showDetailError('summary', describeFailure(error, '주제별 정리를 만들지 못했습니다.'));
+                showDetailError(
+                    'summary',
+                    preparationPending ? ORGANIZE_PREPARATION_NOTE : describeFailure(error, '주제별 정리를 만들지 못했습니다.'),
+                    preparationPending ? 'warning' : 'error',
+                    preparationPending ? 'runtime_preparing' : undefined,
+                );
             }
         } finally {
             setTopicGenerationIntent(null);
@@ -2731,7 +2765,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     topicTitle,
                 }),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `추가 주제 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`));
+            if (!response.ok) throw await readGenerationResponseError(response, `추가 주제 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`);
 
             const data = await response.json() as GenerateTopicSectionsResponse;
             let inputChangedBeforeSave = false;
@@ -2775,7 +2809,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : 'failed';
+            const preparationPending = isGenerationPreparation(error);
+            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, {
                     topicSections: hadCompletedTopicSectionsBeforeRequest ? 'completed' : nextState,
@@ -2783,7 +2818,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                showDetailError('summary', describeFailure(error, '추가 주제 정리를 만들지 못했습니다.'));
+                showDetailError(
+                    'summary',
+                    preparationPending ? ORGANIZE_PREPARATION_NOTE : describeFailure(error, '추가 주제 정리를 만들지 못했습니다.'),
+                    preparationPending ? 'warning' : 'error',
+                    preparationPending ? 'runtime_preparing' : undefined,
+                );
             }
         } finally {
             setTopicGenerationIntent(null);
@@ -2821,7 +2861,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, `참석자별 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`));
+            if (!response.ok) throw await readGenerationResponseError(response, `참석자별 정리를 만들지 못했습니다. ${ORGANIZE_RETRY_STEP}`);
 
             const data = await response.json() as GenerateSpeakerContextResponse;
             let inputChangedBeforeSave = false;
@@ -2864,15 +2904,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 showDetailError('summary', data.export_error, 'warning');
             }
         } catch (error) {
+            const preparationPending = isGenerationPreparation(error);
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
                 ? 'not_started'
-                : hadCompletedSpeakerContextBeforeRequest ? 'completed' : 'failed';
+                : hadCompletedSpeakerContextBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { speakerContextSummaries: nextState }),
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                showDetailError('summary', describeFailure(error, '참석자별 정리를 만들지 못했습니다.'));
+                showDetailError(
+                    'summary',
+                    preparationPending ? ORGANIZE_PREPARATION_NOTE : describeFailure(error, '참석자별 정리를 만들지 못했습니다.'),
+                    preparationPending ? 'warning' : 'error',
+                    preparationPending ? 'runtime_preparing' : undefined,
+                );
             }
         } finally {
             setGeneratingKind(null);
@@ -2917,7 +2963,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify(targetMeeting),
             });
-            if (!response.ok) throw new Error(await getGenerationErrorMessage(response, '보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.'));
+            if (!response.ok) throw await readGenerationResponseError(response, '보고서를 만들지 못했습니다. 잠시 뒤 다시 생성해 주세요.');
 
             const data = await response.json() as GenerateReportResponse;
             let inputChangedBeforeSave = false;
@@ -2950,15 +2996,21 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 showDetailError('report', data.export_error, 'warning');
             }
         } catch (error) {
+            const preparationPending = isGenerationPreparation(error);
             const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
                 ? 'not_started'
-                : hadCompletedMeetingReportBeforeRequest ? 'completed' : 'failed';
+                : hadCompletedMeetingReportBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, { meetingReport: nextState }),
             }), targetMeeting.id);
             if (currentSelectedMeetingIdRef.current === targetMeeting.id) {
                 setNoticeMessage('');
-                showDetailError('report', describeFailure(error, '보고서를 만들지 못했습니다.'));
+                showDetailError(
+                    'report',
+                    preparationPending ? REPORT_PREPARATION_NOTE : describeFailure(error, '보고서를 만들지 못했습니다.'),
+                    preparationPending ? 'warning' : 'error',
+                    preparationPending ? 'runtime_preparing' : undefined,
+                );
             }
         } finally {
             setGeneratingKind(null);
@@ -2972,6 +3024,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const hasGeneratedSummary = summaryGenerationStatus === 'completed'
         && Boolean(selectedMeeting?.summary?.trim())
         && !summarySkippedForDeferredAnalysis;
+    const hasOrganizedContent = Boolean(selectedMeeting && (
+        selectedMeeting.summary?.trim()
+        || selectedMeeting.topics?.length || selectedMeeting.topicSections?.length
+        || selectedMeeting.speakerContextSummaries?.length || selectedMeeting.participantSummaries?.length
+        || selectedMeeting.decisions?.length || selectedMeeting.actions?.length || selectedMeeting.needsCheck?.length
+    ));
     const hasGeneratedMeetingReport = Boolean(
         selectedMeeting?.meetingReport?.content?.trim()
         || selectedMeeting?.meetingReport?.sections?.length,
@@ -3440,6 +3498,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         setSearchQuery('');
         setTranscriptSegmentDrafts(displaySegments.map(segment => ({ ...segment })));
         setIsTranscriptEditing(true);
+        window.requestAnimationFrame(() => {
+            detailSurfaceRef.current?.querySelector<HTMLTextAreaElement>('.script-edit-textarea')?.focus();
+        });
     };
 
     const handleTranscriptDraftChange = (index: number, text: string) => {
@@ -3452,6 +3513,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         setTranscriptSegmentDrafts([]);
         setIsTranscriptEditing(false);
         setNoticeMessage('');
+        window.requestAnimationFrame(() => document.getElementById('transcript-edit-trigger')?.focus());
     };
 
     const handleCopyEditableTranscript = async () => {
@@ -3525,6 +3587,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             ));
             setTranscriptSegmentDrafts([]);
             setIsTranscriptEditing(false);
+            window.requestAnimationFrame(() => {
+                if (currentSelectedMeetingIdRef.current === targetMeetingId) document.getElementById('transcript-edit-trigger')?.focus();
+            });
             setNoticeMessage(hasChanges ? '대화록 수정본을 저장했습니다.' : '수정 내용이 없어 원본 대화록으로 유지했습니다.');
             const syncMessage = await syncMeetingOutputRecordSafely(targetMeetingId, targetJobId);
             if (syncMessage && currentSelectedMeetingIdRef.current === targetMeetingId) {
@@ -3710,7 +3775,9 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const reportStatus: DetailStatus | null = meetingReportIsGenerating
         ? {
             tone: 'neutral',
-            text: '회의록 보고서를 생성 중입니다. 기존 보고서가 있으면 완료 전까지 보관용으로 표시됩니다.',
+            text: hasGeneratedMeetingReport
+                ? '보고서를 생성 중입니다. 완료 전까지 기존 내용을 유지합니다.'
+                : '회의록 보고서를 생성 중입니다.',
             startedAt: generationClockFor('meetingReport'),
         }
         : placedDetailError('report')
@@ -4023,7 +4090,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                 <div className="app-panel-header meeting-detail-overview">
                     <div className="meeting-detail-title-row">
                         {isEditing ? (
-                            <label className="grid min-w-0 flex-1 gap-1 text-xs font-semibold text-foreground">
+                            <label className="grid min-w-0 flex-1 gap-1 text-sm font-semibold text-foreground">
                                 회의 제목
                                 <Input value={editTitle} onChange={event => setEditTitle(event.target.value)} aria-label="회의 제목" placeholder="회의 제목" />
                             </label>
@@ -4095,11 +4162,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                         {isEditing ? (
                             <div className="grid gap-3">
                                 <div className="grid gap-3 sm:grid-cols-2">
-                                    <label className="grid gap-1 text-xs font-semibold text-foreground">
+                                    <label className="grid gap-1 text-sm font-semibold text-foreground">
                                         회의 일시
                                         <Input value={editDate} onChange={event => setEditDate(event.target.value)} aria-label="회의 일시" placeholder="회의 일시" />
                                     </label>
-                                    <label className="grid gap-1 text-xs font-semibold text-foreground">
+                                    <label className="grid gap-1 text-sm font-semibold text-foreground">
                                         회의 목적
                                         <Input value={editMeetingPurpose} onChange={event => setEditMeetingPurpose(event.target.value)} aria-label="회의 목적" placeholder="예: 월간 현황 점검, 후속 조치 중심" />
                                     </label>
@@ -4161,7 +4228,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                         <Button variant="ghost" onClick={retryAudioPlayback}>다시 확인</Button>
                                                     </span>
                                                 ) : (
-                                                    <span className="text-[13px] text-muted-foreground">
+                                                    <span className="text-sm text-muted-foreground">
                                                         {analysisRunning ? '분석 후 재생할 수 있습니다.' : !audioRowMayHaveAudio || audioAvailability === 'missing' ? '음성 없음' : '확인 중'}
                                                     </span>
                                                 )}
@@ -4350,7 +4417,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         </StatusBanner>
                                     )}
                                     <section className="detail-work-surface">
-                                        <div className="detail-command-bar" inert={analysisLocked || undefined}>
+                                        <div className="detail-command-bar detail-command-bar-organize" inert={analysisLocked || undefined}>
                                             <div className="detail-command-primary">
                                                 <div className="detail-mode-switch" role="tablist" aria-label="정리 종류">
                                                     <DetailTabButton
@@ -4400,117 +4467,121 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     </div>
                                                 )}
                                             </div>
-                                            <div className="detail-command-actions">
-                                                <label className="detail-inline-select">
-                                                    <span>이번 정리 기준</span>
-                                                    <select
-                                                        value={activeContextTemplate.id}
-                                                        onChange={event => void handleSelectContextTemplate(event.target.value)}
-                                                        disabled={generatingKind !== null || organizeOutputIsGenerating}
-                                                        aria-label="이번 정리 기준 선택"
-                                                    >
-                                                        <option value="general">선택 안 함</option>
-                                                        {contextTemplates.filter(template => template.id !== 'general').map(template => (
-                                                            <option key={template.id} value={template.id}>
-                                                                {template.name}
-                                                            </option>
-                                                        ))}
-                                                    </select>
-                                                </label>
-                                                <div className="detail-context-menu-wrap" ref={contextTemplateMenuRef}>
-                                                    <IconButton
-                                                        id="context-template-menu-button"
-                                                        variant="outline"
-                                                        className="detail-context-menu-button"
-                                                        icon={<MoreVertical size={16} />}
-                                                        onClick={() => setIsContextTemplateMenuOpen(value => !value)}
-                                                        aria-label="정리 맥락 메뉴"
-                                                        title="정리 맥락 메뉴"
-                                                        aria-haspopup="menu"
-                                                        aria-expanded={isContextTemplateMenuOpen}
-                                                        aria-controls="context-template-menu"
-                                                        disabled={generatingKind !== null || organizeOutputIsGenerating}
-                                                    />
-                                                    {isContextTemplateMenuOpen && (
-                                                        <div
-                                                            id="context-template-menu"
-                                                            className="detail-context-menu"
-                                                            role="menu"
-                                                            aria-labelledby="context-template-menu-button"
+                                            <div className="detail-command-actions detail-command-controls detail-organize-controls">
+                                                <div className="detail-criteria-controls detail-organize-criteria">
+                                                    <label className="detail-inline-select">
+                                                        <span>정리 기준</span>
+                                                        <select
+                                                            value={activeContextTemplate.id}
+                                                            onChange={event => void handleSelectContextTemplate(event.target.value)}
+                                                            disabled={generatingKind !== null || organizeOutputIsGenerating}
+                                                            aria-label="이번 정리 기준 선택"
                                                         >
-                                                            <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewContextTemplate}>
-                                                                <Plus size={14} />
-                                                                추가
-                                                            </button>
-                                                            <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditContextTemplate} disabled={!canEditActiveContextTemplate}>
-                                                                <Edit3 size={14} />
-                                                                변경
-                                                            </button>
-                                                            <button
-                                                                type="button"
-                                                                role="menuitem"
-                                                                tabIndex={-1}
-                                                                className="detail-context-menu-danger"
-                                                                onClick={handleDeleteContextTemplate}
-                                                                disabled={!canEditActiveContextTemplate}
+                                                            <option value="general">기본 정리</option>
+                                                            {contextTemplates.filter(template => template.id !== 'general').map(template => (
+                                                                <option key={template.id} value={template.id}>
+                                                                    {template.name}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </label>
+                                                    <div className="detail-context-menu-wrap" ref={contextTemplateMenuRef}>
+                                                        <IconButton
+                                                            id="context-template-menu-button"
+                                                            variant="outline"
+                                                            className="detail-context-menu-button"
+                                                            icon={<MoreVertical size={16} />}
+                                                            onClick={() => setIsContextTemplateMenuOpen(value => !value)}
+                                                            aria-label="정리 기준 관리"
+                                                            title="정리 기준 관리"
+                                                            aria-haspopup="menu"
+                                                            aria-expanded={isContextTemplateMenuOpen}
+                                                            aria-controls="context-template-menu"
+                                                            disabled={generatingKind !== null || organizeOutputIsGenerating}
+                                                        />
+                                                        {isContextTemplateMenuOpen && (
+                                                            <div
+                                                                id="context-template-menu"
+                                                                className="detail-context-menu"
+                                                                role="menu"
+                                                                aria-labelledby="context-template-menu-button"
                                                             >
-                                                                <Trash2 size={14} />
-                                                                삭제
-                                                            </button>
-                                                            {!canCreateContextTemplate && (
-                                                                <div className="detail-context-menu-note">
-                                                                    최대 {MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.
-                                                                </div>
-                                                            )}
-                                                        </div>
-                                                    )}
+                                                                <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewContextTemplate}>
+                                                                    <Plus size={14} />
+                                                                    추가
+                                                                </button>
+                                                                <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditContextTemplate} disabled={!canEditActiveContextTemplate}>
+                                                                    <Edit3 size={14} />
+                                                                    변경
+                                                                </button>
+                                                                <button
+                                                                    type="button"
+                                                                    role="menuitem"
+                                                                    tabIndex={-1}
+                                                                    className="detail-context-menu-danger"
+                                                                    onClick={handleDeleteContextTemplate}
+                                                                    disabled={!canEditActiveContextTemplate}
+                                                                >
+                                                                    <Trash2 size={14} />
+                                                                    삭제
+                                                                </button>
+                                                                {!canCreateContextTemplate && (
+                                                                    <div className="detail-context-menu-note">
+                                                                        최대 {MAX_CUSTOM_CONTEXT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                                    </div>
+                                                                )}
+                                                            </div>
+                                                        )}
+                                                    </div>
                                                 </div>
-                                                {organizeTab === 'summary' && (
-                                                    <OrganizeRunButton
+                                                <div className="detail-output-actions detail-organize-output-actions">
+                                                    {organizeTab === 'summary' && (
+                                                        <OrganizeRunButton
+                                                            className="detail-context-button"
+                                                            ariaLabel="전체 요약 정리"
+                                                            disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
+                                                            onClick={handleGenerateSummary}
+                                                            title={summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
+                                                            icon={renderRunIcon('summary', summaryGenerationStatus)}
+                                                            label={summaryActionButtonLabel}
+                                                        />
+                                                    )}
+                                                    {organizeTab === 'topics' && (
+                                                        <OrganizeRunButton
+                                                            className="detail-context-button"
+                                                            ariaLabel={topicActionButtonAriaLabel}
+                                                            disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
+                                                            onClick={handleGenerateTopicSections}
+                                                            title={topicActionButtonTitle}
+                                                            icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
+                                                            label={topicActionButtonLabel}
+                                                        />
+                                                    )}
+                                                    {organizeTab === 'speakers' && (
+                                                        <OrganizeRunButton
+                                                            className="detail-context-button"
+                                                            ariaLabel="참석자별 정리"
+                                                            disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
+                                                            onClick={handleGenerateSpeakerContext}
+                                                            title={speakerActionButtonTitle}
+                                                            icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
+                                                            label={speakerActionButtonLabel}
+                                                        />
+                                                    )}
+                                                    <MeetingDownloadControl
+                                                        meeting={selectedMeeting}
+                                                        scope="organized"
+                                                        presentation="button"
+                                                        label="파일 저장"
                                                         className="detail-context-button"
-                                                        ariaLabel="전체 요약 정리"
-                                                        disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
-                                                        onClick={handleGenerateSummary}
-                                                        title={summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
-                                                        icon={renderRunIcon('summary', summaryGenerationStatus)}
-                                                        label={summaryActionButtonLabel}
+                                                        onNotice={setNoticeMessage}
+                                                        onError={message => showDetailError('summary', message, 'warning')}
+                                                        onSaved={showSavedFileToast}
+                                                        onDownloadingChange={setIsDownloading}
+                                                        beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'summary')}
+                                                        disabled={isDownloading || organizeOutputIsGenerating || !hasOrganizedContent}
                                                     />
-                                                )}
-                                                {organizeTab === 'topics' && (
-                                                    <OrganizeRunButton
-                                                        className="detail-context-button"
-                                                        ariaLabel={topicActionButtonAriaLabel}
-                                                        disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
-                                                        onClick={handleGenerateTopicSections}
-                                                        title={topicActionButtonTitle}
-                                                        icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
-                                                        label={topicActionButtonLabel}
-                                                    />
-                                                )}
-                                                {organizeTab === 'speakers' && (
-                                                    <OrganizeRunButton
-                                                        className="detail-context-button"
-                                                        ariaLabel="참석자별 정리"
-                                                        disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
-                                                        onClick={handleGenerateSpeakerContext}
-                                                        title={speakerActionButtonTitle}
-                                                        icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
-                                                        label={speakerActionButtonLabel}
-                                                    />
-                                                )}
-                                                <MeetingDownloadControl
-                                                    meeting={selectedMeeting}
-                                                    scope="organized"
-                                                    presentation="button"
-                                                    label="기록 정리 파일 저장"
-                                                    className="detail-context-button"
-                                                    onNotice={setNoticeMessage}
-                                                    onError={message => showDetailError('summary', message, 'warning')}
-                                                    onSaved={showSavedFileToast}
-                                                    onDownloadingChange={setIsDownloading}
-                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'summary')}
-                                                    disabled={isDownloading || !hasGeneratedSummary}
-                                                />
+                                                </div>
                                             </div>
                                         </div>
                                         {contextTemplateError && (
@@ -4575,14 +4646,14 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 ) : summaryModelUnavailable ? null : (
                                                     // Same one-line note while 정리 runs, so the body keeps its height; the status line says what is happening.
                                                     <InlineStateNote>
-                                                        {summaryGenerationStatus === 'generating' ? '전체 요약이 아직 없습니다.' : '전체 요약이 없습니다. 정리를 실행해 주세요.'}
+                                                        {summaryGenerationStatus === 'generating' || organizeStatus ? '전체 요약이 아직 없습니다.' : '전체 요약이 없습니다. 정리를 실행해 주세요.'}
                                                     </InlineStateNote>
                                                 )}
                                                 {hasResultHighlights && (
                                                     <div className="grid gap-6">
                                                         {!!visibleTopics.length && (
                                                             <div className="summary-topic-row">
-                                                                <h3 className="text-xs font-semibold text-muted-foreground">주요 주제</h3>
+                                                                <h3 className="detail-section-heading">주요 주제</h3>
                                                                 <ul className="summary-topic-list">
                                                                     {visibleTopics.map((topic, index) => (
                                                                         <li key={`${topic}-${index}`}>
@@ -4605,7 +4676,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                         )}
                                                         {!!visibleDecisions.length && (
                                                             <div className="detail-subtle-card">
-                                                                <h3 className="mb-2 text-xs font-semibold text-muted-foreground">결정사항</h3>
+                                                                <h3 className="mb-2 detail-section-heading">결정사항</h3>
                                                                 <ul className="detail-list">
                                                                     {visibleDecisions.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
                                                                 </ul>
@@ -4613,7 +4684,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                         )}
                                                         {!!visibleActions.length && (
                                                             <div className="detail-subtle-card">
-                                                                <h3 className="mb-2 text-xs font-semibold text-muted-foreground">할 일</h3>
+                                                                <h3 className="mb-2 detail-section-heading">할 일</h3>
                                                                 <ul className="detail-list">
                                                                     {visibleActions.map((action, index) => <li key={`${action}-${index}`}>{renderSearchText(toParticipantCopy(action))}</li>)}
                                                                 </ul>
@@ -4623,7 +4694,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                 )}
                                                 {hasNeedsCheckContent && (
                                                     <div className="detail-subtle-card detail-needs-check">
-                                                        <h3 className="mb-2 text-xs font-semibold text-muted-foreground">추가 확인</h3>
+                                                        <h3 className="mb-2 detail-section-heading">추가 확인</h3>
                                                         <ul className="detail-list">
                                                             {visibleNeedsCheck.map((item, index) => <li key={`${item}-${index}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
                                                         </ul>
@@ -4691,8 +4762,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                                     }}
                                                                     className={`detail-subtle-card ${selectedTopicKey === normalizeTopicKey(section.topic ?? '') ? 'topic-chip-active' : ''}`}
                                                                 >
-                                                                    <h4 className="topic-section-heading font-semibold text-foreground" tabIndex={-1}>{renderSearchText(toParticipantCopy(section.topic))}</h4>
-                                                                    <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(toParticipantCopy(section.summary))}</p>
+                                                                    <h4 className="topic-section-heading detail-section-heading" tabIndex={-1}>{renderSearchText(toParticipantCopy(section.topic))}</h4>
+                                                                    <p className="mt-2 detail-result-copy">{renderSearchText(toParticipantCopy(section.summary))}</p>
                                                                     {!!section.evidence?.length && (
                                                                         <ul className="detail-list mt-3">
                                                                             {section.evidence.map((item, itemIndex) => <li key={`${item}-${itemIndex}`}>{renderSearchText(toParticipantCopy(item))}</li>)}
@@ -4708,7 +4779,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             ? '검색과 일치하는 주제별 정리가 없습니다.'
                                                             : hasCompletedEmptyTopicSections
                                                                 ? '주제별 정리 내용이 없습니다. 대화록을 확인해 주세요.'
-                                                                : '주제별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
+                                                                : organizeStatus ? '주제별 정리 내용이 아직 없습니다.' : '주제별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
                                                     </InlineStateNote>
                                                 ) : null}
                                                 {shouldShowCustomTopicInput && (
@@ -4805,7 +4876,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                                     >
                                                                         <div className="min-w-0">
                                                                             <div className="flex flex-wrap items-center gap-2">
-                                                                                <h4 className="font-semibold text-foreground">{renderSearchText(item.name)}</h4>
+                                                                                <h4 className="detail-section-heading">{renderSearchText(item.name)}</h4>
                                                                                 {item.role && (
                                                                                     <span className="speaker-summary-role">
                                                                                         {renderSearchText(item.role)}
@@ -4827,10 +4898,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                                     </button>
                                                                     {!collapsedSpeakerSummaryKeys[item.key] && (
                                                                         <>
-                                                                            <p className="mt-2 text-sm leading-relaxed text-foreground">{renderSearchText(item.summary)}</p>
+                                                                            <p className="mt-2 detail-result-copy">{renderSearchText(item.summary)}</p>
                                                                             {!!item.keyPoints.length && (
                                                                                 <div className="mt-3">
-                                                                                    <div className="mb-2 text-xs font-semibold text-muted-foreground">핵심 발언</div>
+                                                                                    <div className="mb-2 detail-section-heading">핵심 발언</div>
                                                                                     <ul className="detail-list">
                                                                                         {item.keyPoints.map((point, pointIndex) => <li key={`${point}-${pointIndex}`}>{renderSearchText(point)}</li>)}
                                                                                     </ul>
@@ -4848,7 +4919,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             ? '검색과 일치하는 참석자별 정리가 없습니다.'
                                                             : hasCompletedEmptySpeakerContext
                                                                 ? '참석자별 정리 내용이 없습니다. 참석자 구분을 확인해 주세요.'
-                                                                : '참석자별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
+                                                                : organizeStatus ? '참석자별 정리 내용이 아직 없습니다.' : '참석자별 정리 내용이 없습니다. 정리를 실행해 주세요.'}
                                                     </InlineStateNote>
                                                 ) : null}
                                             </div>
@@ -4865,92 +4936,96 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                     aria-labelledby="meeting-detail-tab-report"
                                     className="detail-work-surface"
                                 >
-                                    <div className="detail-command-bar detail-command-bar-actions-only" inert={analysisLocked || undefined}>
-                                        <div className="detail-command-actions">
-                                            <label className="detail-inline-select">
-                                                <span>보고 양식</span>
-                                                <select
-                                                    value={reportOutputTemplate.id}
-                                                    onChange={event => void handleSelectReportTemplate(event.target.value)}
-                                                    disabled={generatingKind !== null || meetingReportIsGenerating}
-                                                    aria-label="보고 양식 선택"
-                                                >
-                                                    {reportTemplates.map(template => (
-                                                        <option key={template.id} value={template.id}>
-                                                            {template.name}
-                                                        </option>
-                                                    ))}
-                                                </select>
-                                            </label>
-                                            <div className="detail-context-menu-wrap" ref={reportTemplateMenuRef}>
-                                                <IconButton
-                                                    id="report-template-menu-button"
-                                                    variant="outline"
-                                                    className="detail-context-menu-button"
-                                                    icon={<MoreVertical size={16} />}
-                                                    onClick={() => setIsReportTemplateMenuOpen(value => !value)}
-                                                    aria-label="보고 양식 메뉴"
-                                                    title="보고 양식 메뉴"
-                                                    aria-haspopup="menu"
-                                                    aria-expanded={isReportTemplateMenuOpen}
-                                                    aria-controls="report-template-menu"
-                                                    disabled={generatingKind !== null || meetingReportIsGenerating}
-                                                />
-                                                {isReportTemplateMenuOpen && (
-                                                    <div
-                                                        id="report-template-menu"
-                                                        className="detail-context-menu"
-                                                        role="menu"
-                                                        aria-labelledby="report-template-menu-button"
+                                    <div className="detail-command-bar detail-command-bar-report" inert={analysisLocked || undefined}>
+                                        <div className="detail-command-actions detail-command-controls">
+                                            <div className="detail-criteria-controls">
+                                                <label className="detail-inline-select">
+                                                    <span>보고 양식</span>
+                                                    <select
+                                                        value={reportOutputTemplate.id}
+                                                        onChange={event => void handleSelectReportTemplate(event.target.value)}
+                                                        disabled={generatingKind !== null || meetingReportIsGenerating}
+                                                        aria-label="보고 양식 선택"
                                                     >
-                                                        <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewReportTemplate}>
-                                                            <Plus size={14} />
-                                                            추가
-                                                        </button>
-                                                        <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditReportTemplate} disabled={!canEditActiveReportTemplate}>
-                                                            <Edit3 size={14} />
-                                                            변경
-                                                        </button>
-                                                        <button
-                                                            type="button"
-                                                            role="menuitem"
-                                                            tabIndex={-1}
-                                                            className="detail-context-menu-danger"
-                                                            onClick={handleDeleteReportTemplate}
-                                                            disabled={!canEditActiveReportTemplate}
+                                                        {reportTemplates.map(template => (
+                                                            <option key={template.id} value={template.id}>
+                                                                {template.name}
+                                                            </option>
+                                                        ))}
+                                                    </select>
+                                                </label>
+                                                <div className="detail-context-menu-wrap" ref={reportTemplateMenuRef}>
+                                                    <IconButton
+                                                        id="report-template-menu-button"
+                                                        variant="outline"
+                                                        className="detail-context-menu-button"
+                                                        icon={<MoreVertical size={16} />}
+                                                        onClick={() => setIsReportTemplateMenuOpen(value => !value)}
+                                                        aria-label="보고 양식 메뉴"
+                                                        title="보고 양식 메뉴"
+                                                        aria-haspopup="menu"
+                                                        aria-expanded={isReportTemplateMenuOpen}
+                                                        aria-controls="report-template-menu"
+                                                        disabled={generatingKind !== null || meetingReportIsGenerating}
+                                                    />
+                                                    {isReportTemplateMenuOpen && (
+                                                        <div
+                                                            id="report-template-menu"
+                                                            className="detail-context-menu"
+                                                            role="menu"
+                                                            aria-labelledby="report-template-menu-button"
                                                         >
-                                                            <Trash2 size={14} />
-                                                            삭제
-                                                        </button>
-                                                        {!canCreateReportTemplate && (
-                                                            <div className="detail-context-menu-note">
-                                                                최대 {MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.
-                                                            </div>
-                                                        )}
-                                                    </div>
-                                                )}
+                                                            <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenNewReportTemplate}>
+                                                                <Plus size={14} />
+                                                                추가
+                                                            </button>
+                                                            <button type="button" role="menuitem" tabIndex={-1} onClick={handleOpenEditReportTemplate} disabled={!canEditActiveReportTemplate}>
+                                                                <Edit3 size={14} />
+                                                                변경
+                                                            </button>
+                                                            <button
+                                                                type="button"
+                                                                role="menuitem"
+                                                                tabIndex={-1}
+                                                                className="detail-context-menu-danger"
+                                                                onClick={handleDeleteReportTemplate}
+                                                                disabled={!canEditActiveReportTemplate}
+                                                            >
+                                                                <Trash2 size={14} />
+                                                                삭제
+                                                            </button>
+                                                            {!canCreateReportTemplate && (
+                                                                <div className="detail-context-menu-note">
+                                                                    최대 {MAX_CUSTOM_REPORT_TEMPLATES}개까지 저장할 수 있습니다.
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    )}
+                                                </div>
                                             </div>
-                                            <OrganizeRunButton
-                                                ariaLabel="회의록 보고서 생성"
-                                                disabled={!canRunMeetingReportGeneration || generatingKind !== null || meetingReportGenerationStatus === 'generating'}
-                                                onClick={handleGenerateMeetingReport}
-                                                title={reportActionButtonTitle}
-                                                icon={renderRunIcon('meetingReport', meetingReportGenerationStatus)}
-                                                label={reportActionButtonLabel}
-                                            />
-                                            <MeetingDownloadControl
-                                                meeting={selectedMeeting}
-                                                scope="report"
-                                                presentation="button"
-                                                label="보고서 파일 저장"
-                                                className="detail-context-button"
-                                                onNotice={setNoticeMessage}
-                                                onError={message => showDetailError('report', message, 'warning')}
-                                                onSaved={showSavedFileToast}
-                                                onDownloadingChange={setIsDownloading}
-                                                beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'report')}
-                                                disabled={isDownloading || !hasGeneratedMeetingReport || meetingReportIsGenerating}
-                                            />
+                                            <div className="detail-output-actions">
+                                                <OrganizeRunButton
+                                                    ariaLabel="회의록 보고서 생성"
+                                                    disabled={!canRunMeetingReportGeneration || generatingKind !== null || meetingReportGenerationStatus === 'generating'}
+                                                    onClick={handleGenerateMeetingReport}
+                                                    title={reportActionButtonTitle}
+                                                    icon={renderRunIcon('meetingReport', meetingReportGenerationStatus)}
+                                                    label={reportActionButtonLabel}
+                                                />
+                                                <MeetingDownloadControl
+                                                    meeting={selectedMeeting}
+                                                    scope="report"
+                                                    presentation="button"
+                                                    label="파일 저장"
+                                                    className="detail-context-button"
+                                                    onNotice={setNoticeMessage}
+                                                    onError={message => showDetailError('report', message, 'warning')}
+                                                    onSaved={showSavedFileToast}
+                                                    onDownloadingChange={setIsDownloading}
+                                                    beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'report')}
+                                                    disabled={isDownloading || !hasGeneratedMeetingReport || meetingReportIsGenerating}
+                                                />
+                                            </div>
                                         </div>
                                     </div>
                                     {reportTemplateError && (
@@ -4973,7 +5048,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             {(selectedMeeting.meetingReport.sections?.length ?? 0) > 0 ? (
                                                 selectedMeeting.meetingReport.sections?.map(section => (
                                                     <section key={section.title} className="detail-report-result-section">
-                                                        <h4>{section.title}</h4>
+                                                        <h3 className="detail-section-heading">{section.title}</h3>
                                                         <p>{renderSearchText(section.content)}</p>
                                                     </section>
                                                 ))
@@ -5019,7 +5094,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             </Button>
                                                         </>
                                                     ) : (
-                                                        <Button variant="ghost" onClick={() => setIsSpeakerLabelPanelOpen(true)}>
+                                                        <Button id="speaker-label-trigger" variant="ghost" onClick={openSpeakerLabelEditor}>
                                                             <Edit3 size={15} />
                                                             참석자 이름 변경
                                                         </Button>
@@ -5061,7 +5136,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             beforeDownload={() => ensureNoUnsavedDraftChanges('파일 저장', 'script')}
                                                             disabled={isDownloading || !displaySegments.length}
                                                         />
-                                                        <Button onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
+                                                        <Button id="transcript-edit-trigger" onClick={handleStartTranscriptEdit} disabled={!displaySegments.length}>
                                                             <Edit3 size={15} />
                                                             편집
                                                         </Button>
@@ -5145,7 +5220,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         </div>
                                     ) : (
                                         <InlineStateNote>
-                                            {isFiltering ? '검색과 일치하는 대화록이 없습니다.' : analysisRunning ? '대화록을 만들고 있습니다.' : '대화록 내용이 없습니다.'}
+                                            {isFiltering ? '검색과 일치하는 대화록이 없습니다. 검색어를 바꾸거나 지워 주세요.' : analysisRunning ? '대화록을 만들고 있습니다.' : '대화록 내용이 없습니다. 새 회의록에서 음성 파일을 다시 분석해 주세요.'}
                                         </InlineStateNote>
                                     )}
                                 </section>

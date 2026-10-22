@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
@@ -272,7 +273,7 @@ const verifyGpuUnavailable = async (browser) => {
     await page.keyboard.press('Escape');
     await dialog.waitFor({ state: 'detached' });
     await waitForRowState(page, 'ready', 15000);
-    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] }, 'the development UI has no 연결됨 line');
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] }, 'readiness is shown beside the primary action');
     console.log('ok - an unusable GPU points at 분석 장치 and clears after switching to CPU');
   } finally {
     await page.close();
@@ -348,7 +349,7 @@ const installTauriMock = () => {
 };
 
 const verifyDesktopStatusRow = async (browser) => {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   const engine = { up: false, models: 'missing' };
   const errors = [];
@@ -431,6 +432,27 @@ const verifyDesktopStatusRow = async (browser) => {
     assert.deepEqual(await readRow(page), {
       state: 'readiness-error', title: '분석 준비 상태를 확인하지 못했습니다', message: '잠시 뒤 다시 확인해 주세요.', buttons: ['문제 해결', '다시 확인'],
     });
+    const errorGeometry = await rowOf(page).evaluate(row => {
+      const main = row.closest('.writer-upload-main').getBoundingClientRect();
+      const controls = [...row.querySelectorAll('button, a')].map(el => {
+        const rect = el.getBoundingClientRect();
+        return { label: el.textContent.trim(), left: Math.round(rect.left), right: Math.round(rect.right), top: Math.round(rect.top), bottom: Math.round(rect.bottom), inside: rect.left >= main.left - 1 && rect.right <= main.right + 1 && rect.top >= 0 && rect.bottom <= innerHeight };
+      });
+      return {
+        mainWidth: Math.round(main.width), controls,
+        textOverflow: [...row.querySelectorAll('.writer-status-title, .writer-status-message')].map(el => el.scrollWidth - el.clientWidth),
+        rowOverflow: row.scrollWidth - row.clientWidth,
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+      };
+    });
+    console.log(`desktop readiness-error layout: ${JSON.stringify(errorGeometry)}`);
+    if (process.env.WRITER_READINESS_SCREENSHOTS) {
+      await mkdir(process.env.WRITER_READINESS_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: `${process.env.WRITER_READINESS_SCREENSHOTS}/desktop-readiness-error-1440.png`, animations: 'disabled' });
+    }
+    assert.ok(errorGeometry.controls.every(control => control.inside) && errorGeometry.textOverflow.every(overflow => overflow <= 1)
+      && errorGeometry.rowOverflow <= 1 && errorGeometry.documentOverflow <= 0,
+    `recovery controls and status must fit the wide upload column: ${JSON.stringify(errorGeometry)}`);
     await assertDesktopSurfaces();
     // 다시 확인 while the engine is gone: the check keeps running, so the row clears on its own once the engine
     // answers, without a window focus or settings event (the warning that follows offers only 문제 해결).
@@ -446,14 +468,14 @@ const verifyDesktopStatusRow = async (browser) => {
     engine.models = 'ready';
     await page.clock.runFor(3_000);
 
-    // Nothing blocked: the line stays mounted and keeps its 40px, but says nothing (no 연결됨).
+    // Nothing blocked: normal readiness stays beside the primary action at 40px.
     await waitForRowState(page, 'ready');
     assert.equal(await page.evaluate(() => window.__readinessEvents), 0, 'the restarted check found the engine by itself');
-    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] });
-    assert.equal((await statusOf(page).innerText()).trim(), '');
-    assert.equal(await statusOf(page).locator('.writer-status-icon').count(), 0);
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] });
+    assert.equal((await statusOf(page).innerText()).trim(), '이 PC와 연결됨');
+    assert.equal(await statusOf(page).locator('.writer-status-icon').count(), 1);
     assert.equal(Math.round((await rowOf(page).boundingBox()).height), 40);
-    assert.equal(await page.getByText('연결됨', { exact: true }).count(), 0);
+    assert.equal(await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).count(), 1);
     assert.equal(await isStartBlocked(page), false);
     await assertDesktopSurfaces();
 
@@ -461,18 +483,18 @@ const verifyDesktopStatusRow = async (browser) => {
     await startButtonOf(page).click();
     await waitForRowState(page, 'required-fields');
     assert.deepEqual(await readRow(page), {
-      state: 'required-fields', title: '필수 항목이 비어 있습니다', message: '영상·음성 파일, 회의 제목, 회의 목적', buttons: [],
+      state: 'required-fields', title: '필수 항목이 비어 있습니다', message: '회의 제목, 회의 목적, 영상·음성 파일', buttons: [],
     });
-    await page.waitForFunction(() => document.activeElement?.id === 'meeting-file-drop');
+    await page.waitForFunction(() => document.activeElement?.id === 'meeting-title');
     assert.equal(await page.locator('#writer-form-error').count(), 1, 'one list, in the status line');
     assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), 'writer-form-error');
     await page.locator('#meeting-title').fill('데스크톱 상태 줄');
-    await page.waitForFunction(() => document.querySelector('#writer-form-error')?.textContent === '영상·음성 파일, 회의 목적');
+    await page.waitForFunction(() => document.querySelector('#writer-form-error')?.textContent === '회의 목적, 영상·음성 파일');
     assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), null);
     await assertDesktopSurfaces();
     assert.deepEqual(await page.evaluate(() => window.__unexpectedTauriCommands), []);
     assert.deepEqual(errors, []);
-    console.log('ok - desktop status row: 분석 기능 준비 중, 45s 문제 해결, models, reinstall, readiness error, empty when ready, required fields');
+    console.log('ok - desktop status row: 분석 기능 준비 중, 45s 문제 해결, models, reinstall, readiness error, connected when ready, required fields');
   } finally {
     await context.close();
   }
@@ -508,7 +530,7 @@ const verifyDevelopmentReadinessError = async (browser) => {
     modelsUp = true;
     await rowOf(page).getByRole('button', { name: '다시 확인', exact: true }).click();
     await waitForRowState(page, 'ready');
-    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] });
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] });
     console.log('ok - development UI readiness error keeps the web ? and 다시 확인');
   } finally {
     await page.close();
@@ -523,6 +545,10 @@ const run = async () => {
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
+    if (process.env.WRITER_READINESS_SCENARIO === 'desktop') {
+      await verifyDesktopStatusRow(browser);
+      return;
+    }
     page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
     const state = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
@@ -579,10 +605,10 @@ const run = async () => {
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '준비 상태 확인');
     assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '모델 미준비 상태에서 시작 차단 확인');
     assert.equal(await page.locator('#meeting-file-input').evaluate(input => input.files?.[0]?.name), '준비 상태 확인.mp3');
-    // Ready: the line stays mounted but says nothing (no 연결됨 without a connection step), and 분석 시작 is on.
-    assert.deepEqual(await readRow(page), { state: 'ready', title: '', message: null, buttons: [] });
-    assert.equal(await statusOf(page).locator('.writer-status-icon').count(), 0, 'no icon on an empty line');
-    assert.equal(Math.round((await rowOf(page).boundingBox()).height), 40, 'the empty line keeps its 40px');
+    // Ready: the normal status is adjacent to the enabled start action.
+    assert.deepEqual(await readRow(page), { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] });
+    assert.equal(await statusOf(page).locator('.writer-status-icon').count(), 1, 'normal readiness has its status icon');
+    assert.equal(Math.round((await rowOf(page).boundingBox()).height), 40, 'normal readiness keeps its 40px');
     assert.equal(await isStartBlocked(page), false);
     assert.equal(await statusOf(page).getAttribute('role'), 'status');
 

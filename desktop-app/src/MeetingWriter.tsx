@@ -1081,10 +1081,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     // The status row lists them in screen order, and 분석 시작 focuses the first empty one.
     const missingRequiredInputs = useMemo(() => {
         const inputs: Array<{ label: string; focusId: string }> = [];
-        if (!file) inputs.push({ label: '영상·음성 파일', focusId: 'meeting-file-drop' });
         if (!title.trim()) inputs.push({ label: '회의 제목', focusId: 'meeting-title' });
         if (!date) inputs.push({ label: '일시', focusId: 'meeting-date' });
         if (!meetingPurpose.trim()) inputs.push({ label: '회의 목적', focusId: 'meeting-purpose' });
+        if (!file) inputs.push({ label: '영상·음성 파일', focusId: 'meeting-file-drop' });
         return inputs;
     }, [date, file, meetingPurpose, title]);
 
@@ -2837,7 +2837,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         : storedErrorMessage;
 
     return (
-        <div className="writer-shell" data-settings-focus-scope>
+        <div className={`writer-shell ${showInputForm ? 'writer-shell-input' : ''}`} data-settings-focus-scope>
             {operationToast && (
                 <AppToast
                     message={operationToast.message}
@@ -2855,33 +2855,120 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     onClose={() => setLocalProcessingNotice(null)}
                 />
             )}
-            <div className={`writer-header ${showInputForm ? 'writer-header-promise' : ''}`}>
-                <div>
-                    <h2 className="page-title" tabIndex={-1}>{writerHeading}</h2>
-                    {/* The product promise, said where people decide whether to hand over a work file. */}
-                    {showInputForm && (
-                        <p className="writer-local-promise">
-                            <ShieldCheck size={18} aria-hidden="true" />
-                            <span>회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다</span>
-                            <button
-                                type="button"
-                                className="writer-local-promise-help"
-                                aria-label="처리 방식"
-                                title="처리 방식"
-                                aria-haspopup="dialog"
-                                onClick={() => setLocalProcessingNotice('help')}
-                            >
-                                <Info size={16} aria-hidden="true" />
-                            </button>
-                        </p>
-                    )}
-                </div>
-                {showInputForm && <LocalProcessingFlow />}
+            <div className="writer-header">
+                <h2 className="page-title" tabIndex={-1}>{writerHeading}</h2>
             </div>
 
             <div className="writer-panel">
                 {showInputForm && (<div className="writer-input-grid">
-                <section className="writer-section">
+                <div className="writer-info-column">
+                    <section className="writer-section writer-info-section" aria-label="회의 정보">
+                    <div className="writer-field-grid">
+                        <div className="writer-field writer-field-wide">
+                            <label htmlFor="meeting-title">회의 제목</label>
+                            <Input
+                                id="meeting-title"
+                                required
+                                aria-required="true"
+                                aria-invalid={hasAttemptedStart && !title.trim()}
+                                aria-describedby={requiredFieldsDescribed && !title.trim() ? 'writer-form-error' : undefined}
+                                value={title}
+                                onChange={event => {
+                                    autoDerivedTitleRef.current = null;
+                                    setTitle(event.target.value);
+                                }}
+                                placeholder="예: 2026년 상반기 기획 회의"
+                                disabled={isAnalyzing}
+                            />
+                        </div>
+                        <div className="writer-field">
+                            <label htmlFor="meeting-date">일시</label>
+                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={requiredFieldsDescribed && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                        </div>
+                        <div className="writer-field">
+                            <label htmlFor="meeting-purpose">회의 목적</label>
+                            <textarea rows={3} className="input-field writer-purpose-input" id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={requiredFieldsDescribed && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                        </div>
+                        <button
+                            type="button"
+                            className="writer-optional-toggle"
+                            aria-expanded={optionalInfoOpen}
+                            aria-controls="writer-optional-fields"
+                            onClick={toggleOptionalInfo}
+                        >
+                            {optionalInfoOpen ? <ChevronUp size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
+                            <span>
+                                {optionalInfoOpen ? '참석자·주요 용어 접기' : optionalInfoSummary || '참석자·주요 용어'}
+                                {!optionalInfoOpen && !optionalInfoSummary && <>{' '}<span className="writer-optional-mark">(선택)</span></>}
+                            </span>
+                        </button>
+                        <div id="writer-optional-fields" className="writer-optional-fields" hidden={!optionalInfoOpen}>
+                            <div className="writer-field">
+                                <label htmlFor="meeting-participants">참석자 <span className="writer-optional-mark">(선택)</span></label>
+                                <Input
+                                    id="meeting-participants"
+                                    value={participants}
+                                    onChange={event => setParticipants(event.target.value)}
+                                    placeholder="예: 김수산, 이자원, 박해양"
+                                    maxLength={300}
+                                    disabled={isAnalyzing}
+                                />
+                            </div>
+                            <div className="writer-field">
+                                <label htmlFor="meeting-key-terms">주요 용어 <span className="writer-optional-mark">(선택)</span></label>
+                                <div className={`input-field writer-term-input ${isAnalyzing ? 'writer-term-input-disabled' : ''}`}>
+                                    {keyTerms.map(term => (
+                                        <span key={term} className="writer-term-chip">
+                                            <span className="writer-term-chip-label">{term}</span>
+                                            <button
+                                                type="button"
+                                                aria-label={`${term} 용어 삭제`}
+                                                onClick={() => {
+                                                    setKeyTerms(current => current.filter(item => item !== term));
+                                                    // The chip and its button go away; keep the keyboard in the term box.
+                                                    keyTermInputRef.current?.focus();
+                                                }}
+                                                disabled={isAnalyzing}
+                                            >
+                                                <X size={12} aria-hidden="true" />
+                                            </button>
+                                        </span>
+                                    ))}
+                                    <input
+                                        ref={keyTermInputRef}
+                                        id="meeting-key-terms"
+                                        value={keyTermDraft}
+                                        onChange={event => {
+                                            const parts = event.target.value.split(/[,\n]/);
+                                            const rest = parts.pop() ?? '';
+                                            if (parts.length > 0) addKeyTerms(parts);
+                                            setKeyTermDraft(rest);
+                                        }}
+                                        onKeyDown={event => {
+                                            // Korean input composes syllables; Enter during composition only finishes the syllable.
+                                            if (event.nativeEvent.isComposing) return;
+                                            if (event.key === 'Enter') {
+                                                event.preventDefault();
+                                                commitKeyTermDraft();
+                                            } else if (event.key === 'Backspace' && !keyTermDraft && keyTerms.length > 0) {
+                                                event.preventDefault();
+                                                setKeyTerms(current => current.slice(0, -1));
+                                            }
+                                        }}
+                                        onBlur={commitKeyTermDraft}
+                                        placeholder={keyTerms.length > 0 ? '' : '예: 연근해 자원조사, 수산과학원'}
+                                        disabled={isAnalyzing}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    </section>
+                </div>
+                <div className="writer-work-column">
+                <div className="writer-upload-layout">
+                <div className="writer-upload-main">
+                <section className="writer-section writer-upload-section">
                     {/* Resuming: the status row says what to do (choose the same file, or why it cannot continue), so
                         the heading line only carries the two ways out, small enough not to push the form down. */}
                     <div className={`writer-section-heading ${selectedResumeDraft ? 'writer-section-heading-split' : ''}`}>
@@ -2981,7 +3068,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                                 <div className="icon-badge">
                                     <FileAudio size={20} />
                                 </div>
-                                <div className="min-w-0">
+                                <div className="selected-file-copy">
                                     <div className="truncate text-sm font-semibold text-foreground" title={file.name}>
                                         {file.name}
                                     </div>
@@ -3065,115 +3152,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     )}
                     </div>
                 </section>
-
-                <div className="writer-info-column">
-                    <section className="writer-section writer-info-section">
-                    <div className="writer-section-heading writer-section-heading-split">
-                        <h3>회의 정보</h3>
-                        {/* Optional inputs fold beside the heading so the form keeps its height until someone wants them. */}
-                        <button
-                            type="button"
-                            className="writer-optional-toggle"
-                            aria-expanded={optionalInfoOpen}
-                            aria-controls="writer-optional-fields"
-                            onClick={toggleOptionalInfo}
-                        >
-                            {optionalInfoOpen ? <ChevronUp size={14} aria-hidden="true" /> : <Plus size={14} aria-hidden="true" />}
-                            <span>
-                                {optionalInfoOpen ? '참석자·주요 용어 접기' : optionalInfoSummary || '참석자·주요 용어'}
-                                {!optionalInfoOpen && !optionalInfoSummary && <>{' '}<span className="writer-optional-mark">(선택)</span></>}
-                            </span>
-                        </button>
-                    </div>
-                    <div className="writer-field-grid">
-                        <div className="writer-field writer-field-wide">
-                            <label htmlFor="meeting-title">회의 제목</label>
-                            <Input
-                                id="meeting-title"
-                                required
-                                aria-required="true"
-                                aria-invalid={hasAttemptedStart && !title.trim()}
-                                aria-describedby={requiredFieldsDescribed && !title.trim() ? 'writer-form-error' : undefined}
-                                value={title}
-                                onChange={event => {
-                                    autoDerivedTitleRef.current = null;
-                                    setTitle(event.target.value);
-                                }}
-                                placeholder="예: 2026년 상반기 기획 회의"
-                                disabled={isAnalyzing}
-                            />
-                        </div>
-                        <div className="writer-field">
-                            <label htmlFor="meeting-date">일시</label>
-                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={requiredFieldsDescribed && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
-                        </div>
-                        <div className="writer-field">
-                            <label htmlFor="meeting-purpose">회의 목적</label>
-                            <Input id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={requiredFieldsDescribed && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
-                        </div>
-                        <div id="writer-optional-fields" className="writer-optional-fields" hidden={!optionalInfoOpen}>
-                            <div className="writer-field">
-                                <label htmlFor="meeting-participants">참석자 <span className="writer-optional-mark">(선택)</span></label>
-                                <Input
-                                    id="meeting-participants"
-                                    value={participants}
-                                    onChange={event => setParticipants(event.target.value)}
-                                    placeholder="예: 김수산, 이자원, 박해양"
-                                    maxLength={300}
-                                    disabled={isAnalyzing}
-                                />
-                            </div>
-                            <div className="writer-field">
-                                <label htmlFor="meeting-key-terms">주요 용어 <span className="writer-optional-mark">(선택)</span></label>
-                                <div className={`input-field writer-term-input ${isAnalyzing ? 'writer-term-input-disabled' : ''}`}>
-                                    {keyTerms.map(term => (
-                                        <span key={term} className="writer-term-chip">
-                                            {term}
-                                            <button
-                                                type="button"
-                                                aria-label={`${term} 용어 삭제`}
-                                                onClick={() => {
-                                                    setKeyTerms(current => current.filter(item => item !== term));
-                                                    // The chip and its button go away; keep the keyboard in the term box.
-                                                    keyTermInputRef.current?.focus();
-                                                }}
-                                                disabled={isAnalyzing}
-                                            >
-                                                <X size={12} aria-hidden="true" />
-                                            </button>
-                                        </span>
-                                    ))}
-                                    <input
-                                        ref={keyTermInputRef}
-                                        id="meeting-key-terms"
-                                        value={keyTermDraft}
-                                        onChange={event => {
-                                            const parts = event.target.value.split(/[,\n]/);
-                                            const rest = parts.pop() ?? '';
-                                            if (parts.length > 0) addKeyTerms(parts);
-                                            setKeyTermDraft(rest);
-                                        }}
-                                        onKeyDown={event => {
-                                            // Korean input composes syllables; Enter during composition only finishes the syllable.
-                                            if (event.nativeEvent.isComposing) return;
-                                            if (event.key === 'Enter') {
-                                                event.preventDefault();
-                                                commitKeyTermDraft();
-                                            } else if (event.key === 'Backspace' && !keyTermDraft && keyTerms.length > 0) {
-                                                event.preventDefault();
-                                                setKeyTerms(current => current.slice(0, -1));
-                                            }
-                                        }}
-                                        onBlur={commitKeyTermDraft}
-                                        placeholder={keyTerms.length > 0 ? '' : '예: 연근해 자원조사, 수산과학원'}
-                                        disabled={isAnalyzing}
-                                    />
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    </section>
-                </div>
                     <WriterActionRow
                         row={writerStatusRow}
                         statusRef={writerStatusRef}
@@ -3200,6 +3178,31 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     {localEngineConnectionRequired && connectionControls.codeDialogOpen && (
                         <LocalEngineCodeDialog onClose={connectionControls.closeCodeDialog} />
                     )}
+                    </div>
+                    <section className="writer-privacy" aria-label="처리·보관 안내">
+                        <h3 className="writer-local-promise">
+                            <ShieldCheck size={18} aria-hidden="true" />
+                            <span>이 PC에서 분석·요약합니다</span>
+                        </h3>
+                        <p className="writer-privacy-description">
+                            영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.
+                        </p>
+                        <LocalProcessingFlow />
+                        <button
+                            type="button"
+                            className="writer-local-promise-help"
+                            aria-label="처리·보관 방식 자세히"
+                            aria-haspopup="dialog"
+                            onClick={() => setLocalProcessingNotice('help')}
+                        >
+                            <Info size={16} aria-hidden="true" />
+                            처리·보관 방식 자세히
+                        </button>
+                    </section>
+                    </div>
+                    {formBannerMessage && <StatusBanner tone="error">{formBannerMessage}</StatusBanner>}
+                    {!resumeSelectionActive && !isAnalyzing && idleCompanion}
+                </div>
                 </div>)}
 
                 {showAnalysisPanel && renderAnalysisContent(
@@ -3425,7 +3428,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     </p>
                 ))}
 
-            {formBannerMessage && (
+            {!showInputForm && formBannerMessage && (
                 <StatusBanner tone="error">
                     {formBannerMessage}
                 </StatusBanner>
@@ -3442,7 +3445,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 <ProgressBar value={transcriptProgressPercent} tone={errorMessage ? 'error' : 'primary'} label="대화록 생성률" />
             )}
 
-            {showInputForm && !resumeSelectionActive && !isAnalyzing && idleCompanion}
         </div>
     );
 };

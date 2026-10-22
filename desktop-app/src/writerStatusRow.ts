@@ -364,18 +364,18 @@ export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): Writer
             state: 'ready',
             tone: 'success',
             busy: false,
-            title: '연결됨',
+            title: '이 PC와 연결됨',
             message: null,
             help: null,
             actions: [],
             blocksStart: false,
         } : {
-            // Without a connection step there is nothing to report: the line stays empty but keeps its height.
+            // The desktop and development UI also reach this state only after readiness succeeds.
             stage: 'ready',
             state: 'ready',
-            tone: 'neutral',
+            tone: 'success',
             busy: false,
-            title: '',
+            title: '이 PC와 연결됨',
             message: null,
             help: null,
             actions: [],

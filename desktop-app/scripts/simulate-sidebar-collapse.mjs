@@ -180,12 +180,16 @@ const run = async (browser, { width, deniedStorage = false }) => {
       await capture(page, 'wide-expanded');
       await click(page, '메뉴 접기'); await mode(page, 'rail');
       assert.equal(Math.round((await page.locator('main').boundingBox()).x), 56);
+      const expandBox = await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).boundingBox();
+      assert.ok(expandBox.y >= 0 && expandBox.y + expandBox.height <= 140, 'the reopen action stays near the top of the rail');
       await page.reload({ waitUntil: 'domcontentloaded' }); await mode(page, 'rail');
       assert.equal(await page.evaluate(() => localStorage.getItem('sidebarCollapsed')), '1');
       await click(page, '메뉴 펼치기'); await mode(page, 'expanded');
       assert.equal(await page.evaluate(() => localStorage.getItem('sidebarCollapsed')), '0');
       console.log('ok - wide collapse choice survives reload and expands again');
     } else {
+      const expandBox = await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).boundingBox();
+      assert.ok(expandBox.y >= 0 && expandBox.y + expandBox.height <= 140, 'narrow windows also keep the reopen action at the top');
       await page.evaluate(async () => {
         const { upsertAnalysisResumeDraft } = await import('/src/analysisResumeDrafts.ts');
         upsertAnalysisResumeDraft({ jobId: 'sidebar-resume', title: '이어서 할 회의', date: '2026-10-22', participants: '', sourceFilename: 'sample.wav', sourceSize: 100, sourceLastModified: 0, status: 'stopped', resumeEligible: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });

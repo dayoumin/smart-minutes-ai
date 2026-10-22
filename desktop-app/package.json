@@ -22,6 +22,8 @@
     "test:folder-recovery": "node scripts/simulate-folder-recovery.mjs",
     "test:meeting-cleanup-flow": "node scripts/simulate-meeting-cleanup-flow.mjs",
     "test:meeting-detail-layout": "node scripts/simulate-meeting-detail-layout.mjs",
+    "test:organize-ui": "node scripts/simulate-organize-ui.mjs",
+    "test:report-ui": "node scripts/simulate-report-ui.mjs",
     "test:sidebar-collapse": "node --experimental-strip-types scripts/simulate-sidebar-collapse.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",
     "test:close-guard-flow": "node scripts/simulate-close-guard-flow.mjs",

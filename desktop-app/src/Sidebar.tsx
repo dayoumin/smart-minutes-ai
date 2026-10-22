@@ -906,6 +906,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                 <button type="button" className="sidebar-brand sidebar-rail-button" aria-label={`${BRAND_NAME} 첫 화면`} title={`${BRAND_NAME} 첫 화면`} onClick={onOpenStart}>
                     <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
                 </button>
+                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴 펼치기" title="메뉴 펼치기" aria-expanded={false} onClick={onExpand}><PanelLeftOpen size={18} aria-hidden="true" /></button>
                 <button ref={createMeetingButtonRef} type="button" className="sidebar-rail-button" aria-label="새 회의록" title={newMeetingBlocked ? newMeetingBlockedReason : '새 회의록'} disabled={newMeetingBlocked || Boolean(analysisStatus?.active)} aria-describedby={newMeetingBlocked || analysisStatus?.active ? 'sidebar-rail-create-note' : undefined} onClick={onCreateMeeting}><Plus size={18} aria-hidden="true" /></button>
                 {(newMeetingBlocked || analysisStatus?.active) && <span id="sidebar-rail-create-note" className="sr-only">{newMeetingBlocked ? newMeetingBlockedReason : '분석이 끝나면 새 회의록을 만들 수 있습니다.'}</span>}
                 <button type="button" className="sidebar-rail-button" aria-label="회의록 목록" title="회의록 목록" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}><List size={18} aria-hidden="true" />{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
@@ -914,7 +915,6 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                 <div className="flex-1" />
                 {onOpenSettings && <button type="button" data-settings-focus-fallback className="sidebar-rail-button sidebar-rail-settings" aria-label="설정" title="설정" onClick={onOpenSettings}><Settings size={18} aria-hidden="true" /></button>}
                 {onOpenAsrBenchmark && <button type="button" className="sidebar-rail-button" aria-label="ASR 테스트 결과" title="ASR 테스트 결과" onClick={onOpenAsrBenchmark}><BarChart3 size={18} aria-hidden="true" /></button>}
-                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴 펼치기" title="메뉴 펼치기" aria-expanded={false} onClick={onExpand}><PanelLeftOpen size={18} aria-hidden="true" /></button>
             </div> : <>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div className="sidebar-brand-row">

@@ -69,6 +69,22 @@ function Resolve-PythonCommand([string]$PythonCommand) {
     return $PythonCommand
 }
 
+function Get-SslRuntimeDataArgs([string]$PythonCommand) {
+    # Some build runtimes patch ssl.py to load a certificate policy beside it.
+    # Preserve that policy in the frozen library; do not bypass verification.
+    $assetJson = & $PythonCommand -c "import json, pathlib, ssl; ssl.create_default_context(); p = pathlib.Path(ssl.__file__).with_name('codex-rejected-cas.pem'); print(json.dumps([str(p)] if p.is_file() else []))"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Build Python TLS initialization failed; repair its runtime before packaging."
+    }
+    foreach ($asset in @($assetJson | ConvertFrom-Json)) {
+        if (-not (Test-Path -LiteralPath $asset -PathType Leaf)) {
+            throw "SSL runtime data file not found: $asset"
+        }
+        Write-Output "--add-data"
+        Write-Output "${asset}:."
+    }
+}
+
 function Get-VenvBasePython([string]$PythonCommand) {
     if (-not ($PythonCommand -like "*\Scripts\python.exe")) {
         return $null
@@ -145,6 +161,7 @@ function Get-PeSubsystem {
 
 $PythonCommand = Resolve-PythonCommand $Python
 Assert-PythonRuntime $PythonCommand
+$SslRuntimeDataArgs = @(Get-SslRuntimeDataArgs $PythonCommand)
 Assert-PythonBuildRequirements $PythonCommand
 
 New-Item -ItemType Directory -Force -Path $PackageDestinationDir | Out-Null
@@ -201,6 +218,7 @@ try {
         --collect-binaries "lxml" `
         --collect-data "lxml" `
         --hidden-import "unicodedata" `
+        @SslRuntimeDataArgs `
         --add-data "${BrandConfigPath}:configs" `
         --distpath $BuildDistDir `
         --workpath (Join-Path $BackendDir "build") `

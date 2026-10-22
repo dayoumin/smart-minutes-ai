@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
@@ -158,7 +159,7 @@ const meetingAt = (id, title, time, meetingPurpose = '') => {
 };
 
 const runEmptyHomeScene = async browser => {
-  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   const page = await context.newPage();
   await installBaseRoutes(page);
   try {
@@ -166,49 +167,259 @@ const runEmptyHomeScene = async browser => {
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.ocean-backdrop, .start-workspace, [data-shell-variant]').count(), 0);
     assert.equal(await page.getByRole('button', { name: `${BRAND_NAME} 첫 화면` }).getAttribute('aria-current'), 'page');
-    // Give the recent-meetings load a moment; an empty store renders no list at all.
-    await page.waitForTimeout(300);
-    assert.equal(await page.locator('.recent-meetings, .writer-recovery').count(), 0);
+    // The empty list is a stable part of the work area, independent of file selection.
+    await page.getByRole('region', { name: '최근 회의록' }).getByRole('heading', { name: '최근 회의록', exact: true }).waitFor();
+    assert.equal(await page.locator('.recent-meeting-row, .writer-recovery').count(), 0);
 
-    const wideMetrics = await page.evaluate(() => {
-      const rect = selector => document.querySelector(selector)?.getBoundingClientRect() ?? null;
-      const shell = rect('.writer-shell');
-      const drop = rect('.file-drop-zone');
-      const info = rect('.writer-info-section');
-      const cta = rect('.writer-start-button');
-      const label = rect('label[for="meeting-title"]');
-      const input = rect('#meeting-title');
-      return {
-        viewportHeight: window.innerHeight,
-        shellWidth: shell?.width ?? 0,
-        dropBottom: drop?.bottom ?? 0,
-        infoTop: info?.top ?? 0,
-        ctaBottom: cta?.bottom ?? Infinity,
-        labelRight: label?.right ?? 0,
-        inputLeft: input?.left ?? 0,
-        labelTop: label?.top ?? 0,
-        inputTop: input?.top ?? 0,
-      };
-    });
-    assert.ok(wideMetrics.shellWidth <= 880, `writer column should stay within 880px, got ${wideMetrics.shellWidth}`);
-    assert.ok(wideMetrics.dropBottom <= wideMetrics.infoTop, 'upload zone should sit above meeting information');
-    assert.ok(wideMetrics.ctaBottom <= wideMetrics.viewportHeight, `analysis start should be visible at 1280x720, bottom ${wideMetrics.ctaBottom}`);
-    assert.ok(wideMetrics.labelRight <= wideMetrics.inputLeft, 'wide meeting information should use label/value rows');
-    assert.ok(Math.abs(wideMetrics.labelTop - wideMetrics.inputTop) < 20, 'wide label and input should share a row');
-    await assertNoHorizontalOverflow(page);
+    for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
+      await page.setViewportSize(viewport);
+      await settleHomePaint(page);
+      const layout = await readHomeLayout(page);
+      assert.ok(Math.abs(layout.info.width - 280) <= 1, `meeting information keeps a 280px column at ${viewport.width}px`);
+      assert.ok(layout.info.right <= layout.work.left, 'meeting information sits left of the file work area');
+      assert.ok(layout.drop.left >= layout.work.left && layout.cta.right <= layout.work.right + 1, 'file and start action stay in the right column');
+      assert.ok(layout.cta.bottom <= viewport.height, 'analysis start stays visible on the supported desktop window');
+      assert.ok(layout.titleBeforeDate && layout.dateBeforePurpose && layout.purposeBeforeFile, 'reading order is title, date, purpose, then file');
+      assert.ok(layout.date.width >= 190 && layout.dateOverflow <= 1 && layout.date.right <= layout.info.right, 'date and time input fits without clipping');
+      assert.equal(await page.locator('.writer-work-column .writer-local-promise').count(), 1, 'privacy guidance belongs to the file work area');
+      await assertNoHorizontalOverflow(page);
+      const optional = page.getByRole('button', { name: '참석자·주요 용어 (선택)' });
+      await optional.click();
+      await assertLongTermFits(page);
+      const expanded = await readHomeLayout(page);
+      assert.deepEqual(expanded.drop, layout.drop, 'opening optional information does not move file selection');
+      assert.deepEqual(expanded.cta, layout.cta, 'opening optional information does not move analysis start');
+      await page.getByRole('button', { name: '참석자·주요 용어 접기' }).click();
+    }
 
-    await page.setViewportSize({ width: 800, height: 720 });
-    await page.waitForTimeout(100);
-    const narrowMetrics = await page.evaluate(() => {
-      const label = document.querySelector('label[for="meeting-title"]')?.getBoundingClientRect();
-      const input = document.querySelector('#meeting-title')?.getBoundingClientRect();
-      return { labelBottom: label?.bottom ?? 0, inputTop: input?.top ?? 0 };
-    });
-    assert.ok(narrowMetrics.labelBottom <= narrowMetrics.inputTop + 1, 'narrow meeting information should stack label above input');
+    // Missing input is a recoverable validation action, never an unreachable disabled button.
+    await page.getByLabel('회의 제목', { exact: true }).fill('');
+    await page.getByLabel('일시', { exact: true }).fill('');
+    await page.getByLabel('회의 목적', { exact: true }).fill('');
+    const start = page.getByRole('button', { name: '분석 시작', exact: true });
+    await page.waitForFunction(() => document.querySelector('.writer-start-button')?.getAttribute('aria-disabled') !== 'true');
+    assert.equal(await start.isEnabled(), true, 'empty fields keep the validation action reachable');
+    await start.click();
+    await page.locator('.writer-action-row[data-state="required-fields"]').waitFor();
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-title');
+    const missing = await page.locator('#writer-form-error').innerText();
+    assert.ok(missing.indexOf('회의 제목') < missing.indexOf('일시') && missing.indexOf('일시') < missing.indexOf('회의 목적') && missing.indexOf('회의 목적') < missing.indexOf('영상·음성 파일'), 'missing-field message follows the new reading order');
+    await page.getByLabel('회의 제목', { exact: true }).fill('두 열 입력 검증');
+    await start.click();
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-date');
+    await page.getByLabel('일시', { exact: true }).fill('2026-10-23T10:00');
+    await start.click();
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-purpose');
+    await page.getByLabel('회의 목적', { exact: true }).fill('입력 순서 확인');
+    await start.click();
+    assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-file-drop');
+
+    await page.setViewportSize({ width: 880, height: 768 });
+    await settleHomePaint(page);
+    const stacked = await readHomeLayout(page);
+    assert.ok(stacked.info.bottom <= stacked.work.top + 1, 'below the supported two-column threshold the information stacks above the file area');
     await assertNoHorizontalOverflow(page);
-    console.log('ok - empty new-record home keeps form and start button in one column');
+    console.log('ok - new-record home keeps desktop columns, stable work controls, validation order and narrow fallback');
   } finally {
     await context.close();
+  }
+};
+
+const settleHomePaint = page => page.evaluate(async () => {
+  await document.fonts.ready;
+  await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+});
+
+const readHomeLayout = page => page.evaluate(() => {
+  const rect = selector => {
+    const r = document.querySelector(selector).getBoundingClientRect();
+    return Object.fromEntries(['top', 'left', 'right', 'bottom', 'width'].map(key => [key, Math.round(r[key])]));
+  };
+  const before = (first, second) => Boolean(document.querySelector(first).compareDocumentPosition(document.querySelector(second)) & Node.DOCUMENT_POSITION_FOLLOWING);
+  const date = document.querySelector('#meeting-date');
+  return {
+    info: rect('.writer-info-column'), work: rect('.writer-work-column'),
+    drop: rect('.file-drop-zone, .selected-file-card'), cta: rect('.writer-start-button'), date: rect('#meeting-date'),
+    dateOverflow: date.scrollWidth - date.clientWidth,
+    titleBeforeDate: before('#meeting-title', '#meeting-date'), dateBeforePurpose: before('#meeting-date', '#meeting-purpose'),
+    purposeBeforeFile: before('#meeting-purpose', '.file-drop-zone, .selected-file-card'),
+  };
+});
+
+const homeAudioFixture = () => {
+  const audio = Buffer.alloc(44 + 16000);
+  audio.write('RIFF', 0); audio.writeUInt32LE(audio.length - 8, 4); audio.write('WAVEfmt ', 8);
+  audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24); audio.writeUInt32LE(16000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34);
+  audio.write('data', 36); audio.writeUInt32LE(audio.length - 44, 40);
+  return { name: 'weekly-meeting.wav', mimeType: 'audio/wav', buffer: audio };
+};
+
+const assertLongTermFits = async page => {
+  const term = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789ABCD';
+  const input = page.getByLabel('주요 용어 (선택)');
+  await input.fill(term);
+  await input.press('Enter');
+  await page.getByRole('button', { name: `${term} 용어 삭제`, exact: true }).waitFor();
+  const metrics = await page.evaluate(() => {
+    const field = document.querySelector('.writer-term-input');
+    const info = document.querySelector('.writer-info-column');
+    const chip = document.querySelector('.writer-term-chip');
+    const remove = chip.querySelector('button');
+    const fieldRect = field.getBoundingClientRect(), infoRect = info.getBoundingClientRect(), chipRect = chip.getBoundingClientRect(), removeRect = remove.getBoundingClientRect();
+    const hit = document.elementFromPoint(removeRect.left + removeRect.width / 2, removeRect.top + removeRect.height / 2);
+    return {
+      fieldOverflow: field.scrollWidth - field.clientWidth,
+      railOverflow: info.scrollWidth - info.clientWidth,
+      chipInside: chipRect.left >= fieldRect.left && chipRect.right <= fieldRect.right + 1,
+      removeInside: removeRect.right <= fieldRect.right + 1 && removeRect.right <= infoRect.right + 1,
+      removeReachable: hit === remove || remove.contains(hit),
+      chipWidth: Math.round(chipRect.width), fieldWidth: Math.round(fieldRect.width), railWidth: Math.round(infoRect.width),
+    };
+  });
+  console.log(`40-character term layout: ${JSON.stringify(metrics)}`);
+  assert.ok(metrics.fieldOverflow <= 1 && metrics.railOverflow <= 1 && metrics.chipInside && metrics.removeInside && metrics.removeReachable,
+    `a supported 40-character term and its delete action must fit the information column: ${JSON.stringify(metrics)}`);
+  await page.getByRole('button', { name: `${term} 용어 삭제`, exact: true }).click();
+  assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-key-terms');
+};
+
+const runLongTermScene = async browser => {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 768 } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor();
+    await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).click();
+    await assertLongTermFits(page);
+    console.log('ok - the 40-character term and its delete action fit the information column');
+  } finally { await context.close(); }
+};
+
+const runIHomeLayoutScene = async browser => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 2044, height: 1149 }]) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    await installBaseRoutes(page);
+    await page.route('**/api/analyze/draft-statuses', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"drafts":[]}' }));
+    await page.route('**/api/analyze/resume-candidates', route => route.fulfill({ status: 200, contentType: 'application/json', body: '{"candidates":[],"recommended_job_id":null}' }));
+    try {
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+      await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor();
+      const recent = page.getByRole('region', { name: '최근 회의록' });
+      await recent.getByRole('heading', { name: '최근 회의록', exact: true }).waitFor();
+      const longName = `주간업무협의-${'조사진행상황과다음일정'.repeat(12)}.wav`;
+      for (const hasRecords of [false, true]) {
+        if (hasRecords) {
+          await putMeeting(page, meetingAt('i-recent-first', '첫 번째 최근 회의', Date.now() - DAY_MS));
+          await putMeeting(page, meetingAt('i-recent-second', '두 번째 최근 회의', Date.now() - 2 * DAY_MS));
+          await page.waitForFunction(() => document.querySelectorAll('.recent-meeting-row').length === 2);
+        }
+        for (const hasFile of [false, true]) {
+          if (hasFile) {
+            await page.getByLabel('회의 제목', { exact: true }).fill('주간 업무 협의');
+            await page.getByLabel('회의 목적', { exact: true }).fill('조사 진행 상황과 다음 일정 확인');
+            await page.setInputFiles('#meeting-file-input', { ...homeAudioFixture(), name: longName });
+            await page.locator('.selected-file-card').getByText(longName, { exact: true }).waitFor();
+          }
+          await page.locator('.writer-action-row[data-state="ready"]').getByText('이 PC와 연결됨', { exact: true }).waitFor();
+          await settleHomePaint(page);
+          assert.equal(await recent.getByRole('heading', { name: '최근 회의록', exact: true }).count(), 1);
+          assert.equal(await recent.locator('.recent-meeting-row').count(), hasRecords ? 2 : 0, 'file selection does not change whether records exist');
+          const layout = await page.evaluate(() => {
+            const rect = selector => {
+              const r = document.querySelector(selector).getBoundingClientRect();
+              return Object.fromEntries(['top', 'left', 'right', 'bottom', 'width'].map(key => [key, Math.round(r[key])]));
+            };
+            return {
+              info: rect('.writer-info-column'), content: rect('.writer-upload-layout'), upload: rect('.writer-upload-section'), guide: rect('.writer-privacy'),
+              action: rect('.writer-action-row'), cta: rect('.writer-start-button'), status: rect('.writer-status-title'), recent: rect('.recent-meetings'),
+            };
+          });
+          assert.ok(Math.abs(layout.info.width - 280) <= 1, 'the information column remains 280px');
+          if (viewport.width >= 1440) {
+            assert.ok(layout.upload.width >= 380 && layout.upload.width <= 504 && layout.guide.width >= 380,
+              `wide upload stays compact while guidance has readable space: ${JSON.stringify(layout)}`);
+            assert.ok(Math.abs(layout.guide.left - layout.upload.right - 24) <= 1, 'wide guide is separated from upload by 24px');
+            assert.ok(layout.guide.top > layout.upload.top && layout.guide.top < layout.upload.top + 48, 'wide guidance panel aligns with the drop area');
+          } else {
+            assert.ok(layout.upload.bottom <= layout.action.top + 1 && layout.action.bottom <= layout.guide.top + 1,
+              'narrow work area orders file selection, analysis action, then guidance');
+          }
+          assert.ok(Math.abs(layout.cta.left - layout.status.right - 16) <= 1,
+            `ready status remains 16px before the start button: ${JSON.stringify(layout)}`);
+          assert.ok(layout.cta.top >= 0 && layout.cta.bottom <= viewport.height, 'analysis start is reachable inside the desktop viewport');
+          assert.ok(layout.recent.top >= Math.max(layout.action.bottom, layout.guide.bottom) - 1, 'recent records follow the upload and guidance work');
+          const guidance = page.getByRole('region', { name: '처리·보관 안내', exact: true });
+          await guidance.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor();
+          assert.equal(await guidance.getByRole('img').isVisible(), true, 'the explanation and picture share one visible panel');
+          assert.equal(await guidance.getByRole('button', { name: '처리·보관 방식 자세히', exact: true }).isVisible(), true);
+          await assertNoHorizontalOverflow(page);
+          if (hasFile) {
+            const filename = await page.locator('.selected-file-main [title]').first().evaluate(el => {
+              const style = getComputedStyle(el);
+              return { overflow: el.scrollWidth - el.clientWidth, textOverflow: style.textOverflow, overflowX: style.overflowX };
+            });
+            assert.ok(filename.overflow > 0 && filename.textOverflow === 'ellipsis' && filename.overflowX === 'hidden', 'long names stay available in title while visually truncated');
+          }
+          const beforeOptional = await readHomeLayout(page);
+          await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).click();
+          const afterOptional = await readHomeLayout(page);
+          assert.deepEqual(afterOptional.cta, beforeOptional.cta, 'optional inputs do not move analysis start');
+          await page.getByRole('button', { name: '참석자·주요 용어 접기' }).click();
+          if (process.env.NEW_RECORD_HOME_SCREENSHOTS) {
+            await mkdir(process.env.NEW_RECORD_HOME_SCREENSHOTS, { recursive: true });
+            await settleHomePaint(page);
+            await page.screenshot({ path: `${process.env.NEW_RECORD_HOME_SCREENSHOTS}/I-home-${viewport.width}-${hasFile ? 'selected' : 'empty'}-${hasRecords ? 'records' : 'no-records'}.png`, animations: 'disabled' });
+          }
+          console.log(`ok - I home ${viewport.width}px file=${hasFile} records=${hasRecords}: ${JSON.stringify(layout)}`);
+        }
+        await page.getByRole('button', { name: `${longName} 제거`, exact: true }).click();
+        await page.locator('.file-drop-zone').waitFor();
+      }
+    } finally { await context.close(); }
+  }
+};
+
+// A capture-only path for comparing empty and selected-file home scenes without starting analysis.
+const runEmptyHomeCapture = async browser => {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
+    const context = await browser.newContext({ viewport });
+    const page = await context.newPage();
+    await installBaseRoutes(page);
+    try {
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+      await page.locator('.writer-shell').getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ state: 'visible', timeout: 10000 });
+      await page.locator('.writer-field label').first().waitFor({ state: 'visible' });
+      await settleHomePaint(page);
+      await assertNoHorizontalOverflow(page);
+      const typography = await page.evaluate(() => {
+        const collect = selector => [...document.querySelectorAll(selector)].map(el => {
+          const style = getComputedStyle(el);
+          return { text: el.textContent.trim(), family: style.fontFamily, size: style.fontSize, weight: style.fontWeight, line: style.lineHeight, color: style.color };
+        });
+        return { labels: collect('.writer-field label'), headings: collect('.writer-section-heading h3') };
+      });
+      if (process.env.NEW_RECORD_HOME_SCREENSHOTS) {
+        await mkdir(process.env.NEW_RECORD_HOME_SCREENSHOTS, { recursive: true });
+        await page.screenshot({
+          path: `${process.env.NEW_RECORD_HOME_SCREENSHOTS}/new-record-home-${viewport.width}.png`,
+          animations: 'disabled',
+        });
+        await page.getByLabel('회의 제목', { exact: true }).fill('주간 업무 협의');
+        await page.getByLabel('회의 목적', { exact: true }).fill('진행 상황과 다음 일정 확인');
+        await page.setInputFiles('#meeting-file-input', homeAudioFixture());
+        await page.locator('.selected-file-card').getByText('weekly-meeting.wav', { exact: true }).waitFor();
+        await settleHomePaint(page);
+        await assertNoHorizontalOverflow(page);
+        await page.screenshot({
+          path: `${process.env.NEW_RECORD_HOME_SCREENSHOTS}/new-record-home-${viewport.width}-selected.png`,
+          animations: 'disabled',
+        });
+      }
+      console.log(`ok - empty home capture ${viewport.width}x${viewport.height}: ${JSON.stringify(typography)}`);
+    } finally { await context.close(); }
   }
 };
 
@@ -237,6 +448,7 @@ const runRecentListScene = async browser => {
 
     const recent = page.getByRole('region', { name: '최근 회의록' });
     await recent.waitFor({ timeout: 10000 });
+    assert.equal(await recent.evaluate(el => Boolean(el.closest('.writer-work-column'))), true, 'recent records stay in the file work column');
     await page.waitForFunction(() => document.querySelectorAll('.recent-meeting-row').length === 5);
     const groups = await recent.locator('.recent-meetings-group-label').allTextContents();
     assert.deepEqual(groups, ['오늘', '최근 7일', '이전']);
@@ -392,7 +604,8 @@ const runAnalysisEntryPointScene = async browser => {
     await navigation.getByText('진입점 확인 회의').first().click();
     await page.locator('.meeting-detail-shell').getByRole('heading', { name: '진입점 확인 회의' }).waitFor({ timeout: 10000 });
     await navigation.locator('.sidebar-analysis-card').click();
-    await page.getByRole('heading', { name: '분석 진행', level: 2 }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-detail-shell').getByRole('heading', { name: '진입점 분석', level: 2, exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    await page.locator('.meeting-detail-shell .writer-analysis-panel').waitFor({ state: 'visible', timeout: 10000 });
     console.log('ok - analysis keeps 새 회의록 disabled and the 분석 중 card returns to progress');
   } finally {
     await context.close();
@@ -407,29 +620,31 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     // The processing promise is fixed copy, so it shows even before (or without) an engine answer.
-    const privacyNote = page.locator('.writer-local-promise');
-    await privacyNote.getByText('회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', { exact: true }).waitFor({ timeout: 10000 });
-    // One fixed line under the title, kept to one line at 1280px so the form below does not move.
-    const promiseBox = await privacyNote.boundingBox();
-    assert.ok(promiseBox && promiseBox.height <= 26, `the promise must stay one line at 1280px (height ${promiseBox?.height})`);
-    // The explanation line was dropped in favor of the (i) help, and the old footnote under the upload area is gone.
+    const privacyNote = page.getByRole('region', { name: '처리·보관 안내', exact: true });
+    await privacyNote.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor({ timeout: 10000 });
+    await privacyNote.getByText('영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.', { exact: true }).waitFor();
+    const promiseOverflow = await privacyNote.evaluate(el => el.scrollHeight - el.clientHeight);
+    assert.ok(promiseOverflow <= 1, 'privacy guidance is readable without clipping');
+    assert.equal(await privacyNote.evaluate(el => Boolean(el.closest('.writer-work-column'))), true, 'privacy guidance stays beside the file work');
+    // The panel combines the explanation, picture and an explicit help action.
     assert.equal(await page.getByText('외부 AI 서비스 없이', { exact: false }).count(), 0);
     assert.equal(await page.locator('.writer-file-support').getByText('이 PC', { exact: false }).count(), 0);
-    // The picture beside the title says the same thing at a glance; it keeps the title at its usual top position.
+    // The local-processing picture follows the action in the same work column.
     const flow = page.getByRole('img', { name: '이 PC 안에서 영상·음성 분석부터 대화록·요약까지 처리' });
     await flow.waitFor({ state: 'visible', timeout: 10000 });
     const headerLayout = await page.evaluate(() => ({
-      titleTop: Math.round(document.querySelector('.page-title')?.getBoundingClientRect().top ?? -1),
       flowTop: Math.round(document.querySelector('.local-flow')?.getBoundingClientRect().top ?? -1),
       startBottom: Math.round(document.querySelector('.writer-start-button')?.getBoundingClientRect().bottom ?? Infinity),
+      flowInWorkColumn: Boolean(document.querySelector('.local-flow')?.closest('.writer-work-column')),
     }));
-    assert.equal(headerLayout.flowTop, headerLayout.titleTop, 'the picture lines up with the title top instead of pushing the title down');
+    assert.equal(headerLayout.flowInWorkColumn, true);
+    assert.ok(headerLayout.flowTop >= headerLayout.startBottom, 'the picture follows analysis start instead of displacing the input header');
     assert.ok(headerLayout.startBottom <= 720, `analysis start must stay on the first 1280x720 screen (bottom ${headerLayout.startBottom})`);
     const helpTitle = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
     // The first-visit notice belongs to the web connection build; the default dev UI opens straight to the writer.
     assert.equal(await page.getByRole('dialog', { name: helpTitle }).count(), 0, 'first-visit notice must not open without the connection build flag');
 
-    const helpButton = privacyNote.getByRole('button', { name: '처리 방식', exact: true });
+    const helpButton = privacyNote.getByRole('button', { name: '처리·보관 방식 자세히', exact: true });
     assert.equal(await helpButton.getAttribute('aria-haspopup'), 'dialog');
     await helpButton.click();
     const help = page.getByRole('dialog', { name: helpTitle });
@@ -465,24 +680,37 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용', 'Tab from outside the help returns to the reading region');
     await page.keyboard.press('Escape');
     await help.waitFor({ state: 'hidden', timeout: 10000 });
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리 방식');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리·보관 방식 자세히');
     assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'closing help must not mark the first-visit notice as seen');
-    // In a narrow window the picture gives way and the one-line promise carries the message alone.
+    // The stacked fallback keeps privacy guidance readable without horizontal scrolling.
     await page.setViewportSize({ width: 800, height: 720 });
-    assert.equal(await flow.isVisible(), false, 'the picture is hidden in a narrow window');
     assert.equal(await privacyNote.isVisible(), true, 'the promise line stays in a narrow window');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
     await page.setViewportSize({ width: 1280, height: 720 });
+    await settleHomePaint(page);
     console.log('ok - new-record home keeps the local processing note and help without an engine answer');
 
     // 참석자·주요 용어 fold beside the 회의 정보 heading: closed by default, so the form keeps its height.
     const optionalToggle = page.getByRole('button', { name: '참석자·주요 용어 (선택)' });
     assert.equal(await optionalToggle.getAttribute('aria-expanded'), 'false');
     assert.equal(await page.getByLabel('참석자 (선택)').isVisible(), false, 'optional fields start folded');
-    const startBottomFolded = await page.evaluate(() => Math.round(document.querySelector('.writer-start-button').getBoundingClientRect().bottom));
+    const readStartPosition = () => page.evaluate(() => {
+      const button = document.querySelector('.writer-start-button');
+      const scrollingAncestors = [];
+      let parent = button.parentElement;
+      while (parent) {
+        if (parent.scrollTop) scrollingAncestors.push({ className: parent.className, scrollTop: parent.scrollTop });
+        parent = parent.parentElement;
+      }
+      const bottom = Math.round(button.getBoundingClientRect().bottom);
+      return { bottom, scrollingAncestors, contentBottom: bottom + scrollingAncestors.reduce((sum, ancestor) => sum + ancestor.scrollTop, 0) };
+    });
+    const startPositionFolded = await readStartPosition();
+    const startBottomFolded = startPositionFolded.bottom;
     await optionalToggle.click();
     const foldButton = page.getByRole('button', { name: '참석자·주요 용어 접기' });
     assert.equal(await foldButton.getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.evaluate(() => Math.round(document.querySelector('.writer-start-button').getBoundingClientRect().bottom)), startBottomFolded, 'expanding optional inputs leaves the work action in place');
     assert.equal(await page.evaluate(() => window.localStorage.getItem('writerOptionalInfoOpen')), '1');
     await page.getByLabel('참석자 (선택)').fill('김수산, 이자원, 박해양');
     const keyTermInput = page.getByLabel('주요 용어 (선택)');
@@ -508,8 +736,11 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     const summaryToggle = page.getByRole('button', { name: '참석자 3명 · 용어 1개' });
     assert.equal(await summaryToggle.getAttribute('aria-expanded'), 'false');
     assert.equal(await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).count(), 0);
-    const startBottomRefolded = await page.evaluate(() => Math.round(document.querySelector('.writer-start-button').getBoundingClientRect().bottom));
-    assert.equal(startBottomRefolded, startBottomFolded, 'folding returns the form to its original height');
+    await settleHomePaint(page);
+    const startPositionRefolded = await readStartPosition();
+    console.log(`optional action position: ${JSON.stringify({ before: startPositionFolded, after: startPositionRefolded })}`);
+    assert.equal(startPositionRefolded.contentBottom, startPositionFolded.contentBottom,
+      'folding preserves the action layout while allowing browser focus scrolling');
     assert.ok(startBottomFolded <= 720, `analysis start stays on the first 1280x720 screen while folded (${startBottomFolded})`);
     // The open state is remembered for the next visit; typed values are not.
     await summaryToggle.click();
@@ -625,14 +856,34 @@ const runEngineDownDeleteScene = async browser => {
 };
 
 const run = async () => {
+  if (process.env.NEW_RECORD_HOME_SCENARIO === 'capture') {
+    assert.ok(process.env.APP_URL, 'Capture requires APP_URL pointing to a caller-owned server.');
+  }
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'capture') {
+      await runEmptyHomeCapture(browser);
+      return;
+    }
     if (process.env.NEW_RECORD_HOME_SCENARIO === 'processing-help') {
       await runPrivacyNoteWithoutEngineScene(browser);
       return;
     }
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'analysis-entry') {
+      await runAnalysisEntryPointScene(browser);
+      return;
+    }
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'term-overflow') {
+      await runLongTermScene(browser);
+      return;
+    }
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'i-layout') {
+      await runIHomeLayoutScene(browser);
+      return;
+    }
     await runEmptyHomeScene(browser);
+    await runIHomeLayoutScene(browser);
     await runRecentListScene(browser);
     await runRecoveryScene(browser);
     await runPendingCancellationLockScene(browser);

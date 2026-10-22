@@ -590,10 +590,88 @@ const runSummaryReviewScenario = async (browser, width) => {
   }
 };
 
+
+const runProductionDetailScenario = async (browser, width) => {
+  const context = await browser.newContext({ viewport: { width, height: 900 } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  const audio = Buffer.alloc(44 + 8000 * 2 * 30);
+  audio.write('RIFF', 0); audio.writeUInt32LE(audio.length - 8, 4); audio.write('WAVEfmt ', 8);
+  audio.writeUInt32LE(16, 16); audio.writeUInt16LE(1, 20); audio.writeUInt16LE(1, 22);
+  audio.writeUInt32LE(8000, 24); audio.writeUInt32LE(16000, 28); audio.writeUInt16LE(2, 32); audio.writeUInt16LE(16, 34);
+  audio.write('data', 36); audio.writeUInt32LE(audio.length - 44, 40);
+  await page.route('**/api/outputs/*/audio', route => route.fulfill({ status: 200, contentType: 'audio/wav', body: audio }));
+  // Captured release state: the managed summary runtime is stopped but can start on demand.
+  await page.route('**/api/models/status', route => route.fulfill(json({
+    ready: true, summary_ready: false, summary_status: 'skipped', summary_reason: 'server_unreachable',
+    models: [{ key: 'llm', installed: false, inventory_checked: false }],
+    ollama_connection: { status: 'managed_stopped', can_auto_start: true, managed_runtime_available: true },
+  })));
+  const meeting = {
+    ...baseMeeting, id: 'production-detail', title: '주간 업무 협의',
+    meetingPurpose: '이번 주 진행 상황과 다음 일정 확인',
+    sourceFile: 'weekly-review.wav', jobId: 'production-detail-job',
+    sourceFileMetadata: { kind: 'audio', sizeBytes: 937000, durationSeconds: 30 },
+    analysisElapsedMs: 19000, diarizationRequested: true,
+    analysisNotes: ['음성은 이 PC에 보관됩니다. 다른 PC에서 열면 음성 파일을 다시 선택해 주세요.'],
+    segments: segments.map(segment => ({ ...segment, text: segment.text.repeat(8) })),
+    displaySegments: segments.map(segment => ({ ...segment, text: segment.text.repeat(8) })),
+  };
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor();
+    await putMeetings(page, [meeting]);
+    await openMeeting(page, meeting.title);
+    await page.locator('.script-row').first().waitFor();
+    await page.locator('.meeting-audio-player').waitFor();
+    const metrics = await page.evaluate(() => {
+      const status = document.querySelector('.meeting-analysis-status');
+      const text = document.querySelector('.script-text');
+      const row = document.querySelector('.script-row');
+      return { statusOverflow: status.scrollHeight - status.clientHeight,
+        textRatio: text.getBoundingClientRect().width / row.getBoundingClientRect().width,
+        documentOverflow: document.documentElement.scrollWidth - document.documentElement.clientWidth };
+    });
+    if (process.env.DETAIL_SCREENSHOTS) {
+      await mkdir(process.env.DETAIL_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: process.env.DETAIL_SCREENSHOTS + '/detail-' + width + '.png' });
+    }
+    if (!process.env.DETAIL_BASELINE) {
+      assert.ok(metrics.statusOverflow <= 1, 'durable processing guidance must not need a nested scrollbar');
+      assert.ok(metrics.documentOverflow <= 0, 'detail must fit the desktop viewport');
+      if (width >= 1440) assert.ok(metrics.textRatio >= 0.60, 'speech should own at least 60% of a wide transcript row');
+      const edit = page.getByRole('button', { name: '편집', exact: true });
+      const rename = page.getByRole('button', { name: '참석자 이름 변경', exact: true });
+      await rename.focus(); await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.activeElement?.closest('.speaker-label-panel'));
+      const panelOverflow = await page.locator('.speaker-label-panel').evaluate(el => el.scrollWidth - el.clientWidth);
+      assert.ok(panelOverflow <= 1, 'speaker name inputs fit the actual content column');
+      await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '취소', exact: true }).click();
+      await page.waitForFunction(() => document.activeElement?.id === 'speaker-label-trigger');
+      await edit.focus(); await page.keyboard.press('Enter');
+      await page.waitForFunction(() => document.activeElement?.classList.contains('script-edit-textarea'));
+      await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '취소', exact: true }).click();
+      await page.waitForFunction(() => document.activeElement?.id === 'transcript-edit-trigger');
+      await edit.click();
+      await page.locator('#meeting-detail-panel-script').getByRole('button', { name: '저장', exact: true }).click();
+      await page.waitForFunction(() => document.activeElement?.id === 'transcript-edit-trigger');
+      await page.getByRole('tab', { name: '기록 정리', exact: true }).click();
+      assert.equal(await page.getByRole('button', { name: '전체 요약 정리', exact: true }).isEnabled(), true, 'managed auto-start must allow summary without visiting settings');
+      assert.equal(await page.getByText('모델 필요', { exact: true }).count(), 0, 'a stopped managed runtime must not be presented as a missing model');
+      await page.getByRole('tab', { name: '대화록', exact: true }).click();
+      await page.getByRole('textbox', { name: '현재 회의에서 검색', exact: true }).fill('no-matching-speech');
+      await page.getByText('검색과 일치하는 대화록이 없습니다. 검색어를 바꾸거나 지워 주세요.', { exact: true }).waitFor();
+    }
+    console.log('ok - production detail at ' + width + 'px: ' + JSON.stringify(metrics));
+  } finally { await context.close(); }
+};
+
 const server = await startServer();
 const browser = await chromium.launch({ headless: true });
 try {
-  if (process.argv.includes('columns')) {
+  if (process.argv.includes('production')) {
+    for (const width of [1440, 1024, 860]) await runProductionDetailScenario(browser, width);
+  } else if (process.argv.includes('columns')) {
     for (const size of [{ width: 1280, height: 720 }, { width: 1440, height: 900 }]) await runColumnsScenario(browser, size);
   } else if (process.argv.includes('meta')) {
     await runNarrowMetaScenario(browser);

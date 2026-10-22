@@ -181,8 +181,8 @@ const verifyDefaultWriterGuidance = async browser => {
         message: (await statusOf(page).locator('.writer-status-message').allInnerTexts())[0] ?? null,
         buttons: await statusRowOf(page).locator('.writer-action-buttons > :is(button, a):not(.writer-start-button)').allInnerTexts(),
       });
-      // The development UI has the same status row without the connection step: ready says nothing (no 연결됨).
-      const emptyReadyRow = { state: 'ready', title: '', message: null, buttons: [] };
+      // Normal readiness uses the same compact status with or without connection setup.
+      const emptyReadyRow = { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] };
       if (scenario === 'anonymous') {
         await page.waitForFunction(() => {
           const button = document.querySelector('.writer-start-button');
@@ -192,7 +192,7 @@ const verifyDefaultWriterGuidance = async browser => {
         // The provider's background reconnect may probe; the writer must not start connecting.
         assert.equal(pairStartCount, 0, 'a working anonymous development API keeps its existing flow');
         assert.deepEqual(await rowText(), emptyReadyRow);
-        assert.equal(await page.getByText('연결됨', { exact: true }).count(), 0, 'no connection step, so no 연결됨');
+        assert.equal(await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).count(), 1, 'normal readiness is adjacent to start even without a connection setup step');
         assert.equal(await analyze.getAttribute('aria-describedby'), 'writer-local-engine-requirement');
       } else {
         if (scenario === 'outage-recovery') {
@@ -254,7 +254,7 @@ const verifyDefaultWriterGuidance = async browser => {
           assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).count(), 0);
           modelReady = true;
           await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-          await statusOf(page).getByText('연결됨', { exact: true }).waitFor();
+          await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).waitFor();
           assert.equal(await analyze.isEnabled(), true);
         }
         assert.ok(probeCount > 0);
@@ -349,7 +349,7 @@ const verifySummaryReadinessAfterPairing = async browser => {
     await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
     assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     await page.waitForFunction(() => document.querySelector('.writer-action-row')?.dataset.state === 'ready');
-    await statusOf(page).getByText('연결됨', { exact: true }).waitFor();
+    await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).waitFor();
     await row.locator('button[title]').filter({ hasText: record.title }).click();
     await detail.getByRole('tab', { name: '기록 정리', exact: true }).click();
     await page.waitForFunction(() => {
@@ -418,7 +418,7 @@ const verifyMissingModelsAfterPairing = async browser => {
     assert.equal(await rowState(page), 'models-missing');
     assert.equal(await status.getByText('음성 인식', { exact: true }).count(), 1, 'the sub-line lists what to download');
     assert.equal(await page.getByText('분석 준비 완료', { exact: true }).count(), 0, 'connected is not ready while a required model is missing');
-    assert.equal(await page.getByText('연결됨', { exact: true }).count(), 0, 'only the first blocked step is named');
+    assert.equal(await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).count(), 0, 'only the first blocked step is named');
     assert.equal(await page.getByText('준비할 모델', { exact: true }).count(), 0, 'no readiness banner below the form');
     assert.equal(await page.locator('.status-banner').count(), 0);
     assert.equal(await rail.getByRole('button', { name: '문제 해결 도움말' }).count(), 0, '모델 받기 is the whole fix, so there is no ?');
@@ -520,7 +520,7 @@ const verifyReadinessNoResponse = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
     await waitForRowState('ready');
-    await status.getByText('연결됨', { exact: true }).waitFor();
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
     assert.equal(await isAriaDisabled(start), false);
 
     // The engine stops answering. The next check (window focus) keeps the last answer until its request gives up.
@@ -580,7 +580,7 @@ const verifyReadinessNoResponse = async browser => {
     engine = 'answer';
     await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
     await waitForRowState('ready');
-    await status.getByText('연결됨', { exact: true }).waitFor();
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
     assert.equal(await warningShown(), 0);
     assert.equal(await isAriaDisabled(start), false, 'a recovered engine unlocks 분석 시작');
 
@@ -873,7 +873,7 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     // The user clicks again and allows this time.
     await page.evaluate(() => { window.__allowWhenAsked = true; });
     await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await status.getByText('연결됨', { exact: true }).waitFor();
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => window.__promptsShown), 2);
     assert.equal(engineRequests[0], '/api/probe', 'the first request to this PC is the user\'s own check');
     assert.ok(engineRequests.includes('/api/pair/start'));
@@ -924,13 +924,13 @@ const verifyAutomaticEngineConnection = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
     const status = statusOf(page);
-    await status.getByText('연결됨', { exact: true }).waitFor();
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
     assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'BODY', 'a connection the page made itself does not move focus');
     assert.equal(starts, 1);
     assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     assert.equal(await page.getByRole('dialog', { name: '이 브라우저 연결' }).count(), 0);
     await page.reload({ waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
-    await status.getByText('연결됨', { exact: true }).waitFor();
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
     assert.equal(starts, 1, 'reload restores the same browser instead of creating another connection');
     assert.ok(restores > 0);
     console.log('ok - installed engine connects automatically and survives reload without code or confirmation');
@@ -1060,7 +1060,7 @@ const verifyInputStage = async browser => {
   }, drafts);
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
-    await status.getByText('연결됨', { exact: true }).waitFor();
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
     await waitState('ready');
     assert.equal(await page.locator('#writer-form-error').count(), 0, 'before 분석 시작 nothing is listed');
     assert.equal(await start.getAttribute('aria-disabled'), null);
@@ -1076,8 +1076,8 @@ const verifyInputStage = async browser => {
 
     // Required fields: 분석 시작 stays available, lists what is left in screen order and goes to the first empty field.
     await start.click();
-    await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 제목, 회의 목적');
-    assert.equal(await activeId(), 'meeting-file-drop', 'focus moves to the first empty field on screen');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 제목, 회의 목적, 영상·음성 파일');
+    assert.equal(await activeId(), 'meeting-title', 'focus moves to the first empty field on screen');
     assert.equal(await start.getAttribute('aria-disabled'), null, 'empty fields alone do not block 분석 시작');
     assert.equal(await status.locator('.writer-status-message').getAttribute('id'), 'writer-form-error');
     assert.equal(await page.locator('#meeting-file-drop').getAttribute('aria-describedby'), 'writer-form-error');
@@ -1088,7 +1088,7 @@ const verifyInputStage = async browser => {
     assert.deepEqual(await startBox(), readyBox, '분석 시작 does not move');
     assert.equal(await rowHeight(), 40);
     await page.locator('#meeting-title').fill('입력 단계 확인');
-    await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 목적');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 목적, 영상·음성 파일');
     assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), null);
     await page.locator('#meeting-purpose').fill('막힌 첫 단계만 말하는지 확인');
     await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일');
@@ -1324,7 +1324,7 @@ const verifyIntroDismissals = async browser => {
     assert.equal(await seen(), '1', 'a backdrop click counts as having read the notice');
     await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     assert.equal(await intro.count(), 0, 'the first-visit notice does not repeat after reload');
-    const helpButton = page.getByRole('button', { name: '처리 방식', exact: true });
+    const helpButton = page.getByRole('button', { name: '처리·보관 방식 자세히', exact: true });
     await helpButton.click();
     await intro.waitFor({ state: 'visible' });
     await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
@@ -1332,7 +1332,7 @@ const verifyIntroDismissals = async browser => {
     assert.equal(await intro.getByRole('button', { name: /자세히|간단히/ }).count(), 0);
     await intro.getByRole('button', { name: '확인', exact: true }).click();
     await intro.waitFor({ state: 'hidden' });
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리 방식');
+    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리·보관 방식 자세히');
     await page.evaluate(() => window.localStorage.removeItem('localProcessingIntroSeen'));
     await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     await intro.getByRole('button', { name: '시작하기', exact: true }).click();
@@ -1598,7 +1598,7 @@ const run = async () => {
     nativeDecision = 'approved';
     await rail.getByRole('button', { name: '다시 연결', exact: true }).click();
 
-    await status.getByText('연결됨', { exact: true }).waitFor({ state: 'visible' });
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor({ state: 'visible' });
     assert.equal(await rowState(page), 'ready');
     assert.equal(await page.getByText('분석 준비 완료', { exact: true }).count(), 0, 'the old ready sentence is gone');
     assert.equal(await rail.locator('.writer-hint-action').count(), 0, 'nothing to fix, so no buttons besides 분석 시작');
@@ -1628,7 +1628,7 @@ const run = async () => {
     assert.equal(recoveredStatus, 200, 'the mounted provider must register request recovery');
     assert.equal(renewalRequests, 1);
     assert.equal(recoveryApiRequests, 2);
-    await status.getByText('연결됨', { exact: true }).waitFor({ state: 'visible' });
+    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor({ state: 'visible' });
 
     authRecoveryMode = 'expired';
     recoveryApiRequests = 0;

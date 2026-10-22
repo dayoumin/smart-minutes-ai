@@ -289,8 +289,8 @@ const run = async () => {
     assert.equal(await contextSelect.inputValue(), 'general');
     assert.equal(await page.getByLabel('선택한 정리 기준 설명').count(), 0);
 
-    await page.getByRole('button', { name: '정리 맥락 메뉴', exact: true }).click();
-    const initialContextMenu = page.getByRole('menu', { name: '정리 맥락 메뉴', exact: true });
+    await page.getByRole('button', { name: '정리 기준 관리', exact: true }).click();
+    const initialContextMenu = page.getByRole('menu', { name: '정리 기준 관리', exact: true });
     await initialContextMenu.waitFor({ timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem' && document.activeElement?.textContent?.includes('추가'));
     await initialContextMenu.getByRole('menuitem', { name: '추가', exact: true }).click();
@@ -323,17 +323,17 @@ const run = async () => {
     await refreshedContextSelect.waitFor({ timeout: 10000 });
     assert.equal(await refreshedContextSelect.inputValue(), customContextId);
 
-    await page.getByRole('button', { name: '정리 맥락 메뉴', exact: true }).click();
-    const contextMenu = page.getByRole('menu', { name: '정리 맥락 메뉴', exact: true });
+    await page.getByRole('button', { name: '정리 기준 관리', exact: true }).click();
+    const contextMenu = page.getByRole('menu', { name: '정리 기준 관리', exact: true });
     await contextMenu.waitFor({ timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem' && document.activeElement?.textContent?.includes('추가'));
     await page.keyboard.press('ArrowDown');
     await page.waitForFunction(() => document.activeElement?.getAttribute('role') === 'menuitem' && document.activeElement?.textContent?.includes('변경'));
     await page.keyboard.press('Escape');
     await page.waitForFunction(() => document.activeElement?.id === 'context-template-menu-button');
-    assert.equal(await page.getByRole('menu', { name: '정리 맥락 메뉴', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('menu', { name: '정리 기준 관리', exact: true }).count(), 0);
 
-    await page.getByRole('button', { name: '정리 맥락 메뉴', exact: true }).click();
+    await page.getByRole('button', { name: '정리 기준 관리', exact: true }).click();
     await page.getByRole('menuitem', { name: '변경', exact: true }).click();
     const editContextDialog = page.getByRole('dialog', { name: '정리 맥락 수정' });
     await editContextDialog.locator('textarea').fill('수정된 보고 안건과 후속 조치 중심으로 정리한다.');
@@ -370,7 +370,7 @@ const run = async () => {
     await page.getByLabel('이번 정리 기준 선택', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByLabel('이번 정리 기준 선택', { exact: true }).inputValue(), customContextId);
 
-    await page.getByRole('button', { name: '정리 맥락 메뉴', exact: true }).click();
+    await page.getByRole('button', { name: '정리 기준 관리', exact: true }).click();
     await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
     const deleteDialog = page.getByRole('dialog', { name: '정리 맥락 삭제' });
     await deleteDialog.getByText('이사회 보고', { exact: true }).waitFor({ timeout: 10000 });
@@ -378,7 +378,7 @@ const run = async () => {
     assert.equal(await page.getByRole('dialog', { name: '정리 맥락 삭제' }).count(), 0);
     assert.equal((await contextSelect.inputValue()).startsWith('custom-context-'), true);
 
-    await page.getByRole('button', { name: '정리 맥락 메뉴', exact: true }).click();
+    await page.getByRole('button', { name: '정리 기준 관리', exact: true }).click();
     await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
     await page.getByRole('dialog', { name: '정리 맥락 삭제' }).getByRole('button', { name: '삭제', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {
@@ -424,7 +424,7 @@ const run = async () => {
     await contextDescription.getByText('이번 정리 기준: 이사회 보고', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByText('정리 맥락을 복원했습니다.', { exact: true }).waitFor({ timeout: 10000 });
 
-    await page.getByRole('button', { name: '정리 맥락 메뉴', exact: true }).click();
+    await page.getByRole('button', { name: '정리 기준 관리', exact: true }).click();
     await page.getByRole('menuitem', { name: '삭제', exact: true }).click();
     await page.getByRole('dialog', { name: '정리 맥락 삭제' }).getByRole('button', { name: '삭제', exact: true }).click();
     await page.waitForFunction(async ({ meetingId }) => {

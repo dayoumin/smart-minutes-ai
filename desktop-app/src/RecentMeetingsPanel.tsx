@@ -53,6 +53,7 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
     const recoverySnapshot = useAnalysisResumeSnapshot();
     const [meetings, setMeetings] = useState<MeetingRecord[]>([]);
     const [meetingsError, setMeetingsError] = useState<string | null>(null);
+    const [meetingsLoaded, setMeetingsLoaded] = useState(false);
     const [loadedAt, setLoadedAt] = useState(() => Date.now());
     const meetingsRequestRef = React.useRef(0);
 
@@ -67,6 +68,8 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
         } catch {
             if (requestId !== meetingsRequestRef.current) return;
             setMeetingsError('저장된 회의록을 불러오지 못했습니다.');
+        } finally {
+            if (requestId === meetingsRequestRef.current) setMeetingsLoaded(true);
         }
     }, []);
 
@@ -140,10 +143,11 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
     );
 
     // The recovery card never hides the recent list, so an unwanted draft cannot bury recent meetings.
-    let recentSection: React.ReactNode = null;
+    let recentSection: React.ReactNode;
     if (meetingsError) {
         recentSection = (
             <section className="recent-meetings" aria-label="최근 회의록">
+                <h3 className="recent-meetings-title">최근 회의록</h3>
                 <div className="recent-meetings-error" role="status">
                     <span>{meetingsError}</span>
                     <Button variant="ghost" onClick={() => void refreshMeetings()}>
@@ -176,9 +180,21 @@ export const RecentMeetingsPanel: React.FC<RecentMeetingsPanelProps> = ({ onOpen
                 ))}
             </section>
         );
+    } else {
+        const loading = !meetingsLoaded || initialRecoveryCheckPending;
+        recentSection = (
+            <section className="recent-meetings" aria-labelledby="recent-meetings-title" aria-busy={loading}>
+                <h3 id="recent-meetings-title" className="recent-meetings-title">최근 회의록</h3>
+                <div className="recent-meetings-empty">
+                    {loading ? <span>회의록을 불러오는 중입니다</span> : <>
+                        <p>아직 저장된 회의록이 없습니다</p>
+                        <span>분석을 마치면 여기에 최근 회의록이 표시됩니다.</span>
+                    </>}
+                </div>
+            </section>
+        );
     }
 
-    if (!recoveryCard && !recentSection) return null;
     return (
         <>
             {recoveryCard}

@@ -49,6 +49,36 @@ def _release_function(name: str) -> str:
     return match.group(0)
 
 
+def _payload_entry(root: Path, relative: str) -> dict:
+    path = root / relative.replace("\\", "/")
+    return {"path": relative, "sha256": _sha256(path).upper(), "bytes": path.stat().st_size}
+
+
+def _packaged_ollama_readme() -> bytes:
+    source = (ROOT / "scripts/portable_data_safety.ps1").read_text(encoding="utf-8")
+    match = re.search(r'function Get-PortableOllamaReadmeText[\s\S]+?FromBase64String\("([^"]+)"\)', source)
+    assert match is not None, "Could not find the packaged Ollama guide"
+    import base64
+    return base64.b64decode(match.group(1))
+
+
+def _run_handoff(portable: Path, package_name: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+         str(ROOT / "scripts" / "create_handoff_package.ps1"), "-PortableDir", str(portable),
+         "-PackageName", package_name, "-AllowStale", "-Force"],
+        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=60,
+    )
+
+
+# Files users or the app put inside backend. Neither the deploy sync nor a
+# handoff may delete, replace or ship them.
+BACKEND_USER_FILES = {
+    "backend/outputs - 복사본/result.json": "user copy of results",
+    "backend/models/stt/model.bin": "alias model folder",
+}
+
+
 class PortableReleaseScriptTest(unittest.TestCase):
     def test_root_build_script_targets_user_ready_portable_release(self):
         root_package = json.loads((ROOT / "package.json").read_text(encoding="utf-8"))
@@ -211,7 +241,8 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
             (portable / "backend" / "config.json").write_text('{"private":"D:/private-meetings"}', encoding="utf-8")
             private_paths = ("personal-backup.json", "logs/private.log", "backend/database/records",
                              "backend/history.db", "backend/history.db-wal", "backend/history.sqlite3-shm",
-                             "backend/outputs/result.json", "backend/temp/resume.json", "backend/logs/private.log")
+                             "backend/outputs/result.json", "backend/temp/resume.json", "backend/logs/private.log",
+                             *BACKEND_USER_FILES)
             for relative in private_paths:
                 private_path = portable / relative
                 private_path.parent.mkdir(parents=True, exist_ok=True)
@@ -255,6 +286,13 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
                     },
                 },
                 "modelMarkers": model_markers,
+                "portablePayloadFiles": [
+                    _payload_entry(portable, relative) for relative in (
+                        "lmo_audio.exe", "START_HERE.txt", "backend\\main.py",
+                        "binaries\\meeting-backend-x86_64-pc-windows-msvc.exe", "runtime\\ollama\\README.txt",
+                        "runtime\\ollama\\ollama.exe", "runtime\\ollama\\ollama.dll",
+                    )
+                ],
             }
             (portable / "release-manifest.json").write_text(json.dumps(release_manifest), encoding="utf-8")
 
@@ -330,6 +368,11 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
                         payload_by_path["START_HERE.txt"]["sha256"],
                         hashlib.sha256(archive.read("lmo_audio/START_HERE.txt")).hexdigest(),
                     )
+                    # The archive lists the build's verified files, minus the Ollama runtime.
+                    self.assertEqual(set(payload_by_path), {
+                        "lmo_audio.exe", "START_HERE.txt", "backend\\main.py",
+                        "binaries\\meeting-backend-x86_64-pc-windows-msvc.exe", "runtime\\ollama\\README.txt",
+                    })
                     marker_by_path = {marker["path"]: marker for marker in manifest["modelMarkers"]}
                     self.assertFalse(marker_by_path["models\\faster-whisper-large-v3\\model.bin"]["exists"])
                     self.assertTrue(marker_by_path["models\\faster-whisper-large-v3\\model.bin"]["excludedFromHandoff"])
@@ -1114,10 +1157,35 @@ Test-ManifestDrift '{portable}' '{manifest}' | ConvertTo-Json -Depth 3
                     path = base / relative
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_text(content, encoding="utf-8")
-            for relative in ("backend/obsolete.py", "binaries/obsolete.dll"):
+            for relative in ("backend/obsolete.py", "binaries/obsolete.dll", "backend/edited.py"):
                 path = destination / relative
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text("obsolete", encoding="utf-8")
+            # The installed build listed its backend code. Only listed, unchanged
+            # files that the new build drops may go.
+            for relative, content in BACKEND_USER_FILES.items():
+                preserved[relative] = content
+                path = destination / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+            result = _payload_entry(destination, "backend\\outputs\\result.json")
+            config = _payload_entry(destination, "backend\\config.json")
+            (destination / "release-manifest.json").write_text(json.dumps({"portablePayloadFiles": [
+                _payload_entry(destination, "backend\\obsolete.py"), _payload_entry(destination, "backend\\edited.py"),
+                # User data a damaged list might name, some in spellings that
+                # resolve to the same file, and an entry without a hash.
+                result, config, _payload_entry(destination, "backend\\history.db"),
+                {**result, "path": "backend\\.\\outputs\\result.json"},
+                {**result, "path": "backend\\x\\..\\outputs\\result.json"},
+                {**config, "path": "backend\\config.json."},
+                {"path": "backend\\models\\stt\\model.bin"},
+            ]}), encoding="utf-8")
+            (destination / "backend/edited.py").write_text("edited by user", encoding="utf-8")
+            legacy = root / "legacy"
+            for relative, content in {"backend/obsolete.py": "obsolete", "release-manifest.json": "{}"}.items():
+                path = legacy / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
             # Source-side runtime data must neither replace existing records nor
             # be copied to a fresh installation.
             for relative in ("backend/outputs/private.json", "backend/history.db-wal"):
@@ -1131,17 +1199,26 @@ $PortableAppExeName = "lmo_audio.exe"
 . '{ROOT / 'scripts/portable_data_safety.ps1'}'
 {sync.group(0)}
 Sync-PortableToDeploy '{source}' '{destination}'
+Write-Host "=== fresh"
 Sync-PortableToDeploy '{source}' '{fresh}'
+Write-Host "=== legacy"
+Sync-PortableToDeploy '{source}' '{legacy}'
 exit 0
 ''')
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
             self.assertEqual(before, {relative: _sha256(destination / relative) for relative in preserved})
+            # Only a manifest without a list warns; a fresh folder has nothing to clean.
+            fresh_output, legacy_output = completed.stdout.split("=== fresh")[1].split("=== legacy")
+            self.assertNotIn("no package file list", fresh_output)
+            self.assertIn("no package file list", legacy_output)
+            self.assertEqual((legacy / "backend/obsolete.py").read_text(encoding="utf-8"), "obsolete")
             for relative, content in packaged.items():
                 self.assertEqual((fresh / relative).read_text(encoding="utf-8"), content)
                 if relative != "backend/config.json":
                     self.assertEqual((destination / relative).read_text(encoding="utf-8"), content)
             for relative in ("backend/obsolete.py", "binaries/obsolete.dll"):
                 self.assertFalse((destination / relative).exists())
+            self.assertEqual((destination / "backend/edited.py").read_text(encoding="utf-8"), "edited by user")
             for base in (destination, fresh):
                 self.assertFalse((base / "backend/outputs/private.json").exists())
             self.assertFalse((fresh / "backend/history.db-wal").exists())
@@ -1280,6 +1357,156 @@ if ($script:Failed) {{
 """
             completed = _run_powershell(command)
             self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+
+
+class HandoffDataSafetyTest(unittest.TestCase):
+    def _make_portable(self, root: Path, ollama_installed: bool, embedded_ollama: bool = False) -> Path:
+        portable = root / "lmo_audio"
+        files = {
+            "lmo_audio.exe": "app", "START_HERE.txt": "full package", "backend/main.py": "backend",
+            "backend/config.json": "{}", "binaries/meeting-backend-x86_64-pc-windows-msvc.exe": "sidecar",
+            "models/speaker-diarization-community-1/config.yaml": "config",
+            "models/speaker-diarization-community-1/embedding/pytorch_model.bin": "embedding",
+            "models/speaker-diarization-community-1/segmentation/pytorch_model.bin": "segmentation",
+            "models/speaker-diarization-community-1/plda/plda.npz": "plda",
+            **BACKEND_USER_FILES,
+        }
+        for relative, content in files.items():
+            path = portable / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(content, encoding="utf-8")
+        readme = portable / "runtime/ollama/README.txt"
+        readme.parent.mkdir(parents=True)
+        readme.write_bytes(_packaged_ollama_readme())
+        entries = [_payload_entry(portable, relative) for relative in (
+            "lmo_audio.exe", "START_HERE.txt", "backend\\main.py",
+            "binaries\\meeting-backend-x86_64-pc-windows-msvc.exe", "runtime\\ollama\\README.txt",
+        )]
+        if ollama_installed:
+            # Installing Ollama from the app replaces the guide.
+            readme.unlink()
+            (portable / "runtime/ollama/ollama.exe").write_text("downloaded runtime", encoding="utf-8")
+        if embedded_ollama:
+            # A build that ships Ollama has the runtime in its list and no guide.
+            readme.unlink()
+            (portable / "runtime/ollama/ollama.exe").write_text("embedded runtime", encoding="utf-8")
+            entries = [entry for entry in entries if entry["path"] != "runtime\\ollama\\README.txt"]
+            entries.append(_payload_entry(portable, "runtime\\ollama\\ollama.exe"))
+        manifest = {"app": "lmo_audio", "commit": "abcdef1234567890", "dirty": False, "files": {},
+                    "modelMarkers": [], "portablePayloadFiles": entries}
+        (portable / "release-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return portable
+
+    def test_handoff_restores_ollama_guide_from_an_installation_that_installed_ollama(self):
+        package_name = f"test_ollama_guide_{id(self)}"
+        package_zip = ROOT / "releases" / "handoff" / f"{package_name}.zip"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = self._make_portable(Path(temp_dir), ollama_installed=True)
+            before = {path: _sha256(path) for path in portable.rglob("*") if path.is_file()}
+            try:
+                completed = _run_handoff(portable, package_name)
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                with zipfile.ZipFile(package_zip) as archive:
+                    names = set(archive.namelist())
+                    self.assertEqual(archive.read("lmo_audio/runtime/ollama/README.txt"), _packaged_ollama_readme())
+                    self.assertNotIn("lmo_audio/runtime/ollama/ollama.exe", names)
+                    for relative in BACKEND_USER_FILES:
+                        self.assertNotIn(f"lmo_audio/{relative}", names)
+                self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
+                self.assertFalse((ROOT / "releases" / "handoff" / ".staging" / package_name).exists())
+            finally:
+                package_zip.unlink(missing_ok=True)
+
+    def test_handoff_from_embedded_ollama_build_adds_the_guide(self):
+        package_name = f"test_embedded_ollama_{id(self)}"
+        package_zip = ROOT / "releases" / "handoff" / f"{package_name}.zip"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = self._make_portable(Path(temp_dir), ollama_installed=False, embedded_ollama=True)
+            try:
+                completed = _run_handoff(portable, package_name)
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                with zipfile.ZipFile(package_zip) as archive:
+                    names = set(archive.namelist())
+                    guide = archive.read("lmo_audio/runtime/ollama/README.txt")
+                    self.assertEqual(guide, _packaged_ollama_readme())
+                    self.assertNotIn("lmo_audio/runtime/ollama/ollama.exe", names)
+                    manifest = json.loads(archive.read("lmo_audio/release-manifest.json").decode("utf-8-sig"))
+                    listed = {entry["path"]: entry for entry in manifest["portablePayloadFiles"]}
+                    self.assertNotIn("runtime\\ollama\\ollama.exe", listed)
+                    self.assertEqual(listed["runtime\\ollama\\README.txt"]["sha256"], hashlib.sha256(guide).hexdigest())
+                    self.assertEqual(manifest["handoff"]["payloadList"], "build")
+            finally:
+                package_zip.unlink(missing_ok=True)
+
+    def test_handoff_refuses_installation_that_differs_from_its_build(self):
+        package_name = f"test_changed_code_{id(self)}"
+        package_zip = ROOT / "releases" / "handoff" / f"{package_name}.zip"
+        for case in ("changed", "missing", "no list"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temp_dir:
+                portable = self._make_portable(Path(temp_dir), ollama_installed=False)
+                code = portable / "backend/main.py"
+                if case == "changed":
+                    code.write_text("edited after build", encoding="utf-8")
+                    expected = "differs from its build manifest"
+                elif case == "missing":
+                    code.unlink()
+                    expected = "missing a file its build manifest lists"
+                else:
+                    manifest_path = portable / "release-manifest.json"
+                    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+                    del manifest["portablePayloadFiles"]
+                    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                    expected = "has no package file list"
+                try:
+                    completed = _run_handoff(portable, package_name)
+                    self.assertNotEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                    self.assertIn(expected, completed.stdout + completed.stderr)
+                    self.assertFalse(package_zip.exists())
+                    self.assertFalse((ROOT / "releases" / "handoff" / ".staging" / package_name).exists())
+                finally:
+                    package_zip.unlink(missing_ok=True)
+
+    def test_existing_installation_check_accepts_whisper_added_after_handoff(self):
+        verifier = (ROOT / "scripts/verify_portable.ps1").read_text(encoding="utf-8")
+        add_result = re.search(r"function Add-Result[\s\S]+?(?=\r?\nfunction Get-PeSubsystem)", verifier).group(0)
+        check = re.search(r"function Test-ReleaseManifest[\s\S]+?(?=\r?\nfunction Test-CleanPortableSurface)", verifier).group(0)
+        hashing = _release_function("Get-FileHashValue")
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = Path(temp_dir) / "lmo_audio"
+            whisper = portable / "models/faster-whisper-large-v3/model.bin"
+            other = portable / "models/other/model.bin"
+            (portable / "backend").mkdir(parents=True)
+            (portable / "backend/config.json").write_text("{}", encoding="utf-8")
+            manifest = portable / "release-manifest.json"
+
+            def verify(existing: bool, markers: list, failed: bool) -> str:
+                manifest.write_text(json.dumps({"dirty": False, "files": {}, "modelMarkers": markers}), encoding="utf-8")
+                result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$ExistingInstallation = ${str(existing).lower()}
+$script:Results = @(); $script:Failed = $false
+{hashing}
+{add_result}
+{check}
+Test-ReleaseManifest '{portable}' '{manifest}' $false
+$Results | ConvertTo-Json -Depth 5
+if ($Failed -ne ${str(failed).lower()}) {{ throw 'Unexpected manifest verification result' }}
+''')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return result.stdout
+
+            handoff_marker = {"path": "models\\faster-whisper-large-v3\\model.bin", "exists": False,
+                              "bytes": None, "excludedFromHandoff": True}
+            verify(True, [handoff_marker], False)
+            for path in (whisper, other):
+                path.parent.mkdir(parents=True)
+                path.write_text("model", encoding="utf-8")
+            verify(True, [handoff_marker], False)
+            # The fresh-archive check still expects the handoff layout.
+            self.assertIn("existence mismatch", verify(False, [handoff_marker], True))
+            # Only markers the handoff left out may appear later.
+            plain_marker = {"path": "models\\other\\model.bin", "exists": False, "bytes": None}
+            self.assertIn("existence mismatch", verify(True, [plain_marker], True))
 
 
 if __name__ == "__main__":

@@ -162,18 +162,20 @@ corepack pnpm check:portable
 
 portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 안에 섞여 있다. 그래서 업데이트가 폴더를 다룰 때마다 주인을 구분해야 한다. 위치가 늘거나 동작이 바뀌면 이 표부터 고친다.
 
-| 위치 | 주인 | 업데이트(`Sync-PortableToDeploy`) | 전달 ZIP |
+패키지 파일의 기준은 빌드 manifest의 파일 목록(`portablePayloadFiles`)이다. 업데이트 패키지와 전달 ZIP은 폴더를 훑지 않고 이 목록대로 만든다. 사용자 자료가 섞인 `backend\`에서 지우는 파일은 설치본의 이전 manifest 목록에 있고, 그 뒤 바뀌지 않았고, 새 빌드에 없는 것뿐이다. 목록에 없는 파일은 사용자 것으로 보고 둔다. 사용자 자료 위치는 목록에 적혀 있어도, `.`·`..`·끝의 점처럼 다른 표기로 적혀 있어도 Windows가 여는 실제 경로로 판단해 건드리지 않는다. 새 manifest는 작업이 끝난 뒤 마지막에 복사하므로, 중간에 멈춰도 다음 실행이 설치본의 이전 목록을 다시 읽는다.
+
+| 위치 | 주인 | 배포 동기화(`Sync-PortableToDeploy`)·업데이트 패키지(`update_lmo_audio.ps1`) | 전달 ZIP |
 | --- | --- | --- | --- |
-| `lmo_audio.exe`, `START_HERE.txt`, `release-manifest.json` | 패키지 | 덮어쓴다. manifest는 검증된 빌드의 것을 그대로 복사한다 | 포함(manifest는 ZIP 기준으로 갱신) |
-| `binaries\` | 패키지 | `/MIR` 통째로 맞춘다 | 포함 |
-| `backend\` 코드 | 패키지 | `/MIR`, 단 아래 사용자 자료는 제외. 목록에 없는 파일은 패키지로 보고 지운다(알려진 한계) | 포함. 아래 이름만 뺀다(알려진 한계) |
-| `backend\models\stt`, `backend\models\diarization`(앱이 인식하는 별칭 모델 위치) | 사용자 | 보호되지 않아 `/MIR`로 지워진다(알려진 한계) | 포함된다(알려진 한계) |
-| `backend\config.json` | 사용자 | 없을 때만 기본값을 넣는다 | 설치본 것 대신 HEAD 기본값 |
-| `backend\outputs`·`temp`·`logs`·`database`, `*.db*`, `*.sqlite*` | 사용자 | 건드리지 않는다 | 제외 |
-| `models\` | 패키지 + 사용자 다운로드 | `/E`로 추가·갱신만 하고 지우지 않는다. 이름이 같은 파일은 빌드 것으로 덮어쓴다 | 정한 모델 폴더만 |
+| `lmo_audio.exe`, `START_HERE.txt`, `release-manifest.json` | 패키지 | 덮어쓴다. manifest는 검증된 빌드의 것을 그대로 복사한다(업데이트 패키지는 적용 기록을 덧붙인다) | 포함. manifest의 파일 목록은 빌드 것을 유지하고 새로 쓴 `START_HERE.txt` 항목만 고친다 |
+| `binaries\` | 패키지 | 통째로 맞춘다(`/MIR`) | 빌드 목록대로, 빌드 해시와 대조해 담는다 |
+| `backend\` 코드 | 패키지 | 새 코드를 복사하고, 이전 목록에 있던 파일 중 바뀌지 않았고 새 빌드에 없는 것만 지운다. 이전 manifest에 목록이 없으면 지우지 않고 경고한다 | 빌드 목록대로, 빌드 해시와 대조해 담는다. 다르거나 없으면 만들지 않는다 |
+| `backend\` 안에 사용자가 둔 파일(예: `outputs - 복사본`, 별칭 모델 위치 `backend\models\stt`·`diarization`), 설치 뒤 사용자가 고친 패키지 파일 | 사용자 | 목록에 없거나 바뀌었으므로 지우지 않는다. 고친 패키지 파일을 새 빌드가 다시 담고 있으면 새 것으로 덮어쓴다 | 제외 |
+| `backend\config.json` | 사용자 | 배포 동기화는 없을 때만 기본값을 넣는다. 업데이트 패키지는 건드리지 않는다 | 설치본 것 대신 HEAD 기본값 |
+| `backend\outputs`·`temp`·`logs`·`database`, `*.db*`, `*.sqlite*` | 사용자 | 건드리지 않는다. 목록에 들어 있어도 지우거나 덮어쓰지 않는다 | 제외 |
+| `models\` | 패키지 + 사용자 다운로드 | 배포 동기화는 `/E`로 추가·갱신만 하고 지우지 않는다(이름이 같은 파일은 빌드 것으로 덮어쓴다). 업데이트 패키지는 건드리지 않는다 | 정한 모델 폴더만 |
 | `models\ollama` | 사용자(Ollama 모델) | 건드리지 않는다 | 제외 |
-| `runtime\ollama` | 빌드에 `ollama.exe`가 있으면 패키지, 없으면 사용자 | 있으면 `/MIR` 통째 교체, 없으면 `/E`로 사용자 것 보존 | `README.txt`만. 설치본에 README가 없으면 폴더째 빠진다(알려진 한계) |
-| 그 밖의 `runtime\` | 패키지 | `/E` | 포함 |
+| `runtime\ollama` | 빌드에 `ollama.exe`가 있으면 패키지, 없으면 사용자 | 배포 동기화는 있으면 `/MIR` 통째 교체, 없으면 `/E`로 사용자 것 보존. 업데이트 패키지는 건드리지 않는다 | `README.txt`만. 앱으로 Ollama를 받아 README가 사라졌으면 빌드와 같은 내용으로 되살린다 |
+| 그 밖의 `runtime\` | 패키지 | 배포 동기화는 `/E`. 업데이트 패키지는 건드리지 않는다(알려진 한계) | 빌드 목록대로 담는다 |
 | 루트 `logs\`, 개인 백업 등 그 밖의 최상위 파일 | 사용자 | 건드리지 않는다 | 제외 |
 | WebView 회의 목록(`%LOCALAPPDATA%\com.nifs.smart-minutes-ai\EBWebView`) | 사용자 | 폴더 밖. `-ClearWebViewCache`는 캐시와 `Session Storage`만 지우고 IndexedDB는 보존한다 | 해당 없음 |
 
@@ -193,14 +195,15 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 데스크톱 업데이트와 공통:
 
 - [ ] **주인 구분**: 앱이 새 파일·폴더를 만들기 시작했다면 위 표에 주인과 업데이트·전달 동작을 먼저 적었다.
-- [ ] **설정으로 바뀌는 경로**: `paths.*`, `summary.model`, 활성 양식처럼 사용자가 위치를 바꿀 수 있는 값을 `portable_data_safety.ps1`이 검사한다. 해석 기준은 앱과 같은 `backend` 작업 위치다(상대·드라이브 상대 `D:x`·루트 상대 `\x` 포함). 셸 위치 기준으로 해석하지 않는다. 배포 동기화와 전달 ZIP에만 적용되고, 업데이트 패키지에는 아직 적용되지 않는다(아래 알려진 한계).
+- [ ] **설정으로 바뀌는 경로**: `paths.*`, `summary.model`, 활성 양식처럼 사용자가 위치를 바꿀 수 있는 값을 `portable_data_safety.ps1`이 검사한다. 해석 기준은 앱과 같은 `backend` 작업 위치다(상대·드라이브 상대 `D:x`·루트 상대 `\x` 포함). 셸 위치 기준으로 해석하지 않는다. 배포 동기화, 업데이트 패키지 생성과 적용, 전달 ZIP에 모두 적용된다.
 - [ ] **폴더별 동작 선택**: `/MIR`은 패키지가 전부 소유한 폴더에만 쓴다. `/E`는 버전이 섞여도 안전한 폴더에만 쓴다. 섞이면 고장 나는 실행 파일 묶음은 통째로 교체한다.
+- [ ] **지울 파일의 근거**: 사용자 자료가 섞인 폴더(`backend\`)에서는 설치본의 이전 manifest 목록에 있고 그 뒤 바뀌지 않은 파일만 지운다. 폴더를 훑어 "새 빌드에 없으니 지운다"로 판단하지 않는다. 공통 규칙은 `portable_data_safety.ps1`의 `Remove-StalePortablePackageFiles`·`Test-PortableUserDataPath`에 있다.
 - [ ] **시험 실행 위치**: 앱을 실제로 켜는 smoke는 중간 빌드 폴더에서만 실행한다. `releases\lmo_audio`는 `-ExistingInstallation`으로 읽기만 한다. 검사를 통과시키려고 기록·로그·설정을 지우지 않는다.
 - [ ] **비교 기준**: 설치본 무결성은 검증된 빌드 manifest와 비교한다. 동기화 뒤 대상 폴더로 manifest를 다시 만들지 않는다. 다시 만들면 잘못 복사된 파일도 정상으로 기록된다.
 - [ ] **앱이 스스로 바꾸는 파일**: 설치 후 앱이 바꾸는 파일(`backend\config.json`, Ollama 설치로 사라지는 `runtime\ollama\README.txt`)을 알고 있다. 검사 예외는 정확한 파일과 조건으로만 둔다.
 - [ ] **종료 범위**: 프로세스 종료는 그 설치 폴더 안의 실행 파일 경로로만 고른다. 이름이나 명령행으로 넓게 고르지 않는다. 웹 엔진(17863)과 다른 설치본은 종료하지 않는다.
 - [ ] **두 제품 공존**: 데스크톱 포트는 17864부터 고르고 17863은 쓰지 않는다. 기록·설정 위치는 제품마다 따로 둔다. RAM·GPU·시스템 Ollama 공유는 허용된 제약이며 완전 격리로 설명하지 않는다.
-- [ ] **전달 ZIP**: 허용한 최상위 항목만 담고, 설정은 HEAD 기본값으로 넣는다. `backend` 안의 결과·임시·로그·DB는 정해진 이름으로 뺀다. 그 밖의 `backend` 안 개인 파일은 아직 걸러지지 않는다(아래 알려진 한계).
+- [ ] **업데이트 패키지·전달 ZIP**: 빌드 manifest 목록대로 담고, 설치본 파일을 빌드 해시와 대조한다. 다르거나 빠진 파일이 있으면 만들지 않는다. 설정은 담지 않거나(업데이트) HEAD 기본값으로 넣는다(전달 ZIP). 목록에 없는 `backend` 안 개인 파일은 담기지 않는다.
 - [ ] **테스트 방식**: 임시 fixture로만 시험하고 `releases\lmo_audio`나 실행 중인 앱은 쓰지 않는다. 수정 전 코드에서 새 테스트가 실패하는지 확인한다. 실행 전후 파일 해시로 보존을 확인한다.
 - [ ] **확인 명령과 문서**: `check:portable`, `verify:portable`, 릴리스 스킬, 이 문서의 작업 순서가 현재 흐름과 같다. 예전 명령이 남으면 정상 빌드도 실패로 보인다.
 - [ ] **커밋 범위**: 여러 세션이 같은 작업 트리를 바꿨다면 검토한 변경만 커밋한다. 빌드 전에 커밋해 manifest가 HEAD를 가리키게 한다.
@@ -217,15 +220,14 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 - [ ] **화면·엔진 호환**: 화면은 즉시 바뀌고 엔진은 늦게 바뀐다. 호환 번호를 바꾸기 전에, 새 화면이 아직 업데이트하지 않은 엔진을 만났을 때 무엇을 보여 줄지(업데이트 안내) 먼저 정하고 시험한다. 한 번에 한쪽만 올려도 동작하도록 순서를 정한다.
 - [ ] **엔진 설치 프로그램 약속**: 실행 중인 엔진은 `--stop`으로 멈추고 멈춤을 확인한 뒤 교체한다. 설치 프로그램이 만든 파일 목록 밖은 지우지 않는다. 새 엔진이 시작되지 않으면 되돌린다. 제거해도 자료 폴더는 남긴다. 이 동작을 바꾸면 기존 설치본 위 실제 업데이트로 파일 해시와 자료 보존을 대조한다.
 
-### 알려진 한계 (2026-10-22 빌드 전 검토)
+### 알려진 한계
 
-빌드 경로(`corepack pnpm build`)에는 영향이 없지만, 업데이트 패키지와 전달 ZIP을 만들기 전에 고쳐야 할 것들이다. 해결 방향은 둘이다. ZIP과 업데이트 payload를 폴더 순회가 아니라 빌드 manifest의 파일 목록(`portablePayloadFiles`)으로 만들고, 업데이트 적용에도 `portable_data_safety.ps1` 검사를 건다. 후속 작업은 `todo.md`에서 관리한다.
+2026-10-22 빌드 전 검토에서 나온 업데이트 패키지·전달 ZIP 위험(backend 로그·DB·알 수 없는 파일 삭제와 유출, 앱으로 Ollama를 받은 설치본의 README 실패, 전달 ZIP의 비교 기준, Whisper를 넣은 전달 ZIP 검사)은 같은 날 위 규칙으로 고쳤다. 남은 한계는 다음과 같다.
 
-- **업데이트 패키지 적용**: `update_lmo_audio.ps1`은 `backend\outputs`·`temp`·`config.json`만 보존한다. `backend\logs`, DB 파일, 설정으로 `backend` 안에 둔 결과 폴더는 지워진다. `create_update_package.ps1`은 그 항목을 payload에 넣는다.
-- **`backend` 안의 알 수 없는 파일**: 정해진 이름만 빼는 방식이라, 사용자가 만든 다른 폴더(예: `outputs - 복사본`)는 배포 동기화에서 지워지고 전달 ZIP과 업데이트 payload에는 들어간다. 앱이 인식하는 별칭 모델 위치(`backend\models\stt`, `backend\models\diarization`)도 같다.
-- **앱으로 Ollama를 받은 설치본**: `package:update`가 `runtime\ollama\README.txt` 누락으로 멈춘다. 전달 ZIP에는 `runtime\ollama` 폴더가 빠져 `verify_portable.ps1 -Handoff`가 실패한다.
-- **전달 ZIP의 비교 기준**: 설치본을 빌드 manifest와 대조하지 않고 ZIP 기준으로 manifest를 다시 쓴다.
-- **Whisper를 넣은 전달 ZIP**: ZIP의 manifest가 Whisper를 "제외됨"으로 기록하므로, Whisper를 넣은 뒤에는 `verify_portable.ps1`의 어떤 모드로도 통과하지 않는다.
+- **빌드 목록이 없는 설치본**: 2026-06-01 이전 빌드처럼 manifest에 `portablePayloadFiles`가 없거나, 2026-10-22 이전에 만든 전달 ZIP으로 설치해 목록이 빌드 것이 아니면(`handoff.payloadList`가 `build`가 아님), 새 빌드에 없는 backend 파일을 지우지 않고 경고만 한다. 예전 전달 ZIP의 목록은 폴더를 훑어 만든 것이라 사용자 복사본이 섞여 있을 수 있기 때문이다. 오래된 코드 파일이 남을 수 있지만 사용자 자료는 지우지 않는다.
+- **업데이트 패키지는 `runtime\`을 담지 않는다**: 지금 빌드의 `runtime`에는 Ollama 안내 파일만 있어 영향이 없다. `verify_update.ps1`은 업데이트가 담는 앱·`binaries`·`backend`만 확인하고, 적용 뒤 대상 manifest의 `runtime` 항목은 설치본의 이전 항목을 유지한다. 새 빌드가 `runtime`에 파일을 더하면 업데이트 패키지로는 전달되지 않으므로, 그때는 업데이트 패키지 범위를 먼저 넓힌다.
+- **나중에 넣은 Whisper의 크기**: `-ExistingInstallation`은 전달 ZIP에서 뺀 Whisper가 들어온 것을 허용하지만, 기대 크기를 모르므로 표식 파일이 있는지만 본다. 잘린 모델 파일은 앱의 모델 상태 화면에서 확인한다.
+- **실제 설치본 검사 미실시**: 위 규칙은 임시 fixture 테스트로만 확인했다. 실제 `package:update` 적용과 전달 ZIP 생성은 다음 배포 때 이 표와 대조한다.
 
 구조 개선 후보(미결정): 사용자 자료를 프로그램과 분리된 `data` 폴더나 `%LOCALAPPDATA%`로 옮기면 업데이트를 "프로그램 폴더 통째 교체"로 단순화할 수 있다. 웹 설치 엔진은 이미 `%LOCALAPPDATA%\Barorok\LocalEngine`을 쓴다. 기존 설치본 이전 절차가 필요하므로 별도 범위로 검토한다.
 
@@ -304,7 +306,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps
 
 ### 기존 설치본용 수동 업데이트 패키지
 
-이미 사용자 PC에 `lmo_audio\models`가 준비되어 있으면 전체 모델을 다시 전달하지 않고 업데이트 패키지만 만들 수 있다. 이 패키지는 새 코드와 실행 파일만 포함하고, 대상 PC의 `models`, `backend\config.json`, `backend\outputs`, `backend\temp`는 보존한다.
+이미 사용자 PC에 `lmo_audio\models`가 준비되어 있으면 전체 모델을 다시 전달하지 않고 업데이트 패키지만 만들 수 있다. 이 패키지는 빌드 manifest에 있는 앱·`binaries`·`backend` 파일만 포함하고, 대상 PC의 `models`, `runtime`, `backend\config.json`, `backend\outputs`·`temp`·`logs`·`database`, DB 파일, 그리고 대상의 이전 manifest 목록에 없는 `backend` 파일은 보존한다(6-1 표).
 
 업데이트 패키지는 변경 사항을 커밋하고 깨끗한 portable 빌드가 끝난 뒤 만든다. `create_update_package.ps1`는 기본적으로 `release-manifest.json`의 commit이 현재 `HEAD`와 같은지 확인한다. 로컬 테스트에서만 `-AllowStale`을 쓴다.
 
@@ -318,7 +320,7 @@ corepack pnpm package:update
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\create_update_package.ps1
 ```
 
-기본 산출물은 `releases\updates\lmo_audio_update_<commit>`이다. 이 폴더 안에는 `payload`, `update-manifest.json`, `update_lmo_audio.ps1`, `verify_update.ps1`가 들어간다. `payload\models`와 `payload\backend\config.json`이 있으면 잘못 만든 패키지로 본다.
+기본 산출물은 `releases\updates\lmo_audio_update_<commit>`이다. 이 폴더 안에는 `payload`, `update-manifest.json`, `update_lmo_audio.ps1`, `verify_update.ps1`, `portable_data_safety.ps1`가 들어간다. `payload\models`와 `payload\backend\config.json`이 있으면 잘못 만든 패키지로 본다.
 
 ### 회사 전달용 슬림 zip
 
@@ -330,7 +332,7 @@ Codex가 사용자에게 배포 결과를 보고할 때는 이 zip을 먼저 제
 corepack pnpm package:handoff
 ```
 
-기본 산출물은 `releases\handoff\lmo_audio_no_ollama_no_whisper_<commit>.zip`이다. 이 zip은 앱, 백엔드, sidecar, 설정 파일, `runtime\ollama` placeholder(설치본에 README가 없으면 빠진다. 6-1 알려진 한계), `models\speaker-diarization-community-1`을 포함하고, `runtime\ollama\ollama.exe`, `models\faster-whisper-large-v3`, `models\ollama`의 실제 요약 모델 데이터는 제외한다. 예전처럼 `no_models`로 만들면 참석자 구분 모델까지 빠져 사용자가 다시 준비해야 하므로 피한다.
+기본 산출물은 `releases\handoff\lmo_audio_no_ollama_no_whisper_<commit>.zip`이다. 이 zip은 앱, 백엔드, sidecar, 설정 파일, `runtime\ollama` placeholder(설치본에서 앱으로 Ollama를 받아 README가 사라졌으면 빌드와 같은 내용으로 되살린다), `models\speaker-diarization-community-1`을 포함하고, `runtime\ollama\ollama.exe`, `models\faster-whisper-large-v3`, `models\ollama`의 실제 요약 모델 데이터는 제외한다. 예전처럼 `no_models`로 만들면 참석자 구분 모델까지 빠져 사용자가 다시 준비해야 하므로 피한다.
 
 슬림 zip 검수 기준:
 
@@ -347,7 +349,13 @@ corepack pnpm package:handoff
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir <압축을 푼 경로>\lmo_audio -Handoff
 ```
 
-Whisper 모델까지 넣은 뒤에는 `verify_portable.ps1`로 검증할 수 없다. ZIP의 manifest가 Whisper를 "제외됨"으로 기록하므로 일반 모드는 존재 불일치로, `-Handoff` 모드는 Whisper 제외 검사로 실패한다(6-1 알려진 한계). 이 경우 앱을 실행해 모델 상태 화면에서 준비 완료를 확인한다.
+전달 ZIP은 설치본이 빌드 manifest와 같을 때만 만들어진다. 설치본의 패키지 파일이 빌드 뒤 바뀌었거나 빠졌으면 멈추므로, 먼저 다시 빌드하거나 설치본을 고친다.
+
+Whisper 모델까지 넣은 뒤에는 `-ExistingInstallation`으로 검사한다. 이 모드는 ZIP의 manifest가 "전달 ZIP에서 뺌"으로 기록한 Whisper가 나중에 들어온 것을 허용하고, 모델 표식 파일이 빠짐없이 있는지는 그대로 확인한다. 일반 모드와 `-Handoff` 모드는 ZIP을 막 푼 상태를 기준으로 하므로 Whisper를 넣은 뒤에는 실패한다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir <압축을 푼 경로>\lmo_audio -ExistingInstallation
+```
 
 사용자 PC에서 적용할 때는 업데이트 패키지 폴더에서 대상 `lmo_audio` 폴더를 지정한다. 이 작업은 일반 사용자가 앱 사용 중에 누르는 자동 업데이트가 아니라 관리자/운영자가 유지보수 시간에 실행하는 수동 절차다. 적용 전 앱을 닫고 분석 작업이 진행 중이 아닌지 확인한다. 중요한 결과물이 있으면 `backend\outputs`를 먼저 백업한다.
 
@@ -367,7 +375,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File verify_update.ps1 -TargetDir
 corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases\updates\lmo_audio_update_<commit>
 ```
 
-`update_lmo_audio.ps1`는 대상 폴더를 수정하기 전에 package payload 해시를 먼저 확인한다. 업데이트 검증은 payload 파일 해시, 앱 exe, sidecar, ffmpeg, 기존 모델 marker, 기존 설정 파일 보존 여부를 확인한다. 기존 설정과 모델을 보존하므로 적용 후 대상 `release-manifest.json`의 `backendConfig` 해시와 model marker 크기는 현재 대상 PC 파일 기준으로 다시 맞춘다.
+`update_lmo_audio.ps1`는 대상 폴더를 수정하기 전에 package payload 해시와 사용자 자료 위치를 먼저 확인한다. payload가 사용자 자료 위치를 덮어쓰려 하거나, 대상 설정이 결과·임시·로그 폴더나 사용자 모델·양식을 `lmo_audio` 안의 비표준 위치에 두었으면 아무것도 바꾸지 않고 멈춘다. 업데이트 검증은 payload 파일 해시, 앱 exe, sidecar, ffmpeg, 기존 모델 marker, 기존 설정 파일 보존 여부와, 빌드 목록 중 업데이트가 담는 앱·`binaries`·`backend` 파일의 해시를 확인한다. 기존 설정과 모델을 보존하므로 적용 후 대상 `release-manifest.json`의 `backendConfig` 해시와 model marker 크기는 현재 대상 PC 파일 기준으로 다시 맞춘다.
 
 운영 기준:
 

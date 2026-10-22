@@ -384,9 +384,12 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
     New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
     # Only packaged code is mirrored. The deploy folder can already be in use
     # as a desktop installation, so its records and downloaded resources stay.
+    # Read the installed list before the new manifest replaces it.
+    $previousManifest = Join-Path $DestinationDir "release-manifest.json"
+    $hadPreviousManifest = Test-Path -LiteralPath $previousManifest
+    $previousPackageEntries = Get-PortablePackageEntries $previousManifest
 
     Copy-Item -Force (Join-Path $SourceDir $PortableAppExeName) (Join-Path $DestinationDir $PortableAppExeName)
-    Copy-Item -Force (Join-Path $SourceDir "release-manifest.json") (Join-Path $DestinationDir "release-manifest.json")
     Copy-Item -Force (Join-Path $SourceDir "START_HERE.txt") (Join-Path $DestinationDir "START_HERE.txt")
 
     robocopy (Join-Path $SourceDir "binaries") (Join-Path $DestinationDir "binaries") /MIR /R:2 /W:2 /NFL /NDL /NP | Out-Host
@@ -410,7 +413,16 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
         }
     }
 
-    robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /MIR /XD outputs temp logs __pycache__ database /XF config.json *.pyc *.db* *.sqlite* /NFL /NDL /NP | Out-Host
+    # backend also holds files users put there, such as copied result folders or
+    # alias model folders. Remove only files the installed build listed and the
+    # new one no longer ships, then copy without purging.
+    if ($null -ne $previousPackageEntries) {
+        Remove-StalePortablePackageFiles $DestinationDir $SourceDir $previousPackageEntries "backend"
+    }
+    elseif ($hadPreviousManifest) {
+        Write-Warning "The deploy folder's previous manifest has no package file list from a build, so backend files the new build no longer ships were left in place."
+    }
+    robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /E /XD outputs temp logs __pycache__ database /XF config.json *.pyc *.db* *.sqlite* /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing backend with exit code $LASTEXITCODE"
     }
@@ -425,6 +437,8 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing models with exit code $LASTEXITCODE"
     }
+    # Last, so an interrupted sync still finds the installed list on the next run.
+    Copy-Item -Force (Join-Path $SourceDir "release-manifest.json") (Join-Path $DestinationDir "release-manifest.json")
 }
 
 $DeployPath = Assert-SafeDeployPath (Resolve-InRepoPath $DeployDir)

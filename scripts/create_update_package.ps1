@@ -8,14 +8,22 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'portable_data_safety.ps1')
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
 $PreservedTargetPaths = @(
     "models",
+    "runtime",
     "backend\config.json",
     "backend\outputs",
-    "backend\temp"
+    "backend\temp",
+    "backend\logs",
+    "backend\database"
+)
+$PreservedTargetPatterns = @(
+    "backend\**\*.db*",
+    "backend\**\*.sqlite*"
 )
 
 function Normalize-FullPath([string]$Path) {
@@ -123,46 +131,39 @@ function Get-GitValue([string[]]$Arguments) {
     return ($output -join "`n").Trim()
 }
 
-function Copy-PortableTree([string]$Source, [string]$Destination) {
-    if (-not (Test-Path -LiteralPath $Source)) {
-        throw "Source folder missing: $Source"
+# The update replaces the app, binaries and backend code only. runtime and
+# models stay as the installation has them.
+function Test-IsUpdatePayloadPath([string]$RelativePath) {
+    $normalizedPath = Normalize-RelativePath $RelativePath
+    if ($normalizedPath -in @("lmo_audio.exe", "START_HERE.txt")) {
+        return $true
     }
+    return $normalizedPath.StartsWith("binaries\", [System.StringComparison]::OrdinalIgnoreCase) -or
+        $normalizedPath.StartsWith("backend\", [System.StringComparison]::OrdinalIgnoreCase)
+}
 
-    New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-    $sourceRoot = Normalize-FullPath $Source
+function Get-UpdatePayloadEntries($Manifest) {
+    $entries = @($Manifest.portablePayloadFiles | Where-Object { $_ -and (Test-IsUpdatePayloadPath ([string]$_.path)) })
+    foreach ($entry in $entries) {
+        if (Test-PortableUserDataPath ([string]$entry.path)) {
+            throw "Release manifest lists user data as package payload: $($entry.path)"
+        }
+    }
+    return ,$entries
+}
 
-    Get-ChildItem -LiteralPath $Source -Recurse -Force | ForEach-Object {
-        $fullPath = Normalize-FullPath $_.FullName
-        $relativePath = $fullPath.Substring($sourceRoot.Length).TrimStart("\", "/")
-        $relativeParts = $relativePath -split '[\\/]'
-
-        if ($_.PSIsContainer) {
-            if ($relativeParts -contains "__pycache__") {
-                return
-            }
-            if ($relativeParts.Length -ge 1 -and $relativeParts[0] -in @("outputs", "temp")) {
-                return
-            }
-            New-Item -ItemType Directory -Path (Join-Path $Destination $relativePath) -Force | Out-Null
-            return
+# Copy exactly the files the build listed. Anything else in the installation,
+# such as records or folders users created in backend, never enters the payload.
+function Copy-ListedPayloadFiles([string]$PortableRoot, [string]$PayloadRoot, $Entries) {
+    foreach ($entry in @($Entries)) {
+        $relativePath = Normalize-RelativePath ([string]$entry.path)
+        $sourceFile = Join-Path $PortableRoot $relativePath
+        $targetFile = Join-Path $PayloadRoot $relativePath
+        if (-not (Test-IsPathWithin $sourceFile $PortableRoot) -or -not (Test-IsPathWithin $targetFile $PayloadRoot)) {
+            throw "Release manifest payload entry escaped the package: $relativePath"
         }
-
-        if ($relativeParts -contains "__pycache__") {
-            return
-        }
-        if ($_.Name -like "*.pyc") {
-            return
-        }
-        if ($relativeParts.Length -ge 1 -and $relativeParts[0] -in @("outputs", "temp")) {
-            return
-        }
-        if ($relativeParts.Length -eq 1 -and $_.Name.Equals("config.json", [System.StringComparison]::OrdinalIgnoreCase)) {
-            return
-        }
-
-        $targetFile = Join-Path $Destination $relativePath
         New-Item -ItemType Directory -Path (Split-Path -Parent $targetFile) -Force | Out-Null
-        Copy-Item -LiteralPath $_.FullName -Destination $targetFile -Force
+        Copy-Item -LiteralPath $sourceFile -Destination $targetFile -Force
     }
 }
 
@@ -243,10 +244,13 @@ function Assert-ReleaseManifestMatchesPortable([string]$PortableRoot, $Manifest)
         $fileEntries += $property.Value
     }
     Assert-ManifestEntriesMatchPortable $PortableRoot $fileEntries "core file" -SkipPreservedTargetPaths
-    Assert-ManifestEntriesMatchPortable $PortableRoot @($Manifest.portablePayloadFiles) "portable payload file"
+    # Only what the update ships must match. runtime\ollama\README.txt, for
+    # example, is replaced when the app installs Ollama and is not shipped.
+    Assert-ManifestEntriesMatchPortable $PortableRoot (Get-UpdatePayloadEntries $Manifest) "portable payload file"
 }
 
 $portablePath = Assert-SafePortablePath (Resolve-InRepoPath $PortableDir)
+Assert-PortableDataLayout $portablePath
 $outputRootPath = Assert-SafeOutputPath (Resolve-InRepoPath $OutputRoot)
 $manifestPath = Join-Path $portablePath "release-manifest.json"
 
@@ -305,11 +309,11 @@ if (Test-Path -LiteralPath $startHere) {
     Copy-Item -LiteralPath $startHere -Destination (Join-Path $payloadRoot "START_HERE.txt") -Force
 }
 
-Copy-PortableTree (Join-Path $portablePath "binaries") (Join-Path $payloadRoot "binaries")
-Copy-PortableTree (Join-Path $portablePath "backend") (Join-Path $payloadRoot "backend")
+Copy-ListedPayloadFiles $portablePath $payloadRoot (Get-UpdatePayloadEntries $releaseManifest)
 
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "update_lmo_audio.ps1") -Destination (Join-Path $packageRoot "update_lmo_audio.ps1") -Force
-Copy-Item -LiteralPath (Join-Path $PSScriptRoot "verify_update.ps1") -Destination (Join-Path $packageRoot "verify_update.ps1") -Force
+foreach ($scriptName in @("update_lmo_audio.ps1", "verify_update.ps1", "portable_data_safety.ps1")) {
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot $scriptName) -Destination (Join-Path $packageRoot $scriptName) -Force
+}
 
 if (Test-Path -LiteralPath (Join-Path $payloadRoot "models")) {
     throw "Update package must not include models: $(Join-Path $payloadRoot "models")"
@@ -320,6 +324,16 @@ if (Test-Path -LiteralPath (Join-Path $payloadRoot "backend\config.json")) {
 
 $modelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 $payloadFiles = Get-PayloadFileEntries $packageRoot $payloadRoot
+# The copies must still be the files the build hashed.
+$buildHashes = @{}
+foreach ($entry in @(Get-UpdatePayloadEntries $releaseManifest)) {
+    $buildHashes["payload\" + (Normalize-RelativePath ([string]$entry.path))] = [string]$entry.sha256
+}
+foreach ($file in @($payloadFiles)) {
+    if ($buildHashes.ContainsKey($file.path) -and $buildHashes[$file.path] -ne $file.sha256) {
+        throw "Update payload file changed while packaging: $($file.path)"
+    }
+}
 $updateManifest = [ordered]@{
     packageFormat = "lmo-audio-manual-update-v1"
     generatedAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -332,14 +346,19 @@ $updateManifest = [ordered]@{
         releaseManifestSha256 = Get-FileHashValue (Join-Path $payloadRoot "release-manifest.json")
     }
     preservedTargetPaths = $PreservedTargetPaths
+    preservedTargetPatterns = $PreservedTargetPatterns
+    payloadSource = "release-manifest.json portablePayloadFiles: lmo_audio.exe, START_HERE.txt, binaries, backend"
     excludedPayloadPaths = @(
         "payload\models",
+        "payload\runtime",
         "payload\backend\config.json",
         "payload\backend\outputs",
         "payload\backend\temp",
-        "**\__pycache__",
-        "**\*.pyc"
+        "payload\backend\logs",
+        "payload\backend\database",
+        "backend files the release manifest does not list"
     )
+    stalePackageFiles = "Only backend files listed by the installed release manifest and unchanged since are removed."
     requiredModels = $modelLayout.models
     mutableTargetPaths = @(
         "release-manifest.json"

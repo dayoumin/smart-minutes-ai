@@ -7,6 +7,12 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+$dataSafetyScript = Join-Path $PSScriptRoot "portable_data_safety.ps1"
+if (-not (Test-Path -LiteralPath $dataSafetyScript)) {
+    throw "Update package is incomplete: portable_data_safety.ps1 must sit next to update_lmo_audio.ps1."
+}
+. $dataSafetyScript
+
 function Normalize-FullPath([string]$Path) {
     return [System.IO.Path]::GetFullPath($Path).TrimEnd([System.IO.Path]::DirectorySeparatorChar, [System.IO.Path]::AltDirectorySeparatorChar)
 }
@@ -128,6 +134,9 @@ function Assert-UpdatePackageIntegrity([string]$PackageRoot, [string]$PayloadRoo
         if (-not (Test-IsPathWithin $payloadFile $PayloadRoot)) {
             throw "Manifest payload entry escaped payload root: $relativePath"
         }
+        if (Test-PortableUserDataPath $relativePath.Substring("payload\".Length)) {
+            throw "Refusing to apply update package because it would overwrite user data: $relativePath"
+        }
         if (-not (Test-Path -LiteralPath $payloadFile)) {
             throw "Manifest payload file missing: $relativePath"
         }
@@ -177,24 +186,8 @@ function Stop-TargetProcesses([string]$TargetRoot) {
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
 
-function Test-PreservedRelativePath([string]$RelativePath, [string[]]$PreserveTopLevelDirectories, [string[]]$PreserveRelativeFiles) {
-    $normalized = $RelativePath.Replace("/", "\").TrimStart("\")
-    foreach ($file in $PreserveRelativeFiles) {
-        if ($normalized.Equals($file, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-
-    $topLevel = ($normalized -split '\\')[0]
-    foreach ($directory in $PreserveTopLevelDirectories) {
-        if ($topLevel.Equals($directory, [System.StringComparison]::OrdinalIgnoreCase)) {
-            return $true
-        }
-    }
-    return $false
-}
-
-function Sync-TreePreservingPaths([string]$Source, [string]$Destination, [string[]]$PreserveTopLevelDirectories = @(), [string[]]$PreserveRelativeFiles = @()) {
+# binaries holds only package files, so it mirrors the payload exactly.
+function Sync-PackageOwnedTree([string]$Source, [string]$Destination) {
     if (-not (Test-Path -LiteralPath $Source)) {
         throw "Payload folder missing: $Source"
     }
@@ -215,11 +208,7 @@ function Sync-TreePreservingPaths([string]$Source, [string]$Destination, [string
     }
 
     Get-ChildItem -LiteralPath $Destination -File -Recurse -Force -ErrorAction SilentlyContinue | ForEach-Object {
-        $relativePath = Get-RelativePath $destinationRoot $_.FullName
-        if (Test-PreservedRelativePath $relativePath $PreserveTopLevelDirectories $PreserveRelativeFiles) {
-            return
-        }
-        if (-not $sourceFiles.Contains($relativePath)) {
+        if (-not $sourceFiles.Contains((Get-RelativePath $destinationRoot $_.FullName))) {
             Remove-Item -LiteralPath $_.FullName -Force
         }
     }
@@ -227,34 +216,43 @@ function Sync-TreePreservingPaths([string]$Source, [string]$Destination, [string
     Get-ChildItem -LiteralPath $Destination -Directory -Recurse -Force -ErrorAction SilentlyContinue |
         Sort-Object FullName -Descending |
         ForEach-Object {
-            $relativePath = Get-RelativePath $destinationRoot $_.FullName
-            if (Test-PreservedRelativePath $relativePath $PreserveTopLevelDirectories $PreserveRelativeFiles) {
-                return
-            }
-            if (-not $sourceDirs.Contains($relativePath)) {
+            if (-not $sourceDirs.Contains((Get-RelativePath $destinationRoot $_.FullName))) {
                 Remove-Item -LiteralPath $_.FullName -Recurse -Force
             }
         }
 
-    Get-ChildItem -LiteralPath $Source -Directory -Recurse -Force | ForEach-Object {
-        $relativePath = Get-RelativePath $sourceRoot $_.FullName
-        New-Item -ItemType Directory -Path (Join-Path $destinationRoot $relativePath) -Force | Out-Null
+    Copy-PayloadFiles $Source $Destination
+}
+
+function Copy-PayloadFiles([string]$Source, [string]$Destination) {
+    if (-not (Test-Path -LiteralPath $Source)) {
+        throw "Payload folder missing: $Source"
     }
+
+    $sourceRoot = Normalize-FullPath $Source
     Get-ChildItem -LiteralPath $Source -File -Recurse -Force | ForEach-Object {
-        $relativePath = Get-RelativePath $sourceRoot $_.FullName
-        $targetFile = Join-Path $destinationRoot $relativePath
+        $targetFile = Join-Path $Destination (Get-RelativePath $sourceRoot $_.FullName)
         New-Item -ItemType Directory -Path (Split-Path -Parent $targetFile) -Force | Out-Null
         Copy-Item -LiteralPath $_.FullName -Destination $targetFile -Force
     }
 }
 
-function Update-TargetReleaseManifest([string]$TargetRoot, $UpdateManifest) {
+function Update-TargetReleaseManifest([string]$TargetRoot, $UpdateManifest, $PreviousEntries) {
     $manifestPath = Join-Path $TargetRoot "release-manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         return
     }
 
     $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    if ($null -ne $PreviousEntries -and $manifest.PSObject.Properties.Name -contains "portablePayloadFiles") {
+        # The update does not ship runtime, so the installed runtime entries stay
+        # the true description of those files.
+        $newCode = @($manifest.portablePayloadFiles | Where-Object {
+            -not ([string]$_.path -replace '/', '\').StartsWith("runtime\", [System.StringComparison]::OrdinalIgnoreCase) })
+        $installedRuntime = @($PreviousEntries | Where-Object {
+            ([string]$_.path -replace '/', '\').StartsWith("runtime\", [System.StringComparison]::OrdinalIgnoreCase) })
+        $manifest.portablePayloadFiles = @($newCode + $installedRuntime)
+    }
     $configPath = Join-Path $TargetRoot "backend\config.json"
     if (Test-Path -LiteralPath $configPath) {
         $configHash = Get-FileHashValue $configPath
@@ -315,6 +313,10 @@ if (-not (Test-Path -LiteralPath (Join-Path $targetPath "backend\config.json")))
 }
 
 Assert-RequiredModels $targetPath $updateManifest
+Assert-PortableDataLayout $targetPath
+# Read before the new manifest replaces it: it names the files the installed
+# version owns, which is what the backend cleanup below may remove.
+$previousPackageEntries = Get-PortablePackageEntries (Join-Path $targetPath "release-manifest.json")
 Stop-TargetProcesses $targetPath
 Start-Sleep -Seconds 1
 
@@ -322,11 +324,19 @@ Copy-Item -LiteralPath (Join-Path $payloadPath "lmo_audio.exe") -Destination (Jo
 if (Test-Path -LiteralPath (Join-Path $payloadPath "START_HERE.txt")) {
     Copy-Item -LiteralPath (Join-Path $payloadPath "START_HERE.txt") -Destination (Join-Path $targetPath "START_HERE.txt") -Force
 }
+Sync-PackageOwnedTree (Join-Path $payloadPath "binaries") (Join-Path $targetPath "binaries")
+# backend also holds settings, records and files users put there. Remove only
+# files the installed version listed and left unchanged, then copy the new code.
+if ($null -ne $previousPackageEntries) {
+    Remove-StalePortablePackageFiles $targetPath $payloadPath $previousPackageEntries "backend"
+}
+else {
+    Write-Warning "The installed release manifest has no package file list from a build, so backend files the new version no longer ships were left in place."
+}
+Copy-PayloadFiles (Join-Path $payloadPath "backend") (Join-Path $targetPath "backend")
+# Last, so a failed run still finds the installed list on the next attempt.
 Copy-Item -LiteralPath (Join-Path $payloadPath "release-manifest.json") -Destination (Join-Path $targetPath "release-manifest.json") -Force
-
-Sync-TreePreservingPaths (Join-Path $payloadPath "binaries") (Join-Path $targetPath "binaries")
-Sync-TreePreservingPaths (Join-Path $payloadPath "backend") (Join-Path $targetPath "backend") @("outputs", "temp") @("config.json")
-Update-TargetReleaseManifest $targetPath $updateManifest
+Update-TargetReleaseManifest $targetPath $updateManifest $previousPackageEntries
 
 if (-not $SkipVerify) {
     $verifyScript = Join-Path $packagePath "verify_update.ps1"

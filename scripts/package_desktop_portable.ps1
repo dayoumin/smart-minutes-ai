@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'portable_data_safety.ps1')
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TauriDir = Join-Path $RepoRoot "desktop-app\src-tauri"
@@ -76,7 +77,7 @@ else {
     New-Item -ItemType Directory -Force -Path $PortableOllamaRuntime | Out-Null
     [System.IO.File]::WriteAllText(
         (Join-Path $PortableOllamaRuntime "README.txt"),
-        (ConvertFrom-Utf8Base64 "7ZqM7J2YIOyalOyVvSDtlITroZzqt7jrnqgg7Y+0642UCgrsnbQg7Y+0642U64qUIO2ajOydmCDsmpTslb3sl5Ag7JOw64qUIOyLpO2WiSDtlITroZzqt7jrnqjsnbQg65Ok7Ja06rCIIOyekOumrOyeheuLiOuLpC4KCuuMgO2ZlOuhnSDsnpHshLHrp4wg7ZWgIOuVjOuKlCDsmpTslb0g7ZSE66Gc6re4656o7J20IO2VhOyalO2VmOyngCDslYrsirXri4jri6QuCuyghOyytCDsmpTslb0sIOyjvOygnOuzhCDsoJXrpqwsIOywuOyEneyekOuzhCDsoJXrpqzrpbwg7IKs7Jqp7ZWgIOuVjOunjCDsmpTslb0g7ZSE66Gc6re4656o6rO8IO2ajOydmCDsmpTslb0g66qo64247J20IO2VhOyalO2VqeuLiOuLpC4KCuydvOuwmCDsoITri6zsmqkg7Yyo7YKk7KeA7JeQ64qUIOyalOyVvSDtlITroZzqt7jrnqgg7Iuk7ZaJIO2MjOydvOydtCDrk6TslrQg7J6I7KeAIOyViuyKteuLiOuLpC4K7J247YSw64S37J20IOuQmOuKlCBQQ+yXkOyEnOuKlCDslbHsnYQg7Iuk7ZaJ7ZWcIOuSpCDshKTsoJUgPiDrqqjrjbgg7ZmU66m07JeQ7IScICLsmpTslb0g7ZSE66Gc6re4656oIOuwm+q4sCLrpbwg64iE66W07IS47JqULgrslbHsnbQg7ZWE7JqU7ZWcIOyalOyVvSDtlITroZzqt7jrnqjsnYQg7J20IO2PtOuNlOyXkCDspIDruYTtlanri4jri6QuCgrsoJXsg4HsoIHsnLzroZwg7KSA67mE65CY66m0IOyalOyVvSDtlITroZzqt7jrnqgg7Iuk7ZaJIO2MjOydvOydtCDsg53quYHri4jri6QuCu2MjOydvCDsnbTrpoQ6IG9sbGFtYS5leGUKCu2ajOyCrCDrs7TslYgg7KCV7LGF7J2064KYIOyduO2EsOuEtyDssKjri6jsnLzroZwg67Cb6riw6rCAIOyLpO2MqO2VmOuptCwg6rSA66as7J6Q7JeQ6rKMIOyalOyVvSDtlITroZzqt7jrnqgg7KSA67mE66W8IOyalOyyre2VmOyEuOyalC4K"),
+        (Get-PortableOllamaReadmeText),
         [System.Text.UTF8Encoding]::new($false)
     )
 }

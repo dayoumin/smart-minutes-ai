@@ -155,6 +155,102 @@ function Get-HandoffPayloadFiles([string]$PortableRoot) {
     return @($files)
 }
 
+function Get-HandoffPackageEntries([string]$PortableRoot) {
+    $entries = Get-PortablePackageEntries (Join-Path $PortableRoot "release-manifest.json")
+    if ($null -eq $entries) {
+        throw "Release manifest has no package file list. Rebuild the portable release before making a handoff."
+    }
+    return ,$entries
+}
+
+function Write-HandoffOllamaReadme([string]$Path) {
+    New-Item -ItemType Directory -Force -Path (Split-Path -Parent $Path) | Out-Null
+    [System.IO.File]::WriteAllText($Path, (Get-PortableOllamaReadmeText), [System.Text.UTF8Encoding]::new($false))
+}
+
+# Copies the files the build listed, each checked against its build hash, so the
+# archive carries the verified build rather than whatever else the installation
+# holds (records, user copies or alias model folders inside backend).
+function Copy-HandoffPackageFiles([string]$PortableRoot, [string]$StagingRoot, $Entries) {
+    $ollamaReadme = "runtime\ollama\README.txt"
+    $copied = @()
+    foreach ($entry in @($Entries)) {
+        $relativePath = ([string]$entry.path -replace '/', '\').TrimStart('\')
+        # The slim handoff never carries the Ollama runtime; the app downloads it.
+        if ($relativePath.StartsWith("runtime\ollama\", [System.StringComparison]::OrdinalIgnoreCase) -and
+            -not $relativePath.Equals($ollamaReadme, [System.StringComparison]::OrdinalIgnoreCase)) {
+            continue
+        }
+        if (Test-PortableUserDataPath $relativePath) {
+            throw "Release manifest lists user data as package payload: $relativePath"
+        }
+        $sourceFile = Join-Path $PortableRoot $relativePath
+        $targetFile = Join-Path $StagingRoot $relativePath
+        if (-not (Test-PortablePathWithin $sourceFile $PortableRoot) -or -not (Test-PortablePathWithin $targetFile $StagingRoot)) {
+            throw "Release manifest payload entry escaped the package: $relativePath"
+        }
+        $sourceHash = if (Test-Path -LiteralPath $sourceFile -PathType Leaf) { Get-FileHashValue $sourceFile } else { $null }
+        New-Item -ItemType Directory -Force -Path (Split-Path -Parent $targetFile) | Out-Null
+        if ($relativePath.Equals($ollamaReadme, [System.StringComparison]::OrdinalIgnoreCase)) {
+            # Installing Ollama from the app replaces this guide; restore the packaged bytes.
+            if ($sourceHash -ne [string]$entry.sha256) {
+                Write-HandoffOllamaReadme $targetFile
+                if ((Get-FileHashValue $targetFile) -ne [string]$entry.sha256) {
+                    throw "Restored Ollama guide does not match the build manifest. Rebuild before making a handoff."
+                }
+            }
+            else {
+                Copy-Item -LiteralPath $sourceFile -Destination $targetFile -Force
+            }
+        }
+        elseif (-not $sourceHash) {
+            throw "Installation is missing a file its build manifest lists: $relativePath. Rebuild before making a handoff."
+        }
+        elseif ($sourceHash -ne [string]$entry.sha256) {
+            throw "Installation file differs from its build manifest: $relativePath. Rebuild before making a handoff."
+        }
+        else {
+            Copy-Item -LiteralPath $sourceFile -Destination $targetFile -Force
+        }
+        $copied += [ordered]@{ path = $relativePath; sha256 = [string]$entry.sha256; bytes = (Get-Item -LiteralPath $targetFile).Length }
+    }
+    if (-not ($copied | Where-Object { $_.path -eq $ollamaReadme })) {
+        # A build with embedded Ollama has no guide, but the slim archive needs one.
+        $targetFile = Join-Path $StagingRoot $ollamaReadme
+        Write-HandoffOllamaReadme $targetFile
+        $copied += [ordered]@{ path = $ollamaReadme; sha256 = Get-FileHashValue $targetFile; bytes = (Get-Item -LiteralPath $targetFile).Length }
+    }
+    return ,$copied
+}
+
+# Every staged file must be listed, except the manifest, the default settings
+# and the chosen models, so nothing reaches the archive by another route.
+function Assert-HandoffStagingMatches([string]$StagingRoot, $Entries) {
+    $expected = @{}
+    foreach ($entry in @($Entries)) { $expected[[string]$entry.path] = [string]$entry.sha256 }
+    $stagingPath = Normalize-FullPath $StagingRoot
+    $actual = @{}
+    Get-ChildItem -LiteralPath $StagingRoot -File -Recurse -Force | ForEach-Object {
+        $relativePath = (Normalize-FullPath $_.FullName).Substring($stagingPath.Length).TrimStart("\", "/")
+        if ($relativePath -in @("release-manifest.json", "backend\config.json") -or
+            $relativePath.StartsWith("models\", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return
+        }
+        $actual[$relativePath] = Get-FileHashValue $_.FullName
+    }
+    $differences = @()
+    foreach ($path in $expected.Keys) {
+        if (-not $actual.ContainsKey($path)) { $differences += "$path missing" }
+        elseif ($actual[$path] -ne $expected[$path]) { $differences += "$path hash mismatch" }
+    }
+    foreach ($path in $actual.Keys) {
+        if (-not $expected.ContainsKey($path)) { $differences += "$path not listed" }
+    }
+    if ($differences.Count -gt 0) {
+        throw "Handoff staging does not match its package list: $($differences -join '; ')"
+    }
+}
+
 function ConvertFrom-Utf8Base64([string]$Value) {
     return [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($Value))
 }
@@ -171,7 +267,19 @@ function Copy-HandoffTree([string]$Source, [string]$Destination, [string[]]$Incl
     $excluded = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
     foreach ($name in $ExcludedModelDirs) { [void]$excluded.Add($name) }
 
-    Get-ChildItem -LiteralPath $Source -Recurse -Force | ForEach-Object {
+    # Package files come from the build list (Copy-HandoffPackageFiles). Walk
+    # only the manifest and the chosen model folders, never records or other
+    # downloads, which can be large or unreadable.
+    $walkRoots = @(Get-Item -LiteralPath (Join-Path $Source "release-manifest.json") -Force -ErrorAction SilentlyContinue)
+    foreach ($name in $IncludedModelDirs) {
+        $modelRoot = Join-Path (Join-Path $Source "models") $name
+        if (Test-Path -LiteralPath $modelRoot) {
+            $walkRoots += Get-Item -LiteralPath $modelRoot -Force
+            $walkRoots += @(Get-ChildItem -LiteralPath $modelRoot -Recurse -Force)
+        }
+    }
+
+    $walkRoots | ForEach-Object {
         $fullPath = Normalize-FullPath $_.FullName
         $relativePath = $fullPath.Substring($sourceRoot.Length).TrimStart("\", "/")
         if (-not $relativePath) {
@@ -179,24 +287,6 @@ function Copy-HandoffTree([string]$Source, [string]$Destination, [string[]]$Incl
         }
         $relativeParts = $relativePath -split '[\\/]'
 
-        # Existing installations can contain personal backups and logs. Only
-        # packaged roots belong in a handoff archive.
-        if ($relativeParts[0] -notin @($PortableAppExeName, "START_HERE.txt", "release-manifest.json", "binaries", "backend", "models", "runtime")) {
-            return
-        }
-        if ($relativePath.Equals("backend\config.json", [System.StringComparison]::OrdinalIgnoreCase)) {
-            return
-        }
-
-        if ($relativeParts -contains "__pycache__") {
-            return
-        }
-        if (-not $_.PSIsContainer -and $_.Name -like "*.pyc") {
-            return
-        }
-        if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and (($relativeParts[1] -in @("outputs", "temp", "logs", "database")) -or ($_.Name -like "*.db*" -or $_.Name -like "*.sqlite*"))) {
-            return
-        }
         if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("models", [System.StringComparison]::OrdinalIgnoreCase)) {
             $modelDirName = $relativeParts[1]
             if ($excluded.Contains($modelDirName)) {
@@ -214,18 +304,6 @@ function Copy-HandoffTree([string]$Source, [string]$Destination, [string[]]$Incl
         }
         if ($relativeParts.Length -eq 2 -and $relativeParts[0].Equals("models", [System.StringComparison]::OrdinalIgnoreCase) -and $_.Name.Equals("README.txt", [System.StringComparison]::OrdinalIgnoreCase)) {
             return
-        }
-        if (
-            $relativeParts.Length -ge 2 `
-                -and $relativeParts[0].Equals("runtime", [System.StringComparison]::OrdinalIgnoreCase) `
-                -and $relativeParts[1].Equals("ollama", [System.StringComparison]::OrdinalIgnoreCase)
-        ) {
-            if ($_.PSIsContainer) {
-                return
-            }
-            if (-not $_.Name.Equals("README.txt", [System.StringComparison]::OrdinalIgnoreCase)) {
-                return
-            }
         }
 
         $targetPath = Join-Path $Destination $relativePath
@@ -288,7 +366,7 @@ function Write-HandoffReadmes([string]$PortableRoot, [object[]]$IncludedModels, 
     )
 }
 
-function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels, [object[]]$ExcludedModels) {
+function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels, [object[]]$ExcludedModels, $PayloadEntries) {
     $manifestPath = Join-Path $PortableRoot "release-manifest.json"
     if (-not (Test-Path -LiteralPath $manifestPath)) {
         throw "Release manifest missing: $manifestPath"
@@ -316,6 +394,9 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
         excludedSummaryModelStore = "models\ollama"
         excludedModels = @($ExcludedModels | ForEach-Object { $_.portableDir })
         includedModels = @($IncludedModels | ForEach-Object { $_.portableDir })
+        # portablePayloadFiles below is the build's list, so updates may use it
+        # to decide which backend files the package owns.
+        payloadList = "build"
         note = "This handoff zip includes the speaker diarization model, but excludes the Ollama runtime, Whisper STT files, and Ollama summary model data. The app can download the standalone Ollama runtime on first use."
     }) -Force
 
@@ -326,12 +407,16 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
     if ($manifest.files -and ($manifest.files.PSObject.Properties.Name -contains "backendConfig")) {
         $manifest.files.backendConfig.sha256 = Get-FileHashValue (Join-Path $PortableRoot "backend\config.json")
     }
-    if ($manifest.PSObject.Properties.Name -contains "portablePayloadFiles") {
-        $manifest.portablePayloadFiles = @(Get-HandoffPayloadFiles $PortableRoot)
+    # Keep the build's verified list. Only START_HERE.txt is rewritten for the
+    # handoff, so its entry follows the new file.
+    $startHerePath = Join-Path $PortableRoot "START_HERE.txt"
+    foreach ($entry in @($PayloadEntries)) {
+        if ([string]$entry.path -eq "START_HERE.txt") {
+            $entry.sha256 = Get-FileHashValue $startHerePath
+            $entry.bytes = (Get-Item -LiteralPath $startHerePath).Length
+        }
     }
-    else {
-        $manifest | Add-Member -NotePropertyName portablePayloadFiles -NotePropertyValue @(Get-HandoffPayloadFiles $PortableRoot)
-    }
+    $manifest.portablePayloadFiles = @($PayloadEntries)
 
     $manifest | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath $manifestPath -Encoding UTF8
 }
@@ -476,21 +561,32 @@ if ((Test-Path -LiteralPath $stagingRoot) -or (Test-Path -LiteralPath $zipPath))
     }
 }
 
+$packageEntries = Get-HandoffPackageEntries $portablePath
 New-Item -ItemType Directory -Force -Path $stagingRoot | Out-Null
-Copy-HandoffTree `
-    -Source $portablePath `
-    -Destination $stagingPortable `
-    -IncludedModelDirs @($includedModels | ForEach-Object { [string]$_.portableDir }) `
-    -ExcludedModelDirs @($excludedModels | ForEach-Object { [string]$_.portableDir })
-Write-HandoffDefaultConfig $stagingPortable
-Write-HandoffReadmes $stagingPortable $includedModels $excludedModels
-Update-HandoffManifest $stagingPortable $includedModels $excludedModels
+try {
+    $handoffEntries = Copy-HandoffPackageFiles $portablePath $stagingPortable $packageEntries
+    Copy-HandoffTree `
+        -Source $portablePath `
+        -Destination $stagingPortable `
+        -IncludedModelDirs @($includedModels | ForEach-Object { [string]$_.portableDir }) `
+        -ExcludedModelDirs @($excludedModels | ForEach-Object { [string]$_.portableDir })
+    Write-HandoffDefaultConfig $stagingPortable
+    Write-HandoffReadmes $stagingPortable $includedModels $excludedModels
+    Update-HandoffManifest $stagingPortable $includedModels $excludedModels $handoffEntries
+    Assert-HandoffStagingMatches $stagingPortable $handoffEntries
 
-Add-Type -AssemblyName System.IO.Compression.FileSystem
-[System.IO.Compression.ZipFile]::CreateFromDirectory($stagingRoot, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
-Test-HandoffPackage $stagingPortable $zipPath $includedModels $excludedModels
-
-Remove-Item -LiteralPath $stagingRoot -Recurse -Force
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    [System.IO.Compression.ZipFile]::CreateFromDirectory($stagingRoot, $zipPath, [System.IO.Compression.CompressionLevel]::Optimal, $false)
+    Test-HandoffPackage $stagingPortable $zipPath $includedModels $excludedModels
+}
+catch {
+    # A failed check must not leave an archive that looks finished.
+    Remove-Item -LiteralPath $zipPath -Force -ErrorAction SilentlyContinue
+    throw
+}
+finally {
+    Remove-Item -LiteralPath $stagingRoot -Recurse -Force -ErrorAction SilentlyContinue
+}
 
 Write-Host "Created slim handoff package:"
 Write-Host $zipPath

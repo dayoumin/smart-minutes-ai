@@ -43,10 +43,9 @@
   - 동시 분석은 RAM/GPU 경합 때문에 별도 성능 증거 전 보장하지 않는다. 현재 브라우저/WebView별 IndexedDB 목록은 사이트 데이터/프로필 삭제에 취약하며 SQLite 전환은 별도 후속이다. 기존 장문 요약 공개 배포 보류는 유지한다.
 
 - [ ] 2026-10-22 **업데이트 패키지·전달 ZIP 데이터 보호 보강** (다음 `package:update`·`package:handoff` 전)
-  - 빌드 전 2관점 agent 검토에서 나온 기존 위험이다. 빌드 경로에는 영향이 없다. 상세는 `docs/tauri-desktop-release-checklist.md` 6-1 "알려진 한계".
-  - 업데이트 적용(`update_lmo_audio.ps1`)이 `backend\logs`·DB·설정으로 backend 안에 둔 결과 폴더를 지운다. 적용과 패키지 생성에 `portable_data_safety.ps1` 검사를 걸고 보존 목록을 배포 동기화와 맞춘다.
-  - 전달 ZIP과 업데이트 payload를 빌드 manifest의 `portablePayloadFiles` 목록으로 만든다. 그러면 `backend` 안의 알 수 없는 개인 파일과 별칭 모델 위치(`backend\models\stt`·`diarization`)가 섞이지 않는다. 배포 동기화에서 이 위치가 지워지는 문제도 함께 정한다.
-  - 앱으로 Ollama를 받은 설치본에서 `package:update`의 README 누락 실패, 전달 ZIP의 `runtime\ollama` 폴더 누락을 고친다. Whisper를 넣은 전달 ZIP을 검증하는 방법도 정한다.
+  - 빌드 전 2관점 agent 검토에서 나온 위험을 같은 날 소스에서 보강했다(미커밋). 업데이트 payload와 전달 ZIP은 빌드 manifest 목록(`portablePayloadFiles`)대로 만들고 설치본 파일을 빌드 해시와 대조한다. `backend`에서는 이전 manifest 목록에 있고 바뀌지 않은 파일만 지워, 사용자가 둔 파일과 별칭 모델 위치(`backend\models\stt`·`diarization`)를 보존한다. 배포 동기화(`Sync-PortableToDeploy`)도 같은 규칙으로 바꿨다.
+  - 업데이트 적용과 패키지 생성에 `portable_data_safety.ps1` 검사를 걸었고, `backend\logs`·`database`·DB 파일도 보존한다. 앱으로 Ollama를 받은 설치본의 README 누락(업데이트 생성·검증, 전달 ZIP)과 Whisper를 넣은 전달 ZIP 검사(`-ExistingInstallation`)도 고쳤다. 독립 agent 검토의 P2 4건(비정상 경로 표기 `.`·`..`·끝의 점, 예전 전달 ZIP 목록 불신, 업데이트 검증 범위, 핵심 규칙 테스트)과 P3 대부분을 반영했다. 임시 fixture로 업데이트15/15·`check:quick`(릴리스 모듈 포함 backend153건) 통과, 새·변경 테스트는 수정 전 코드에서 실패하고 사용자 자료 보호 줄을 빼도 실패함을 확인했다.
+  - 남은 것: 실제 설치본에서 `package:update` 적용과 `package:handoff` 생성 확인, 바뀐 배포 동기화로 한 번 빌드. 목록 없는 오래된 설치본과 업데이트 패키지의 `runtime` 범위는 `docs/tauri-desktop-release-checklist.md` 6-1 "알려진 한계"에 둔다.
 
 - [ ] 2026-10-21 **집에서 이어하기 — 출력 상한 일치 후 Luna·Qwen 비교**
   - 먼저 `git pull --ff-only`로 이 인계 커밋을 받는다. 아래 「장문 요약 출력 계약」을 구현해 생성 형식과 사후 검사가 동일한 최대12개 상수를 사용하게 한다. Luna와 로컬 Ollama0.34.2/`qwen3.5:4b`에 같은 입력·프롬프트·검사 기준으로 다시 검증한다. 생성 완료, 원문 부정/조건/합의 보존, 채택 노트의 최종 보존을 각각 판정한다.

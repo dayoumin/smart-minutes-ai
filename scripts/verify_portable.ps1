@@ -208,6 +208,12 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
         foreach ($marker in $manifest.modelMarkers) {
             $fullPath = Join-Path $PortableRoot ([string]$marker.path)
             $exists = Test-Path -LiteralPath $fullPath
+            # A handoff leaves Whisper out and users add it later. The model
+            # layout check below still requires every marker once it is there.
+            if ($ExistingInstallation -and $exists -and -not [bool]$marker.exists -and
+                ($marker.PSObject.Properties.Name -contains 'excludedFromHandoff') -and [bool]$marker.excludedFromHandoff) {
+                continue
+            }
             if ([bool]$marker.exists -ne $exists) {
                 $mismatches += "$($marker.path) existence mismatch"
                 continue

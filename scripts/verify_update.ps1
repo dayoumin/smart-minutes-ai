@@ -248,6 +248,14 @@ function Test-ReleaseManifest([string]$TargetRoot, $Manifest) {
                 $checks += "portable payload entry missing path or sha256"
                 continue
             }
+            # runtime and models are the installation's own; the update checks
+            # only what it ships.
+            $normalizedPath = ($relativePath -replace '/', '\').TrimStart('\')
+            if (-not ($normalizedPath -in @("lmo_audio.exe", "START_HERE.txt") -or
+                $normalizedPath.StartsWith("binaries\", [System.StringComparison]::OrdinalIgnoreCase) -or
+                $normalizedPath.StartsWith("backend\", [System.StringComparison]::OrdinalIgnoreCase))) {
+                continue
+            }
             $targetFile = Join-Path $TargetRoot $relativePath
             if (-not (Test-IsPathWithin $targetFile $TargetRoot)) {
                 $checks += "$relativePath escaped target root"

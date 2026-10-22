@@ -272,3 +272,12 @@
 - 결정 사항: 재생기는 정보 칸에 둔다. 좁은 창은 앱 메뉴를 아이콘 줄로 접고 정보 칸은 고정. Task 2의 Layout은 `<main className="barorok-workspace">`의 React 위치를 바꾸지 않도록 Sidebar와 56px 자리를 항상 있는 감싸개 하나(`div.barorok-sidebar-slot`) 안에 둔다.
 - main 작업 폴더(`D:\Projects\audio`)에는 같은 design.md 절과 이 계획 파일이 커밋 안 된 변경으로도 남아 있다(다른 세션 변경과 섞여 있음). 브랜치를 main에 합칠 때 중복을 정리한다.
 - 2026-10-22 집 PC 종료 시점 상태: Task 1을 구현했고 `columns` 시나리오도 추가했다. `typecheck`는 통과했다. **Task 1 Step 6 검증(eslint와 시뮬레이션)과 작업 리뷰는 아직 하지 않았다.** 회사에서는 `WIP Task 1` 커밋에서 시작해 Step 6을 먼저 돌린다. 실패를 고친 뒤 리뷰를 받고, 원래 제목(`feat(detail): split meeting detail into header, info panel and tab column`)으로 커밋하고 Task 2로 간다.
+
+### 진행 갱신 (2026-10-22, `D:\Projects\LMO_audio`)
+
+- 위 집 PC 종료 메모 이후 `faa5a6da`를 로컬 main에 fast-forward 병합했다. Task 1 검증과 agent 검토를 마쳤고, 주제 이동 시 고정 탭 가림과 280px 중지 안내 폭을 수정했다. Task 3의 해당 보완도 포함한다.
+- 사용자가 메뉴 이미지 시안을 승인했다. 기존 Figma 원본을 보존하고 편집 가능한 E1·E2·E3을 `49:1740` 보드에 정리했다. 링크와 실제 글꼴/참고 화면 차이는 `docs/design.md`에 기록했다.
+- Task 2 소스 구현 완료: `useSidebarCollapse.ts`, 단일 Sidebar, 영구 슬롯, 아이콘 줄, 겹침 메뉴와 배경 차단, 창 크기 전환, 초점 순환/복귀, 설정 종료 후 초점, 이어하기 설명을 반영했다. 검증 후 사용자 승인에 따라 소스·테스트를 `b37a990f`로 커밋했고, 설계·검증 기록은 별도 문서 커밋으로 저장한다.
+- typecheck, 변경 파일 ESLint, 메뉴 전용 검사(넓은 창·1024px·저장소 거부), 상세 배치 기본/columns, 분석 연속성 4개, 참석자 구분 연속성 2개, `simulate-meeting-detail-flow.mjs` 모듈이 통과했다. 추가된 설정 창 크기 전환·재생 중 유지·Tab 순환 검사는 `narrow`로 재검증했다. 독립 agent 검토의 현재 범위 지적은 수정 후 재검토했다.
+- 기존 상세 모듈의 오래된 폴더 이동/고정 해제·빈 폴더·진행 패널 단언도 현재 계약에 맞췄다. 기존 상태/저장/내보내기 검증은 유지했다. 증거·명령은 `docs/frontend-simulation-testing.md`를 따른다.
+- 남은 작업은 Task 4의 나머지 통합 점검과 문서의 이전 880px 상세 설명 정리다. 이미 유효한 집중 검사는 반복하지 않는다. 소스 UI 통과는 설치 엔진·HTTPS 배포 검증을 뜻하지 않으며, 빌드·푸시·배포는 하지 않았다.

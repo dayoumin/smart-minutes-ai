@@ -1,5 +1,109 @@
 # Frontend Simulation Testing
 
+## Collapsible app menu — 2026-10-22
+
+Approved editable Figma states are linked from `docs/design.md` (E board
+`49:1740`). The source uses one Sidebar instance, a permanent sidebar slot and
+an unchanged main element. Wide windows remember 240px/56px navigation;
+windows under 1200px use a 56px rail with a 240px overlay and scrim. The
+overlay makes the workspace inert, cycles Tab focus, and closes on selection,
+Escape or the scrim. Settings opens from a connected rail button so closing
+the settings dialog restores focus. Resume dots have an accessible description.
+
+Commands run serially from `D:\Projects\LMO_audio` using
+`COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`,
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`,
+and `APP_URL=http://127.0.0.1:5196/`. The dedicated server command is
+`corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5196
+--strictPort --configLoader runner`. It is stopped after checks; the same
+command and working directory restore it.
+
+- `corepack pnpm --dir desktop-app typecheck` and changed-file ESLint pass.
+- `corepack pnpm --dir desktop-app test:sidebar-collapse` covers remembered wide
+  preference/reload, denied preference storage, 1024px columns, overlay geometry,
+  Tab/Shift+Tab/Escape, scrim, record/new-record navigation, both resize preference
+  cases, main/audio node identity, seek position, uninterrupted playback,
+  unsaved title preservation, Settings focus return and the resume description.
+  The final expanded narrow assertions were additionally run with `narrow`.
+  Settings resize checks cover both rail→expanded and expanded→rail while the
+  dialog is open; a persistent focus scope selects the currently visible button.
+- `simulate-meeting-detail-layout.mjs` passes the existing metadata, transcript,
+  audio/error placement and long-topic scenarios at the relevant widths.
+- `simulate-analysis-stop-flow.mjs detail-continuity` passes all four scenarios,
+  including the 760px progress entrance and disabled new-record action.
+- `simulate-analysis-stop-flow.mjs diarization-continuity` passes at 1280/760px.
+- `corepack pnpm --dir desktop-app exec node --experimental-strip-types scripts/simulate-meeting-detail-flow.mjs`
+  passes the full module, including the 800px overlay row/folder menus, keyboard
+  move/unpin, cross-meeting generation, edit/reopen and latest export payload.
+
+Test fixture/recovery lessons: audio mocks must support Range, HEAD and CORS
+headers to prove seeking/playback. Scope title-edit locators to the visible detail
+surface because the writer is retained. The back-to-top check retains the
+negative threshold assertion but clicks at 1.5 viewports instead of only 30px
+past the threshold: diagnostic scroll anchoring moved 750px to 695px during
+layout settling and legitimately removed the button below the 720px threshold.
+No force-click or threshold change in product code was needed.
+The detail-flow module also contained older folder assertions: a row moved into
+a closed folder must focus a remaining row, while a row moved back to the
+unfiled list keeps its own menu focus. Its empty-folder check now uses the current
+paragraph and `회의록이 없습니다.` copy. Storage-preservation checks remain intact.
+Unpinning retains the record in the complete unfiled list, checks persisted
+`pinned: false` and its new sort position, and retains focus on the current node.
+Progress assertions now use the current information-column progressbar, timing
+and stop control; accepted stops remove that control rather than retaining an
+older disabled button. Existing stop request bodies and preserved results are
+still checked.
+
+Independent behavior and test reviewers checked the implementation. The identified
+Settings opener-lifetime and resume-description gaps were fixed and rechecked;
+targeted final review found no remaining blocker. Original Figma frames, unrelated
+work, and prior P2 fixes were preserved. After verification, user approval saved
+the source/tests as `b37a990f`; these records are committed separately. No push,
+build or deployment ran.
+
+Screenshots are in `.tmp/sidebar-collapse/` (`wide-expanded`, `narrow-rail`,
+`narrow-overlay`, plus Figma reference images). These are source-UI Chromium
+simulations with isolated storage, synthetic audio and mocked engine APIs;
+they do not verify installed-engine inference or a deployed HTTPS build.
+
+## Two-column detail review fixes — 2026-10-22
+
+The meeting information column now stacks stop/cancel explanations above their
+wrapping actions, for both analysis and on-demand speaker separation. Detail
+scroll targets reserve 8rem above the destination in the workspace so long-topic
+jumps and generated-section navigation clear the sticky tabs and padded inset.
+
+The layout simulation now measures the sticky navigation wrapper against the
+workspace's padding edge, rather than expecting its inner tabs at viewport zero.
+Records with a complete output list without audio retain the `음성 없음` row,
+keep the tabs stable, and make no audio request, matching `docs/design.md`.
+Long-topic navigation runs at 1280/760px and checks the focused heading below the
+navigation; both stop flows check readable text width and contained buttons.
+
+Passed serially from `D:\Projects\LMO_audio`, with Node 22.22.2,
+`COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`,
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`, and
+`APP_URL=http://127.0.0.1:5196/`:
+
+| Command after `corepack pnpm --dir desktop-app` | Evidence |
+| --- | --- |
+| `typecheck` | TypeScript passes |
+| `exec eslint scripts/simulate-meeting-detail-layout.mjs scripts/simulate-analysis-stop-flow.mjs` | Changed scripts pass |
+| `exec node --experimental-strip-types scripts/simulate-meeting-detail-layout.mjs columns` | 1280/1440px columns, sticky navigation and audio visibility |
+| `exec node --experimental-strip-types scripts/simulate-meeting-detail-layout.mjs` | Long-topic jumps at 1280/760px, narrow metadata, transcript rows, audio state and error placement |
+| `exec node --experimental-strip-types scripts/simulate-analysis-stop-flow.mjs diarization-continuity` | 1280/760px stop choice, focus return, completion and reopen |
+| `exec node --experimental-strip-types scripts/simulate-analysis-stop-flow.mjs stop-actions` | Analysis stop and cancel, including readable choices and partial-result preservation |
+
+These are Chromium source-UI checks with mocked APIs and isolated storage; they
+do not prove actual engine processing, production HTTPS or packaged runtime.
+The session-owned Vite command is `corepack pnpm --dir desktop-app exec vite
+--host 127.0.0.1 --port 5196 --strictPort --configLoader runner`, from the repository
+root. It is stopped after verification; this command restores it if needed.
+Screenshots are kept under `.tmp/merge-review-20261022/`.
+The 1280px long-topic destination and 1280/760px stop panels were visually
+inspected. Two independent read-only agent reviews covered behavior/scope and
+test contracts after the passing checks; neither found a remaining blocker.
+
 ## Full local-processing notice — 2026-10-21
 
 Removed the compact intro and its expand/collapse control. Intro and help show

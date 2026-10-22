@@ -146,6 +146,78 @@ corepack pnpm check:portable
 - `check:release`·`check:portable`은 Node 22.6 이상이 필요하다(2026-10-20). `test:generation-flow`·`test:topic-generation-ui`가 `node --experimental-strip-types`로 TypeScript를 바로 불러오기 때문이고, 더 낮은 Node에서는 `bad option: --experimental-strip-types`로 실패한다. 빌드 PC에서 먼저 `node --version`을 확인한다.
 - 현재 `check:release`의 백엔드 API unittest는 Ollama 모델 받기/상태/삭제, 직접 입력 모델 저장, 참석자 구분 분석 중 실행 옵션을 포함한다. 프론트 시뮬레이션은 모델 탭 진입, 추천/직접 입력 표시, 참석자 구분 재실행 상태를 일부 확인한다.
 
+## 6-1. 배포·업데이트·전달 스크립트를 바꿀 때 데이터 안전 체크
+
+다음을 바꾸면 리뷰 전에 이 절을 확인한다. 데스크톱과 웹은 화면 코드를 함께 쓰므로 한쪽만 바꿔도 양쪽 표를 본다.
+
+- 데스크톱: `release_portable.ps1`, `verify_portable.ps1`, `create_handoff_package.ps1`, `create_update_package.ps1`, `portable_data_safety.ps1`, `run_release_checks.ps1`
+- 웹: `prepare_cloudflare_web.ps1`, `installer\web-local-engine.nsi`, `build_web_local_engine_*.ps1`, `backend\web_local_engine_installer_preflight.py`, `backend\web_local_engine_runtime.py`
+- 공통: 앱이 파일을 저장하는 위치, `desktop-app\src\meetingRepository.ts`의 저장 형식(`DB_VERSION`), 화면·엔진 호환 번호(`API_CONTRACT_VERSION`, `SUPPORTED_API_CONTRACT_VERSIONS`)
+
+2026-10-22 웹·데스크톱 병행 작업에서 리뷰가 반복될 때마다 같은 종류의 누락(결과 폴더 → 요약 모델 파일 → 드라이브 상대 경로)이 나왔기 때문에 만든 목록이다. 아래 날짜별 기록은 "무슨 일이 있었나", 이 절은 "다음에 무엇을 볼까"다.
+
+공통 원칙과 이유는 playbook 저장소의 `quality/release-update-data-safety.md`(이 PC에서는 `D:\Projects\playbook\quality\release-update-data-safety.md`)에 있다. 이 절에는 이 프로젝트의 표와 체크 항목만 둔다. 공통 원칙이 추가되면 해당하는 체크 항목만 여기에 더한다.
+
+### 데스크톱 portable (`releases\lmo_audio`)
+
+portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 안에 섞여 있다. 그래서 업데이트가 폴더를 다룰 때마다 주인을 구분해야 한다. 위치가 늘거나 동작이 바뀌면 이 표부터 고친다.
+
+| 위치 | 주인 | 업데이트(`Sync-PortableToDeploy`) | 전달 ZIP |
+| --- | --- | --- | --- |
+| `lmo_audio.exe`, `START_HERE.txt`, `release-manifest.json` | 패키지 | 덮어쓴다. manifest는 검증된 빌드의 것을 그대로 복사한다 | 포함(manifest는 ZIP 기준으로 갱신) |
+| `binaries\` | 패키지 | `/MIR` 통째로 맞춘다 | 포함 |
+| `backend\` 코드 | 패키지 | `/MIR`, 단 아래 사용자 자료는 제외 | 포함 |
+| `backend\config.json` | 사용자 | 없을 때만 기본값을 넣는다 | 설치본 것 대신 HEAD 기본값 |
+| `backend\outputs`·`temp`·`logs`·`database`, `*.db*`, `*.sqlite*` | 사용자 | 건드리지 않는다 | 제외 |
+| `models\` | 패키지 + 사용자 다운로드 | `/E` 덧붙이기만 한다 | 정한 모델 폴더만 |
+| `models\ollama` | 사용자(Ollama 모델) | 건드리지 않는다 | 제외 |
+| `runtime\ollama` | 빌드에 `ollama.exe`가 있으면 패키지, 없으면 사용자 | 있으면 `/MIR` 통째 교체, 없으면 `/E`로 사용자 것 보존 | `README.txt`만 |
+| 그 밖의 `runtime\` | 패키지 | `/E` | 포함 |
+| 루트 `logs\`, 개인 백업 등 그 밖의 최상위 파일 | 사용자 | 건드리지 않는다 | 제외 |
+| WebView 회의 목록(`%LOCALAPPDATA%\com.nifs.smart-minutes-ai\EBWebView`) | 사용자 | 폴더 밖. `-ClearWebViewCache`는 캐시와 `Session Storage`만 지우고 IndexedDB는 보존한다 | 해당 없음 |
+
+### 웹 화면과 설치형 엔진
+
+웹은 배포물이 둘이다. 화면은 Cloudflare에 올리는 순간 모든 사용자에게 바뀌고, 엔진은 사용자가 설치 프로그램을 실행해야 바뀐다. 엔진은 프로그램과 자료가 이미 다른 폴더로 나뉘어 있다.
+
+| 위치 | 주인 | 배포·업데이트 때 | 비고 |
+| --- | --- | --- | --- |
+| 웹 화면 자산 | 패키지 | 배포 때 전체 교체, 모든 사용자에게 즉시 반영 | `prepare_cloudflare_web.ps1`이 `.tmp\cloudflare-web\dist`에 만든다 |
+| 브라우저 회의 목록(IndexedDB) | 사용자 | 배포가 건드리지 않는다. 사이트 주소(프로토콜·도메인·포트)마다 따로 저장된다 | 운영 주소 `https://barorok.ecomarin.workers.dev` |
+| 엔진 프로그램 `%LOCALAPPDATA%\Programs\Barorok\LocalEngine` | 패키지 | 설치 프로그램이 준비 폴더에 풀어 교체한다. 새 엔진이 시작되지 않으면 되돌린다 | 정리는 설치 프로그램이 만든 파일 목록 안에서만 한다. 허용하는 웹 주소는 빌드 때 `defaults\engine-settings.json`에 고정된다 |
+| 엔진 자료 `%LOCALAPPDATA%\Barorok\LocalEngine`(설정·모델·DB·결과·임시·로그·런타임) | 사용자 | 설치·업데이트·제거 모두 보존한다 | |
+
+### 체크 항목
+
+데스크톱 업데이트와 공통:
+
+- [ ] **주인 구분**: 앱이 새 파일·폴더를 만들기 시작했다면 위 표에 주인과 업데이트·전달 동작을 먼저 적었다.
+- [ ] **설정으로 바뀌는 경로**: `paths.*`, `summary.model`, 활성 양식처럼 사용자가 위치를 바꿀 수 있는 값을 `portable_data_safety.ps1`이 검사한다. 해석 기준은 앱과 같은 `backend` 작업 위치다(상대·드라이브 상대 `D:x`·루트 상대 `\x` 포함). 셸 위치 기준으로 해석하지 않는다.
+- [ ] **폴더별 동작 선택**: `/MIR`은 패키지가 전부 소유한 폴더에만 쓴다. `/E`는 버전이 섞여도 안전한 폴더에만 쓴다. 섞이면 고장 나는 실행 파일 묶음은 통째로 교체한다.
+- [ ] **시험 실행 위치**: 앱을 실제로 켜는 smoke는 중간 빌드 폴더에서만 실행한다. `releases\lmo_audio`는 `-ExistingInstallation`으로 읽기만 한다. 검사를 통과시키려고 기록·로그·설정을 지우지 않는다.
+- [ ] **비교 기준**: 설치본 무결성은 검증된 빌드 manifest와 비교한다. 동기화 뒤 대상 폴더로 manifest를 다시 만들지 않는다. 다시 만들면 잘못 복사된 파일도 정상으로 기록된다.
+- [ ] **앱이 스스로 바꾸는 파일**: 설치 후 앱이 바꾸는 파일(`backend\config.json`, Ollama 설치로 사라지는 `runtime\ollama\README.txt`)을 알고 있다. 검사 예외는 정확한 파일과 조건으로만 둔다.
+- [ ] **종료 범위**: 프로세스 종료는 그 설치 폴더 안의 실행 파일 경로로만 고른다. 이름이나 명령행으로 넓게 고르지 않는다. 웹 엔진(17863)과 다른 설치본은 종료하지 않는다.
+- [ ] **두 제품 공존**: 데스크톱 포트는 17864부터 고르고 17863은 쓰지 않는다. 기록·설정 위치는 제품마다 따로 둔다. RAM·GPU·시스템 Ollama 공유는 허용된 제약이며 완전 격리로 설명하지 않는다.
+- [ ] **전달 ZIP**: 허용한 최상위 항목만 담고, 설정은 HEAD 기본값으로 넣는다. DB·로그·개인 파일은 넣지 않는다.
+- [ ] **테스트 방식**: 임시 fixture로만 시험하고 `releases\lmo_audio`나 실행 중인 앱은 쓰지 않는다. 수정 전 코드에서 새 테스트가 실패하는지 확인한다. 실행 전후 파일 해시로 보존을 확인한다.
+- [ ] **확인 명령과 문서**: `check:portable`, `verify:portable`, 릴리스 스킬, 이 문서의 작업 순서가 현재 흐름과 같다. 예전 명령이 남으면 정상 빌드도 실패로 보인다.
+- [ ] **커밋 범위**: 여러 세션이 같은 작업 트리를 바꿨다면 검토한 변경만 커밋한다. 빌드 전에 커밋해 manifest가 HEAD를 가리키게 한다.
+- [ ] **중간에 멈췄을 때(알려진 한계)**: `Sync-PortableToDeploy`는 준비 폴더나 되돌리기 없이 `releases\lmo_audio`에 바로 복사한다. 디스크 부족이나 잠긴 파일로 중간에 멈추면 새 버전과 이전 버전이 섞인 설치본이 남을 수 있다. 사용자 자료는 동기화 대상이 아니므로 그대로 남는다. 복구는 원인을 해결한 뒤 `scripts\build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild`로 동기화와 읽기 전용 검사를 다시 하는 것이다. 동기화 방식을 바꿀 때는 준비 폴더와 되돌리기를 함께 검토한다.
+
+웹 화면과 설치형 엔진:
+
+- [ ] **저장 위치를 정하는 식별자 유지**: 아래 값을 바꾸지 않는다. 꼭 바꿔야 하면 기록 이전과 엔진 업데이트 계획을 같은 릴리스에 넣는다.
+  - 운영 웹 주소(프로토콜·도메인·포트): 바꾸면 브라우저의 기존 회의 목록이 보이지 않고, 설치된 엔진이 허용한 웹 주소(빌드 때 고정, `validate_production_web_origin`)와도 달라져 연결이 거부된다.
+  - 데스크톱 앱 식별자 `com.nifs.smart-minutes-ai`(`tauri.conf.json`): WebView 저장소 폴더를 정한다. 브랜드 이름이 바뀌어도 이 값은 유지한다.
+  - IndexedDB 이름 `MeetingHistoryDB`: 바꾸면 웹과 데스크톱 모두 기존 회의 목록이 빈 것처럼 보인다.
+  - Tauri 메이저 업그레이드: WebView 주소나 프로필 경로가 바뀌는지 확인하고, 이전 버전이 만든 기록이 보이는지 시험한다.
+- [ ] **저장 형식 버전**: `DB_VERSION`은 올리기만 한다. 올릴 때는 이전 형식을 읽어 올리는 코드와 테스트를 같이 둔다. 화면을 예전 빌드로 되돌릴 때는 그 빌드의 `DB_VERSION`이 운영 중인 값보다 낮지 않은지 확인한다. 낮으면 브라우저가 기존 저장소를 열지 않는다. 데스크톱 WebView도 같은 코드라 함께 해당한다.
+- [ ] **화면·엔진 호환**: 화면은 즉시 바뀌고 엔진은 늦게 바뀐다. 호환 번호를 바꾸기 전에, 새 화면이 아직 업데이트하지 않은 엔진을 만났을 때 무엇을 보여 줄지(업데이트 안내) 먼저 정하고 시험한다. 한 번에 한쪽만 올려도 동작하도록 순서를 정한다.
+- [ ] **엔진 설치 프로그램 약속**: 실행 중인 엔진은 `--stop`으로 멈추고 멈춤을 확인한 뒤 교체한다. 설치 프로그램이 만든 파일 목록 밖은 지우지 않는다. 새 엔진이 시작되지 않으면 되돌린다. 제거해도 자료 폴더는 남긴다. 이 동작을 바꾸면 기존 설치본 위 실제 업데이트로 파일 해시와 자료 보존을 대조한다.
+
+구조 개선 후보(미결정): 사용자 자료를 프로그램과 분리된 `data` 폴더나 `%LOCALAPPDATA%`로 옮기면 업데이트를 "프로그램 폴더 통째 교체"로 단순화할 수 있다. 웹 설치 엔진은 이미 `%LOCALAPPDATA%\Barorok\LocalEngine`을 쓴다. 기존 설치본 이전 절차가 필요하므로 별도 범위로 검토한다.
+
 ## 7. 이 프로젝트의 단일 배포 흐름
 
 혼돈을 줄이기 위해 실제 배포 기준은 `releases\lmo_audio` 폴더 하나로 고정한다. Tauri target 폴더는 중간 산출물이며 사용자가 직접 실행할 기준 폴더가 아니다.
@@ -168,7 +240,7 @@ corepack pnpm check:portable
    - 프론트엔드: `corepack pnpm --dir desktop-app run typecheck`, `corepack pnpm --dir desktop-app run lint`, 필요한 `desktop-app/scripts/simulate-*.mjs`.
    - Tauri/Rust: `cargo check` in `desktop-app\src-tauri`.
    - 백엔드: 관련 Python unittest 또는 `py_compile`.
-3. 서버 재시작, 취소/삭제, 이어하기, 저장/내보내기, 배포, 긴 파일 처리처럼 사용자 작업 손실이나 운영 위험이 있으면 큰 관점/작은 관점 리뷰를 실행한다. 리뷰에는 0-1의 데스크탑앱 한계 체크를 포함한다.
+3. 서버 재시작, 취소/삭제, 이어하기, 저장/내보내기, 배포, 긴 파일 처리처럼 사용자 작업 손실이나 운영 위험이 있으면 큰 관점/작은 관점 리뷰를 실행한다. 리뷰에는 0-1의 데스크탑앱 한계 체크를 포함한다. 배포·업데이트·전달 스크립트나 저장 위치가 바뀌었으면 6-1의 데이터 안전 체크도 포함한다.
 4. 리뷰 지적을 반영하고 다시 좁은 검증을 통과시킨다.
 5. 배포 빌드 전에 변경 사항을 커밋한다. 최종 사용자용 manifest는 커밋된 HEAD를 가리켜야 한다.
 6. 루트에서 `corepack pnpm build`를 실행한다.

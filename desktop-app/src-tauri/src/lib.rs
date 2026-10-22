@@ -1,11 +1,13 @@
 use std::fs::{self, OpenOptions};
 use std::io::Write;
-use std::net::TcpListener;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use tauri::{AppHandle, Manager, RunEvent, State, WindowEvent};
 use tauri_plugin_shell::ShellExt;
+
+mod backend_port;
+use backend_port::{find_available_port, PREFERRED_BACKEND_PORT};
 
 #[cfg(target_os = "windows")]
 use std::ffi::c_void;
@@ -14,8 +16,6 @@ use std::os::windows::process::CommandExt;
 
 #[cfg(target_os = "windows")]
 const BACKEND_SIDECAR: &str = "meeting-backend-x86_64-pc-windows-msvc.exe";
-const PREFERRED_BACKEND_PORT: u16 = 17863;
-const PREFERRED_BACKEND_PORT_ATTEMPTS: u16 = 100;
 
 #[cfg(target_os = "windows")]
 const MB_YESNO: u32 = 0x00000004;
@@ -233,24 +233,6 @@ fn confirm_app_close() -> bool {
 #[cfg(not(target_os = "windows"))]
 fn confirm_app_close() -> bool {
     true
-}
-
-fn find_available_port() -> Result<u16, String> {
-    for offset in 0..PREFERRED_BACKEND_PORT_ATTEMPTS {
-        let candidate = PREFERRED_BACKEND_PORT + offset;
-        if TcpListener::bind(("127.0.0.1", candidate)).is_ok() {
-            return Ok(candidate);
-        }
-    }
-
-    let listener = TcpListener::bind("127.0.0.1:0")
-        .map_err(|error| format!("Could not reserve an analysis port: {error}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|error| format!("Could not read reserved analysis port: {error}"))?
-        .port();
-    drop(listener);
-    Ok(port)
 }
 
 fn spawn_backend(app: &AppHandle, port: u16, desktop_action_token: &str) -> Result<Child, String> {

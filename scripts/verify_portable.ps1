@@ -2,11 +2,13 @@ param(
     [string]$PortableDir = "releases\lmo_audio",
     [int]$TimeoutSeconds = 240,
     [switch]$AllowDirty,
+    [switch]$ExistingInstallation,
     [switch]$Handoff,
     [switch]$AllowMissingEmbeddedOllama
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'portable_data_safety.ps1')
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
 $ModelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
@@ -154,6 +156,13 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
     }
 
     $mismatches = @()
+    if ($ExistingInstallation) {
+        try {
+            $userConfig = Get-Content -LiteralPath (Join-Path $PortableRoot 'backend\config.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+            if ($userConfig -isnot [pscustomobject]) { throw 'configuration must be a JSON object' }
+        }
+        catch { $mismatches += 'backend\config.json missing or invalid JSON object' }
+    }
     foreach ($entry in $manifest.files.PSObject.Properties) {
         $relativePath = [string]$entry.Value.path
         $expectedHash = [string]$entry.Value.sha256
@@ -162,7 +171,8 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
         if (-not $actualHash) {
             $mismatches += "$relativePath missing"
         }
-        elseif ($expectedHash -and $actualHash -ne $expectedHash) {
+        elseif ($expectedHash -and $actualHash -ne $expectedHash -and
+            -not ($ExistingInstallation -and $relativePath.Replace('/', '\').Equals('backend\config.json', [System.StringComparison]::OrdinalIgnoreCase))) {
             $mismatches += "$relativePath hash mismatch"
         }
     }
@@ -179,7 +189,8 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
             if (-not $actualHash) {
                 $mismatches += "$relativePath missing"
             }
-            elseif ($expectedHash -and $actualHash -ne $expectedHash) {
+            elseif ($expectedHash -and $actualHash -ne $expectedHash -and
+                -not ($ExistingInstallation -and $relativePath.Replace('/', '\').Equals('backend\config.json', [System.StringComparison]::OrdinalIgnoreCase))) {
                 $mismatches += "$relativePath hash mismatch"
             }
         }
@@ -223,6 +234,7 @@ function Test-CleanPortableSurface([string]$PortableRoot) {
         "backend\outputs",
         "backend\temp",
         "backend\logs",
+        "backend\database",
         "backend\__pycache__"
     )
     $presentRuntimePaths = @(
@@ -233,6 +245,9 @@ function Test-CleanPortableSurface([string]$PortableRoot) {
         }
     )
     Add-Result "runtime folders excluded" ($presentRuntimePaths.Count -eq 0) ($presentRuntimePaths -join ", ")
+    $databaseFiles = @(Get-ChildItem -LiteralPath (Join-Path $PortableRoot 'backend') -File -Recurse -Force -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -like '*.db*' -or $_.Name -like '*.sqlite*' })
+    Add-Result "user databases excluded" ($databaseFiles.Count -eq 0) "count=$($databaseFiles.Count)"
 }
 
 function Test-ManagedReleasePortablePath([string]$PortableRoot) {
@@ -242,11 +257,8 @@ function Test-ManagedReleasePortablePath([string]$PortableRoot) {
 }
 
 function Remove-PortableRuntimeArtifacts([string]$PortableRoot) {
-    $portableFullPath = Normalize-FullPath $PortableRoot
-    if (-not (Test-ManagedReleasePortablePath $portableFullPath)) {
-        return @("skipped: external portable dir")
-    }
-
+    # Only empty directories may be removed. Never recursively clear a used
+    # installation, even after a failed smoke test.
     $runtimePaths = @(
         "logs",
         "backend\outputs",
@@ -258,13 +270,14 @@ function Remove-PortableRuntimeArtifacts([string]$PortableRoot) {
 
     foreach ($relativePath in $runtimePaths) {
         $targetPath = Join-Path $PortableRoot $relativePath
+        $portableFullPath = Normalize-FullPath $PortableRoot
         $targetFullPath = Normalize-FullPath $targetPath
         if (-not $targetFullPath.StartsWith($portableFullPath + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)) {
             throw "Runtime cleanup target escaped portable root: $targetFullPath"
         }
 
-        if (Test-Path -LiteralPath $targetFullPath) {
-            Remove-Item -LiteralPath $targetFullPath -Recurse -Force -ErrorAction Stop
+        if ((Test-Path -LiteralPath $targetFullPath -PathType Container) -and @(Get-ChildItem -LiteralPath $targetFullPath -Force).Count -eq 0) {
+            Remove-Item -LiteralPath $targetFullPath -Force -ErrorAction Stop
             $removedPaths += $relativePath
         }
     }
@@ -272,12 +285,12 @@ function Remove-PortableRuntimeArtifacts([string]$PortableRoot) {
     return $removedPaths
 }
 
-function Stop-PortableProcesses([string]$PortableRoot) {
-    Get-Process -ErrorAction SilentlyContinue |
+function Assert-NoPortableProcesses([string]$PortableRoot) {
+    $live = @(Get-Process -ErrorAction SilentlyContinue |
         Where-Object {
-            $_.Path -and $_.Path.StartsWith($PortableRoot, [System.StringComparison]::OrdinalIgnoreCase)
-        } |
-        Stop-Process -Force -ErrorAction SilentlyContinue
+            $_.Path -and (Test-PortablePathWithin $_.Path $PortableRoot)
+        })
+    if ($live.Count -gt 0) { throw 'Portable runtime smoke refused: this installation is running. Use -ExistingInstallation for read-only integrity checks.' }
 }
 
 function Test-PortAvailable([int]$Port) {
@@ -297,7 +310,7 @@ function Test-PortAvailable([int]$Port) {
     }
 }
 
-function Get-AvailableBackendPort([int]$StartPort = 17863, [int]$Attempts = 100) {
+function Get-AvailableBackendPort([int]$StartPort = 17864, [int]$Attempts = 100) {
     for ($offset = 0; $offset -lt $Attempts; $offset += 1) {
         $candidate = $StartPort + $offset
         if (Test-PortAvailable $candidate) {
@@ -378,7 +391,7 @@ if (Test-Path -LiteralPath $ollamaRuntimeDir) {
 }
 Add-Result "ffmpeg exists" (Test-Path -LiteralPath $ffmpegExe) $ffmpegExe
 Add-Result "release manifest exists" (Test-Path -LiteralPath $manifestFile) $manifestFile
-Test-CleanPortableSurface $portablePath
+if (-not $ExistingInstallation) { Test-CleanPortableSurface $portablePath }
 Test-ReleaseManifest $portablePath $manifestFile ([bool]$AllowDirty)
 $modelsToVerify = if ($Handoff) {
     @($ModelLayout.models | Where-Object { [string]$_.role -eq "diarization" })
@@ -415,8 +428,15 @@ if (Test-Path -LiteralPath $sidecarExe) {
     Add-Result "sidecar exe subsystem" ($sidecarSubsystem -eq "Windows GUI") $sidecarSubsystem
 }
 
-Stop-PortableProcesses $portablePath
-Start-Sleep -Seconds 1
+if ($ExistingInstallation) {
+    $Results | Format-Table -AutoSize
+    if ($Failed) { throw "Portable installation integrity verification failed." }
+    Write-Host "Portable installation integrity verified; runtime smoke deferred. No processes or user data changed." -ForegroundColor Green
+    return
+}
+if ($Failed) { throw 'Portable runtime smoke refused: structural or clean-folder preflight failed. No processes or user data changed.' }
+Assert-PortableDataLayout $portablePath -ForRuntimeSmoke
+Assert-NoPortableProcesses $portablePath
 
 $appProcess = $null
 $backendProcess = $null
@@ -510,9 +530,10 @@ try {
             }
         }
 
+        $smokeJobId = "portable_verify_$([Guid]::NewGuid().ToString('N'))"
         $smokeRecord = [ordered]@{
-            id = "portable_verify_smoke"
-            jobId = "portable_verify_smoke"
+            id = $smokeJobId
+            jobId = $smokeJobId
             title = "Portable verify smoke"
             date = (Get-Date).ToString("yyyy-MM-dd HH:mm")
             participants = "tester"
@@ -532,7 +553,7 @@ try {
 
         $exportFailures = @()
         foreach ($kind in @("txt", "md", "docx", "hwpx")) {
-            $smokeFile = Join-Path ([System.IO.Path]::GetTempPath()) "lmo-audio-export-smoke-$kind.tmp"
+            $smokeFile = Join-Path ([System.IO.Path]::GetTempPath()) "$smokeJobId-$kind.tmp"
             try {
                 Invoke-WebRequest -Uri "$baseUrl/api/export-record/$kind" -Method Post -ContentType "application/json; charset=utf-8" -Body $smokeRecord -OutFile $smokeFile -TimeoutSec 15
                 if (-not (Test-Path -LiteralPath $smokeFile) -or (Get-Item -LiteralPath $smokeFile).Length -le 0) {
@@ -561,7 +582,7 @@ try {
         Add-Result "export smoke" ($exportFailures.Count -eq 0) ($exportFailures -join "; ")
 
         try {
-            Invoke-RestMethod -Uri "$baseUrl/api/outputs/portable_verify_smoke" -Method Delete -TimeoutSec 5 | Out-Null
+            Invoke-RestMethod -Uri "$baseUrl/api/outputs/$smokeJobId" -Method Delete -TimeoutSec 5 | Out-Null
         }
         catch {
             Add-Result "export smoke cleanup" $false $_.Exception.Message
@@ -575,7 +596,6 @@ finally {
     if ($backendProcess -and -not $backendProcess.HasExited) {
         Stop-Process -Id $backendProcess.Id -Force -ErrorAction SilentlyContinue
     }
-    Stop-PortableProcesses $portablePath
     try {
         $removedRuntimeArtifacts = @(Remove-PortableRuntimeArtifacts $portablePath)
         Add-Result "runtime artifact cleanup" $true $(if ($removedRuntimeArtifacts.Count -gt 0) { $removedRuntimeArtifacts -join ", " } else { "none" })

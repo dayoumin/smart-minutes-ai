@@ -189,7 +189,14 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
             (portable / "lmo_audio.exe").write_text("app", encoding="utf-8")
             (portable / "START_HERE.txt").write_text("full package", encoding="utf-8")
             (portable / "backend" / "main.py").write_text("backend", encoding="utf-8")
-            (portable / "backend" / "config.json").write_text("{}", encoding="utf-8")
+            (portable / "backend" / "config.json").write_text('{"private":"D:/private-meetings"}', encoding="utf-8")
+            private_paths = ("personal-backup.json", "logs/private.log", "backend/database/records",
+                             "backend/history.db", "backend/history.db-wal", "backend/history.sqlite3-shm",
+                             "backend/outputs/result.json", "backend/temp/resume.json", "backend/logs/private.log")
+            for relative in private_paths:
+                private_path = portable / relative
+                private_path.parent.mkdir(parents=True, exist_ok=True)
+                private_path.write_text("private fixture", encoding="utf-8")
             (portable / "binaries" / "meeting-backend-x86_64-pc-windows-msvc.exe").write_text("sidecar", encoding="utf-8")
             (portable / "runtime" / "ollama" / "README.txt").write_text("placeholder", encoding="utf-8")
             (portable / "runtime" / "ollama" / "ollama.exe").write_text("large runtime", encoding="utf-8")
@@ -219,6 +226,10 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
                 "commit": "abcdef1234567890",
                 "dirty": False,
                 "files": {
+                    "backendConfig": {
+                        "path": "backend\\config.json",
+                        "sha256": _sha256(portable / "backend" / "config.json"),
+                    },
                     "startHere": {
                         "path": "START_HERE.txt",
                         "sha256": _sha256(portable / "START_HERE.txt"),
@@ -256,6 +267,16 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
 
                 with zipfile.ZipFile(package_zip) as archive:
                     names = set(archive.namelist())
+                    for relative in private_paths:
+                        self.assertNotIn(f"lmo_audio/{relative}", names)
+                    packaged_config = archive.read("lmo_audio/backend/config.json").decode("utf-8")
+                    committed_config = subprocess.run(
+                        ["git", "-c", "core.excludesFile=", "show", "HEAD:backend/config.json"],
+                        cwd=ROOT, capture_output=True, text=True, encoding="utf-8", check=True,
+                    ).stdout
+                    self.assertEqual(json.loads(packaged_config), json.loads(committed_config))
+                    self.assertNotIn("private-meetings", packaged_config)
+                    self.assertIn("용량과 속도를 우선할 때 사용합니다.", packaged_config)
                     self.assertIn(
                         "lmo_audio/models/speaker-diarization-community-1/config.yaml",
                         names,
@@ -282,6 +303,8 @@ Test-RequiredMarkers $modelDir @("config.json") "sample"
                     self.assertNotIn("lmo_audio/runtime/ollama/ollama.exe", names)
                     self.assertNotIn("lmo_audio/runtime/ollama/ollama.dll", names)
                     manifest = json.loads(archive.read("lmo_audio/release-manifest.json").decode("utf-8-sig"))
+                    self.assertEqual(manifest["files"]["backendConfig"]["sha256"],
+                                     hashlib.sha256(archive.read("lmo_audio/backend/config.json")).hexdigest())
                     self.assertEqual(manifest["handoff"]["packageFormat"], "lmo-audio-slim-handoff-v1")
                     payload_by_path = {entry["path"]: entry for entry in manifest["portablePayloadFiles"]}
                     self.assertEqual(
@@ -559,46 +582,149 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
         self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
 
     def test_verify_portable_preserves_config_and_manifest(self):
-        portable_dir = ROOT / "releases" / "lmo_audio"
-        config_path = portable_dir / "backend" / "config.json"
-        manifest_path = portable_dir / "release-manifest.json"
-        if not config_path.exists() or not manifest_path.exists():
-            self.skipTest("Portable release folder is not available")
-        runtime_paths = [
-            portable_dir / "logs",
-            portable_dir / "backend" / "outputs",
-            portable_dir / "backend" / "temp",
-        ]
-        if any(path.exists() for path in runtime_paths):
-            self.skipTest("Portable release folder has runtime artifacts; preservation test requires a clean deploy folder")
+        # Never launch a real user's installed sidecar from this test module.
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = Path(temp_dir) / "lmo_audio"
+            fixture = {
+                "backend/config.json": '{"paths":{"output_dir":"./outputs","temp_dir":"./temp"}}',
+                "backend/main.py": "packaged code",
+                "backend/ffmpeg.exe": "fixture", "backend/outputs/meeting.json": "meeting",
+                "backend/temp/resume.json": "resume", "backend/logs/private.log": "private",
+                "logs/analysis.log": "existing log", "personal-backup.json": "backup",
+            }
+            for relative, text in fixture.items():
+                target = portable / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text(text, encoding="utf-8")
+            # Minimal headers are only for structural checks, never executable.
+            pe = bytearray(4096)
+            pe[0x3c:0x40] = (128).to_bytes(4, "little")
+            pe[128 + 24 + 68:128 + 24 + 70] = (2).to_bytes(2, "little")
+            for relative in ("lmo_audio.exe", "binaries/meeting-backend-x86_64-pc-windows-msvc.exe"):
+                path = portable / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(pe)
+            (portable / "runtime/ollama").mkdir(parents=True)
+            layout = json.loads(MODEL_LAYOUT_PATH.read_text(encoding="utf-8"))
+            for model in layout["models"]:
+                for marker in model["requiredMarkers"]:
+                    path = portable / "models" / model["portableDir"] / marker
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("model fixture", encoding="utf-8")
+            manifest = {"dirty": True, "modelMarkers": [], "files": {"backendConfig": {
+                "path": "backend/config.json", "sha256": _sha256(portable / "backend/config.json"),
+            }, "backendMain": {"path": "backend/main.py", "sha256": _sha256(portable / "backend/main.py")}}}
+            (portable / "release-manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+            # A valid user setting change is intentional mutable state; its old
+            # release hash must not invalidate installed integrity checks.
+            (portable / "backend/config.json").write_text('{"paths":{"output_dir":"./outputs","temp_dir":"./temp"},"user_setting":true}', encoding="utf-8")
+            before = {path.relative_to(portable).as_posix(): _sha256(path) for path in portable.rglob("*") if path.is_file()}
+            for mode, expected_code in (("-ExistingInstallation", 0), ("", 1)):
+                with self.subTest(mode=mode):
+                    command = f"& '{ROOT / 'scripts/verify_portable.ps1'}' -PortableDir '{portable}' -AllowDirty {mode}"
+                    result = _run_powershell(command)
+                    self.assertEqual(result.returncode, expected_code, result.stdout + result.stderr)
+                    self.assertIn("runtime smoke deferred" if mode else "preflight failed", result.stdout + result.stderr)
+                    after = {path.relative_to(portable).as_posix(): _sha256(path) for path in portable.rglob("*") if path.is_file()}
+                    self.assertEqual(before, after)
+            command = f"& '{ROOT / 'scripts/verify_portable.ps1'}' -PortableDir '{portable}' -AllowDirty -ExistingInstallation"
+            for relative, modified in (("backend/main.py", "tampered code"), ("backend/config.json", "invalid json")):
+                with self.subTest(invalid=relative):
+                    path = portable / relative
+                    original = path.read_bytes()
+                    path.write_text(modified, encoding="utf-8")
+                    result = _run_powershell(command)
+                    self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                    self.assertIn("integrity verification failed", result.stdout + result.stderr)
+                    self.assertEqual(path.read_text(encoding="utf-8"), modified)
+                    path.write_bytes(original)
 
-        before_config = _sha256(config_path)
-        before_manifest = _sha256(manifest_path)
-        completed = subprocess.run(
-            [
-                "powershell",
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-File",
-                str(ROOT / "scripts" / "verify_portable.ps1"),
-                "-PortableDir",
-                str(portable_dir),
-                "-AllowDirty",
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            timeout=300,
-        )
+    def test_verifier_cleanup_never_deletes_nonempty_user_data(self):
+        script = (ROOT / "scripts/verify_portable.ps1").read_text(encoding="utf-8")
+        cleanup = re.search(r"function Remove-PortableRuntimeArtifacts[\s\S]+?(?=\r?\nfunction Assert-NoPortableProcesses)", script)
+        self.assertIsNotNone(cleanup)
+        self.assertNotIn("Stop-PortableProcesses", script)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            for relative in ("logs/analysis.log", "backend/outputs/meeting.json", "backend/temp/resume.json"):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("existing private data", encoding="utf-8")
+            before = {path: _sha256(path) for path in root.rglob("*") if path.is_file()}
+            result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+function Normalize-FullPath([string]$Path) {{ return [System.IO.Path]::GetFullPath($Path).TrimEnd('\\', '/') }}
+{cleanup.group(0)}
+Remove-PortableRuntimeArtifacts '{root}' | Out-Null
+''')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(before, {path: _sha256(path) for path in root.rglob("*") if path.is_file()})
 
-        self.assertEqual(completed.returncode, 0, (completed.stdout or "") + (completed.stderr or ""))
-        self.assertIn("Qwen optional model omitted", completed.stdout)
-        self.assertIn("Portable verification passed", completed.stdout)
-        self.assertEqual(before_config, _sha256(config_path))
-        self.assertEqual(before_manifest, _sha256(manifest_path))
+    def test_custom_data_layout_is_rejected_before_update_or_handoff(self):
+        script = (ROOT / "scripts/release_portable.ps1").read_text(encoding="utf-8")
+        sync = re.search(r"function Sync-PortableToDeploy[\s\S]+?(?=\r?\n\$DeployPath =)", script)
+        self.assertIsNotNone(sync)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, portable = root / "source", root / "lmo_audio"
+            source.mkdir()
+            for directory in ("backend/saved-meetings", "binaries", "models"):
+                (portable / directory).mkdir(parents=True, exist_ok=True)
+            (portable / "lmo_audio.exe").write_text("existing app", encoding="utf-8")
+            record = portable / "backend/saved-meetings/private.json"
+            record.write_text("private meeting", encoding="utf-8")
+            config = portable / "backend/config.json"
+            config.write_text('{"paths":{"output_dir":"./saved-meetings"}}', encoding="utf-8")
+            before = {path: _sha256(path) for path in portable.rglob("*") if path.is_file()}
+            result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$PortableAppExeName = "lmo_audio.exe"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+{sync.group(0)}
+try {{ Sync-PortableToDeploy '{source}' '{portable}'; throw 'Expected rejection' }}
+catch {{ if ($_.Exception.Message -notlike '*Unsupported portable data layout*') {{ throw }} }}
+''')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            result = _run_powershell(f"& '{ROOT / 'scripts/create_handoff_package.ps1'}' -PortableDir '{portable}' -AllowStale -PackageName 'must-not-create-custom-data-package'")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("Unsupported portable data layout", result.stdout + result.stderr)
+            self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
+
+    def test_external_data_paths_are_allowed_but_runtime_smoke_is_refused(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            portable = root / "lmo_audio"
+            (portable / "backend").mkdir(parents=True)
+            (portable / "backend/config.json").write_text(json.dumps({"paths": {
+                "output_dir": str(root / "external-meetings"), "temp_dir": "./temp/",
+            }}), encoding="utf-8")
+            result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+Assert-PortableDataLayout '{portable}'
+try {{ Assert-PortableDataLayout '{portable}' -ForRuntimeSmoke; throw 'Expected smoke rejection' }}
+catch {{ if ($_.Exception.Message -notlike '*Unsupported portable data layout*') {{ throw }} }}
+''')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_verifier_refuses_live_target_without_stopping_sibling_installation(self):
+        script = (ROOT / "scripts/verify_portable.ps1").read_text(encoding="utf-8")
+        guard = re.search(r"function Assert-NoPortableProcesses[\s\S]+?(?=\r?\nfunction Test-PortAvailable)", script)
+        self.assertIsNotNone(guard)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir) / "lmo_audio"
+            result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+{guard.group(0)}
+function Stop-Process {{ throw 'Must not stop any existing process' }}
+function Get-Process {{ return [pscustomobject]@{{Path='{root}_other\\app.exe'}} }}
+Assert-NoPortableProcesses '{root}'
+function Get-Process {{ return [pscustomobject]@{{Path='{root}\\app.exe'}} }}
+try {{ Assert-NoPortableProcesses '{root}'; throw 'Expected live target rejection' }}
+catch {{ if ($_.Exception.Message -notlike '*this installation is running*') {{ throw }} }}
+''')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_verify_portable_checks_export_zip_structure(self):
         script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
@@ -623,6 +749,159 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
         self.assertIn("Test-IsPathWithin $_.ExecutablePath $portableFullPath", script)
         self.assertIn("Test-IsPathWithin $_.Path $portableFullPath", script)
         self.assertNotIn("ExecutablePath.StartsWith($portableFullPath", script)
+        self.assertNotIn('$_.CommandLine -match', script)
+
+    def test_deploy_update_preserves_records_settings_and_downloads(self):
+        script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        sync = re.search(r"function Sync-PortableToDeploy[\s\S]+?(?=\r?\n\$DeployPath =)", script)
+        self.assertIsNotNone(sync)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source, destination, fresh = (root / name for name in ("source", "existing", "fresh"))
+            packaged = {
+                "lmo_audio.exe": "new app", "release-manifest.json": "{}", "START_HERE.txt": "help",
+                "binaries/sidecar.exe": "new sidecar", "backend/main.py": "new code",
+                "backend/config.json": '{"default":true}', "runtime/ffmpeg/ffmpeg.exe": "ffmpeg",
+                "models/default/model.bin": "default model",
+            }
+            preserved = {
+                "backend/config.json": '{"custom":true}', "backend/outputs/result.json": "meeting",
+                "backend/temp/resume.json": "resume", "backend/logs/engine.log": "log",
+                "backend/database/records": "database", "backend/history.db": "db",
+                "backend/history.db-wal": "wal", "backend/history.sqlite3-shm": "shm",
+                "models/downloaded/model.bin": "downloaded model",
+                "runtime/ollama/ollama.exe": "downloaded runtime", "personal-backup.json": "backup",
+            }
+            for base, entries in ((source, packaged), (destination, preserved)):
+                for relative, content in entries.items():
+                    path = base / relative
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text(content, encoding="utf-8")
+            for relative in ("backend/obsolete.py", "binaries/obsolete.dll"):
+                path = destination / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("obsolete", encoding="utf-8")
+            # Source-side runtime data must neither replace existing records nor
+            # be copied to a fresh installation.
+            for relative in ("backend/outputs/private.json", "backend/history.db-wal"):
+                path = source / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("source private data", encoding="utf-8")
+            before = {relative: _sha256(destination / relative) for relative in preserved}
+            completed = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$PortableAppExeName = "lmo_audio.exe"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+{sync.group(0)}
+Sync-PortableToDeploy '{source}' '{destination}'
+Sync-PortableToDeploy '{source}' '{fresh}'
+exit 0
+''')
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            self.assertEqual(before, {relative: _sha256(destination / relative) for relative in preserved})
+            for relative, content in packaged.items():
+                self.assertEqual((fresh / relative).read_text(encoding="utf-8"), content)
+                if relative != "backend/config.json":
+                    self.assertEqual((destination / relative).read_text(encoding="utf-8"), content)
+            for relative in ("backend/obsolete.py", "binaries/obsolete.dll"):
+                self.assertFalse((destination / relative).exists())
+            for base in (destination, fresh):
+                self.assertFalse((base / "backend/outputs/private.json").exists())
+            self.assertFalse((fresh / "backend/history.db-wal").exists())
+
+    def test_deploy_update_replaces_packaged_ollama_as_a_unit(self):
+        script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        sync = re.search(r"function Sync-PortableToDeploy[\s\S]+?(?=\r?\n\$DeployPath =)", script)
+        self.assertIsNotNone(sync)
+        packaged = {
+            "lmo_audio.exe": "new app", "release-manifest.json": "{}", "START_HERE.txt": "help",
+            "binaries/sidecar.exe": "new sidecar", "backend/main.py": "new code",
+            "backend/config.json": '{"default":true}', "runtime/ffmpeg/ffmpeg.exe": "new ffmpeg",
+            "models/default/model.bin": "default model",
+        }
+        embedded_ollama = {
+            "runtime/ollama/ollama.exe": "new ollama",
+            "runtime/ollama/lib/ollama/ggml-base.dll": "new base",
+            "runtime/ollama/lib/ollama/cuda_v13/ggml-cuda.dll": "new cuda",
+        }
+        user_ollama = {
+            "runtime/ollama/ollama.exe": "user ollama",
+            "runtime/ollama/lib/ollama/ggml-cpu-old.dll": "user cpu",
+            "runtime/ollama/lib/ollama/cuda_v12/ggml-cuda.dll": "user cuda",
+        }
+        # Ollama models live outside the runtime and other runtime folders are
+        # never mirrored, so both survive either update.
+        user_kept = {"models/ollama/blobs/sha256-model": "user model", "runtime/other/keep.txt": "user runtime"}
+        cases = {
+            "packaged": {**packaged, **embedded_ollama},
+            "downloaded": {**packaged, "runtime/ollama/README.txt": "downloaded on first use"},
+        }
+
+        def write_tree(base, entries):
+            for relative, content in entries.items():
+                path = base / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content, encoding="utf-8")
+
+        def ollama_files(base):
+            root = base / "runtime/ollama"
+            return {path.relative_to(base).as_posix(): path.read_text(encoding="utf-8")
+                    for path in root.rglob("*") if path.is_file()}
+
+        for case, source_entries in cases.items():
+            with self.subTest(source=case), tempfile.TemporaryDirectory() as temp_dir:
+                root = Path(temp_dir)
+                source, destination = root / "source", root / "existing"
+                write_tree(source, source_entries)
+                write_tree(destination, {**user_ollama, **user_kept})
+                self.assertEqual(ollama_files(destination), user_ollama)
+                completed = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$PortableAppExeName = "lmo_audio.exe"
+. '{ROOT / 'scripts/portable_data_safety.ps1'}'
+{sync.group(0)}
+Sync-PortableToDeploy '{source}' '{destination}'
+exit 0
+''')
+                self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+                if case == "packaged":
+                    self.assertEqual(ollama_files(destination), embedded_ollama)
+                    for relative in ("runtime/ollama/lib/ollama/ggml-cpu-old.dll",
+                                     "runtime/ollama/lib/ollama/cuda_v12/ggml-cuda.dll"):
+                        self.assertFalse((destination / relative).exists(), relative)
+                else:
+                    self.assertEqual(ollama_files(destination),
+                                     {**user_ollama, "runtime/ollama/README.txt": "downloaded on first use"})
+                for relative, content in user_kept.items():
+                    self.assertEqual((destination / relative).read_text(encoding="utf-8"), content)
+                self.assertEqual((destination / "runtime/ffmpeg/ffmpeg.exe").read_text(encoding="utf-8"), "new ffmpeg")
+
+    def test_release_payload_manifest_excludes_mutable_record_data(self):
+        script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")
+        payload = re.search(r"function Get-PortablePayloadFiles[\s\S]+?(?=\r?\nfunction Write-ReleaseManifest)", script)
+        self.assertIsNotNone(payload)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            private = ("backend/outputs/result.json", "backend/temp/resume.json", "backend/logs/engine.log",
+                       "backend/database/records", "backend/history.db", "backend/history.db-wal",
+                       "backend/history.sqlite3-shm", "backend/config.json")
+            for relative in (*private, "backend/main.py", "runtime/ffmpeg.exe"):
+                path = root / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text("fixture", encoding="utf-8")
+            output = root / "payload.json"
+            completed = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$PortableAppExeName = "lmo_audio.exe"
+function Normalize-FullPath([string]$Path) {{ return [System.IO.Path]::GetFullPath($Path) }}
+function Get-FileHashValue([string]$Path) {{ return "fixture-hash" }}
+{payload.group(0)}
+@(Get-PortablePayloadFiles '{root}') | ConvertTo-Json | Set-Content -LiteralPath '{output}' -Encoding UTF8
+''')
+            self.assertEqual(completed.returncode, 0, completed.stdout + completed.stderr)
+            entries = json.loads(output.read_text(encoding="utf-8-sig"))
+            self.assertEqual({entry["path"].replace("\\", "/") for entry in entries},
+                             {"backend/main.py", "runtime/ffmpeg.exe"})
 
     def test_verify_manifest_dirty_requires_allow_dirty(self):
         script = (ROOT / "scripts" / "verify_portable.ps1").read_text(encoding="utf-8")
@@ -631,7 +910,7 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
             script,
         )
         manifest_check = re.search(
-            r"function Test-ReleaseManifest[\s\S]+?(?=\r?\nfunction Stop-PortableProcesses)",
+            r"function Test-ReleaseManifest[\s\S]+?(?=\r?\nfunction Test-CleanPortableSurface)",
             script,
         )
         self.assertIsNotNone(add_result, "Could not find Add-Result helper")

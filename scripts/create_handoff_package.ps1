@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'portable_data_safety.ps1')
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $ModelLayoutFile = Join-Path $PSScriptRoot "portable_model_layout.json"
@@ -137,7 +138,7 @@ function Get-HandoffPayloadFiles([string]$PortableRoot) {
                 if ($_.Name -like "*.pyc") {
                     return
                 }
-                if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and $relativeParts[1] -in @("outputs", "temp", "logs")) {
+                if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and (($relativeParts[1] -in @("outputs", "temp", "logs", "database")) -or ($_.Name -like "*.db*" -or $_.Name -like "*.sqlite*"))) {
                     return
                 }
                 if ($relativePath.Equals("backend\config.json", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -178,13 +179,22 @@ function Copy-HandoffTree([string]$Source, [string]$Destination, [string[]]$Incl
         }
         $relativeParts = $relativePath -split '[\\/]'
 
+        # Existing installations can contain personal backups and logs. Only
+        # packaged roots belong in a handoff archive.
+        if ($relativeParts[0] -notin @($PortableAppExeName, "START_HERE.txt", "release-manifest.json", "binaries", "backend", "models", "runtime")) {
+            return
+        }
+        if ($relativePath.Equals("backend\config.json", [System.StringComparison]::OrdinalIgnoreCase)) {
+            return
+        }
+
         if ($relativeParts -contains "__pycache__") {
             return
         }
         if (-not $_.PSIsContainer -and $_.Name -like "*.pyc") {
             return
         }
-        if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and $relativeParts[1] -in @("outputs", "temp", "logs")) {
+        if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and (($relativeParts[1] -in @("outputs", "temp", "logs", "database")) -or ($_.Name -like "*.db*" -or $_.Name -like "*.sqlite*"))) {
             return
         }
         if ($relativeParts.Length -ge 2 -and $relativeParts[0].Equals("models", [System.StringComparison]::OrdinalIgnoreCase)) {
@@ -226,6 +236,34 @@ function Copy-HandoffTree([string]$Source, [string]$Destination, [string[]]$Incl
 
         New-Item -ItemType Directory -Path (Split-Path -Parent $targetPath) -Force | Out-Null
         Copy-Item -LiteralPath $_.FullName -Destination $targetPath -Force
+    }
+}
+
+function Write-HandoffDefaultConfig([string]$PortableRoot) {
+    # Read the committed default as UTF-8, never the installation's personal
+    # configuration or a developer's working configuration.
+    $info = [System.Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = "git"
+    $info.Arguments = "-c core.excludesFile= show HEAD:backend/config.json"
+    $info.WorkingDirectory = $RepoRoot.Path
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $true
+    $info.RedirectStandardError = $true
+    $info.StandardOutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $process = [System.Diagnostics.Process]::Start($info)
+    try {
+        $defaultConfig = $process.StandardOutput.ReadToEnd()
+        $gitError = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        if ($process.ExitCode -ne 0) {
+            throw "Unable to read committed handoff defaults: $gitError"
+        }
+        $null = $defaultConfig | ConvertFrom-Json
+        [System.IO.File]::WriteAllText((Join-Path $PortableRoot "backend\config.json"), $defaultConfig, [System.Text.UTF8Encoding]::new($false))
+    }
+    finally {
+        $process.Dispose()
     }
 }
 
@@ -284,6 +322,9 @@ function Update-HandoffManifest([string]$PortableRoot, [object[]]$IncludedModels
     if ($manifest.files -and ($manifest.files.PSObject.Properties.Name -contains "startHere")) {
         $startHere = Join-Path $PortableRoot "START_HERE.txt"
         $manifest.files.startHere.sha256 = Get-FileHashValue $startHere
+    }
+    if ($manifest.files -and ($manifest.files.PSObject.Properties.Name -contains "backendConfig")) {
+        $manifest.files.backendConfig.sha256 = Get-FileHashValue (Join-Path $PortableRoot "backend\config.json")
     }
     if ($manifest.PSObject.Properties.Name -contains "portablePayloadFiles") {
         $manifest.portablePayloadFiles = @(Get-HandoffPayloadFiles $PortableRoot)
@@ -364,6 +405,7 @@ if (-not (Test-Path -LiteralPath $ModelLayoutFile)) {
 }
 
 $portablePath = Assert-SafePortablePath (Resolve-InRepoPath $PortableDir)
+Assert-PortableDataLayout $portablePath
 $outputPath = Assert-SafeOutputPath (Resolve-InRepoPath $OutputRoot)
 $modelLayout = Get-Content -LiteralPath $ModelLayoutFile -Raw | ConvertFrom-Json
 $includedModels = @($modelLayout.models | Where-Object { [string]$_.role -eq "diarization" })
@@ -440,6 +482,7 @@ Copy-HandoffTree `
     -Destination $stagingPortable `
     -IncludedModelDirs @($includedModels | ForEach-Object { [string]$_.portableDir }) `
     -ExcludedModelDirs @($excludedModels | ForEach-Object { [string]$_.portableDir })
+Write-HandoffDefaultConfig $stagingPortable
 Write-HandoffReadmes $stagingPortable $includedModels $excludedModels
 Update-HandoffManifest $stagingPortable $includedModels $excludedModels
 

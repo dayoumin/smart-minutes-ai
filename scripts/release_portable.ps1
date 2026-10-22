@@ -10,6 +10,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+. (Join-Path $PSScriptRoot 'portable_data_safety.ps1')
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
 $TauriDir = Join-Path $RepoRoot "desktop-app\src-tauri"
@@ -161,8 +162,7 @@ function Stop-AppProcesses([string]$PortableRoot) {
     try {
         Get-CimInstance Win32_Process -ErrorAction Stop |
             Where-Object {
-                ($_.ExecutablePath -and (Test-IsPathWithin $_.ExecutablePath $portableFullPath)) -or
-                ($_.Name -like "msedgewebview2*" -and $_.CommandLine -match "com\.nifs\.smart-minutes-ai|com\.lmo\.audio|Smart Minutes AI|lmo_audio")
+                $_.ExecutablePath -and (Test-IsPathWithin $_.ExecutablePath $portableFullPath)
             } |
             ForEach-Object {
                 Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue
@@ -293,7 +293,8 @@ function Get-PortablePayloadFiles([string]$PortableDir) {
                 }
                 $isBackendRuntimeFile = $relativeParts.Length -ge 2 -and
                     $relativeParts[0].Equals("backend", [System.StringComparison]::OrdinalIgnoreCase) -and
-                    ($relativeParts[1] -in @("outputs", "temp"))
+                    (($relativeParts[1] -in @("outputs", "temp", "logs", "database")) -or
+                        ($_.Name -like "*.db*" -or $_.Name -like "*.sqlite*"))
                 if ($isBackendRuntimeFile) {
                     return
                 }
@@ -377,44 +378,12 @@ function Write-ReleaseManifest([string]$PortableDir) {
     return $manifestPath
 }
 
-function Clear-DeployResidue([string]$DestinationDir) {
-    $destinationFullPath = Normalize-FullPath $DestinationDir
-    $allowedRootNames = [System.Collections.Generic.HashSet[string]]::new([System.StringComparer]::OrdinalIgnoreCase)
-    foreach ($name in @($PortableAppExeName, "release-manifest.json", "START_HERE.txt", "backend", "binaries", "models", "runtime")) {
-        $null = $allowedRootNames.Add($name)
-    }
-
-    foreach ($entry in Get-ChildItem -LiteralPath $DestinationDir -Force) {
-        if ($allowedRootNames.Contains($entry.Name)) {
-            continue
-        }
-
-        $entryFullPath = Normalize-FullPath $entry.FullName
-        if (-not $entryFullPath.StartsWith($destinationFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to clear unsafe deploy residue path: $entryFullPath"
-        }
-
-        Remove-Item -LiteralPath $entry.FullName -Recurse -Force -ErrorAction SilentlyContinue
-    }
-
-    foreach ($relativePath in @("backend\outputs", "backend\temp", "backend\logs", "backend\__pycache__")) {
-        $path = Join-Path $DestinationDir $relativePath
-        if (-not (Test-Path -LiteralPath $path)) {
-            continue
-        }
-
-        $pathFullPath = Normalize-FullPath $path
-        if (-not $pathFullPath.StartsWith($destinationFullPath, [System.StringComparison]::OrdinalIgnoreCase)) {
-            throw "Refusing to clear unsafe deploy runtime path: $pathFullPath"
-        }
-
-        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
-    }
-}
-
 function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
+    Assert-PortableDataLayout $SourceDir
+    Assert-PortableDataLayout $DestinationDir
     New-Item -ItemType Directory -Force -Path $DestinationDir | Out-Null
-    Clear-DeployResidue $DestinationDir
+    # Only packaged code is mirrored. The deploy folder can already be in use
+    # as a desktop installation, so its records and downloaded resources stay.
 
     Copy-Item -Force (Join-Path $SourceDir $PortableAppExeName) (Join-Path $DestinationDir $PortableAppExeName)
     Copy-Item -Force (Join-Path $SourceDir "release-manifest.json") (Join-Path $DestinationDir "release-manifest.json")
@@ -425,25 +394,41 @@ function Sync-PortableToDeploy([string]$SourceDir, [string]$DestinationDir) {
         throw "robocopy failed while syncing binaries with exit code $LASTEXITCODE"
     }
 
-    robocopy (Join-Path $SourceDir "runtime") (Join-Path $DestinationDir "runtime") /MIR /R:2 /W:2 /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+    $sourceOllama = Join-Path $SourceDir "runtime\ollama"
+    robocopy (Join-Path $SourceDir "runtime") (Join-Path $DestinationDir "runtime") /E /R:2 /W:2 /XD .git .cache $sourceOllama /XF *.lock /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing runtime with exit code $LASTEXITCODE"
     }
 
-    robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /MIR /XD outputs temp logs __pycache__ /XF *.pyc /NFL /NDL /NP | Out-Host
+    # A packaged Ollama replaces the runtime as a unit: libraries left from another
+    # version can break it. Without one, keep the runtime the user downloaded.
+    if (Test-Path -LiteralPath $sourceOllama) {
+        $ollamaMode = if (Test-Path -LiteralPath (Join-Path $sourceOllama "ollama.exe")) { "/MIR" } else { "/E" }
+        robocopy $sourceOllama (Join-Path $DestinationDir "runtime\ollama") $ollamaMode /R:2 /W:2 /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+        if ($LASTEXITCODE -gt 7) {
+            throw "robocopy failed while syncing Ollama runtime with exit code $LASTEXITCODE"
+        }
+    }
+
+    robocopy (Join-Path $SourceDir "backend") (Join-Path $DestinationDir "backend") /MIR /XD outputs temp logs __pycache__ database /XF config.json *.pyc *.db* *.sqlite* /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing backend with exit code $LASTEXITCODE"
+    }
+    $destinationConfig = Join-Path $DestinationDir "backend\config.json"
+    if (-not (Test-Path -LiteralPath $destinationConfig)) {
+        Copy-Item -LiteralPath (Join-Path $SourceDir "backend\config.json") -Destination $destinationConfig
     }
 
     $destinationModels = Join-Path $DestinationDir "models"
     New-Item -ItemType Directory -Force -Path $destinationModels | Out-Null
-    robocopy (Join-Path $SourceDir "models") $destinationModels /MIR /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
+    robocopy (Join-Path $SourceDir "models") $destinationModels /E /XD .git .cache /XF *.lock /NFL /NDL /NP | Out-Host
     if ($LASTEXITCODE -gt 7) {
         throw "robocopy failed while syncing models with exit code $LASTEXITCODE"
     }
 }
 
 $DeployPath = Assert-SafeDeployPath (Resolve-InRepoPath $DeployDir)
+Assert-PortableDataLayout $DeployPath
 $PythonCommand = Resolve-PythonCommand $Python
 
 if (-not $SkipSidecarBuild) {
@@ -476,11 +461,15 @@ if (-not $SkipTauriBuild) {
 $targetManifest = Write-ReleaseManifest $TargetPortableDir
 Write-Host "Wrote target manifest: $targetManifest"
 
+# Run the owned smoke against the clean build before syncing files into an
+# existing installation. The deployed installation receives read-only integrity checks.
+& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $TargetPortableDir -AllowDirty:$AllowDirty -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
+
 Sync-PortableToDeploy $TargetPortableDir $DeployPath
 $deployManifest = Write-ReleaseManifest $DeployPath
 Write-Host "Wrote deploy manifest: $deployManifest"
 
-& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -AllowDirty:$AllowDirty -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
+& (Join-Path $PSScriptRoot "verify_portable.ps1") -PortableDir $DeployPath -ExistingInstallation -AllowDirty:$AllowDirty -AllowMissingEmbeddedOllama:$AllowMissingEmbeddedOllama
 
 Write-Host "Portable release is ready:" -ForegroundColor Green
 Write-Host $DeployPath

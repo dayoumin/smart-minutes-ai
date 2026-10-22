@@ -1,5 +1,53 @@
 # Frontend Simulation Testing
 
+## Separate web/desktop records — 2026-10-22
+
+`simulate-dual-runtime-isolation.mjs` requires an explicit local `APP_URL` and
+does not start a server. Run from `D:\Projects\LMO_audio`:
+
+```powershell
+$env:COREPACK_HOME='D:\Projects\LMO_audio\.cache\corepack'
+$env:PLAYWRIGHT_BROWSERS_PATH='D:\Projects\LMO_audio\.cache\ms-playwright'
+$env:APP_URL='http://127.0.0.1:5197/'
+corepack pnpm --dir desktop-app test:dual-runtime-isolation
+```
+
+The dedicated Vite command is `corepack pnpm --dir desktop-app exec vite --host
+127.0.0.1 --port 5197 --strictPort --configLoader runner`, repository-root cwd.
+HTTP200 and title `LMO 회의록` identify the source UI before trusting the check.
+The sandboxed server listened but timed out at initial navigation; the same
+command with focused elevated permissions answered immediately. This was an
+environment boundary, not a product failure. Only this session's Vite was
+stopped/restarted; no installed engine or other server was stopped.
+
+| Scenario | Observed result |
+| --- | --- |
+| Same record/job IDs, different titles/body in two Chromium contexts | Each context shows its own record |
+| Repository edit, reload and new-page reopen | Each record retains its own changed title/body |
+| Web deletion while its mocked engine is offline | Only web record removed; only web cleanup queue receives the job |
+| Reconnect and flush web cleanup | DELETE reaches17863 with browser session; desktop record/queue unchanged |
+| Desktop deletion while web record exists again | DELETE reaches17864 with desktop token; web record persists through reload |
+
+The scenario passed with no page errors, foreign-engine requests or mutation
+credential violations. It uses the actual repository/deletion modules and
+visible record reopening, with programmatic fixture edits and deletion calls;
+it does not claim an end-to-end test of editing/deletion UI controls. The native
+bridge and both engines are mocked, and Chromium contexts model storage profiles.
+Separate Chromium contexts never share IndexedDB, so the store-separation rows
+cannot fail on their own; the routing and credential checks are what this run
+can catch. A later same-day rerun through the `web-ui-sim` launch entry
+(port 5196, HTTP200 and title checked) passed again: 42 web calls only to 17863,
+25 desktop calls only to 17864 with the desktop token, and the three DELETEs
+matched the table.
+Real WebView persistence, process termination, installed-engine processing and
+updates remain executable QA gates.
+
+Rust's actual socket tests cover web-first coexistence, desktop-first while the
+web port is idle, skipping an occupied desktop port and exhausting all100
+preferred ports before OS fallback. All4 pass; output explicitly confirmed the
+desktop-first branch was exercised on this run. Existing external port owners
+are never stopped. These tests do not replace native executable startup tests.
+
 ## Collapsible app menu — 2026-10-22
 
 Approved editable Figma states are linked from `docs/design.md` (E board

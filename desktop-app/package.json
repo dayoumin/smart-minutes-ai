@@ -28,6 +28,7 @@
     "test:writer-model-readiness": "node scripts/simulate-writer-model-readiness.mjs",
     "test:local-engine-connection-ui": "node scripts/simulate-local-engine-connection-ui.mjs",
     "test:runtime-boundary": "node --experimental-strip-types scripts/test-runtime-boundary.mjs",
+    "test:dual-runtime-isolation": "node --experimental-strip-types scripts/simulate-dual-runtime-isolation.mjs",
     "test:auth-recovery": "node --experimental-strip-types scripts/test-auth-recovery.mjs",
     "test:browser-approval": "node --experimental-strip-types scripts/test-browser-approval.mjs",
     "test:local-engine-browser-access": "node --experimental-strip-types scripts/test-local-engine-browser-access.mjs",

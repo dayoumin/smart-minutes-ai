@@ -2,6 +2,20 @@
 
 ## 0. 문서 운영 원칙
 
+- 2026-10-22 웹·데스크톱 병행: 웹 설치 엔진의 고정 포트17863을 데스크톱이 먼저 사용하지 않도록 `src-tauri/src/backend_port.rs`에서17864부터 탐색한다. 포트 모듈의 실제 소켓 검사는 `rustc --edition=2021 --test desktop-app/src-tauri/src/backend_port.rs -o .tmp/dual-runtime/backend-port-tests.exe`로 좁게 실행할 수 있다. 이것은 Tauri 실행 파일의 실제 공존 검증을 대신하지 않는다.
+- 기존 deploy 폴더는 사용자 설치본일 수 있다. `Sync-PortableToDeploy`는 패키지 코드만 mirror하며 설정·outputs/temp/logs/database·DB/WAL·다운로드한 모델/runtime·개인 최상위 파일을 보존한다. 프로세스 종료는 지정 deploy 폴더의 실행 파일 경계로 제한한다. 전역 WebView 이름/명령행만으로 다른 설치본을 종료하지 않는다.
+- 보존과 전달은 구분한다. 전달 ZIP은 알려진 패키지 루트만 복사하고 개인 백업·로그·DB/보조파일을 제외한다. `backend/config.json`은 설치본에서 복사하지 않고 현재 HEAD의 UTF-8 기본 설정을 넣는다. 보통 HEAD 일치·clean manifest 게이트를 지키며 `-AllowStale`/`-AllowDirty`는 로컬 시험용이다. 격리된 신·기존 설치 fixture의 파일 해시와 ZIP 내용으로 보존/제외를 검증한다. 실사용 폴더로 시험하지 않는다.
+- 같은 날짜 검증: `backend\.venv-desktop\Scripts\python.exe`(Python3.12.14), `-B -X utf8 -m unittest tests.test_portable_release_scripts`는22개 중21개 통과·1개 skip(기존 deploy에 runtime 산출물이 있어 실제 폴더를 사용하는 검사는 생략). `TEMP`/`TMP`는 `.tmp\dual-runtime\temp`로 지정했다. 실제 소켓2검사, `corepack pnpm --dir desktop-app typecheck`·인증 경계10검사·공개 업데이트 정보4검사, `cargo check --locked --offline --lib` 통과. Cargo 최초 검사에서 누락된 고정 의존성과 사용자 캐시 쓰기 권한을 구분했고, 잠금 파일을 바꾸지 않고 캐시 접근 권한으로 재검사했다. 독립 agent의 포트·배포 데이터 검토 지적과 후속 재검토를 완료했다. 전체 portable 재빌드·실제 Tauri UI·운영 배포는 실행하지 않았다.
+
+### 2026-10-22 체계적 후속 검토: 기존 설치본 검사와 데이터 보호
+
+- 추가 agent 검토에서 동기화 뒤 `verify_portable.ps1`의 재귀 정리가 보존한 결과를 다시 삭제할 수 있음을 확인했다. 재귀 정리를 제거하고 빈 디렉터리만 정리한다. 기본 runtime smoke는 기존 산출물·실행 중인 대상·비표준 내부 데이터 경로를 만나면 실행 전에 중단하며, 다른 설치본을 강제로 종료하지 않는다. 시험 작업/다운로드에는 고유 ID를 사용한다.
+- `release_portable.ps1`은 깨끗한 중간 빌드의 smoke를 통과한 뒤 파일을 동기화하고, 기존 deploy는 `-ExistingInstallation`으로 구조·코드 해시만 읽는다. 이 모드는 프로세스 실행/종료·설정/데이터 정리를 하지 않는다. 정상 사용자 설정 변경은 이전 설정 해시와 달라도 허용하며, 파일 존재·JSON 객체 유효성과 실행 코드 해시는 계속 검사한다.
+- 기존 설치본을 실행 없이 검사하는 명령: `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir releases\lmo_audio -ExistingInstallation`. 일반 smoke 통과와 이 무결성 검사를 구분한다. 과거 manifest의 코드·모델 조건이 현재와 다르면 무결성 실패를 우회하지 않는다.
+- `scripts/portable_data_safety.ps1`은 업데이트·포장 전에 설정된 저장 경로를 검사한다. portable 내부의 비표준 결과/임시/로그 경로, backend 내부에 존재하는 사용자 모델/활성 양식 경로는 삭제·전달 위험이 있어 안전하게 중단한다. 임의 경로를 자동 이전하지 않는다. 외부 경로는 업데이트·포장에서 보존하며 runtime smoke는 기본 경로에서만 허용한다.
+- 후속 최종 검증은 위 초기22개 기록을 대체한다. 동일 Python·TEMP/TMP로 `tests.test_portable_release_scripts` **26/26 통과, skip 없음**. 실제 deploy를 사용하는 검사를 격리된 가짜 PE/데이터 fixture로 교체했다. 설정 변경 통과, 코드 변조·잘못된 JSON 거부, 기존 파일 SHA 불변, 비표준 내부 경로의 변경 전 거부, ZIP 개인 파일 제외를 검사했다. 실제 소켓4검사·두 모의 환경 기록/삭제 격리 시뮬레이션·변경 JS ESLint도 통과했다. 독립 후속 재검토의 기능상 차단 지적은 없으며 실행 파일·실제 업데이트·WebView 검증은 여전히 미실행이다.
+- 같은 날 추가 검토: `runtime`을 `/E`로만 갱신하면 빌드에 포함된 Ollama를 덮을 때 이전 버전 라이브러리가 남아 섞이고, 배포 manifest가 동기화 뒤 폴더에서 생성되어 이를 잡지 못했다. 이제 빌드에 `runtime\ollama\ollama.exe`가 있을 때만 `runtime\ollama`를 `/MIR`로 통째로 교체하고, 없으면 사용자가 받은 Ollama를 보존한다(README만 추가). Ollama 모델은 `models\ollama`에 있어 교체 대상이 아니다. 고정 fixture 테스트를 추가했고 이전 `/E`·HEAD `/MIR` 버전에서 각각 실패, 수정본에서 통과함을 확인했다. `tests.test_portable_release_scripts` **27/27 통과**, `releases` 폴더 4936파일 불변. 실제 Ollama 버전 교체 실행은 하지 않았다.
+
 - 2026-10-20 자동 연결 웹/설치형 엔진은 같은 소스 기준으로 함께 제공한다. 새 엔진의 `--pair`는 시작 별칭이며 이전 숫자 코드 웹의 준비 절차와 호환된다고 안내하지 않는다. `PYINSTALLER_CONFIG_DIR=D:\Projects\audio\.cache\pyinstaller`를 사용한 전용 웹 엔진 빌드는 중간 산출물 삭제 권한 오류 시 실제 설치 엔진과 경로가 다른지 먼저 확인한다. 실행 중인 사용자 엔진을 빌드 캐시로 오인해 종료하지 않는다.
   - 0.1.8 실제 current-user 업데이트 exit0, 기존 데이터 보존·재시작 복원/해제, 비공개 R2 전체 read-back SHA와 운영 웹6파일 SHA·이전 링크2개를 확인했다. 운영 Chrome의 무코드 자동 연결·reload 후 `분석 준비 완료`까지 통과했다. 임시 업로드 Worker/로컬 인증은 정리했고 사용자 모델·회의록은 전송하지 않았다. 근거 `.tmp/browser-connection-20261020`, 자세한 현재 범위/남은 QA는 followup-plan과 기존 release QA 표를 따른다.
   - 0.1.9는 새 엔진·helper·NSIS 설치 파일을 만들고0.1.8 위 실제 업데이트45.36초/exit0·설치 payload4957파일 해시·기존 데이터 불변·재시작 복원/해제를 확인했다. 설치 helper의 `--result-json`/`--decision-ini`는 TEMP 내부의 아직 없는 파일이어야 한다. 전용 QA 폴더를 TEMP/TMP로 지정하고 GUI 실행 파일은 Python `subprocess.run` 등으로 종료를 기다린다. 실행 중인 자기 엔진만 경고인 exit10을 저장 공간 미확정으로 해석하지 않는다. helper 빌드의 `build/web-local-engine-installer-preflight-helper`는 생성물이며 커밋하지 않는다. 근거 `.tmp/release-019-20261020`, 공개 반영/잔여 관문은 followup-plan과 release QA 표를 따른다.

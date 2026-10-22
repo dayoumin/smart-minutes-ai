@@ -1,3 +1,4 @@
+import ast
 import hashlib
 import json
 import os
@@ -710,18 +711,32 @@ catch {{ if ($_.Exception.Message -notlike '*Unsupported portable data layout*')
 
     def test_selected_summary_model_is_rejected_before_update_or_handoff(self):
         for reference in ("./private-model.gguf", "private-model.gguf", ".\\private-model.bin", "absolute",
-                          "private-model", "models/private-model", "  ./private-model.gguf  "):
+                          "private-model", "models/private-model", "  ./private-model.gguf  ",
+                          "drive-relative", "drive-relative-lowercase", "root-relative"):
             with self.subTest(reference=reference), tempfile.TemporaryDirectory() as temp_dir:
                 root = Path(temp_dir)
                 portable, other = root / "lmo_audio", root / "other"
                 backend = portable / "backend"
                 backend.mkdir(parents=True)
                 other.mkdir()
-                model = backend / ("private-model.gguf" if reference == "absolute" else reference.strip())
+                special = reference in ("absolute", "drive-relative", "drive-relative-lowercase", "root-relative")
+                model = backend / ("private-model.gguf" if special else reference.strip())
                 model.parent.mkdir(parents=True, exist_ok=True)
                 model.write_text("private model fixture", encoding="utf-8")
+                configured = str(model) if reference == "absolute" else reference
+                if reference.startswith("drive-relative"):
+                    configured = (backend.drive.lower() if reference.endswith("lowercase") else backend.drive) + model.name
+                elif reference == "root-relative":
+                    configured = str(model)[len(model.drive):]
+                if special:
+                    previous = Path.cwd()
+                    try:
+                        os.chdir(backend)
+                        self.assertTrue(os.path.isfile(configured), "the actual backend cwd recognizes this local model")
+                    finally:
+                        os.chdir(previous)
                 config = {"paths": {"llm_model": "./models/llm/gemma.gguf"}, "summary": {
-                    "model": str(model) if reference == "absolute" else reference,
+                    "model": configured,
                 }}
                 (backend / "config.json").write_text(json.dumps(config), encoding="utf-8")
                 (portable / "personal-backup.json").write_text("keep", encoding="utf-8")
@@ -732,6 +747,7 @@ $ErrorActionPreference = "Stop"
 $PortableAppExeName = "lmo_audio.exe"
 . '{ROOT / 'scripts/portable_data_safety.ps1'}'
 {_release_function('Sync-PortableToDeploy')}
+Set-Location '{other}'
 Sync-PortableToDeploy '{source}' '{destination}'
 ''')
                     self.assertNotEqual(result.returncode, 0)
@@ -758,7 +774,8 @@ Sync-PortableToDeploy '{source}' '{destination}'
             for model in (portable / "models/user.gguf", root / "external/model.bin"):
                 model.parent.mkdir(parents=True, exist_ok=True)
                 model.write_text("user model", encoding="utf-8")
-            for reference in ("gemma4:e2b", "library/gemma4:e2b", "../models/user.gguf", str(root / "external/model.bin")):
+            for reference in ("gemma4:e2b", "q:7b", f"{portable.drive}not-a-local-file", "library/gemma4:e2b",
+                              "../models/user.gguf", str(root / "external/model.bin")):
                 with self.subTest(reference=reference):
                     (portable / "backend/config.json").write_text(json.dumps({"summary": {"model": reference}}), encoding="utf-8")
                     before = {path: _sha256(path) for path in root.rglob("*") if path.is_file()}
@@ -769,6 +786,90 @@ Assert-PortableDataLayout '{portable}'
 ''')
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(before, {path: _sha256(path) for path in root.rglob("*") if path.is_file()})
+
+    def test_installed_runtime_may_replace_only_readme_placeholder(self):
+        backend_source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
+        functions = ast.parse(backend_source)
+        installer = {"Path": Path, "shutil": shutil}
+        for node in functions.body:
+            if isinstance(node, ast.FunctionDef) and node.name in {
+                "_clear_ollama_runtime_dir", "_install_extracted_ollama_runtime",
+            }:
+                exec(compile(ast.Module(body=[node], type_ignores=[]), "backend/main.py", "exec"), installer)
+        verifier = (ROOT / "scripts/verify_portable.ps1").read_text(encoding="utf-8")
+        add_result = re.search(r"function Add-Result[\s\S]+?(?=\r?\nfunction Get-PeSubsystem)", verifier).group(0)
+        check = re.search(r"function Test-ReleaseManifest[\s\S]+?(?=\r?\nfunction Test-CleanPortableSurface)", verifier).group(0)
+        helpers = "\n".join(_release_function(name) for name in (
+            "Normalize-FullPath", "Get-FileHashValue", "Get-PortablePayloadFiles",
+        ))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            portable = root / "lmo_audio"
+            runtime = portable / "runtime/ollama"
+            runtime.mkdir(parents=True)
+            (portable / "backend").mkdir()
+            (portable / "backend/config.json").write_text("{}", encoding="utf-8")
+            code = portable / "backend/main.py"
+            code.write_bytes(b"packaged backend code")
+            readme = runtime / "README.txt"
+            readme.write_bytes(b"download runtime on first use")
+            manifest = portable / "release-manifest.json"
+            result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$PortableAppExeName = "lmo_audio.exe"
+{helpers}
+[ordered]@{{dirty=$false; files=@{{}}; modelMarkers=@(); portablePayloadFiles=@(Get-PortablePayloadFiles '{portable}')}} | ConvertTo-Json -Depth 6 | Set-Content -LiteralPath '{manifest}' -Encoding UTF8
+''')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+            def verify(existing: bool, failed: bool, detail: str = ""):
+                before = {path: _sha256(path) for path in portable.rglob("*") if path.is_file()}
+                result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$ExistingInstallation = ${str(existing).lower()}
+$script:Results = @(); $script:Failed = $false
+{helpers}
+{add_result}
+{check}
+Test-ReleaseManifest '{portable}' '{manifest}' $false
+$Results | ConvertTo-Json -Depth 5
+if ($Failed -ne ${str(failed).lower()}) {{ throw 'Unexpected manifest verification result' }}
+''')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if detail:
+                    reports = json.loads(result.stdout)
+                    self.assertIn(detail, "; ".join(report["Detail"] for report in reports))
+                self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
+
+            verify(False, False)
+            extract = root / "extracted"
+            extract.mkdir()
+            (extract / "ollama.exe").write_bytes(b"fake downloaded executable; never run")
+            (extract / "ollama.dll").write_bytes(b"fake downloaded library")
+            download = runtime / ".download"
+            download.mkdir()
+            installer["_install_extracted_ollama_runtime"](extract, runtime, download)
+            self.assertFalse(readme.exists())
+            verify(True, False)
+            verify(False, True, "README.txt missing")
+            executable = runtime / "ollama.exe"
+            original = executable.read_bytes()
+            executable.unlink()
+            verify(True, True, "README.txt missing")
+            executable.write_bytes(original)
+            # Only the guide can disappear. Packaged backend and runtime code
+            # still require their original hashes, including legacy manifests.
+            payload = json.loads(manifest.read_text(encoding="utf-8-sig"))
+            payload["portablePayloadFiles"].append({"path": "runtime\\ollama\\ollama.exe", "sha256": _sha256(executable)})
+            manifest.write_text(json.dumps(payload), encoding="utf-8")
+            verify(True, False)
+            for target in (code, executable):
+                saved = target.read_bytes()
+                target.unlink()
+                verify(True, True, f"{target.relative_to(portable)} missing")
+                target.write_bytes(b"tampered packaged code")
+                verify(True, True, f"{target.relative_to(portable)} hash mismatch")
+                target.write_bytes(saved)
 
     def test_deploy_completion_uses_build_manifest_and_rejects_skipped_wrong_code(self):
         release = (ROOT / "scripts/release_portable.ps1").read_text(encoding="utf-8")

@@ -5,6 +5,27 @@ function Test-PortablePathWithin([string]$Path, [string]$Root) {
         $fullPath.StartsWith($fullRoot + [System.IO.Path]::DirectorySeparatorChar, [System.StringComparison]::OrdinalIgnoreCase)
 }
 
+function Resolve-PortableBackendPath([string]$Path, [string]$BackendRoot) {
+    $backendFullPath = [System.IO.Path]::GetFullPath($BackendRoot)
+    # D:model is relative to that drive's current directory, not D:\model.
+    # The desktop child runs in backend, rather than the release shell's cwd.
+    if ($Path -match '^([A-Za-z]:)([^\\/].*|)$') {
+        $drive = $Matches[1]
+        $tail = $Matches[2]
+        if ($drive.Equals([System.IO.Path]::GetPathRoot($backendFullPath).TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)) {
+            return [System.IO.Path]::GetFullPath((Join-Path $backendFullPath $tail))
+        }
+        # Another drive cannot refer into this backend. Keep it unchanged so
+        # model names such as q:7b do not require a Q: filesystem drive.
+        return $Path
+    }
+    if ($Path -match '^[\\/](?![\\/])') {
+        return Join-Path ([System.IO.Path]::GetPathRoot($backendFullPath)) $Path.TrimStart('\', '/')
+    }
+    if ([System.IO.Path]::IsPathRooted($Path)) { return $Path }
+    return Join-Path $backendFullPath $Path
+}
+
 function Assert-PortableDataLayout([string]$PortableRoot, [switch]$ForRuntimeSmoke) {
     $backendRoot = Join-Path $PortableRoot 'backend'
     $configFile = Join-Path $backendRoot 'config.json'
@@ -14,7 +35,7 @@ function Assert-PortableDataLayout([string]$PortableRoot, [switch]$ForRuntimeSmo
     foreach ($key in $defaults.Keys) {
         if (-not $config.paths -or $config.paths.PSObject.Properties.Name -notcontains $key) { continue }
         $configured = [string]$config.paths.$key
-        $resolved = if ([System.IO.Path]::IsPathRooted($configured)) { $configured } else { Join-Path $backendRoot $configured }
+        $resolved = Resolve-PortableBackendPath $configured $backendRoot
         $expected = Join-Path $backendRoot $defaults[$key]
         $isDefault = [System.IO.Path]::GetFullPath($resolved).TrimEnd('\', '/').Equals([System.IO.Path]::GetFullPath($expected).TrimEnd('\', '/'), [System.StringComparison]::OrdinalIgnoreCase)
         if (-not $isDefault -and ($ForRuntimeSmoke -or (Test-PortablePathWithin $resolved $PortableRoot))) {
@@ -31,10 +52,10 @@ function Assert-PortableDataLayout([string]$PortableRoot, [switch]$ForRuntimeSmo
     # it as an Ollama name, including files without an extension.
     $summaryModel = ([string]$config.summary.model).Trim()
     if ($summaryModel) {
-        $resolvedSummaryModel = if ([System.IO.Path]::IsPathRooted($summaryModel)) { $summaryModel } else { Join-Path $backendRoot $summaryModel }
+        $resolvedSummaryModel = Resolve-PortableBackendPath $summaryModel $backendRoot
         # Names such as gemma4:e2b are not filesystem paths on Windows.
         if (Test-Path -LiteralPath $resolvedSummaryModel -PathType Leaf -ErrorAction SilentlyContinue) {
-            $resources += $summaryModel
+            $resources += $resolvedSummaryModel
         }
     }
     if ($config.export_templates -and $config.export_templates.use_custom_template) {
@@ -42,7 +63,7 @@ function Assert-PortableDataLayout([string]$PortableRoot, [switch]$ForRuntimeSmo
     }
     foreach ($resource in $resources) {
         if (-not $resource) { continue }
-        $resolved = if ([System.IO.Path]::IsPathRooted($resource)) { $resource } else { Join-Path $backendRoot $resource }
+        $resolved = Resolve-PortableBackendPath $resource $backendRoot
         if ((Test-PortablePathWithin $resolved $backendRoot) -and (Test-Path -LiteralPath $resolved)) {
             throw "Unsupported portable data layout: custom model/template inside backend. Move custom resources outside backend before updating or packaging. No data was changed."
         }

@@ -187,6 +187,14 @@ function Test-ReleaseManifest([string]$PortableRoot, [string]$ManifestPath, [boo
             $fullPath = Join-Path $PortableRoot $relativePath
             $actualHash = Get-FileHashValue $fullPath
             if (-not $actualHash) {
+                # First-use runtime installation replaces the download guide.
+                # Only a used installation with its runtime present may omit
+                # this exact placeholder; packaged code remains mandatory.
+                if ($ExistingInstallation -and
+                    $relativePath.Replace('/', '\').Equals('runtime\ollama\README.txt', [System.StringComparison]::OrdinalIgnoreCase) -and
+                    (Test-Path -LiteralPath (Join-Path $PortableRoot 'runtime\ollama\ollama.exe') -PathType Leaf)) {
+                    continue
+                }
                 $mismatches += "$relativePath missing"
             }
             elseif ($expectedHash -and $actualHash -ne $expectedHash -and

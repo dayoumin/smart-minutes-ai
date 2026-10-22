@@ -2518,7 +2518,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         if (diarizationIsRunning) return { label: '진행 중', tone: 'info' };
         if (diarizationRetryable && selectedMeeting?.diarizationSkipReason === 'model_not_ready') return { label: '모델 준비 필요', tone: 'warning' };
         if (diarizationRetryable) return { label: '재실행 필요', tone: 'warning' };
-        if (selectedMeeting?.analysisStatus === 'diarization_failed') return { label: '참석자 구분 실패', tone: 'warning' };
+        if (selectedMeeting?.analysisStatus === 'diarization_failed') return { label: '실패', tone: 'warning' };
         if (selectedMeeting?.analysisStatus === 'diarization_stopped') return { label: '중지됨', tone: 'warning' };
         if (selectedMeeting?.diarizationSkipped) return { label: '제외됨', tone: 'warning' };
         if (diarizationApplied === true) return { label: '완료', tone: 'success' };
@@ -4186,23 +4186,32 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             <div className="meeting-analysis-content" ref={analysisStatusRef}>
                                             {!analysisLocked && (showDiarizationProgress ? diarizationProgressPanel : (
                                             <>
-                                            <div className="meeting-analysis-summary" role="status">
-                                                {hasTranscriptData && <CheckCircle2 size={17} aria-hidden="true" className="status-done" />}
-                                                <span>{selectedMeeting.analysisStatus === 'completed' ? '분석 완료' : hasTranscriptData ? '대화록이 준비되었습니다.' : '대화록 내용이 없습니다.'}</span>
-                                                {selectedMeeting.analysisElapsedMs != null && Number.isFinite(selectedMeeting.analysisElapsedMs) && <span className="meeting-analysis-duration">소요 {formatAnalysisDuration(selectedMeeting.analysisElapsedMs)}</span>}
-                                            </div>
                                             <div className="meeting-status-grid">
+                                                <div className="meeting-status-item meeting-analysis-summary" role="status">
+                                                    <span className="meeting-status-title">분석</span>
+                                                    <span className="meeting-status-actions">
+                                                        {selectedMeeting.analysisStatus === 'completed' ? (
+                                                            <span className="status-done" role="img" aria-label="완료" title="완료">
+                                                                <CheckCircle2 size={17} aria-hidden="true" />
+                                                            </span>
+                                                        ) : (
+                                                            <span className="status-pill status-neutral">{hasTranscriptData ? '대화록 준비' : '대화록 없음'}</span>
+                                                        )}
+                                                    </span>
+                                                </div>
                                                 <div className="meeting-status-item">
                                                     <span className="meeting-status-title">대화록</span>
-                                                    {hasTranscriptData ? (
-                                                        <span className="status-done" role="img" aria-label="완료" title="완료">
-                                                            <CheckCircle2 size={17} aria-hidden="true" />
-                                                        </span>
-                                                    ) : analysisRunning ? (
-                                                        <span className="status-pill status-info">생성 중</span>
-                                                    ) : (
-                                                        <span className="status-pill status-neutral">대기</span>
-                                                    )}
+                                                    <span className="meeting-status-actions">
+                                                        {hasTranscriptData ? (
+                                                            <span className="status-done" role="img" aria-label="완료" title="완료">
+                                                                <CheckCircle2 size={17} aria-hidden="true" />
+                                                            </span>
+                                                        ) : analysisRunning ? (
+                                                            <span className="status-pill status-info">생성 중</span>
+                                                        ) : (
+                                                            <span className="status-pill status-neutral">대기</span>
+                                                        )}
+                                                    </span>
                                                 </div>
                                                 <div className="meeting-status-item" title={diarizationStatusTitle}>
                                                     <span className="meeting-status-title">참석자 구분</span>
@@ -4232,6 +4241,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     </span>
                                                 </div>
                                             </div>
+                                            {selectedMeeting.analysisElapsedMs != null && Number.isFinite(selectedMeeting.analysisElapsedMs) && <div className="meeting-analysis-duration">소요 {formatAnalysisDuration(selectedMeeting.analysisElapsedMs)}</div>}
                                             </>
                                             ))}
                                             </div>
@@ -4510,6 +4520,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                         )}
                                         {/* Same reserved line as the report tab: starting, finishing or failing never moves the body. */}
                                         <DetailStatusLine status={organizeStatus} action={organizeGeneratingKind ? undefined : renderModelSetupAction('summary')} />
+                                        <div className="detail-summary-review-note" aria-label="AI 요약 확인 안내">
+                                            <p>AI가 정리한 내용에는 누락이나 잘못된 해석이 있을 수 있습니다. 중요한 내용은 대화록과 대조해 주세요.</p>
+                                            <button
+                                                type="button"
+                                                onClick={() => {
+                                                    setDetailTab('script');
+                                                    requestAnimationFrame(() => document.getElementById('meeting-detail-tab-script')?.focus());
+                                                }}
+                                            >
+                                                대화록 확인
+                                            </button>
+                                        </div>
                                         {shouldShowContextPreview && (
                                             <div className="detail-context-preview" aria-label="선택한 정리 기준 설명">
                                                 <div className="min-w-0">

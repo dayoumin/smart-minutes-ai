@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
+import { mkdir } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
@@ -230,6 +231,10 @@ const runNarrowMetaScenario = async browser => {
     assert.equal(metrics.valueOutside, false, 'property values should stay inside the list');
     assert.equal(metrics.statusInside, true, 'status chips should stay inside the property list');
     assert.ok(metrics.documentOverflow <= 0, `document overflowed by ${metrics.documentOverflow}px`);
+    if (process.env.MEETING_STATUS_SCREENSHOTS) {
+      await mkdir(process.env.MEETING_STATUS_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: `${process.env.MEETING_STATUS_SCREENSHOTS}/meeting-status-narrow.png` });
+    }
     console.log('ok - narrow meeting property rows fit without overlap');
   } finally {
     await context.close();
@@ -518,6 +523,13 @@ const runColumnsScenario = async (browser, { width, height }) => {
     assert.ok(tablist.top <= header.bottom + 24, `tabs start right under the header at ${width}px: tabs ${tablist.top}, header bottom ${header.bottom}`);
     assert.ok(title.right <= actions.left + 1, 'long title does not run under the actions');
     assert.ok(overflowBefore <= 0, `document overflowed by ${overflowBefore}px`);
+    const statusAlignment = await page.locator('.meeting-detail-info .meeting-status-item').evaluateAll(rows => rows.map(row => {
+      const label = row.querySelector('.meeting-status-title').getBoundingClientRect();
+      const status = row.querySelector('.meeting-status-actions').getBoundingClientRect();
+      return { labelRight: label.right, statusLeft: status.left, centerDelta: Math.abs((label.top + label.bottom - status.top - status.bottom) / 2) };
+    }));
+    assert.ok(statusAlignment.length > 0, 'info panel has processing status rows');
+    assert.ok(statusAlignment.every(row => row.labelRight <= row.statusLeft + 1 && row.centerDelta <= 1), 'info status labels sit left of vertically aligned actions');
 
     await page.locator('.barorok-workspace').evaluate(element => { element.scrollTop = 1500; });
     await page.waitForTimeout(200);
@@ -532,11 +544,61 @@ const runColumnsScenario = async (browser, { width, height }) => {
   }
 };
 
+const runSummaryReviewScenario = async (browser, width) => {
+  const context = await browser.newContext({ viewport: { width, height: 900 } });
+  const page = await context.newPage();
+  await installBaseRoutes(page);
+  const meeting = { ...topicMeeting, id: 'summary-review', title: '회의 요약 확인 안내' };
+  const empty = { ...baseMeeting, id: 'summary-review-empty', title: '정리 전 회의록', summary: '', generationStatus: {} };
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor();
+    await putMeetings(page, [meeting, empty]);
+    await openMeeting(page, meeting.title);
+    const openOrganize = () => page.getByRole('tab', { name: '기록 정리', exact: true }).click();
+    await openOrganize();
+    const note = page.getByLabel('AI 요약 확인 안내', { exact: true });
+    await note.getByText('AI가 정리한 내용에는 누락이나 잘못된 해석이 있을 수 있습니다. 중요한 내용은 대화록과 대조해 주세요.', { exact: true }).waitFor();
+    const tab = page.getByRole('tab', { name: '전체 요약', exact: true });
+    const initialY = (await tab.boundingBox()).y;
+    for (const name of ['주제별 정리', '참석자별 정리', '전체 요약']) {
+      await page.getByRole('tab', { name, exact: true }).click();
+      assert.equal(await note.count(), 1);
+      assert(await note.isVisible());
+      assert(Math.abs((await tab.boundingBox()).y - initialY) <= 1, 'persistent controls should stay in place');
+      assert(await note.evaluate(element => element.scrollWidth <= element.clientWidth + 1), 'review guidance must wrap within its work surface');
+    }
+    if (process.env.SUMMARY_REVIEW_SCREENSHOTS) {
+      await mkdir(process.env.SUMMARY_REVIEW_SCREENSHOTS, { recursive: true });
+      await page.screenshot({ path: `${process.env.SUMMARY_REVIEW_SCREENSHOTS}/summary-review-${width}.png` });
+    }
+    await note.getByRole('button', { name: '대화록 확인', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    const scriptTab = page.getByRole('tab', { name: '대화록', exact: true });
+    await page.waitForFunction(() => document.activeElement?.id === 'meeting-detail-tab-script');
+    assert.equal(await scriptTab.getAttribute('aria-selected'), 'true');
+    await openMeeting(page, empty.title);
+    await openOrganize();
+    assert(await note.isVisible(), 'guidance should remain before the first summary is generated');
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await openMeeting(page, meeting.title);
+    await openOrganize();
+    assert(await note.isVisible(), 'saved summaries should retain the guidance on reopen');
+    console.log(`ok - summary guidance, keyboard transcript review, reopen and stable controls at ${width}px`);
+  } finally {
+    await context.close();
+  }
+};
+
 const server = await startServer();
 const browser = await chromium.launch({ headless: true });
 try {
   if (process.argv.includes('columns')) {
     for (const size of [{ width: 1280, height: 720 }, { width: 1440, height: 900 }]) await runColumnsScenario(browser, size);
+  } else if (process.argv.includes('meta')) {
+    await runNarrowMetaScenario(browser);
+  } else if (process.argv.includes('summary-review')) {
+    for (const width of [1280, 860]) await runSummaryReviewScenario(browser, width);
   } else if (process.argv.includes('review')) {
     for (const width of [1280, 760]) await runTranscriptReviewScenario(browser, width);
   } else {

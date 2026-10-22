@@ -566,7 +566,7 @@ const runScenario = async (
     if (delayStopDecisionResponse) {
       releaseAnalyzeResponse();
       await page.waitForFunction(() => window.__meetingUpdateCount >= 1, undefined, { timeout: 10000 });
-      assert.equal(await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).count(), 0);
+      assert.equal(await page.locator('.meeting-analysis-summary').getByRole('img', { name: '완료', exact: true }).count(), 0);
       releaseStopDecisionResponse();
     }
     if (!cancelAccepted) {
@@ -586,7 +586,7 @@ const runScenario = async (
       );
       releaseAnalyzeResponse();
       if (completedResultAfterStop) {
-        await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
+        await page.locator('.meeting-analysis-summary').getByRole('img', { name: '완료', exact: true }).waitFor({ timeout: 10000 });
         const completedMeetings = await page.evaluate(() => new Promise((resolve, reject) => {
           const request = indexedDB.open('MeetingHistoryDB');
           request.onerror = () => reject(request.error);
@@ -634,7 +634,7 @@ const runScenario = async (
       assert.equal(drafts.length, 1);
       assert.equal(drafts[0].status, 'stopped');
       assert.equal(drafts[0].jobId, analyzeJobId);
-      assert.equal(await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).count(), 0, 'accepted stop must not claim completion');
+      assert.equal(await page.locator('.meeting-analysis-summary').getByRole('img', { name: '완료', exact: true }).count(), 0, 'accepted stop must not claim completion');
       assert.equal(
         (await page.evaluate(() => window.__meetingStatusesWritten)).includes('completed'),
         false,
@@ -770,7 +770,7 @@ const runFailureScenario = async (browser, fixture) => {
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.locator('.writer-analysis-panel-error').waitFor({ timeout: 10000 });
     await page.locator('.writer-analysis-panel-error').getByRole('button', { name: '다시 시도' }).click();
-    await page.locator('.meeting-analysis-summary').getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
+    await page.locator('.meeting-analysis-summary').getByRole('img', { name: '완료', exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('heading', { name: originalTitle, exact: true }).waitFor({ timeout: 10000 });
     assert.equal(analyzeAttempt, 3, 'retry should start one new analysis request');
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).count(), 0, 'retry completion should replace the input form');
@@ -1325,7 +1325,7 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
       assert.equal(await page.getByRole('heading', { name: '다른 회의록', exact: true }).count(), 1, 'background completion preserves the current meeting');
       await selectSidebarMeeting(page, title);
     }
-    await page.locator('.meeting-analysis-status').getByText('분석 완료', { exact: false }).waitFor();
+    await page.locator('.meeting-analysis-summary').getByRole('img', { name: '완료', exact: true }).waitFor();
     await page.getByText('같은 화면에서 준비된 첫 대화입니다.', { exact: true }).waitFor();
     if (audioFailure) await page.locator('.meeting-audio-error').waitFor();
     if (!background) {
@@ -1335,7 +1335,11 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
       const collapsed = await expandMenu.isVisible();
       if (collapsed) await expandMenu.click();
       await page.locator('.sidebar-record-row-active').getByRole('button', { name: title, exact: true }).waitFor();
-      if (collapsed) await page.keyboard.press('Escape');
+      if (collapsed) {
+        await page.waitForFunction(() => document.activeElement?.classList.contains('sidebar-collapse-button'));
+        await page.keyboard.press('Escape');
+        await page.locator('.sidebar-scrim').waitFor({ state: 'hidden' });
+      }
       assert.equal(await page.locator('.detail-command-bar-script').getAttribute('inert'), null, 'completion has unlocked result controls before capture');
       await captureState('completed');
       await page.getByRole('button', { name: '회의 정보 수정', exact: true }).click();
@@ -1345,7 +1349,7 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
       assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '아직 저장하지 않은 제목', 'navigation preserves an unsaved completed-result edit');
       await page.getByRole('button', { name: '수정 취소', exact: true }).click();
       await selectSidebarMeeting(page, title);
-      await page.locator('.meeting-analysis-status').getByText('분석 완료', { exact: true }).waitFor();
+      await page.locator('.meeting-analysis-summary').getByRole('img', { name: '완료', exact: true }).waitFor();
       assertSameAnchors(preparing, await anchors(), 'reopened result');
       await captureState('reopened');
     }

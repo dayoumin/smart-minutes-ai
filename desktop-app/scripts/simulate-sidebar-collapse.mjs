@@ -105,7 +105,10 @@ const putMeetings = async (page, meetings) => page.evaluate(values => new Promis
 }), meetings);
 
 const sidebar = page => page.locator('.barorok-navigation');
-const mode = async (page, value) => { await page.locator(`.barorok-navigation[data-mode="${value}"]`).waitFor(); };
+const mode = async (page, value) => {
+  await page.locator(`.barorok-navigation[data-mode="${value}"]`).waitFor();
+  if (value === 'overlay') await page.waitForFunction(() => document.querySelector('.barorok-navigation[data-mode=overlay]')?.contains(document.activeElement));
+};
 const click = (page, name) => sidebar(page).getByRole('button', { name, exact: true }).click();
 const select = async (page, title) => {
   if (await sidebar(page).getAttribute('data-mode') === 'rail') await click(page, '회의록 목록');

@@ -1876,7 +1876,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByLabel('분석 상태', { exact: true }).getByRole('status')
-      .getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
+      .getByRole('img', { name: '완료', exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the ready command bar must not compete with the completed result');
     assert.equal(await page.getByRole('button', { name: '결과 보기', exact: true }).count(), 0, 'completion already shows the detail');
     assert.equal(dialogShown, false);
@@ -2049,7 +2049,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '분석 시작' }).click();
     await page.getByLabel('분석 상태', { exact: true }).getByRole('status')
-      .getByText('분석 완료', { exact: true }).waitFor({ timeout: 10000 });
+      .getByRole('img', { name: '완료', exact: true }).waitFor({ timeout: 10000 });
     await page.locator('.meeting-detail-shell').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-panel .writer-action-row').count(), 0, 'the completed meeting detail replaces the writer controls');
     assert.equal(await page.getByRole('button', { name: '결과 보기', exact: true }).count(), 0, 'completion already shows the detail');

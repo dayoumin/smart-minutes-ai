@@ -50,7 +50,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - First classify the failing layer: sidecar packaging, desktop/Tauri build, portable packaging, or deploy-folder runtime.
 - Use the actual `lmo_audio` deploy folder as the runtime source of truth. Treat `dist`, `dist-sidecar`, `target`, and `target/release/portable` as intermediate artifacts unless the task explicitly asks about them.
 - Before diagnosing a portable bug, record the launched executable, backend directory from `/api/health`, and whether the app is dev, sidecar, or packaged portable.
-- Prefer `scripts/verify_portable.ps1` before rerunning a full portable build.
+- Prefer `scripts/verify_portable.ps1 -PortableDir releases\lmo_audio -ExistingInstallation` (read-only) before rerunning a full portable build. The default mode launches the app and refuses a deploy folder that holds records or logs; never delete them to make it pass.
 - If intermediate portable packaging is locked, verify `lmo_audio` directly and rebuild only the missing layer.
 - When a new portable build lesson is learned, update `docs/tauri-desktop-release-checklist.md` instead of duplicating the detailed procedure here.
 

@@ -644,6 +644,11 @@ foreach ($unsafe in @($RepoRoot.Path, (Join-Path $RepoRoot "releases"), (Join-Pa
                     result = _run_powershell(command)
                     self.assertEqual(result.returncode, expected_code, result.stdout + result.stderr)
                     self.assertIn("runtime smoke deferred" if mode else "preflight failed", result.stdout + result.stderr)
+                    if not mode:
+                        # A refused smoke must name the failing checks, not only the refusal.
+                        self.assertRegex(result.stdout, r"runtime folders excluded\s+FAIL")
+                        self.assertRegex(result.stdout, r"portable root clean\s+FAIL")
+                        self.assertNotRegex(result.stdout, r"app exe exists\s+FAIL")
                     after = {path.relative_to(portable).as_posix(): _sha256(path) for path in portable.rglob("*") if path.is_file()}
                     self.assertEqual(before, after)
             command = f"& '{ROOT / 'scripts/verify_portable.ps1'}' -PortableDir '{portable}' -AllowDirty -ExistingInstallation"
@@ -1002,6 +1007,78 @@ catch {{ if ($_.Exception.Message -notlike '*this installation is running*') {{ 
             "Contents/section0.xml",
         ):
             self.assertIn(required, script)
+
+    def test_release_stops_only_processes_inside_deploy_and_build_folders(self):
+        script = (ROOT / "scripts/release_portable.ps1").read_text(encoding="utf-8")
+        # Leftover smoke processes in the build folder are stopped before packaging replaces it.
+        self.assertLess(script.index("Stop-AppProcesses $TargetPortableDir"),
+                        script.index('"package_desktop_portable.ps1"'))
+        helpers = "\n".join(_release_function(name) for name in (
+            "Normalize-FullPath", "Test-IsPathWithin", "Stop-AppProcesses",
+        ))
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            target, deploy = root / "target/lmo_audio", root / "releases/lmo_audio"
+            processes = {
+                11: target / "binaries/meeting-backend.exe",
+                12: deploy / "lmo_audio.exe",
+                13: root / "target/lmo_audio_other/binaries/meeting-backend.exe",
+                14: root / "Programs/Barorok/LocalEngine/engine/barorok-local-engine.exe",
+            }
+            listing = ", ".join(f"[pscustomobject]@{{ProcessId={pid}; ExecutablePath='{path}'}}" for pid, path in processes.items())
+            result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+$script:Stopped = @()
+{helpers}
+function Get-CimInstance {{ return @({listing}) }}
+function Stop-Process {{ param([int]$Id) $script:Stopped += $Id }}
+Stop-AppProcesses '{target}'
+"target=" + (($script:Stopped | Sort-Object) -join ",")
+$script:Stopped = @()
+Stop-AppProcesses '{deploy}'
+"deploy=" + (($script:Stopped | Sort-Object) -join ",")
+''')
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            stopped = dict(line.split("=", 1) for line in result.stdout.split() if "=" in line)
+            # A sibling build folder and the installed web engine are never stopped.
+            self.assertEqual(stopped, {"target": "11", "deploy": "12"})
+
+    def test_diagnose_accepts_user_settings_but_reports_code_drift(self):
+        script = (ROOT / "scripts/diagnose_portable.ps1").read_text(encoding="utf-8")
+        helpers = re.search(r"function Get-HashIfExists[\s\S]+?(?=\r?\nfunction Write-Section)", script)
+        self.assertIsNotNone(helpers)
+        with tempfile.TemporaryDirectory() as temp_dir:
+            portable = Path(temp_dir) / "lmo_audio"
+            files = {"backend/config.json": b'{"default":true}', "backend/main.py": b"packaged code"}
+            for relative, content in files.items():
+                path = portable / relative
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(content)
+            manifest = portable / "release-manifest.json"
+            manifest.write_text(json.dumps({"files": {
+                "backendConfig": {"path": "backend\\config.json", "sha256": _sha256(portable / "backend/config.json")},
+                "backendMain": {"path": "backend\\main.py", "sha256": _sha256(portable / "backend/main.py")},
+            }, "modelMarkers": []}), encoding="utf-8")
+
+            def drift():
+                result = _run_powershell(f'''
+$ErrorActionPreference = "Stop"
+{helpers.group(0)}
+Test-ManifestDrift '{portable}' '{manifest}' | ConvertTo-Json -Depth 3
+''')
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                return {row["Item"]: (row["Result"], row["Detail"]) for row in json.loads(result.stdout)}
+
+            self.assertEqual(drift()["backend\\config.json"][0], "PASS")
+            (portable / "backend/config.json").write_bytes(b'{"default":true,"user_setting":1}')
+            self.assertEqual(drift()["backend\\config.json"], ("PASS", "user settings differ from build default"))
+            (portable / "backend/config.json").write_bytes(b"not json")
+            self.assertEqual(drift()["backend\\config.json"], ("FAIL", "invalid JSON"))
+            (portable / "backend/config.json").unlink()
+            self.assertEqual(drift()["backend\\config.json"], ("FAIL", "missing"))
+            # The settings exception never extends to packaged code.
+            (portable / "backend/main.py").write_bytes(b"tampered code")
+            self.assertEqual(drift()["backend\\main.py"][0], "FAIL")
 
     def test_release_process_cleanup_uses_path_boundary_check(self):
         script = (ROOT / "scripts" / "release_portable.ps1").read_text(encoding="utf-8")

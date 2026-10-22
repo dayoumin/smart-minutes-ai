@@ -442,7 +442,11 @@ if ($ExistingInstallation) {
     Write-Host "Portable installation integrity verified; runtime smoke deferred. No processes or user data changed." -ForegroundColor Green
     return
 }
-if ($Failed) { throw 'Portable runtime smoke refused: structural or clean-folder preflight failed. No processes or user data changed.' }
+if ($Failed) {
+    # Show which preflight check failed; the release build stops here.
+    $Results | Format-Table -AutoSize
+    throw 'Portable runtime smoke refused: structural or clean-folder preflight failed. No processes or user data changed.'
+}
 Assert-PortableDataLayout $portablePath -ForRuntimeSmoke
 Assert-NoPortableProcesses $portablePath
 

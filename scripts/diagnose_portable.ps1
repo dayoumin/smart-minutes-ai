@@ -68,10 +68,23 @@ function Test-ManifestDrift([string]$PortableRoot, [string]$ManifestPath) {
         $fullPath = Join-Path $PortableRoot $relativePath
         $actualHash = Get-HashIfExists $fullPath
         $ok = $actualHash -and (!$expectedHash -or $actualHash -eq $expectedHash)
+        $detail = if ($actualHash) { $actualHash } else { "missing" }
+        # Updates keep the user's settings while the manifest records the build
+        # default, so a valid changed config is expected, not drift.
+        if (-not $ok -and $actualHash -and $relativePath.Replace('/', '\').Equals('backend\config.json', [System.StringComparison]::OrdinalIgnoreCase)) {
+            try {
+                $userConfig = Get-Content -LiteralPath $fullPath -Raw -Encoding UTF8 | ConvertFrom-Json
+                if ($userConfig -is [pscustomobject]) {
+                    $ok = $true
+                    $detail = "user settings differ from build default"
+                }
+            }
+            catch { $detail = "invalid JSON" }
+        }
         $results += [pscustomobject]@{
             Item = $relativePath
             Result = if ($ok) { "PASS" } else { "FAIL" }
-            Detail = if ($actualHash) { $actualHash } else { "missing" }
+            Detail = $detail
         }
     }
 

@@ -442,6 +442,9 @@ if (Test-Path -LiteralPath $legacyRootPortable) {
 }
 
 Stop-AppProcesses $DeployPath
+# An interrupted smoke can leave its sidecar running from the intermediate
+# build folder, which would lock the files packaging is about to replace.
+Stop-AppProcesses $TargetPortableDir
 if ($ClearWebViewCache) {
     Clear-WebViewRenderCache
 }

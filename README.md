@@ -112,7 +112,11 @@ lmo_audio*.zip
 
 ## 회사 PC 이관
 
-회사 PC에는 실행용이면 프로젝트의 `releases\lmo_audio` 폴더 전체를 `lmo_audio` 폴더로 옮기면 됩니다. `releases`는 커밋 제외 폴더이므로 `git push`로 실행 파일이 전달되지는 않습니다. 다른 PC 테스트용 실행본은 `releases\lmo_audio`를 별도 복사하거나 압축해서 전달합니다. 기본 음성 인식 모델은 외부망 PC에서 설정 화면의 `받기`로 받을 수 있고, 실패하거나 내부망이면 관리자가 지정한 공유 저장소나 외장 저장장치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 그 밖의 앱 실행용 소형 모델은 전달용 묶음에 포함합니다. Ollama 정리 모델은 외부망이 있고 Ollama가 준비된 PC에서 설정 화면으로 받거나 선택할 수 있습니다.
+기존 설치를 갱신할 때는 **업데이트 패키지**, 새 PC나 새 폴더에서 시작할 때는 **신규 설치 패키지**를 사용합니다. ZIP은 압축 형식이며 패키지 용도와 구분합니다. 두 패키지에는 대부분 같은 앱·백엔드 프로그램이 들어갑니다. 업데이트 패키지는 기존 설정·모델·회의 기록을 유지하고, 신규 설치 패키지는 기본 설정과 참석자 구분 모델을 포함하며 개인 기록은 제외합니다.
+
+깨끗한 portable 빌드 후 `corepack pnpm package:update`로 업데이트 패키지를, `corepack pnpm package:handoff`로 신규 설치 패키지(ZIP)를 만듭니다. 신규 설치 시에는 `releases\handoff\lmo_audio_no_ollama_no_whisper_<commit>.zip`을 새 폴더에 압축 해제합니다. `releases`는 커밋 제외 폴더이므로 `git push`로 실행 파일이 전달되지는 않습니다. 전체 `releases\lmo_audio` 폴더는 로컬 빌드·검증 원본이며, 모든 모델을 포함해 전달할 필요가 있을 때 별도로 사용합니다.
+
+현재 신규 설치 패키지는 Whisper 모델·Ollama 실행 파일·Ollama 요약 모델 데이터를 제외합니다. 기본 음성 인식 모델은 외부망 PC에서 설정 화면의 `받기`로 받을 수 있고, 실패하거나 내부망이면 관리자가 준비해 압축 해제한 `lmo_audio\models\faster-whisper-large-v3` 아래에 복사합니다. 요약 프로그램과 요약 모델은 대상 PC의 앱 설정 화면에서 받거나 별도로 준비합니다. 자세한 생성·검증 절차는 [릴리스 체크리스트](docs/tauri-desktop-release-checklist.md)를 따릅니다.
 
 자세한 내용은 [LMO 회의 인사이트 portable 회사 PC 사용법](docs/lmo-meeting-insight-company-pc-guide.md)을 봅니다.
 

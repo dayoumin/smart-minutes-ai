@@ -78,7 +78,7 @@ lmo_audio\models\faster-whisper-large-v3\
 
 ## 정리 모델과 Ollama
 
-대화록 작성에 필요한 기본 음성 인식 모델은 외부망 PC에서 앱 안의 `받기` 버튼으로 받을 수 있습니다. 앱 실행용 소형 모델은 회사 전달용 슬림 zip에 포함하는 것을 기본으로 하므로 사용자가 따로 받을 필요가 없습니다.
+대화록 작성에 필요한 기본 음성 인식 모델은 외부망 PC에서 앱 안의 `받기` 버튼으로 받을 수 있습니다. 앱 실행용 소형 모델은 신규 설치 패키지(ZIP)에 포함하는 것을 기본으로 하므로 사용자가 따로 받을 필요가 없습니다.
 
 전체 요약, 주제별 정리, 참석자별 정리에 쓰는 Ollama 정리 모델은 별도입니다. 외부망이 있고 Ollama가 설치된 PC에서는 시스템 설정 > 모델에서 추천 정리 모델을 받거나 직접 입력한 모델을 선택할 수 있습니다. Ollama가 설치되어 있지 않으면 앱이 정리 모델을 받을 수 없으므로 먼저 Ollama를 설치한 뒤 다시 시도합니다. 내부망 또는 오프라인 PC에서는 이미 설치된 Ollama 모델이 감지되는지 확인하고, 모델이 없으면 대화록 작성만 먼저 사용합니다.
 
@@ -108,7 +108,7 @@ lmo_audio\models\faster-whisper-large-v3\
 ## 주의 사항
 
 - 기본 음성 인식 모델은 외부망 PC에서는 설정 화면에서 받을 수 있습니다. 내부망이거나 다운로드가 실패하면 구글 드라이브, 사내 공유 드라이브, 외장 SSD 등 관리자가 지정한 위치에서 받아 `models\faster-whisper-large-v3`에 복사하세요.
-- 회사 전달용 슬림 zip은 `corepack pnpm package:handoff`로 만듭니다. 이 zip은 앱 실행용 소형 모델을 포함하고, 큰 `faster-whisper-large-v3`만 제외합니다.
+- 신규 설치 패키지(ZIP)는 `corepack pnpm package:handoff`로 만듭니다. 참석자 구분 모델을 포함하고, Whisper 모델·Ollama 실행 파일·Ollama 요약 모델 데이터는 제외하므로 별도로 준비합니다. 기존 설치를 갱신할 때는 기존 설정·모델·회의 기록을 유지하는 업데이트 패키지(`corepack pnpm package:update`)를 사용합니다.
 - 정상 배포본에서는 별도 PowerShell 창이 뜨지 않아야 합니다.
 - zip을 옮길 때는 `lmo_audio` 폴더 전체를 옮기세요.
 - 분석 결과와 임시 파일은 `lmo_audio\backend\outputs`, `lmo_audio\backend\temp`에 생성됩니다. 앱 폴더는 쓰기 가능한 D 드라이브 같은 위치에 두세요.

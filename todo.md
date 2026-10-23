@@ -35,28 +35,28 @@
 # 0. Immediate queue
 
 - [ ] 2026-10-23 **회사에서 이어하기: I안 후속 화면·실제 분석 확인**
-  - 2026-10-23 이 체크아웃에서 최신 `07e071c7` 전체 portable 빌드·중간 smoke·deploy 무결성이 통과했다. 별도 복사본/프로필의 실제30초 분석(15구간·2화자)→Qwen4B 요약→자동 저장→정상 종료/재실행·재열기와 재시도 후 음성 재생도 확인했다. 보호61항목·원본 WAV 불변. 개발 UI 검증만 있던 아래 기록을 보완하되, HTTPS 웹/설치 엔진·내보내기 실물·장문 품질·업데이트/전달 ZIP은 아직 미검증이다. 근거와 범위는 릴리스 체크리스트의 같은 날짜 후속 확인과 `.tmp/release-20261023/final-qa.json`을 따른다.
+  - 2026-10-23 이 체크아웃에서 최신 `07e071c7` 전체 portable 빌드·중간 smoke·deploy 무결성이 통과했다. 별도 복사본/프로필의 실제30초 분석(15구간·2화자)→Qwen4B 요약→자동 저장→정상 종료/재실행·재열기와 재시도 후 음성 재생도 확인했다. 보호61항목·원본 WAV 불변. 개발 UI 검증만 있던 아래 기록을 보완하되, HTTPS 웹/설치 엔진·내보내기 실물·장문 품질·업데이트/신규 설치 패키지는 아직 미검증이다. 근거와 범위는 릴리스 체크리스트의 같은 날짜 후속 확인과 `.tmp/release-20261023/final-qa.json`을 따른다.
   - [x] 실제 실행 초기 상태 회복(2026-10-23): 숨겨진 상세 화면의 초기 단발 모델 조회와 음성 HEAD가 엔진 시작 전 실패한 뒤 갱신되지 않는 경로, 기존 요약의 첫 모델 확인 전 재생성 허용을 수정했다. 네이티브 읽기만45초 안에서 자동 회복하고 준비 중 응답·JSON 본문 제한·이전 요청 취소를 포함한다. 실제 미커밋 시험 EXE의 동시 시작/같은 프로필 정상 재시작2회에서 수동 준비 상태 확인/음성 재시도 각0회, 음성 재생·실제 요약 재생성POST200·요약 재열기 통과. 집중12검사·화면3시나리오·타입/lint·독립2관점 재검토 통과. 정식 clean 빌드 반영은 별도이며 source/EXE SHA와 상세 증거는 `.tmp/native-startup-fix/{final-report,provenance,cycle-1,cycle-2}.json` 및 기존 release QA 공존 행에서 관리한다.
   - 코드 반영 및 집중 검증 완료: 메뉴 펼치기 상단 이동, 업로드 폭 제한, 처리·보관 안내 통합. 1440·1024·2044px의 12개 조합, 긴 파일명, 도움말·최초 방문 안내, 메뉴·연결 복구 검사와 독립 agent 검토를 통과했다.
   - 회사에서 최신 코드를 받아 실제 브라우저의 메뉴 재열기·안내 가독성을 확인하고, 실제 음성 분석 → 요약 → 저장·재열기·내보내기를 확인한다. 이 실제 분석 검증은 사용자 요청으로 회사에서 진행한다.
-  - 개발 UI와 위 최신 portable의 짧은 실제 분석은 확인했다. HTTPS 웹/설치 엔진과 내보내기 실물·장문 품질·업데이트/전달 ZIP 검증은 기존 릴리스 절차로 이어간다. 새 인계 문서는 만들지 않는다.
+  - 개발 UI와 위 최신 portable의 짧은 실제 분석은 확인했다. HTTPS 웹/설치 엔진과 내보내기 실물·장문 품질·업데이트/신규 설치 패키지 검증은 기존 릴리스 절차로 이어간다. 새 인계 문서는 만들지 않는다.
 
 - [ ] 2026-10-22 **웹·데스크톱 병행 후보의 실제 공존 검사**
-  - 기록은 각각 보관하며 자동 동기화·기존 기록 이동은 하지 않는다. 데스크톱의17863 선점, 업데이트 시 설정/결과/다운로드 자원 삭제, 전달 ZIP의 개인 파일·설정 포함을 소스에서 보완했다.
+  - 기록은 각각 보관하며 자동 동기화·기존 기록 이동은 하지 않는다. 데스크톱의17863 선점, 업데이트 시 설정/결과/다운로드 자원 삭제, 신규 설치 패키지의 개인 파일·설정 포함을 소스에서 보완했다.
   - 후속3관점 검토에서 verifier의 재귀 삭제·비표준 내부 데이터 경로 삭제/ZIP 유출·정상 설정 변경의 오판을 수정했다. 배포 검사26/26·실제 소켓4검사·모의 양쪽 기록/삭제 격리가 통과했다. 기존 설치본은 읽기 전용으로 검사하며 지원하지 않는 내부 사용자 경로는 변경 전에 거부한다.
   - 같은 날 독립 리뷰 P1/P2를 수정했다. `summary.model`의 backend 내부 파일이 갱신에서 삭제되거나 ZIP에 포함되는 경로를 사전 차단하며, deploy manifest 재생성을 제거해 빌드 manifest로 복사 결과를 검증한다. 두 결함은 수정 전 회귀 검사에서 실패했고 수정 후 집중3/3·관련 모듈30/30 통과했다. 외부 모델/Ollama 허용도 검사했다. 실제 설치본·사용자 데이터는 변경하지 않았다.
   - 후속 P2 두 건도 수정했다. 드라이브 상대 모델 경로를 backend 기준으로 보호하고, 기존 설치본에서 Ollama 실행 파일이 있으면 설치 과정에서 사라진 정확한 README만 허용한다. 실행 코드 누락/변조 검사는 유지한다. 집중 회귀 검사와 독립 agent 재검토를 통과했다.
   - 2026-10-22 a150589b 빌드로 실제 공존 QA를 했다. 웹 먼저/데스크톱 추가, 각 앱 종료·재시작, 데스크톱 시험 기록 저장·재열기가 통과했다. 남은 것은 웹 쪽 새 기록 저장·재열기(웹 엔진 모델 필요), `package:update` 실제 업데이트, 재시작 직후 기록의 음성 확인 실패1회 원인 확인이다. 상세 상태·증거·종료 기준은 `docs/web-runtime-separation-implementation-plan.md`의 기존 release QA 표에서 관리한다.
   - 동시 분석은 RAM/GPU 경합 때문에 별도 성능 증거 전 보장하지 않는다. 현재 브라우저/WebView별 IndexedDB 목록은 사이트 데이터/프로필 삭제에 취약하며 SQLite 전환은 별도 후속이다. 기존 장문 요약 공개 배포 보류는 유지한다.
 
-- [ ] 2026-10-22 **업데이트 패키지·전달 ZIP 데이터 보호 보강** (다음 `package:update`·`package:handoff` 전)
-  - 빌드 전 2관점 agent 검토에서 나온 위험을 같은 날 소스에서 보강했다(`11b7eff5`에 커밋 완료). 업데이트 payload와 전달 ZIP은 빌드 manifest 목록(`portablePayloadFiles`)대로 만들고 설치본 파일을 빌드 해시와 대조한다. `backend`에서는 이전 manifest 목록에 있고 바뀌지 않은 파일만 지워, 사용자가 둔 파일과 별칭 모델 위치(`backend\models\stt`·`diarization`)를 보존한다. 배포 동기화(`Sync-PortableToDeploy`)도 같은 규칙으로 바꿨다.
-  - 업데이트 적용과 패키지 생성에 `portable_data_safety.ps1` 검사를 걸었고, `backend\logs`·`database`·DB 파일도 보존한다. 앱으로 Ollama를 받은 설치본의 README 누락(업데이트 생성·검증, 전달 ZIP)과 Whisper를 넣은 전달 ZIP 검사(`-ExistingInstallation`)도 고쳤다. 독립 agent 검토의 P2 4건(비정상 경로 표기 `.`·`..`·끝의 점, 예전 전달 ZIP 목록 불신, 업데이트 검증 범위, 핵심 규칙 테스트)과 P3 대부분을 반영했다. 임시 fixture로 업데이트15/15·`check:quick`(릴리스 모듈 포함 backend153건) 통과, 새·변경 테스트는 수정 전 코드에서 실패하고 사용자 자료 보호 줄을 빼도 실패함을 확인했다.
+- [ ] 2026-10-22 **업데이트 패키지·신규 설치 패키지 데이터 보호 보강** (다음 `package:update`·`package:handoff` 전)
+  - 빌드 전 2관점 agent 검토에서 나온 위험을 같은 날 소스에서 보강했다(`11b7eff5`에 커밋 완료). 업데이트 payload와 신규 설치 패키지는 빌드 manifest 목록(`portablePayloadFiles`)대로 만들고 설치본 파일을 빌드 해시와 대조한다. `backend`에서는 이전 manifest 목록에 있고 바뀌지 않은 파일만 지워, 사용자가 둔 파일과 별칭 모델 위치(`backend\models\stt`·`diarization`)를 보존한다. 배포 동기화(`Sync-PortableToDeploy`)도 같은 규칙으로 바꿨다.
+  - 업데이트 적용과 패키지 생성에 `portable_data_safety.ps1` 검사를 걸었고, `backend\logs`·`database`·DB 파일도 보존한다. 앱으로 Ollama를 받은 설치본의 README 누락(업데이트 생성·검증, 신규 설치 패키지)과 Whisper를 넣은 신규 설치 패키지 검사(`-ExistingInstallation`)도 고쳤다. 독립 agent 검토의 P2 4건(비정상 경로 표기 `.`·`..`·끝의 점, 예전 신규 설치 패키지 목록 불신, 업데이트 검증 범위, 핵심 규칙 테스트)과 P3 대부분을 반영했다. 임시 fixture로 업데이트15/15·`check:quick`(릴리스 모듈 포함 backend153건) 통과, 새·변경 테스트는 수정 전 코드에서 실패하고 사용자 자료 보호 줄을 빼도 실패함을 확인했다.
   - 남은 것: 실제 설치본에서 `package:update` 적용과 `package:handoff` 생성 확인, 바뀐 배포 동기화로 한 번 빌드. 목록 없는 오래된 설치본과 업데이트 패키지의 `runtime` 범위는 `docs/tauri-desktop-release-checklist.md` 6-1 "알려진 한계"에 둔다.
-  - **2026-10-22 작업 종료·10-23 재개**: 독립 agent 3관점의 재검토에서 새 확정 P1/P2는 없었고 집중 검사26개(배포6·업데이트4·전달2·인증10·실제 소켓4)가 통과했다. 실제 deploy는 `a150589b`/dirty=false/15:34 빌드이며 읽기 전용 무결성 검사도 통과했다. 이후 변경은 배포 스크립트·문서·테스트라 실행 파일·sidecar 재컴파일 없이 포장 단계를 재실행할 수 있다. 최신 후보 완성·실제 업데이트·오늘 전달 ZIP은 아직 미완료다.
+  - **2026-10-22 작업 종료·10-23 재개**: 독립 agent 3관점의 재검토에서 새 확정 P1/P2는 없었고 집중 검사26개(배포6·업데이트4·전달2·인증10·실제 소켓4)가 통과했다. 실제 deploy는 `a150589b`/dirty=false/15:34 빌드이며 읽기 전용 무결성 검사도 통과했다. 이후 변경은 배포 스크립트·문서·테스트라 실행 파일·sidecar 재컴파일 없이 포장 단계를 재실행할 수 있다. 최신 후보 완성·실제 업데이트·오늘 신규 설치 패키지는 아직 미완료다.
   - 실제 시험은 `.tmp/release-real-qa-20261022/previous/lmo_audio`와 전용 `webview-profile`에서 했다. 실제 WebView 프로필 인자와 health의 backend 경로·17864를 확인했다. `QA 업데이트 보존 1022`(job `267feb12-e1e5-4b25-89af-2391c114a177`)는 30초 음성 → 대화록·2명 구분 → 자동 저장을 완료했고 오디오 readyState=4/duration=30을 확인했다. 소요6분12초는 파일 복사·메모리 압박과 겹친 결과이며 속도 정상·음성 재생·재열기·업데이트 후 보존의 증거는 아니다. 시험 기록·프로필·원본은 그대로 남긴다. 원본 deploy 사용자 파일35개와 기존 데스크톱 IndexedDB8개는 종료 시 SHA 불변이다.
   - 재포장 시 `src-tauri/binaries`가 `.gitkeep`만 있어 첫 실행이 실패했다. 검증된 deploy의 sidecar와 `_internal`을 같은 중간 경로로 복구했다(소스 재컴파일 없음). 두 번째 포장은 파일 복사 중 가용 메모리0.8GB/5%와 실제 분석 지연이 겹쳐 소유 PowerShell만 중지했다. deploy 동기화 전이며 **중간 `target/release/portable/lmo_audio`는 완성본으로 쓰면 안 된다**. 사용자 요청으로 오늘 재시작하지 않는다.
-  - **내일 순서**: 프로세스·포트·메모리와 `git status` 확인 → 다른 실모델 실행 없이 저장소 루트에서 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache` 재실행 → 중간 smoke·deploy 읽기 전용 검사 및 clean/HEAD manifest 확인 → `corepack pnpm package:update`·`corepack pnpm package:handoff`를 순차 실행 → 위 시험 복사본에 실제 업데이트 → 같은 전용 프로필로 실행·저장 기록/설정/모델 해시·대화록·음성 재생·재열기 확인 → 전달 ZIP을 별도 폴더에 풀어 첫 실행 확인. 그 뒤 웹 쪽 새 기록 저장·재열기를 기존 공존 QA 행 기준으로 검증한다. 동시 모델 실행으로 검사를 겹치지 않는다.
+  - **내일 순서**: 프로세스·포트·메모리와 `git status` 확인 → 다른 실모델 실행 없이 저장소 루트에서 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache` 재실행 → 중간 smoke·deploy 읽기 전용 검사 및 clean/HEAD manifest 확인 → `corepack pnpm package:update`·`corepack pnpm package:handoff`를 순차 실행 → 위 시험 복사본에 실제 업데이트 → 같은 전용 프로필로 실행·저장 기록/설정/모델 해시·대화록·음성 재생·재열기 확인 → 신규 설치 패키지를 별도 폴더에 풀어 첫 실행 확인. 그 뒤 웹 쪽 새 기록 저장·재열기를 기존 공존 QA 행 기준으로 검증한다. 동시 모델 실행으로 검사를 겹치지 않는다.
   - 실행 환경: Windows, `backend/.venv-desktop/Scripts/python.exe` 3.12.14, `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`, `TEMP`/`TMP=D:\Projects\LMO_audio\.tmp\release-real-qa-20261022\temp`. 이 세션에서는 샌드박스 앱의9433에 외부 검사 연결이 안 됐고 앱·검사를 같은 비격리 권한 경계에서 실행하자 연결됐다. `launch_qa.ps1`·`inspect_ui.mjs`·`read_record.mjs`, `end-of-day.json/png`, 빌드 로그·보호 파일 비교·종료 증거는 위 `.tmp`에만 보존한다. 자동 검사 실패를 제품 실패로 단정하거나 실사용 WebView 프로필을 검사 대상으로 쓰지 않는다. 릴리스 위험·종료 기준은 기존 체크리스트6-1 및 공존 QA 표를 따른다.
 
 - [ ] 2026-10-21 **집에서 이어하기 — 출력 상한 일치 후 Luna·Qwen 비교**
@@ -512,7 +512,7 @@
   - 일반 사용자 배포본에서 최상위에는 `lmo_audio.exe`, `START_HERE.txt`처럼 사용자가 직접 볼 파일만 남기고, `models`, `backend`, `binaries`, `runtime` 같은 내부 리소스 폴더는 `_internal` 또는 앱 관리 데이터 폴더 아래로 숨기는 구조를 검토한다.
   - 모델 파일은 실제로 여러 필수 파일로 구성되므로 단일 파일로 합치지 않는다. 대신 앱/패키징/검증 코드가 역할 기반 모델 registry를 통해 내부 경로를 찾게 한다.
   - `faster-whisper-large-v3`, `speaker-diarization-community-1` 같은 구체 모델명이 backend, Settings UI, verify/release script에 직접 박혀 있는 지점을 줄이고, `stt`, `diarization`, `summary` 역할 기준으로 교체 가능하게 만든다.
-  - 변경 시 `docs\tauri-desktop-release-checklist.md`의 리소스와 모델 경로 기준, handoff zip, manifest, `verify_portable.ps1`, `/api/models/status`, 설정 모델 탭을 함께 갱신한다.
+  - 변경 시 `docs\tauri-desktop-release-checklist.md`의 리소스와 모델 경로 기준, 신규 설치 패키지(ZIP), manifest, `verify_portable.ps1`, `/api/models/status`, 설정 모델 탭을 함께 갱신한다.
 - [x] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
   - 2026-10-20 점검: 닫음. 원래 체크아웃에 `models\` 두 모델, `releases\lmo_audio`, `backend\.venv-desktop`이 있고 README·체크리스트에 옛 `backend\models` 경로가 없다.
   - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
@@ -546,7 +546,7 @@
   - 남은 일은 회사 PC에서 외부망/내부망 조건별 실제 확인이다. 외부망 PC에서는 설정 화면으로 모델 받기/선택이 되는지 보고, 내부망/오프라인 PC에서는 이미 설치된 Ollama 모델만 감지해서 선택되는지 확인한다.
   - STT 모델은 외부망 PC에서 앱 설정 화면의 `받기`로 다운로드를 시작할 수 있게 한다. 내부망/실패 시에는 관리자가 `models\faster-whisper-large-v3`에 준비한다.
   - 2026-06-06 보완: 참석자 구분 모델은 전달본에 포함하고 설정 화면의 별도 받기 대상으로 노출하지 않는다. Ollama가 없는 PC에서 정리 모델 받기를 누르면 설치 페이지를 열고, 진행 중 메시지를 남기지 않는다. 회의 요약 모델 영역에는 Ollama 설치 링크를 별도로 제공한다.
-  - 2026-06-06 보완: 회사 전달용 슬림 zip은 `no_models`가 아니라 `no_whisper` 기준으로 만든다. `speaker-diarization-community-1`은 포함하고, 큰 `faster-whisper-large-v3`만 제외한다. 외부망 PC에서는 앱에서 STT 모델 다운로드를 시도할 수 있고, 실패하면 관리자 준비 절차를 따른다.
+  - 2026-06-06 보완: 신규 설치 패키지(ZIP)는 `no_models`가 아니라 `no_whisper` 기준으로 만든다. `speaker-diarization-community-1`은 포함하고, 큰 `faster-whisper-large-v3`만 제외한다. 외부망 PC에서는 앱에서 STT 모델 다운로드를 시도할 수 있고, 실패하면 관리자 준비 절차를 따른다.
   - 2026-06-07 보완: STT/Ollama 모델 받기 화면은 진행률, 남은 시간, 중지 버튼을 제공하고, 완료 후 `/api/models/status`로 실제 준비 상태를 다시 확인한 뒤 체크 아이콘으로 표시한다. 자동 반복 확인, `최근 확인`, 긴 완료 배너, 중복 진행 문구는 다시 넣지 않는다.
   - 2026-06-07 추가 안정화: Ollama 모델 받기 시작 직후 중지 요청이 유실되지 않게 하고, 장시간 다운로드 상태 추적과 설정 모델 탭 재진입 시 진행 상태 복구를 추가했다.
   - 다음 회사 PC 실검증에서는 STT 모델 받기/중지/재받기/완료 후 체크 표시, Ollama 모델 받기/중지/사용 전환, Ollama 미설치 링크 이동, 모델 탭 레이아웃 흔들림 여부를 함께 확인한다.
@@ -792,7 +792,7 @@ elease-manifest.json`은 2026-06-18 `5e57c2b`를 가리켜 HEAD보다 132커밋 
   - 참석자 구분 모델 내부 진행률은 pyannote 호출 중 자세히 받을 수 없어 현재는 단계 전환 기준으로만 표시한다. 긴 파일에서 멈춘 것처럼 보이면 pyannote 세부 진행 이벤트 또는 별도 상태 heartbeat 설계를 후속 검토한다.
   - 큰 파일 업로드 저장은 현재 SSE 스트림 시작 전 처리된다. FastAPI 업로드 파일 수명 문제 때문에 먼저 저장하지만, 긴 파일에서 초기 진행률/취소가 비어 보일 수 있어 job 등록과 업로드 진행 상태를 분리하는 후속 개선이 필요하다.
 - [x] 6순위: 최종 배포 zip 재생성
-  - 2026-10-20 점검: 닫음. portable은 웹 MVP 이후다. 마지막 handoff zip은 06-18 `5e57c2b`, 스크립트는 `08825903`이다.
+  - 2026-10-20 점검: 닫음. portable은 웹 MVP 이후다. 마지막 신규 설치 패키지(ZIP)는 06-18 `5e57c2b`, 스크립트는 `08825903`이다.
   - 모델 미포함/포함 기준을 명확히 하고, 회사 PC용 설명 md와 함께 다시 묶는다.
   - 2026-05-12 빌드 기록: sidecar/Tauri 빌드는 성공했고, 최상단 안내 파일 한글 파일명/PowerShell 인코딩 문제로 packaging 단계에서 실패했다. 안내 파일은 `START_HERE.txt`로 고정한다.
   - 2026-05-12 검증 기록: `/api/health`, `/api/settings`는 통과했으나 `/api/models/status` 첫 호출이 5초를 넘겨 runtime smoke timeout이 났다. 검증 스크립트 모델 상태 요청 timeout은 최소 60초로 조정했다.

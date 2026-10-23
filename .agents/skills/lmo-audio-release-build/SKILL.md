@@ -7,13 +7,19 @@ description: Build, package, and verify this repository's Windows portable deskt
 
 Use this skill only inside this repository. The repository folder name can differ between PCs; use the current repository root, not a hard-coded absolute path. Stay Windows-native.
 
-## Default Meaning
+## User-Facing Package Names
+
+Use `업데이트 패키지` for an existing-install update and `신규 설치 패키지` for a new-PC/new-folder setup. ZIP is the archive format, not the package purpose. Do not label the latter as `전달 ZIP`, `전달용 슬림 zip`, or `handoff zip` in reports. Keep technical identifiers (`package:handoff`, scripts, paths, and schema fields) unchanged.
+
+The core app/backend files largely overlap. The update package preserves existing settings, models, and records and includes update/verification scripts. The current slim new-install package supplies default settings and the diarization model; Whisper, the Ollama executable, and Ollama summary model data must be prepared separately. Do not imply that it is ready for fully offline analysis immediately after extraction.
+
+## Build Scope
 
 Treat an unqualified request such as "build", "release build", "portable build", or "make it runnable for normal users" as a user-ready portable desktop release.
 
 Do not use `corepack pnpm --dir desktop-app build` for that request. It only creates Vite web assets and does not update the executable, sidecar, models, or `releases\lmo_audio`.
 
-If the request implies sharing, handoff, company delivery, another PC, or a zip file, the normal transfer artifact is the slim handoff package, not the full `releases\lmo_audio` folder. Build and verify the clean portable folder first, then run `corepack pnpm package:handoff` and report the zip path and size.
+If the request implies sharing, handoff, company delivery, another PC, or a zip file, the normal transfer artifact is the slim new-install package (`신규 설치 패키지`, ZIP), not the full `releases\lmo_audio` folder. Build and verify the clean portable folder first, then run `corepack pnpm package:handoff` and report the zip path and size.
 
 ## Required Workflow
 
@@ -77,4 +83,4 @@ powershell -NoProfile -ExecutionPolicy Bypass -File releases\updates\lmo_audio_u
 
 State whether the release is ready for a normal user PC, give the path `releases\lmo_audio`, and mention residual risk such as a dirty manifest or a clean-room zip test that was not performed.
 
-For delivery/handoff work, lead with the slim handoff zip path and size. Mention the full portable folder only as the local source/verification folder, because it includes large embedded model files and is not the usual transfer artifact.
+For delivery/handoff work, lead with the new-install package (`신규 설치 패키지`, ZIP) path and size. Mention the full portable folder only as the local source/verification folder, because it includes large embedded model files and is not the usual transfer artifact.

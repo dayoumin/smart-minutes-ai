@@ -6,7 +6,7 @@
 
 - 2026-10-22 웹·데스크톱 병행: 웹 설치 엔진의 고정 포트17863을 데스크톱이 먼저 사용하지 않도록 `src-tauri/src/backend_port.rs`에서17864부터 탐색한다. 포트 모듈의 실제 소켓 검사는 `rustc --edition=2021 --test desktop-app/src-tauri/src/backend_port.rs -o .tmp/dual-runtime/backend-port-tests.exe`로 좁게 실행할 수 있다. 이것은 Tauri 실행 파일의 실제 공존 검증을 대신하지 않는다.
 - 기존 deploy 폴더는 사용자 설치본일 수 있다. `Sync-PortableToDeploy`는 패키지 코드만 mirror하며 설정·outputs/temp/logs/database·DB/WAL·다운로드한 모델/runtime·개인 최상위 파일을 보존한다. 프로세스 종료는 지정 deploy 폴더의 실행 파일 경계로 제한한다. 전역 WebView 이름/명령행만으로 다른 설치본을 종료하지 않는다.
-- 보존과 전달은 구분한다. 전달 ZIP은 알려진 패키지 루트만 복사하고 개인 백업·로그·DB/보조파일을 제외한다. `backend/config.json`은 설치본에서 복사하지 않고 현재 HEAD의 UTF-8 기본 설정을 넣는다. 보통 HEAD 일치·clean manifest 게이트를 지키며 `-AllowStale`/`-AllowDirty`는 로컬 시험용이다. 격리된 신·기존 설치 fixture의 파일 해시와 ZIP 내용으로 보존/제외를 검증한다. 실사용 폴더로 시험하지 않는다.
+- 보존과 전달은 구분한다. 신규 설치 패키지는 알려진 패키지 루트만 복사하고 개인 백업·로그·DB/보조파일을 제외한다. `backend/config.json`은 설치본에서 복사하지 않고 현재 HEAD의 UTF-8 기본 설정을 넣는다. 보통 HEAD 일치·clean manifest 게이트를 지키며 `-AllowStale`/`-AllowDirty`는 로컬 시험용이다. 격리된 신·기존 설치 fixture의 파일 해시와 ZIP 내용으로 보존/제외를 검증한다. 실사용 폴더로 시험하지 않는다.
 - 같은 날짜 검증: `backend\.venv-desktop\Scripts\python.exe`(Python3.12.14), `-B -X utf8 -m unittest tests.test_portable_release_scripts`는22개 중21개 통과·1개 skip(기존 deploy에 runtime 산출물이 있어 실제 폴더를 사용하는 검사는 생략). `TEMP`/`TMP`는 `.tmp\dual-runtime\temp`로 지정했다. 실제 소켓2검사, `corepack pnpm --dir desktop-app typecheck`·인증 경계10검사·공개 업데이트 정보4검사, `cargo check --locked --offline --lib` 통과. Cargo 최초 검사에서 누락된 고정 의존성과 사용자 캐시 쓰기 권한을 구분했고, 잠금 파일을 바꾸지 않고 캐시 접근 권한으로 재검사했다. 독립 agent의 포트·배포 데이터 검토 지적과 후속 재검토를 완료했다. 전체 portable 재빌드·실제 Tauri UI·운영 배포는 실행하지 않았다.
 
 ### 2026-10-22 체계적 후속 검토: 기존 설치본 검사와 데이터 보호
@@ -83,11 +83,11 @@
 - [x] 새 빌드의 별도 QA 복사본에서 실제 로컬 요약 요청 성공, 자동 저장, 같은 프로필 재실행 후 요약 재열기를 확인한다. 2026-10-23 `07e071c7`의 30초 WAV/Qwen4B 검사로 확인했으며, 장문 품질·초기 상태 회복 문제의 종료로 확대하지 않는다.
 - [ ] 업데이트/전달 패키지를 만드는 경우 최종 패키지에도 같은 리소스가 들어 있는지 확인한다.
 
-2026-10-23 현재 상태: 현재 `.venv-desktop`의 통신 초기화와 최소 frozen 회귀 검사 1개가 통과했다. 정책 파일은 906바이트, SHA256 `c916ce1b14ed8ca69e9b5c9fab22799a900dd610d6d4ec9b1347f4fd48e53718`이다. 격리된 clean 브랜치 `codex/ui-home-release-20261023`의 `371b066`에서 `corepack pnpm build -NoClearWebViewCache`가 exit0이며 중간 폴더 실행 smoke와 최종 deploy 읽기 전용 무결성 검사를 통과했다. 정책 파일의 최종 SHA·manifest 포함도 일치한다. 빌드 전후 설정·모델·사용자 WebView 저장소 34파일의 SHA가 모두 같다(`.tmp/home-release-20261023/postbuild-protection.json`). 이후 채택한 I안과 추가 화면 수정의 실제 요약·자동 저장·재실행 검사는 **사용자 결정으로 회사 PC에 이관**했다. `todo.md`의 회사 이어하기 항목에 따라 최종 소스 재빌드·실제 모델 검사 증거로 닫는다. 이 상태를 회사 PC·전달 ZIP 또는 모든 수동 QA 완료로 해석하지 않는다.
+2026-10-23 현재 상태: 현재 `.venv-desktop`의 통신 초기화와 최소 frozen 회귀 검사 1개가 통과했다. 정책 파일은 906바이트, SHA256 `c916ce1b14ed8ca69e9b5c9fab22799a900dd610d6d4ec9b1347f4fd48e53718`이다. 격리된 clean 브랜치 `codex/ui-home-release-20261023`의 `371b066`에서 `corepack pnpm build -NoClearWebViewCache`가 exit0이며 중간 폴더 실행 smoke와 최종 deploy 읽기 전용 무결성 검사를 통과했다. 정책 파일의 최종 SHA·manifest 포함도 일치한다. 빌드 전후 설정·모델·사용자 WebView 저장소 34파일의 SHA가 모두 같다(`.tmp/home-release-20261023/postbuild-protection.json`). 이후 채택한 I안과 추가 화면 수정의 실제 요약·자동 저장·재실행 검사는 **사용자 결정으로 회사 PC에 이관**했다. `todo.md`의 회사 이어하기 항목에 따라 최종 소스 재빌드·실제 모델 검사 증거로 닫는다. 이 상태를 회사 PC·신규 설치 패키지 또는 모든 수동 QA 완료로 해석하지 않는다.
 
-2026-10-23 후속 확인(`D:\Projects\LMO_audio`): P2 수정·독립 재검토 후 `07e071c7`을 커밋하고 `corepack pnpm build -NoClearWebViewCache` 전체 빌드가 exit0이다. 중간 실행 smoke·최종 설치본 읽기 전용 무결성, HEAD 일치·dirty=false, SSL 정책 파일 SHA 일치를 확인했다. 보호61항목의 사용자 파일·설정·기존 WebView 기록 SHA와 모델 파일 크기가 불변이다(모델 전체 SHA 검사는 아님). 별도 QA 복사본·전용 프로필에서 실제30초 음성의15구간/2화자 분석·자동 저장, 시스템 Ollama0.34.2의 `qwen3.5:4b` 요약·자동 저장·정상 종료/같은 프로필 재실행 후 같은 대화록/요약과 backend overview 일치를 확인했다. 정리 전 저장 잠금·요약 후 저장 활성화도 실제 EXE에서 통과했다. 재실행 첫 음성 확인 실패는 `다시 확인`으로 회복 후 실제 재생 시간이0.53초를 넘어갔다. 초기 요약 모델 상태는 설정의 준비 상태 재확인 뒤 회복했다. 두 초기 상태 문제는 기존 release QA 행과 TODO에 미해결로 유지한다. 원본 WAV는 SHA 불변이다. 근거 `.tmp/release-20261023/{build.log,protected-after.json,final-qa.json,open.json,retry-audio.json,play.json}`. 사용자 설치본의 요약 설정은 바꾸지 않았으며 시험 복사본만 Qwen을 사용했다. 새 업데이트/전달 ZIP·HTTPS 웹·설치 엔진·장문 품질·다른 PC 검증은 수행하지 않았고 공개 배포 보류를 유지한다.
+2026-10-23 후속 확인(`D:\Projects\LMO_audio`): P2 수정·독립 재검토 후 `07e071c7`을 커밋하고 `corepack pnpm build -NoClearWebViewCache` 전체 빌드가 exit0이다. 중간 실행 smoke·최종 설치본 읽기 전용 무결성, HEAD 일치·dirty=false, SSL 정책 파일 SHA 일치를 확인했다. 보호61항목의 사용자 파일·설정·기존 WebView 기록 SHA와 모델 파일 크기가 불변이다(모델 전체 SHA 검사는 아님). 별도 QA 복사본·전용 프로필에서 실제30초 음성의15구간/2화자 분석·자동 저장, 시스템 Ollama0.34.2의 `qwen3.5:4b` 요약·자동 저장·정상 종료/같은 프로필 재실행 후 같은 대화록/요약과 backend overview 일치를 확인했다. 정리 전 저장 잠금·요약 후 저장 활성화도 실제 EXE에서 통과했다. 재실행 첫 음성 확인 실패는 `다시 확인`으로 회복 후 실제 재생 시간이0.53초를 넘어갔다. 초기 요약 모델 상태는 설정의 준비 상태 재확인 뒤 회복했다. 두 초기 상태 문제는 기존 release QA 행과 TODO에 미해결로 유지한다. 원본 WAV는 SHA 불변이다. 근거 `.tmp/release-20261023/{build.log,protected-after.json,final-qa.json,open.json,retry-audio.json,play.json}`. 사용자 설치본의 요약 설정은 바꾸지 않았으며 시험 복사본만 Qwen을 사용했다. 새 업데이트/신규 설치 패키지·HTTPS 웹·설치 엔진·장문 품질·다른 PC 검증은 수행하지 않았고 공개 배포 보류를 유지한다.
 
-2026-10-23 초기 상태 후속 수정 검증: 첫 모델/음성 조회의 시작 실패 고착, 모델 준비 중 성공 응답의 고착, 기존 요약에서 첫 모델 확인 전 재생성 허용을 UI에서 수정했다. 네이티브의 읽기 전용 조회만45초 안에서 회복하며 유한 JSON 본문도 요청 시간 제한·취소에 포함했다. 집중12·브라우저 승인21·인증 경계10검사, 화면3시나리오, 타입/lint, 독립2관점 재검토 통과. `corepack pnpm --dir desktop-app desktop:build:exe`로 UI EXE를 컴파일해 검증된07e071c7 sidecar/모델이 있는 **별도 QA 복사본에만** 반영했다. `dirty=true` 시험용이며 정식 deploy 갱신·clean portable 재빌드 완료로 표시하지 않는다. 앱·시스템 Ollama 동시 새 시작 및 같은 프로필 정상 재시작2회에서 수동 준비 상태 확인·음성 재시도 각0회, 30초 음성 실제 재생과 요약 재생성POST200·기존 요약 재열기 통과. 초기 준비9.4초/6.1초, 전체26.5초/11.4초이며 성능 일반화 자료는 아니다. 최종 source/EXE SHA·backend overview 일치는 `.tmp/native-startup-fix/{provenance,final-report,cycle-1,cycle-2}.json`을 따른다. 앞 문단의 두 초기 상태 결함은 이 표본에서 해소했으며, 웹·설치 엔진·업데이트/전달 ZIP·장문 품질·공개 배포 보류는 유지한다.
+2026-10-23 초기 상태 후속 수정 검증: 첫 모델/음성 조회의 시작 실패 고착, 모델 준비 중 성공 응답의 고착, 기존 요약에서 첫 모델 확인 전 재생성 허용을 UI에서 수정했다. 네이티브의 읽기 전용 조회만45초 안에서 회복하며 유한 JSON 본문도 요청 시간 제한·취소에 포함했다. 집중12·브라우저 승인21·인증 경계10검사, 화면3시나리오, 타입/lint, 독립2관점 재검토 통과. `corepack pnpm --dir desktop-app desktop:build:exe`로 UI EXE를 컴파일해 검증된07e071c7 sidecar/모델이 있는 **별도 QA 복사본에만** 반영했다. `dirty=true` 시험용이며 정식 deploy 갱신·clean portable 재빌드 완료로 표시하지 않는다. 앱·시스템 Ollama 동시 새 시작 및 같은 프로필 정상 재시작2회에서 수동 준비 상태 확인·음성 재시도 각0회, 30초 음성 실제 재생과 요약 재생성POST200·기존 요약 재열기 통과. 초기 준비9.4초/6.1초, 전체26.5초/11.4초이며 성능 일반화 자료는 아니다. 최종 source/EXE SHA·backend overview 일치는 `.tmp/native-startup-fix/{provenance,final-report,cycle-1,cycle-2}.json`을 따른다. 앞 문단의 두 초기 상태 결함은 이 표본에서 해소했으며, 웹·설치 엔진·업데이트/신규 설치 패키지·장문 품질·공개 배포 보류는 유지한다.
 
 ## 3. 리소스와 모델 경로
 
@@ -98,9 +98,9 @@
 - 내부 폴더를 숨기더라도 모델 파일을 단일 파일로 합치지는 않는다. STT 모델과 참석자 구분 모델은 여러 필수 파일로 구성되므로, 실제 파일 구조는 유지하고 앱/패키징/검증 코드가 역할 기반 모델 registry에서 경로를 찾게 한다.
 - 모델 교체 가능성을 열어둘 때는 `faster-whisper-large-v3` 같은 모델명을 UI, 설정 저장, backend 경로, verify script에 직접 박지 않는다. `stt`, `diarization`, `summary` 같은 역할과 `portable_model_layout.json` 또는 후속 model registry를 기준으로 resolve한다.
 - 필수 모델이 없으면 분석 버튼 클릭 후 즉시 원인과 조치 방법을 보여준다.
-- 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 회사 전달용 슬림 zip은 `no_ollama_no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
+- 큰 모델을 zip에서 제외하는 경우, 제외한 모델명과 넣을 위치를 문서에 명시한다. 신규 설치 패키지(ZIP)는 `no_ollama_no_whisper` 기준으로 만들고, 참석자 구분 모델은 포함한다.
 - Ollama runtime은 기본 배포 zip에 포함하지 않는다. 앱 설정의 모델 탭에서 고정된 공식 standalone Windows CLI release zip을 받아 `runtime\ollama\ollama.exe`로 풀고, portable 폴더에 쓸 수 없으면 `%LOCALAPPDATA%\LMO_audio\runtime\ollama`를 사용한다. 앱은 앱 관리 runtime이 있으면 시스템 설치본보다 우선 사용하고, 앱 관리 runtime이 없으면 `OLLAMA_EXE`, PATH의 `ollama`, 일반 설치 경로의 시스템 Ollama 순서로 fallback한다. 앱 관리 runtime의 요약 모델 저장소는 같은 앱 관리 경계의 `models\ollama`를 사용한다. release 운영 시 `LMO_OLLAMA_RUNTIME_VERSION`과 `LMO_OLLAMA_RUNTIME_SHA256`을 기록해 다운로드 URL과 해시가 의도한 릴리스인지 확인한다.
-- 오프라인 또는 사전 내장 배포가 필요할 때만 공식 standalone Windows CLI 압축을 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다. 이때 전체 `releases\lmo_audio` 폴더 크기와 회사 전달용 handoff zip 크기를 구분해서 기록한다.
+- 오프라인 또는 사전 내장 배포가 필요할 때만 공식 standalone Windows CLI 압축을 풀어 `runtime\ollama\ollama.exe`가 보이게 둔다. 이때 전체 `releases\lmo_audio` 폴더 크기와 회사 전달용 신규 설치 패키지(ZIP) 크기를 구분해서 기록한다.
 - Ollama 요약 모델은 임의의 단일 파일 링크 다운로드가 아니라 앱 내부에서 `ollama pull <model>` 흐름으로 받는다. 그래야 manifest/blob 저장 구조와 설치 여부 확인이 Ollama 기준과 맞는다.
 
 ## 4. 패키징 산출물
@@ -178,9 +178,9 @@ corepack pnpm check:portable
 
 portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 안에 섞여 있다. 그래서 업데이트가 폴더를 다룰 때마다 주인을 구분해야 한다. 위치가 늘거나 동작이 바뀌면 이 표부터 고친다.
 
-패키지 파일의 기준은 빌드 manifest의 파일 목록(`portablePayloadFiles`)이다. 업데이트 패키지와 전달 ZIP은 폴더를 훑지 않고 이 목록대로 만든다. 사용자 자료가 섞인 `backend\`에서 지우는 파일은 설치본의 이전 manifest 목록에 있고, 그 뒤 바뀌지 않았고, 새 빌드에 없는 것뿐이다. 목록에 없는 파일은 사용자 것으로 보고 둔다. 사용자 자료 위치는 목록에 적혀 있어도, `.`·`..`·끝의 점처럼 다른 표기로 적혀 있어도 Windows가 여는 실제 경로로 판단해 건드리지 않는다. 새 manifest는 작업이 끝난 뒤 마지막에 복사하므로, 중간에 멈춰도 다음 실행이 설치본의 이전 목록을 다시 읽는다.
+패키지 파일의 기준은 빌드 manifest의 파일 목록(`portablePayloadFiles`)이다. 업데이트 패키지와 신규 설치 패키지는 폴더를 훑지 않고 이 목록대로 만든다. 사용자 자료가 섞인 `backend\`에서 지우는 파일은 설치본의 이전 manifest 목록에 있고, 그 뒤 바뀌지 않았고, 새 빌드에 없는 것뿐이다. 목록에 없는 파일은 사용자 것으로 보고 둔다. 사용자 자료 위치는 목록에 적혀 있어도, `.`·`..`·끝의 점처럼 다른 표기로 적혀 있어도 Windows가 여는 실제 경로로 판단해 건드리지 않는다. 새 manifest는 작업이 끝난 뒤 마지막에 복사하므로, 중간에 멈춰도 다음 실행이 설치본의 이전 목록을 다시 읽는다.
 
-| 위치 | 주인 | 배포 동기화(`Sync-PortableToDeploy`)·업데이트 패키지(`update_lmo_audio.ps1`) | 전달 ZIP |
+| 위치 | 주인 | 배포 동기화(`Sync-PortableToDeploy`)·업데이트 패키지(`update_lmo_audio.ps1`) | 신규 설치 패키지 |
 | --- | --- | --- | --- |
 | `lmo_audio.exe`, `START_HERE.txt`, `release-manifest.json` | 패키지 | 덮어쓴다. manifest는 검증된 빌드의 것을 그대로 복사한다(업데이트 패키지는 적용 기록을 덧붙인다) | 포함. manifest의 파일 목록은 빌드 것을 유지하고 새로 쓴 `START_HERE.txt` 항목만 고친다 |
 | `binaries\` | 패키지 | 통째로 맞춘다(`/MIR`) | 빌드 목록대로, 빌드 해시와 대조해 담는다 |
@@ -211,7 +211,7 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 데스크톱 업데이트와 공통:
 
 - [ ] **주인 구분**: 앱이 새 파일·폴더를 만들기 시작했다면 위 표에 주인과 업데이트·전달 동작을 먼저 적었다.
-- [ ] **설정으로 바뀌는 경로**: `paths.*`, `summary.model`, 활성 양식처럼 사용자가 위치를 바꿀 수 있는 값을 `portable_data_safety.ps1`이 검사한다. 해석 기준은 앱과 같은 `backend` 작업 위치다(상대·드라이브 상대 `D:x`·루트 상대 `\x` 포함). 셸 위치 기준으로 해석하지 않는다. 배포 동기화, 업데이트 패키지 생성과 적용, 전달 ZIP에 모두 적용된다.
+- [ ] **설정으로 바뀌는 경로**: `paths.*`, `summary.model`, 활성 양식처럼 사용자가 위치를 바꿀 수 있는 값을 `portable_data_safety.ps1`이 검사한다. 해석 기준은 앱과 같은 `backend` 작업 위치다(상대·드라이브 상대 `D:x`·루트 상대 `\x` 포함). 셸 위치 기준으로 해석하지 않는다. 배포 동기화, 업데이트 패키지 생성과 적용, 신규 설치 패키지에 모두 적용된다.
 - [ ] **폴더별 동작 선택**: `/MIR`은 패키지가 전부 소유한 폴더에만 쓴다. `/E`는 버전이 섞여도 안전한 폴더에만 쓴다. 섞이면 고장 나는 실행 파일 묶음은 통째로 교체한다.
 - [ ] **지울 파일의 근거**: 사용자 자료가 섞인 폴더(`backend\`)에서는 설치본의 이전 manifest 목록에 있고 그 뒤 바뀌지 않은 파일만 지운다. 폴더를 훑어 "새 빌드에 없으니 지운다"로 판단하지 않는다. 공통 규칙은 `portable_data_safety.ps1`의 `Remove-StalePortablePackageFiles`·`Test-PortableUserDataPath`에 있다.
 - [ ] **시험 실행 위치**: 앱을 실제로 켜는 smoke는 중간 빌드 폴더에서만 실행한다. `releases\lmo_audio`는 `-ExistingInstallation`으로 읽기만 한다. 검사를 통과시키려고 기록·로그·설정을 지우지 않는다.
@@ -219,7 +219,7 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 - [ ] **앱이 스스로 바꾸는 파일**: 설치 후 앱이 바꾸는 파일(`backend\config.json`, Ollama 설치로 사라지는 `runtime\ollama\README.txt`)을 알고 있다. 검사 예외는 정확한 파일과 조건으로만 둔다.
 - [ ] **종료 범위**: 프로세스 종료는 그 설치 폴더 안의 실행 파일 경로로만 고른다. 이름이나 명령행으로 넓게 고르지 않는다. 웹 엔진(17863)과 다른 설치본은 종료하지 않는다.
 - [ ] **두 제품 공존**: 데스크톱 포트는 17864부터 고르고 17863은 쓰지 않는다. 기록·설정 위치는 제품마다 따로 둔다. RAM·GPU·시스템 Ollama 공유는 허용된 제약이며 완전 격리로 설명하지 않는다.
-- [ ] **업데이트 패키지·전달 ZIP**: 빌드 manifest 목록대로 담고, 설치본 파일을 빌드 해시와 대조한다. 다르거나 빠진 파일이 있으면 만들지 않는다. 설정은 담지 않거나(업데이트) HEAD 기본값으로 넣는다(전달 ZIP). 목록에 없는 `backend` 안 개인 파일은 담기지 않는다.
+- [ ] **업데이트 패키지·신규 설치 패키지**: 빌드 manifest 목록대로 담고, 설치본 파일을 빌드 해시와 대조한다. 다르거나 빠진 파일이 있으면 만들지 않는다. 설정은 담지 않거나(업데이트) HEAD 기본값으로 넣는다(신규 설치 패키지). 목록에 없는 `backend` 안 개인 파일은 담기지 않는다.
 - [ ] **테스트 방식**: 임시 fixture로만 시험하고 `releases\lmo_audio`나 실행 중인 앱은 쓰지 않는다. 수정 전 코드에서 새 테스트가 실패하는지 확인한다. 실행 전후 파일 해시로 보존을 확인한다.
 - [ ] **확인 명령과 문서**: `check:portable`, `verify:portable`, 릴리스 스킬, 이 문서의 작업 순서가 현재 흐름과 같다. 예전 명령이 남으면 정상 빌드도 실패로 보인다.
 - [ ] **커밋 범위**: 여러 세션이 같은 작업 트리를 바꿨다면 검토한 변경만 커밋한다. 빌드 전에 커밋해 manifest가 HEAD를 가리키게 한다.
@@ -240,19 +240,19 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 
 - **같은 PC의 포장 실패와 복구(2026-10-22)**: clean `7addaa7`의 전체 빌드에서 sidecar와 Tauri 실행 파일은 성공했으나, 오래된 `resources/backend/__pycache__`의 Python3.13 캐시3개가 그대로 복사되어 중간 runtime preflight가 거부했다. 배포 동기화 전이므로 기존 deploy는 변경하지 않았다. `package_desktop_portable.ps1`의 backend 복사 경계에서 캐시·결과·임시·로그·DB를 제외하고 복사 오류를 전파하도록 수정했다. 실제 복사 진입문을 격리 fixture에서 실행한 회귀 검사는 수정 전 실패·수정 후 통과, 원본 SHA 불변을 확인했고 독립 검토도 통과했다. 이 수정은 실행 코드나 화면 자산을 바꾸지 않으므로 검증된 sidecar·Tauri 산출물을 유지하고 `build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache`로 포장·manifest·smoke·deploy 검사를 다시 진행해 통과했다. 캐시를 지우거나 사용자 자료 정리를 해서 verifier를 우회하지 않는다.
 
-- **이 PC의 후보·보존 검사(2026-10-22, `D:\Projects\audio`)**: 최초 deploy는 `7cb39ac`/dirty=false(2026-06-08)였다. 원격 `77555e3`와 검토한 UI 변경을 합치고 요약 실험은 별도 stash에 보존한 clean `7addaa7`에서 sidecar·Tauri 전체 빌드를 완료했다. 위 복사 경계 수정 뒤 clean `eb79082`로 재포장하여 중간 runtime smoke·4형식 export·deploy 읽기 전용 무결성 검사가 통과했다. 원래 deploy의 설정·모델20개 SHA는 동일하고 모델 안내 파일1개만 패키지 내용으로 갱신됐다. 격리한 구버전 복사본·별도 WebView 프로필에 합성 기록과3초 음성을 넣은 뒤 실제 업데이트를 적용했고, 설정·모델·결과·음성·사용자 파일·로그25개 SHA 불변과 같은 프로필의 기록/대화록 재열기·음성 재생을 확인했다(데스크톱17864). 기록은 IndexedDB에 직접 넣었으므로 실제 STT·새 회의 생성·자동 저장 성공의 근거로 쓰지 않는다. 최종 clean `beb3554`로 재포장·중간 smoke·deploy 무결성 검사 후 `corepack pnpm package:update`와 `corepack pnpm package:handoff`를 순차 완료했다. 최종 업데이트를 같은 시험 복사본에 실제 적용해25파일 SHA 불변·기록 재열기·음성 재생 시작을 다시 확인했다. 전달 ZIP `lmo_audio_no_ollama_no_whisper_beb3554.zip`은474,053,423바이트·4,995항목이며 Ollama 실행 환경·Whisper를 제외했다. 별도 추출본과 새 WebView 프로필에서 초기 화면·모델 받기 안내·자체 backend17864를 확인했다. 최초 CDP 검사에서 페이지 생성 전 접속해 대상 미발견으로 실패했으며, 실제 URL/엔진 응답을 확인하고 검사 도구의 페이지 준비 대기만 보완해 통과했다(최초 로그 보존). 후속으로 같은 최종 후보에서 고정30초 실제 음성을 UI로 분석해15구간 자동 저장·참석자 구분3개 ID를 확인했다. 실제 프로세스 종료/같은 프로필 재실행 후 동일 대화록·서버 결과 SHA와30초 음성 완주를 확인했으며 보호24파일·원본 음성은 불변이었다. 서버 로그에서 최초 분석/구분 POST200은 각각1회이고 재시작 뒤 추가 분석/생성 POST는0이다. 이 표본의 처리·저장·복원 동작만 확인했으며 인식/화자 정답 정확도·요약 생성·다른 PC·새 모델 다운로드 복구는 미검증이다. 근거 `real-qa-complete.json` 및 오디오 성능 로그의 같은 날짜 절; 기존 release QA 미완료 관문을 유지한다. 최종 근거는 같은 폴더의 `final-user-preservation.json`, `verify-native-result.json`, `handoff-artifact.json`, `handoff-native-result.json`, `final-original-user-preservation.json`, `build-source-correspondence.json`이다. 근거: `.tmp/release-candidate-20261022`의 `original-user-preservation.json`, `qa-user-preservation-after-update.json`, `seed-native-result.json`, `verify-native-result.json`. 아래 다른 PC의 `a150589b` 이력과 구분한다.
+- **이 PC의 후보·보존 검사(2026-10-22, `D:\Projects\audio`)**: 최초 deploy는 `7cb39ac`/dirty=false(2026-06-08)였다. 원격 `77555e3`와 검토한 UI 변경을 합치고 요약 실험은 별도 stash에 보존한 clean `7addaa7`에서 sidecar·Tauri 전체 빌드를 완료했다. 위 복사 경계 수정 뒤 clean `eb79082`로 재포장하여 중간 runtime smoke·4형식 export·deploy 읽기 전용 무결성 검사가 통과했다. 원래 deploy의 설정·모델20개 SHA는 동일하고 모델 안내 파일1개만 패키지 내용으로 갱신됐다. 격리한 구버전 복사본·별도 WebView 프로필에 합성 기록과3초 음성을 넣은 뒤 실제 업데이트를 적용했고, 설정·모델·결과·음성·사용자 파일·로그25개 SHA 불변과 같은 프로필의 기록/대화록 재열기·음성 재생을 확인했다(데스크톱17864). 기록은 IndexedDB에 직접 넣었으므로 실제 STT·새 회의 생성·자동 저장 성공의 근거로 쓰지 않는다. 최종 clean `beb3554`로 재포장·중간 smoke·deploy 무결성 검사 후 `corepack pnpm package:update`와 `corepack pnpm package:handoff`를 순차 완료했다. 최종 업데이트를 같은 시험 복사본에 실제 적용해25파일 SHA 불변·기록 재열기·음성 재생 시작을 다시 확인했다. 신규 설치 패키지 `lmo_audio_no_ollama_no_whisper_beb3554.zip`은474,053,423바이트·4,995항목이며 Ollama 실행 환경·Whisper를 제외했다. 별도 추출본과 새 WebView 프로필에서 초기 화면·모델 받기 안내·자체 backend17864를 확인했다. 최초 CDP 검사에서 페이지 생성 전 접속해 대상 미발견으로 실패했으며, 실제 URL/엔진 응답을 확인하고 검사 도구의 페이지 준비 대기만 보완해 통과했다(최초 로그 보존). 후속으로 같은 최종 후보에서 고정30초 실제 음성을 UI로 분석해15구간 자동 저장·참석자 구분3개 ID를 확인했다. 실제 프로세스 종료/같은 프로필 재실행 후 동일 대화록·서버 결과 SHA와30초 음성 완주를 확인했으며 보호24파일·원본 음성은 불변이었다. 서버 로그에서 최초 분석/구분 POST200은 각각1회이고 재시작 뒤 추가 분석/생성 POST는0이다. 이 표본의 처리·저장·복원 동작만 확인했으며 인식/화자 정답 정확도·요약 생성·다른 PC·새 모델 다운로드 복구는 미검증이다. 근거 `real-qa-complete.json` 및 오디오 성능 로그의 같은 날짜 절; 기존 release QA 미완료 관문을 유지한다. 최종 근거는 같은 폴더의 `final-user-preservation.json`, `verify-native-result.json`, `handoff-artifact.json`, `handoff-native-result.json`, `final-original-user-preservation.json`, `build-source-correspondence.json`이다. 근거: `.tmp/release-candidate-20261022`의 `original-user-preservation.json`, `qa-user-preservation-after-update.json`, `seed-native-result.json`, `verify-native-result.json`. 아래 다른 PC의 `a150589b` 이력과 구분한다.
 
 - **후속 판정: 배포 보류.** 실제 요약 QA에서 frozen Python의 SSL 정책 리소스 `codex-rejected-cas.pem`(906바이트) 누락을 확인했다. QA 복사본에 원본 파일만 추가하면 요약 POST200·자동 저장·재실행 보존이 통과한다. `scripts/package_backend_sidecar.ps1`에 빌드 Python의 TLS 초기화 사전 검사와 해당 리소스 수집을 추가했고 실제 최소 frozen 회귀 검사1개·독립 검토를 통과했다. 인증서 검증은 유지한다. 기존 `beb3554` deploy/ZIP/update에는 수정이 없으므로 전달 승인으로 해석하지 않는다. 새 clean 빌드·manifest/리소스 확인·재포장·실물 요약 회복 검증 후에만 배포 가능하다.
   - QA 증거: `summary-result.json`, `summary-reopen-result.json`, `summary-export-validation.json`, `qa-ssl-runtime-fix.json`, `frozen-probe-trace.json`, `frozen-probe-resource-fixed.json` (`.tmp/release-candidate-20261022`). 기록 정리 MD/DOCX/HWPX는 실제 요약 포함, 대화록 TXT는 실제 발언 포함을 확인했다. ZIP CRC·XML 검사이며 Word/한컴 화면 렌더링 검사는 아니다. UI의 초기 모델 준비 표시 불일치는 설정의 상태 다시 확인으로 회복한 관찰이며 별도 UI 채팅에 전달했다.
 
 - **기본 업데이트 명령 복구(2026-10-22)**: 실제 `powershell -File update_lmo_audio.ps1 -TargetDir ...`에서 매개변수 기본값의 `$PSScriptRoot`가 비어 적용 전에 실패했다. `verify_update.ps1`도 같았다. 두 스크립트 모두 본문에서 기본 패키지 경로를 확정하도록 고쳤으며, 회귀 검사는 실제 `-File` 호출에서 `-PackageDir`를 생략한 적용과 단독 검증을 실행한다. 업데이트 검사15개·독립 검토와 실제 구버전 복사본 업데이트가 통과했다. `eb79082` 패키지에 이 수정만 덧씌운 시험 산출물은 QA 전용이며 배포하지 않는다. 최종 산출물은 수정 커밋 후 clean HEAD로 다시 생성한다.
 
-2026-10-22 빌드 전 검토에서 나온 업데이트 패키지·전달 ZIP 위험(backend 로그·DB·알 수 없는 파일 삭제와 유출, 앱으로 Ollama를 받은 설치본의 README 실패, 전달 ZIP의 비교 기준, Whisper를 넣은 전달 ZIP 검사)은 같은 날 위 규칙으로 고쳤다. 남은 한계는 다음과 같다.
+2026-10-22 빌드 전 검토에서 나온 업데이트 패키지·신규 설치 패키지 위험(backend 로그·DB·알 수 없는 파일 삭제와 유출, 앱으로 Ollama를 받은 설치본의 README 실패, 신규 설치 패키지의 비교 기준, Whisper를 넣은 신규 설치 패키지 검사)은 같은 날 위 규칙으로 고쳤다. 남은 한계는 다음과 같다.
 
-- **빌드 목록이 없는 설치본**: 2026-06-01 이전 빌드처럼 manifest에 `portablePayloadFiles`가 없거나, 2026-10-22 이전에 만든 전달 ZIP으로 설치해 목록이 빌드 것이 아니면(`handoff.payloadList`가 `build`가 아님), 새 빌드에 없는 backend 파일을 지우지 않고 경고만 한다. 예전 전달 ZIP의 목록은 폴더를 훑어 만든 것이라 사용자 복사본이 섞여 있을 수 있기 때문이다. 오래된 코드 파일이 남을 수 있지만 사용자 자료는 지우지 않는다.
+- **빌드 목록이 없는 설치본**: 2026-06-01 이전 빌드처럼 manifest에 `portablePayloadFiles`가 없거나, 2026-10-22 이전에 만든 신규 설치 패키지로 설치해 목록이 빌드 것이 아니면(`handoff.payloadList`가 `build`가 아님), 새 빌드에 없는 backend 파일을 지우지 않고 경고만 한다. 예전 신규 설치 패키지의 목록은 폴더를 훑어 만든 것이라 사용자 복사본이 섞여 있을 수 있기 때문이다. 오래된 코드 파일이 남을 수 있지만 사용자 자료는 지우지 않는다.
 - **업데이트 패키지는 `runtime\`을 담지 않는다**: 지금 빌드의 `runtime`에는 Ollama 안내 파일만 있어 영향이 없다. `verify_update.ps1`은 업데이트가 담는 앱·`binaries`·`backend`만 확인하고, 적용 뒤 대상 manifest의 `runtime` 항목은 설치본의 이전 항목을 유지한다. 새 빌드가 `runtime`에 파일을 더하면 업데이트 패키지로는 전달되지 않으므로, 그때는 업데이트 패키지 범위를 먼저 넓힌다.
-- **나중에 넣은 Whisper의 크기**: `-ExistingInstallation`은 전달 ZIP에서 뺀 Whisper가 들어온 것을 허용하지만, 기대 크기를 모르므로 표식 파일이 있는지만 본다. 잘린 모델 파일은 앱의 모델 상태 화면에서 확인한다.
-- **다른 PC의 중단 이력 — 2026-10-22(현재 PC의 완료 결과는 위 항목)**: 위 보호 규칙의 실제 `package:update` 적용과 최신 전달 ZIP 생성은 아직 하지 않았다. 기존 deploy는 `a150589b`/dirty=false이며 읽기 전용 무결성 검사를 통과했다. 별도 복사본·별도 WebView 프로필에서는 실제30초 음성의 대화록·2명 구분·자동 저장과 음성 파일 로드까지 확인했지만, 재시작/업데이트 후 재열기·재생은 미검증이다. 분석6분12초는 동시 파일 복사와 가용 메모리0.8GB/5%가 겹친 조건으로 성능 정상 판정에 쓰지 않는다. 재포장에 필요한 중간 sidecar가 없어 검증된 deploy에서 복구했고, 후속 포장은 deploy 동기화 전 파일 복사 중 중지했다. 중간 portable 폴더는 미완성이며 배포물로 쓰지 않는다. 다음 확인은 실모델 실행 없이 `build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache`를 끝낸 뒤 업데이트·전달 ZIP을 순차 생성하는 것이다. 종료 조건은 clean/HEAD manifest·중간 smoke·deploy 무결성 통과, 별도 시험 복사본에 실제 업데이트 후 설정/모델/기록 보존, 같은 WebView 프로필의 대화록·음성 재열기/재생, 새 ZIP의 별도 폴더 첫 실행이다. 원본 deploy 사용자 파일35개·기존 IndexedDB8개는 종료 시 SHA 불변이다. 근거와 복원 명령은 `.tmp/release-real-qa-20261022` 및 `todo.md`의 같은 항목에 보관하며, 웹·데스크톱 공존의 최종 판정은 기존 release QA 표를 계속 사용한다.
+- **나중에 넣은 Whisper의 크기**: `-ExistingInstallation`은 신규 설치 패키지에서 뺀 Whisper가 들어온 것을 허용하지만, 기대 크기를 모르므로 표식 파일이 있는지만 본다. 잘린 모델 파일은 앱의 모델 상태 화면에서 확인한다.
+- **다른 PC의 중단 이력 — 2026-10-22(현재 PC의 완료 결과는 위 항목)**: 위 보호 규칙의 실제 `package:update` 적용과 최신 신규 설치 패키지 생성은 아직 하지 않았다. 기존 deploy는 `a150589b`/dirty=false이며 읽기 전용 무결성 검사를 통과했다. 별도 복사본·별도 WebView 프로필에서는 실제30초 음성의 대화록·2명 구분·자동 저장과 음성 파일 로드까지 확인했지만, 재시작/업데이트 후 재열기·재생은 미검증이다. 분석6분12초는 동시 파일 복사와 가용 메모리0.8GB/5%가 겹친 조건으로 성능 정상 판정에 쓰지 않는다. 재포장에 필요한 중간 sidecar가 없어 검증된 deploy에서 복구했고, 후속 포장은 deploy 동기화 전 파일 복사 중 중지했다. 중간 portable 폴더는 미완성이며 배포물로 쓰지 않는다. 다음 확인은 실모델 실행 없이 `build_user_release.ps1 -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache`를 끝낸 뒤 업데이트·신규 설치 패키지를 순차 생성하는 것이다. 종료 조건은 clean/HEAD manifest·중간 smoke·deploy 무결성 통과, 별도 시험 복사본에 실제 업데이트 후 설정/모델/기록 보존, 같은 WebView 프로필의 대화록·음성 재열기/재생, 새 ZIP의 별도 폴더 첫 실행이다. 원본 deploy 사용자 파일35개·기존 IndexedDB8개는 종료 시 SHA 불변이다. 근거와 복원 명령은 `.tmp/release-real-qa-20261022` 및 `todo.md`의 같은 항목에 보관하며, 웹·데스크톱 공존의 최종 판정은 기존 release QA 표를 계속 사용한다.
 
 구조 개선 후보(미결정): 사용자 자료를 프로그램과 분리된 `data` 폴더나 `%LOCALAPPDATA%`로 옮기면 업데이트를 "프로그램 폴더 통째 교체"로 단순화할 수 있다. 웹 설치 엔진은 이미 `%LOCALAPPDATA%\Barorok\LocalEngine`을 쓴다. 기존 설치본 이전 절차가 필요하므로 별도 범위로 검토한다.
 
@@ -329,6 +329,20 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_user_release.p
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\diagnose_portable.ps1
 ```
 
+### 패키지 명칭과 용도
+
+문서와 사용자 안내에서는 **업데이트 패키지 / 신규 설치 패키지**로 통일한다. ZIP은 압축 형식이므로 용도 명칭과 별도로 표시한다. `package:handoff` 같은 명령·파일명·경로·스키마 식별자는 유지한다.
+
+| 구분 | 업데이트 패키지 | 신규 설치 패키지 |
+| --- | --- | --- |
+| 용도 | 기존 설치의 프로그램 갱신 | 새 PC 또는 새 폴더에서 시작 |
+| 앱·백엔드 | 포함 | 포함 |
+| 설정·모델 | 기존 설정·모델 사용 | 기본 설정·참석자 구분 모델 포함 |
+| 적용 방식 | 업데이트·검증 스크립트로 기존 설치에 적용 | ZIP 압축 해제 후 필요한 자원 준비 |
+| 사용자 기록 | 기존 기록 보존 | 기존 사용자의 기록 제외 |
+
+현재 신규 설치 패키지는 Whisper 모델·Ollama 실행 파일·Ollama 요약 모델 데이터를 제외하므로 별도 준비가 필요하다. 업데이트 패키지도 이 자원을 포함하지 않는다. 핵심 프로그램 파일은 대부분 공통이며, 압축 여부가 두 패키지의 차이는 아니다.
+
 ### 기존 설치본용 수동 업데이트 패키지
 
 이미 사용자 PC에 `lmo_audio\models`가 준비되어 있으면 전체 모델을 다시 전달하지 않고 업데이트 패키지만 만들 수 있다. 이 패키지는 빌드 manifest에 있는 앱·`binaries`·`backend` 파일만 포함하고, 대상 PC의 `models`, `runtime`, `backend\config.json`, `backend\outputs`·`temp`·`logs`·`database`, DB 파일, 그리고 대상의 이전 manifest 목록에 없는 `backend` 파일은 보존한다(6-1 표).
@@ -347,7 +361,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\create_update_packag
 
 기본 산출물은 `releases\updates\lmo_audio_update_<commit>`이다. 이 폴더 안에는 `payload`, `update-manifest.json`, `update_lmo_audio.ps1`, `verify_update.ps1`, `portable_data_safety.ps1`가 들어간다. `payload\models`와 `payload\backend\config.json`이 있으면 잘못 만든 패키지로 본다.
 
-### 회사 전달용 슬림 zip
+### 신규 설치 패키지(ZIP)
 
 새 PC에 전달하되 2GB 이상 Whisper 모델, Ollama 실행 파일, Gemma 등 Ollama 요약 모델 데이터를 제외하려면 풀 portable 빌드가 끝난 뒤 아래 명령을 사용한다. 요약 프로그램과 요약 모델은 대상 PC에서 앱 설정 화면으로 받는다.
 
@@ -374,9 +388,9 @@ corepack pnpm package:handoff
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir <압축을 푼 경로>\lmo_audio -Handoff
 ```
 
-전달 ZIP은 설치본이 빌드 manifest와 같을 때만 만들어진다. 설치본의 패키지 파일이 빌드 뒤 바뀌었거나 빠졌으면 멈추므로, 먼저 다시 빌드하거나 설치본을 고친다.
+신규 설치 패키지는 설치본이 빌드 manifest와 같을 때만 만들어진다. 설치본의 패키지 파일이 빌드 뒤 바뀌었거나 빠졌으면 멈추므로, 먼저 다시 빌드하거나 설치본을 고친다.
 
-Whisper 모델까지 넣은 뒤에는 `-ExistingInstallation`으로 검사한다. 이 모드는 ZIP의 manifest가 "전달 ZIP에서 뺌"으로 기록한 Whisper가 나중에 들어온 것을 허용하고, 모델 표식 파일이 빠짐없이 있는지는 그대로 확인한다. 일반 모드와 `-Handoff` 모드는 ZIP을 막 푼 상태를 기준으로 하므로 Whisper를 넣은 뒤에는 실패한다.
+Whisper 모델까지 넣은 뒤에는 `-ExistingInstallation`으로 검사한다. 이 모드는 ZIP의 manifest가 "신규 설치 패키지에서 뺌"으로 기록한 Whisper가 나중에 들어온 것을 허용하고, 모델 표식 파일이 빠짐없이 있는지는 그대로 확인한다. 일반 모드와 `-Handoff` 모드는 ZIP을 막 푼 상태를 기준으로 하므로 Whisper를 넣은 뒤에는 실패한다.
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir <압축을 푼 경로>\lmo_audio -ExistingInstallation
@@ -404,7 +418,7 @@ corepack pnpm verify:update -- -TargetDir D:\Apps\lmo_audio -PackageDir releases
 
 운영 기준:
 
-- 기본 STT 모델은 외부망 PC에서 설정 화면의 `받기`로 앱이 다운로드를 시작할 수 있다. 내부망/실패 상황에서는 관리자가 준비해 `models\faster-whisper-large-v3`에 배치한다. 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않고, 회사 전달용 슬림 zip에 포함하거나 관리자가 `models\speaker-diarization-community-1`에 배치한다.
+- 기본 STT 모델은 외부망 PC에서 설정 화면의 `받기`로 앱이 다운로드를 시작할 수 있다. 내부망/실패 상황에서는 관리자가 준비해 `models\faster-whisper-large-v3`에 배치한다. 참석자 구분 모델은 앱 안에서 개별 다운로드하지 않고, 신규 설치 패키지(ZIP)에 포함하거나 관리자가 `models\speaker-diarization-community-1`에 배치한다.
 - Ollama 정리 모델은 외부망 PC에서 설정 화면으로 받거나 선택할 수 있다. 기본 배포본은 Ollama runtime을 함께 묶지 않고 설정 화면에서 고정된 standalone Windows CLI release zip을 내려받아 앱 관리 runtime으로 설치한다. 앱 관리 runtime이 없고 대상 PC에 Ollama가 이미 설치되어 실행 중이면 시스템 설치본을 사용해 상태 확인과 모델 받기를 시도한다. 시스템 설치본이 실행되지 않으면 사용자가 먼저 Ollama를 실행한 뒤 다시 확인하도록 안내한다. 오프라인 배포나 사전 내장 배포가 필요할 때만 공식 zip을 미리 풀어 앱 내부 `runtime\ollama\ollama.exe`와 `models\ollama`를 사용한다. 내부망/오프라인 PC에서는 이미 설치된 모델 감지와 관리자 준비 절차를 기준으로 한다.
 - 기본 STT 모델을 앱에서 받을 수 없는 PC는 관리자가 지정한 공유 위치에서 받아 `releases\lmo_audio\models\faster-whisper-large-v3` 아래에 둔다.
 - `release-manifest.json`은 배포본의 신분증이며, verify/diagnose가 파일 해시 불일치를 잡아야 한다.

@@ -26,6 +26,7 @@ import {
     getSummaryGenerationStatus,
     getTopicGenerationStatus,
     normalizeGenerationStatus,
+    hasOrganizedMeetingContent,
 } from './meetingGeneration';
 import { getTopicGenerationUiState, TopicGenerationIntent } from './topicGenerationUi';
 import {
@@ -3024,12 +3025,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const hasGeneratedSummary = summaryGenerationStatus === 'completed'
         && Boolean(selectedMeeting?.summary?.trim())
         && !summarySkippedForDeferredAnalysis;
-    const hasOrganizedContent = Boolean(selectedMeeting && (
-        selectedMeeting.summary?.trim()
-        || selectedMeeting.topics?.length || selectedMeeting.topicSections?.length
-        || selectedMeeting.speakerContextSummaries?.length || selectedMeeting.participantSummaries?.length
-        || selectedMeeting.decisions?.length || selectedMeeting.actions?.length || selectedMeeting.needsCheck?.length
-    ));
+    const hasOrganizedContent = hasOrganizedMeetingContent(selectedMeeting, summarySkippedForDeferredAnalysis);
     const hasGeneratedMeetingReport = Boolean(
         selectedMeeting?.meetingReport?.content?.trim()
         || selectedMeeting?.meetingReport?.sections?.length,

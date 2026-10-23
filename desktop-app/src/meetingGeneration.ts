@@ -14,6 +14,29 @@ export interface TopicSectionShape {
     topic?: string;
 }
 
+interface OrganizedMeetingContentShape {
+    summary?: string;
+    topics?: readonly unknown[];
+    topicSections?: readonly unknown[];
+    speakerContextSummaries?: readonly unknown[];
+    participantSummaries?: readonly unknown[];
+    decisions?: readonly unknown[];
+    actions?: readonly unknown[];
+    needsCheck?: readonly string[];
+}
+
+export const hasOrganizedMeetingContent = (
+    meeting: OrganizedMeetingContentShape | null | undefined,
+    summaryIsDeferred: boolean,
+): boolean => Boolean(meeting && (
+    (!summaryIsDeferred && meeting.summary?.trim())
+    || meeting.topics?.length || meeting.topicSections?.length
+    || meeting.speakerContextSummaries?.length || meeting.participantSummaries?.length
+    || meeting.decisions?.length || meeting.actions?.length
+    || meeting.needsCheck?.some(note => note.trim()
+        && (!summaryIsDeferred || note.trim() !== meeting.summary?.trim()))
+));
+
 /**
  * Topics shown as "주요 주제" on screen and in exports. Topic section titles supersede summary
  * keywords (the backend appends them to `topics`, so merging both repeats near-identical items).

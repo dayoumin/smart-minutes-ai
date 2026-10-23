@@ -16,6 +16,8 @@ export interface LocalEngineAuthorizationRecovery {
 
 export interface LocalEngineRequestInit extends RequestInit {
     timeoutMs?: number;
+    /** Keep finite JSON body reads inside the request deadline and caller cancellation. */
+    bufferJson?: boolean;
     /** The user asked for this request, so the browser may show its permission prompt. */
     userInitiated?: boolean;
 }
@@ -162,7 +164,7 @@ export const createLocalEngineClient = (
         explicitSessionToken = '',
         finiteJson = false,
     ): Promise<Response> => {
-        const { timeoutMs, userInitiated = false, signal: callerSignal, ...requestInit } = init;
+        const { timeoutMs, bufferJson = false, userInitiated = false, signal: callerSignal, ...requestInit } = init;
         const controller = new AbortController();
         const handleCallerAbort = () => controller.abort();
         let timeout = timeoutMs
@@ -219,7 +221,8 @@ export const createLocalEngineClient = (
                     headers: requestHeaders,
                     signal: controller.signal,
                 }), controller.signal);
-                if (!finiteJson || !response.body) return response;
+                const shouldBufferJson = finiteJson || (bufferJson && response.ok);
+                if (!shouldBufferJson || !response.body) return response;
                 // A user permission prompt may hold probe headers indefinitely.
                 // Once headers arrive, its JSON body still has a finite deadline.
                 if (timeout === null) timeout = globalThis.setTimeout(() => controller.abort(), 15000);

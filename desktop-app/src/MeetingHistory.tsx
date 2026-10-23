@@ -6,6 +6,7 @@ import { isTauriRuntime, openSavedFileLocation } from './apiBase';
 import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { useMeetingAudioPlayback } from './useMeetingAudioPlayback';
+import { readWithDesktopStartupRecovery } from './desktopStartupRead';
 import {
     parseApiErrorBody,
     readApiErrorInfo as getGenerationErrorInfo,
@@ -83,6 +84,7 @@ const readGenerationResponseError = async (response: Response, fallback: string)
 };
 const isGenerationPreparation = (error: unknown): boolean => error instanceof GenerationResponseError && error.code === 'runtime_preparing';
 const ORGANIZE_PREPARATION_NOTE = '요약 프로그램이 아직 준비되지 않았습니다. 잠시 후 정리를 다시 눌러 주세요.';
+const MODEL_STATUS_PENDING_NOTE = '요약 준비 상태를 확인하고 있습니다.';
 
 const REPORT_PREPARATION_NOTE = '요약 프로그램이 아직 준비되지 않았습니다. 잠시 후 생성을 다시 눌러 주세요.';
 
@@ -1081,6 +1083,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const [selectedSpeakerSummaryKey, setSelectedSpeakerSummaryKey] = useState<string>('all');
     const [collapsedSpeakerSummaryKeys, setCollapsedSpeakerSummaryKeys] = useState<Record<string, boolean>>({});
     const [summaryModelReady, setSummaryModelReady] = useState<boolean | null>(null);
+    const [initialModelStatusPending, setInitialModelStatusPending] = useState(true);
     const [summaryModelMessage, setSummaryModelMessage] = useState('');
     const [summaryRuntimeCanAutoStart, setSummaryRuntimeCanAutoStart] = useState(false);
     const [isSpeakerLabelPanelOpen, setIsSpeakerLabelPanelOpen] = useState(false);
@@ -1328,13 +1331,23 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     }, [detailOpenRequest, selectedMeeting?.id]);
 
     useEffect(() => {
-        let cancelled = false;
+        let currentRequest: AbortController | null = null;
         const loadSummaryModelStatus = async () => {
+            currentRequest?.abort();
+            const controller = new AbortController();
+            currentRequest = controller;
             try {
-                const response = await localEngineClient.request('/api/models/status');
-                if (!response.ok) throw new Error(`models=${response.status}`);
-                const payload = await response.json() as ModelsStatusResponse;
-                if (cancelled) return;
+                const payload = await readWithDesktopStartupRecovery(async signal => {
+                    const response = await localEngineClient.request('/api/models/status', { signal, timeoutMs: 10000, bufferJson: true });
+                    if (!response.ok) throw new Error(`models=${response.status}`);
+                    return await response.json() as ModelsStatusResponse;
+                }, {
+                    desktop: isTauriRuntime(), signal: controller.signal,
+                    retryResult: payload => !payload.summary_ready
+                        && !(payload.ollama_connection?.can_auto_start && payload.ollama_connection.managed_runtime_available)
+                        && ['runtime_preparing', 'server_unreachable'].includes(payload.summary_reason || ''),
+                });
+                if (controller.signal.aborted) return;
                 setSummaryModelReady(Boolean(payload.summary_ready));
                 if (payload.summary_ready) {
                     setDetailError(current => current?.reason === 'runtime_preparing' ? null : current);
@@ -1350,10 +1363,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     ))
                 ));
             } catch {
-                if (cancelled) return;
+                if (controller.signal.aborted) return;
                 setSummaryModelReady(null);
                 setSummaryModelMessage('');
                 setSummaryRuntimeCanAutoStart(false);
+            } finally {
+                if (!controller.signal.aborted) setInitialModelStatusPending(false);
             }
         };
         const syncSummaryModelStatus = () => {
@@ -1364,11 +1379,11 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         window.addEventListener('focus', syncSummaryModelStatus);
         window.addEventListener('analysis:settings-updated', syncSummaryModelStatus);
         return () => {
-            cancelled = true;
+            currentRequest?.abort();
             window.removeEventListener('focus', syncSummaryModelStatus);
             window.removeEventListener('analysis:settings-updated', syncSummaryModelStatus);
         };
-    }, [localEngineAuthorization]);
+    }, [localEngineAuthorization, selectedMeeting?.jobId, analysisRunning]);
 
     useEffect(() => {
         selectedMeetingRef.current = selectedMeeting;
@@ -2594,7 +2609,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         selectedMeeting?.topicSections,
     );
     const canCreateSpeakerContext = baseCanCreateSpeakerContext && !topicSectionsOutdated;
-    const summaryModelUnavailable = !summaryRuntimeCanAutoStart && (
+    const summaryModelUnavailable = !initialModelStatusPending && !summaryRuntimeCanAutoStart && (
         summaryModelReady === false
         || (summaryModelReady !== true && summaryGenerationStatus === 'skipped')
     );
@@ -2618,8 +2633,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             모델 준비
         </Button>
     ) : undefined);
-    const canRunSummaryGeneration = canGenerateSummary && !summaryModelUnavailable;
-    const canRunTopicGeneration = canGenerateTopicSections && !summaryModelUnavailable && !summaryOutdated;
+    const canRunSummaryGeneration = canGenerateSummary && !initialModelStatusPending && !summaryModelUnavailable;
+    const canRunTopicGeneration = canGenerateTopicSections && !initialModelStatusPending && !summaryModelUnavailable && !summaryOutdated;
     const canRunSpeakerContextGeneration = canRunTopicGeneration && canCreateSpeakerContext;
     const summaryRegenerationWillResetDerived = Boolean(
         selectedMeeting?.topicSections?.length
@@ -3050,6 +3065,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         || speakerGenerationStatus === 'generating';
     const canOpenReportTab = hasTranscriptData;
     const canRunMeetingReportGeneration = reportHasCurrentOrganizedRecord
+        && !initialModelStatusPending
         && !summaryModelUnavailable
         && Boolean(selectedMeeting?.jobId);
     const reportTabDisabledMessage = canOpenReportTab ? '회의록 보고서' : '대화록이 있어야 보고서를 사용할 수 있습니다.';
@@ -3666,12 +3682,12 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         selectedMeeting?.topicSections?.some(section => section.topic?.trim() || section.summary?.trim()),
     );
     const canShowCompletedCustomTopicInput = topicGenerationStatus === 'completed' && !topicSectionsOutdated && hasTopicSectionResults;
-    const topicActionBlockedMessage = !summaryModelUnavailable && !canRunTopicGeneration
+    const topicActionBlockedMessage = !initialModelStatusPending && !summaryModelUnavailable && !canRunTopicGeneration
         ? summaryOutdated
             ? '전체 요약을 다시 정리한 뒤 주제별 정리를 실행할 수 있습니다.'
             : '전체 요약을 먼저 정리한 뒤 주제별 정리를 실행할 수 있습니다.'
         : '';
-    const speakerActionBlockedMessage = !summaryModelUnavailable && shouldShowSpeakerAction && !canRunSpeakerContextGeneration
+    const speakerActionBlockedMessage = !initialModelStatusPending && !summaryModelUnavailable && shouldShowSpeakerAction && !canRunSpeakerContextGeneration
         ? summaryOutdated
             ? '전체 요약을 다시 정리한 뒤 주제별 정리와 참석자별 정리를 실행할 수 있습니다.'
             : topicSectionsOutdated
@@ -4537,7 +4553,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             ariaLabel="전체 요약 정리"
                                                             disabled={!canRunSummaryGeneration || generatingKind !== null || summaryGenerationStatus === 'generating'}
                                                             onClick={handleGenerateSummary}
-                                                            title={summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
+                                                            title={initialModelStatusPending ? MODEL_STATUS_PENDING_NOTE : summaryModelUnavailable ? organizeModelGuidanceMessage : summaryActionButtonTitle}
                                                             icon={renderRunIcon('summary', summaryGenerationStatus)}
                                                             label={summaryActionButtonLabel}
                                                         />
@@ -4548,7 +4564,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             ariaLabel={topicActionButtonAriaLabel}
                                                             disabled={!canRunTopicGeneration || generatingKind !== null || topicGenerationStatus === 'generating'}
                                                             onClick={handleGenerateTopicSections}
-                                                            title={topicActionButtonTitle}
+                                                            title={initialModelStatusPending ? MODEL_STATUS_PENDING_NOTE : topicActionButtonTitle}
                                                             icon={renderRunIcon('topicSections', topicGenerationStatus, isMainTopicGenerationRunning)}
                                                             label={topicActionButtonLabel}
                                                         />
@@ -4559,7 +4575,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                             ariaLabel="참석자별 정리"
                                                             disabled={!canRunSpeakerContextGeneration || generatingKind !== null || speakerGenerationStatus === 'generating'}
                                                             onClick={handleGenerateSpeakerContext}
-                                                            title={speakerActionButtonTitle}
+                                                            title={initialModelStatusPending ? MODEL_STATUS_PENDING_NOTE : speakerActionButtonTitle}
                                                             icon={renderRunIcon('speakerContextSummaries', speakerGenerationStatus)}
                                                             label={speakerActionButtonLabel}
                                                         />
@@ -5004,7 +5020,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                                     ariaLabel="회의록 보고서 생성"
                                                     disabled={!canRunMeetingReportGeneration || generatingKind !== null || meetingReportGenerationStatus === 'generating'}
                                                     onClick={handleGenerateMeetingReport}
-                                                    title={reportActionButtonTitle}
+                                                    title={initialModelStatusPending ? MODEL_STATUS_PENDING_NOTE : reportActionButtonTitle}
                                                     icon={renderRunIcon('meetingReport', meetingReportGenerationStatus)}
                                                     label={reportActionButtonLabel}
                                                 />

@@ -24,6 +24,8 @@
     "test:meeting-detail-layout": "node scripts/simulate-meeting-detail-layout.mjs",
     "test:organize-ui": "node scripts/simulate-organize-ui.mjs",
     "test:organized-content": "node --experimental-strip-types scripts/test-organized-content.mjs",
+    "test:desktop-startup-read": "node --experimental-strip-types scripts/test-desktop-startup-read.mjs",
+    "test:desktop-startup-ui": "node scripts/simulate-desktop-startup-ui.mjs",
     "test:report-ui": "node scripts/simulate-report-ui.mjs",
     "test:sidebar-collapse": "node --experimental-strip-types scripts/simulate-sidebar-collapse.mjs",
     "test:edit-guard-flow": "node scripts/simulate-edit-guard-flow.mjs",

@@ -4,6 +4,7 @@ import { localEngineClient } from './localEngineClient';
 import { createLocalAudioPlaybackSource } from './localAudioPlayback';
 import type { LocalAudioPlaybackSource } from './localAudioPlayback';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
+import { readWithDesktopStartupRecovery } from './desktopStartupRead';
 
 type AudioAvailability = 'idle' | 'checking' | 'available' | 'missing' | 'error';
 interface PlaybackState { key: string; sourceUrl: string; availability: AudioAvailability; error: string; }
@@ -36,7 +37,10 @@ export const useMeetingAudioPlayback = (meetingId?: string, jobId?: string, audi
             publish({ sourceUrl: '', availability: 'checking', error: '' });
             const path = '/api/outputs/' + encodeURIComponent(jobId) + '/audio';
             try {
-                const response = await localEngineClient.request(path, { method: 'HEAD', signal: controller.signal, timeoutMs: 10000, cache: 'no-store' });
+                const response = await readWithDesktopStartupRecovery(
+                    signal => localEngineClient.request(path, { method: 'HEAD', signal, timeoutMs: 10000, cache: 'no-store' }),
+                    { desktop: isTauriRuntime(), signal: controller.signal },
+                );
                 if (controller.signal.aborted) return;
                 if (!response.ok) {
                     publish({ sourceUrl: '', availability: response.status === 404 ? 'missing' : 'error', error: response.status === 404 ? '' : confirmationError });

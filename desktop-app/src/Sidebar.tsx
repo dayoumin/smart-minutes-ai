@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronRight, ChevronUp, Clock3, Folder, FolderPlus, List, Loader2, MoreVertical, PanelLeftClose, PanelLeftOpen, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, AudioLines, BarChart3, ChevronDown, ChevronRight, ChevronUp, Clock3, Folder, FolderPlus, Loader2, MoreVertical, Pencil, Pin, PinOff, Plus, Search, Settings, Trash2 } from 'lucide-react';
 import { AnalysisResumeDraft } from './analysisResumeDrafts';
 import type { AppView } from './appView';
 import { selectVisibleRecoveryDrafts, useAnalysisResumeSnapshot } from './analysisResumeState';
@@ -211,7 +211,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
             setOpenMenuId(null);
             setOpenFolderMenuId(null);
             if (restore && document.activeElement === document.body) {
-                sidebarRef.current?.querySelector<HTMLElement>(mode === 'rail' ? '.sidebar-rail-expand' : '.sidebar-collapse-button')?.focus();
+                const target = mode === 'rail' ? '.sidebar-rail-expand' : mode === 'overlay' ? '.sidebar-collapse-button' : '.sidebar-brand';
+                sidebarRef.current?.querySelector<HTMLElement>(target)?.focus();
             }
         });
         return () => cancelAnimationFrame(frame);
@@ -901,20 +902,14 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                     else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
                 }
             }}
-            className="barorok-navigation flex h-full max-h-none shrink-0 flex-col border-r">
+            className="barorok-navigation flex max-h-none shrink-0 flex-col border-r">
             {mode === 'rail' ? <div className="sidebar-rail">
                 <button type="button" className="sidebar-brand sidebar-rail-button" aria-label={`${BRAND_NAME} 첫 화면`} title={`${BRAND_NAME} 첫 화면`} onClick={onOpenStart}>
                     <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
+                    <strong>{BRAND_NAME}</strong>
                 </button>
-                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴 펼치기" title="메뉴 펼치기" aria-expanded={false} onClick={onExpand}><PanelLeftOpen size={18} aria-hidden="true" /></button>
-                <button ref={createMeetingButtonRef} type="button" className="sidebar-rail-button" aria-label="새 회의록" title={newMeetingBlocked ? newMeetingBlockedReason : '새 회의록'} disabled={newMeetingBlocked || Boolean(analysisStatus?.active)} aria-describedby={newMeetingBlocked || analysisStatus?.active ? 'sidebar-rail-create-note' : undefined} onClick={onCreateMeeting}><Plus size={18} aria-hidden="true" /></button>
-                {(newMeetingBlocked || analysisStatus?.active) && <span id="sidebar-rail-create-note" className="sr-only">{newMeetingBlocked ? newMeetingBlockedReason : '분석이 끝나면 새 회의록을 만들 수 있습니다.'}</span>}
-                <button type="button" className="sidebar-rail-button" aria-label="회의록 목록" title="회의록 목록" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}><List size={18} aria-hidden="true" />{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
-                {onOpenArchive && <button type="button" className="sidebar-rail-button" aria-label="기록 찾기" title="기록 찾기" onClick={onOpenArchive}><Search size={18} aria-hidden="true" /></button>}
-                {analysisStatus?.active && <button type="button" className="sidebar-rail-button sidebar-rail-analysis" aria-label="분석 진행 화면 열기" title="분석 진행 화면 열기" onClick={onOpenAnalysis}><Loader2 size={18} className="animate-spin" aria-hidden="true" /></button>}
-                <div className="flex-1" />
+                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}>메뉴{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
                 {onOpenSettings && <button type="button" data-settings-focus-fallback className="sidebar-rail-button sidebar-rail-settings" aria-label="설정" title="설정" onClick={onOpenSettings}><Settings size={18} aria-hidden="true" /></button>}
-                {onOpenAsrBenchmark && <button type="button" className="sidebar-rail-button" aria-label="ASR 테스트 결과" title="ASR 테스트 결과" onClick={onOpenAsrBenchmark}><BarChart3 size={18} aria-hidden="true" /></button>}
             </div> : <>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
                 <div className="sidebar-brand-row">
@@ -924,12 +919,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                         <strong>{BRAND_NAME}</strong>
                     </span>
                 </button>
-                <button type="button" className="sidebar-collapse-button sidebar-rail-button" aria-label="메뉴 접기" title="메뉴 접기" aria-expanded={true} onClick={onCollapse}><PanelLeftClose size={17} aria-hidden="true" /></button>
+                {mode === 'overlay' && <button type="button" className="sidebar-collapse-button sidebar-menu-close" onClick={onCollapse}>메뉴 닫기</button>}
                 </div>
                 <button
                     ref={createMeetingButtonRef}
                     type="button"
-                    className="sidebar-create-button mb-3"
+                    className={`sidebar-create-button mb-3 ${activeTab === 'minutes' && !selectedMeetingId && !analysisStatus?.active ? 'sidebar-create-button-active' : ''}`}
                     disabled={newMeetingBlocked || Boolean(analysisStatus?.active)}
                     aria-describedby={newMeetingBlocked ? 'sidebar-create-blocked' : analysisStatus?.active ? 'sidebar-create-analysis-note' : undefined}
                     title={newMeetingBlocked
@@ -1216,7 +1211,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                     {unfiledRecords.length ? (
                         unfiledRecords.map(renderRecord)
                     ) : (
-                        <div className="px-3 py-2 text-xs leading-relaxed text-muted-foreground">
+                        <div className="sidebar-empty-note px-3 py-2 leading-relaxed text-muted-foreground">
                             {records.length ? '폴더 없는 회의록이 없습니다.' : '아직 저장된 회의록이 없습니다.'}
                         </div>
                     )}

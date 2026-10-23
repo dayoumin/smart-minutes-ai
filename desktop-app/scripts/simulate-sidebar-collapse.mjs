@@ -111,7 +111,7 @@ const mode = async (page, value) => {
 };
 const click = (page, name) => sidebar(page).getByRole('button', { name, exact: true }).click();
 const select = async (page, title) => {
-  if (await sidebar(page).getAttribute('data-mode') === 'rail') await click(page, '회의록 목록');
+  if (await sidebar(page).getAttribute('data-mode') === 'rail') await click(page, '메뉴');
   await sidebar(page).getByRole('button', { name: title, exact: true }).click();
   await page.getByRole('heading', { name: title, exact: true }).waitFor();
 };
@@ -151,16 +151,21 @@ const run = async (browser, { width, deniedStorage = false }) => {
     Storage.prototype.getItem = function(key) { if (key === 'sidebarCollapsed') throw new DOMException('Denied', 'SecurityError'); return get.call(this, key); };
     Storage.prototype.setItem = function(key, value) { if (key === 'sidebarCollapsed') throw new DOMException('Denied', 'SecurityError'); return set.call(this, key, value); };
   });
+  else await page.addInitScript(() => localStorage.setItem('sidebarCollapsed', '1'));
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     assert.equal(await page.title(), BRAND_NAME);
-    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor();
+    await page.getByRole('button', { name: `${BRAND_NAME} 첫 화면`, exact: true }).first().waitFor();
     await putMeetings(page, records);
     const narrow = width < 1200;
     await mode(page, narrow ? 'rail' : 'expanded');
-    assert.equal(Math.round((await sidebar(page).boundingBox()).width), narrow ? 56 : 240);
+    assert.equal(Math.round((await sidebar(page).boundingBox()).width), narrow ? width : 208);
+    assert.equal(await page.getByRole('button', { name: '메뉴 접기', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).count(), 0);
+    if (narrow) assert.equal(Math.round((await sidebar(page).boundingBox()).height), 64);
     if (deniedStorage) {
-      await click(page, '메뉴 접기');
+      await click(page, '설정');
+      await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
       await mode(page, 'expanded');
       assert.deepEqual(errors, []);
       console.log('ok - denied sidebar storage keeps expanded navigation usable');
@@ -178,26 +183,24 @@ const run = async (browser, { width, deniedStorage = false }) => {
     await page.waitForFunction(() => Math.abs(document.querySelector('audio').currentTime - 3) < 0.1);
     if (!narrow) {
       await capture(page, 'wide-expanded');
-      await click(page, '메뉴 접기'); await mode(page, 'rail');
-      assert.equal(Math.round((await page.locator('main').boundingBox()).x), 56);
-      const expandBox = await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).boundingBox();
-      assert.ok(expandBox.y >= 0 && expandBox.y + expandBox.height <= 140, 'the reopen action stays near the top of the rail');
-      await page.reload({ waitUntil: 'domcontentloaded' }); await mode(page, 'rail');
+      assert.equal(Math.round((await page.locator('main').boundingBox()).x), 208);
+      assert.equal(await page.getByRole('button', { name: '메뉴', exact: true }).count(), 0);
+      await page.reload({ waitUntil: 'domcontentloaded' }); await mode(page, 'expanded');
+      assert.equal(Math.round((await sidebar(page).boundingBox()).width), 208);
       assert.equal(await page.evaluate(() => localStorage.getItem('sidebarCollapsed')), '1');
-      await click(page, '메뉴 펼치기'); await mode(page, 'expanded');
-      assert.equal(await page.evaluate(() => localStorage.getItem('sidebarCollapsed')), '0');
-      console.log('ok - wide collapse choice survives reload and expands again');
+      console.log('ok - wide navigation stays expanded and ignores the legacy collapsed choice');
     } else {
-      const expandBox = await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).boundingBox();
-      assert.ok(expandBox.y >= 0 && expandBox.y + expandBox.height <= 140, 'narrow windows also keep the reopen action at the top');
+      const menuBox = await page.getByRole('button', { name: '메뉴', exact: true }).boundingBox();
+      assert.ok(menuBox.y >= 0 && menuBox.y + menuBox.height <= 64, 'menu action stays inside the top header');
+      assert.equal(await sidebar(page).getByRole('button', { name: '새 회의록', exact: true }).count(), 0);
+      assert.equal(await sidebar(page).getByRole('button', { name: '회의록 목록', exact: true }).count(), 0);
       await page.evaluate(async () => {
         const { upsertAnalysisResumeDraft } = await import('/src/analysisResumeDrafts.ts');
         upsertAnalysisResumeDraft({ jobId: 'sidebar-resume', title: '이어서 할 회의', date: '2026-10-22', participants: '', sourceFilename: 'sample.wav', sourceSize: 100, sourceLastModified: 0, status: 'stopped', resumeEligible: true, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
       });
       await page.waitForFunction(() => {
-        const button = document.querySelector('[aria-label="회의록 목록"]');
-        const description = document.getElementById(button?.getAttribute('aria-describedby'));
-        return description?.textContent === '이어서 할 분석 있음';
+        const button = document.querySelector('.sidebar-rail-expand');
+        return document.getElementById(button?.getAttribute('aria-describedby'))?.textContent === '이어서 할 분석 있음';
       });
       await page.evaluate(async () => (await import('/src/analysisResumeDrafts.ts')).removeAnalysisResumeDraft('sidebar-resume'));
       const columns = await page.evaluate(() => ({
@@ -207,7 +210,9 @@ const run = async (browser, { width, deniedStorage = false }) => {
       assert.ok(columns.infoRight <= columns.tabsLeft, '1024px keeps meeting information beside the tabs');
       const before = await page.locator('main').evaluate(e => ({ left: e.getBoundingClientRect().left, width: e.clientWidth, top: e.scrollTop }));
       await capture(page, 'narrow-rail');
-      await click(page, '회의록 목록'); await mode(page, 'overlay');
+      await click(page, '메뉴'); await mode(page, 'overlay');
+      assert.equal(Math.round((await sidebar(page).boundingBox()).width), 240);
+      assert.equal(await sidebar(page).getByRole('button', { name: '메뉴 닫기', exact: true }).count(), 1);
       assert.deepEqual(await page.locator('main').evaluate(e => ({ left: e.getBoundingClientRect().left, width: e.clientWidth, top: e.scrollTop })), before, 'overlay does not push or scroll the document');
       assert.equal(await page.locator('main').getAttribute('inert'), '');
       const buttons = sidebar(page).getByRole('button');
@@ -223,11 +228,11 @@ const run = async (browser, { width, deniedStorage = false }) => {
       assert.ok(Math.abs(playbackTime - 3) < 0.1, `playback position is retained: ${playbackTime}`);
       await page.locator('audio').evaluate(e => e.play());
       const playingTime = await page.locator('audio').evaluate(e => e.currentTime);
-      await click(page, '회의록 목록'); await mode(page, 'overlay');
+      await click(page, '메뉴'); await mode(page, 'overlay');
       await page.keyboard.press('Escape'); await mode(page, 'rail');
       await page.waitForFunction(t => !document.querySelector('audio').paused && document.querySelector('audio').currentTime > t, playingTime);
       await page.locator('audio').evaluate(e => e.pause());
-      await click(page, '회의록 목록'); await mode(page, 'overlay');
+      await click(page, '메뉴'); await mode(page, 'overlay');
       await click(page, '설정'); await mode(page, 'rail');
       await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
       await page.waitForFunction(() => document.activeElement === document.querySelector('.barorok-navigation[data-mode="rail"] button[aria-label="설정"]'));
@@ -240,31 +245,35 @@ const run = async (browser, { width, deniedStorage = false }) => {
       await page.getByRole('button', { name: '설정 닫기', exact: true }).waitFor();
       await page.setViewportSize({ width, height: 768 }); await mode(page, 'rail');
       await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
-      assert.ok(await sidebar(page).getByRole('button', { name: '설정', exact: true }).evaluate(e => e === document.activeElement), 'settings focus follows a resize into icon navigation');
+      assert.ok(await sidebar(page).getByRole('button', { name: '설정', exact: true }).evaluate(e => e === document.activeElement), 'settings focus follows a resize into the top header');
       await page.getByRole('button', { name: '회의 정보 수정', exact: true }).click();
       const draftTitle = page.locator('.meeting-detail-shell').getByLabel('회의 제목', { exact: true });
       await draftTitle.fill('아직 저장하지 않은 회의 제목');
-      await click(page, '회의록 목록'); await mode(page, 'overlay');
+      await click(page, '메뉴'); await mode(page, 'overlay');
       await page.keyboard.press('Escape'); await mode(page, 'rail');
       assert.equal(await draftTitle.inputValue(), '아직 저장하지 않은 회의 제목', 'opening and closing navigation preserves unsaved edits');
       await page.getByRole('button', { name: '수정 취소', exact: true }).click();
-      await click(page, '메뉴 펼치기'); await mode(page, 'overlay');
-      await page.getByRole('button', { name: '메뉴 닫기', exact: true }).click({ position: { x: 600, y: 400 } });
+      await click(page, '메뉴'); await mode(page, 'overlay');
+      await sidebar(page).getByRole('button', { name: '메뉴 닫기', exact: true }).click();
+      await mode(page, 'rail');
+      await click(page, '메뉴'); await mode(page, 'overlay');
+      await page.getByRole('button', { name: '메뉴 밖 닫기', exact: true }).click({ position: { x: 600, y: 400 } });
       await mode(page, 'rail');
       await select(page, records[1].title); await mode(page, 'rail');
-      await click(page, '메뉴 펼치기'); await mode(page, 'overlay');
+      await click(page, '메뉴'); await mode(page, 'overlay');
       await page.setViewportSize({ width: 1280, height: 768 }); await mode(page, 'expanded');
       assert.equal(await sidebar(page).count(), 1);
       assert.equal(await page.locator('.sidebar-rail-spacer').count(), 0);
-      await click(page, '메뉴 접기'); await mode(page, 'rail');
+      assert.equal(Math.round((await sidebar(page).boundingBox()).width), 208);
       await page.setViewportSize({ width: 1024, height: 768 }); await mode(page, 'rail');
-      await click(page, '회의록 목록'); await mode(page, 'overlay');
-      await page.setViewportSize({ width: 1280, height: 768 }); await mode(page, 'rail');
-      assert.equal(await page.locator('.sidebar-scrim').count(), 0, 'resize restores the remembered wide choice');
-      await page.setViewportSize({ width, height: 768 });
+      await click(page, '메뉴'); await mode(page, 'overlay');
+      await page.setViewportSize({ width: 1280, height: 768 }); await mode(page, 'expanded');
+      assert.equal(await page.locator('.sidebar-scrim').count(), 0, 'wide resize dismisses the menu overlay');
+      await page.setViewportSize({ width, height: 768 }); await mode(page, 'rail');
+      await click(page, '메뉴'); await mode(page, 'overlay');
       await click(page, '새 회의록');
       await page.getByRole('heading', { name: '새 회의록', exact: true }).waitFor();
-      console.log('ok - narrow rail/overlay, focus, record selection, resize and audio continuity');
+      console.log('ok - narrow header/overlay, focus, record selection, resize and audio continuity');
     }
     assert.deepEqual(errors, []);
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), 'no document overflow');

@@ -5,19 +5,14 @@ import { Button } from './components/common';
 import { markLocalProcessingIntroSeen } from './localProcessingIntro';
 import type { RuntimeKind } from './runtimeEnvironment';
 
-export type LocalProcessingNoticeMode = 'intro' | 'help';
-
 interface LocalProcessingNoticeProps {
-    /** Both modes show the full notice; only `intro` includes first-use preparation. */
-    mode: LocalProcessingNoticeMode;
     runtime: RuntimeKind;
-    /** Setting-aware storage sentence, so the help never promises a retention the engine does not apply. */
+    /** Setting-aware storage sentence; do not promise a retention the engine does not apply. */
     storageMessage: string;
     onClose: () => void;
 }
 
 export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
-    mode,
     runtime,
     storageMessage,
     onClose,
@@ -26,9 +21,9 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
     const primaryRef = useRef<HTMLButtonElement>(null);
     // Any way of closing the intro (button, Escape, backdrop) counts as having read it.
     const close = useCallback(() => {
-        if (mode === 'intro') markLocalProcessingIntroSeen();
+        markLocalProcessingIntroSeen();
         onClose();
-    }, [mode, onClose]);
+    }, [onClose]);
     const closeRef = useRef(close);
     useEffect(() => {
         closeRef.current = close;
@@ -103,7 +98,7 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                     <p id="local-processing-summary" className="local-processing-summary">
                         외부 AI 서버 없이 이 PC에서 분석하고 요약합니다.
                     </p>
-                    {isWeb && mode === 'intro' && (
+                    {isWeb && (
                         <section className="local-processing-setup" aria-labelledby="local-processing-setup-title">
                             <h3 id="local-processing-setup-title">처음 한 번 준비해 주세요</h3>
                             <p>‘{LOCAL_ENGINE_NAME}’ 설치와 분석에 필요한 파일 받기는 다음 화면에서 진행합니다.</p>
@@ -134,7 +129,7 @@ export const LocalProcessingNotice: React.FC<LocalProcessingNoticeProps> = ({
                 </div>
                 <div className="local-processing-actions">
                     <Button ref={primaryRef} onClick={close}>
-                        {mode === 'intro' ? '시작하기' : '확인'}
+                        시작하기
                     </Button>
                 </div>
             </div>

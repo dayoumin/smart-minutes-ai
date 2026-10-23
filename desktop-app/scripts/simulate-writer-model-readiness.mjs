@@ -501,8 +501,8 @@ const verifyDesktopStatusRow = async (browser) => {
 };
 
 // The development UI speaks as the web app where the desktop app differs: `?` instead of 문제 해결.
-const verifyDevelopmentReadinessError = async (browser) => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+const verifyDevelopmentReadinessError = async (browser, viewport = { width: 1280, height: 900 }) => {
+  const page = await browser.newPage({ viewport });
   let modelsUp = false;
   try {
     await page.clock.install();
@@ -520,17 +520,42 @@ const verifyDevelopmentReadinessError = async (browser) => {
     assert.deepEqual(await readRow(page), {
       state: 'readiness-error', title: '분석 준비 상태를 확인하지 못했습니다', message: '잠시 뒤 다시 확인해 주세요.', buttons: ['다시 확인'],
     });
+    const anchors = () => page.evaluate(() => Object.fromEntries(['.writer-header', '.writer-upload-section', '.writer-start-button', '.writer-privacy', '.recent-meetings'].map(selector => {
+      const box = document.querySelector(selector).getBoundingClientRect();
+      return [selector, { x: box.x, y: box.y, width: box.width, height: box.height }];
+    })));
     const help = rowOf(page).getByRole('button', { name: '문제 해결 도움말' });
     assert.equal(await help.getAttribute('aria-expanded'), 'false');
+    const beforeHelp = await anchors();
     await help.click();
+    assert.deepEqual(await anchors(), beforeHelp, 'opening help must not move the header, upload, start, local promise or recent records');
     assert.equal(await page.locator('#writer-status-help').innerText(),
       `모델 상태를 확인하지 못했습니다. ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행한 뒤 다시 확인해 주세요.`);
     assert.equal(await rowOf(page).getByRole('button', { name: '문제 해결', exact: true }).count(), 0, '문제 해결 is desktop-only');
+    await help.press('Escape');
+    assert.equal(await help.getAttribute('aria-expanded'), 'false');
+    assert.equal(await help.evaluate(e => e === document.activeElement), true);
+    assert.deepEqual(await anchors(), beforeHelp, 'Escape closes help without shifting content');
+    await help.click();
+    await page.getByRole('heading', { name: '새 회의록', exact: true }).click();
+    assert.equal(await help.getAttribute('aria-expanded'), 'false', 'outside click dismisses the popup');
+    await help.click();
+    const settingsButton = page.getByRole('button', { name: '설정', exact: true });
+    await settingsButton.focus();
+    await settingsButton.press('Enter');
+    const settingsClose = page.getByRole('button', { name: '설정 닫기', exact: true });
+    await settingsClose.waitFor();
+    await settingsClose.press('Escape');
+    await settingsClose.waitFor({ state: 'hidden' });
+    assert.equal(await help.getAttribute('aria-expanded'), 'true', 'Escape in Settings must not close the background help or steal its focus');
+    assert.equal(await settingsButton.evaluate(e => e === document.activeElement), true, 'Settings returns focus to its own opener');
+    await help.press('Escape');
     await assertNoOldSurfaces(page);
     modelsUp = true;
     await rowOf(page).getByRole('button', { name: '다시 확인', exact: true }).click();
     await waitForRowState(page, 'ready');
     assert.deepEqual(await readRow(page), { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] });
+    assert.deepEqual(await anchors(), beforeHelp, 'recovering readiness keeps the same layout anchors');
     console.log('ok - development UI readiness error keeps the web ? and 다시 확인');
   } finally {
     await page.close();
@@ -545,6 +570,10 @@ const run = async () => {
   try {
     server = await startServer();
     browser = await chromium.launch({ headless: true });
+    if (process.env.WRITER_READINESS_SCENARIO === 'help-stability') {
+      for (const width of [1440, 1024, 860]) await verifyDevelopmentReadinessError(browser, { width, height: 900 });
+      return;
+    }
     if (process.env.WRITER_READINESS_SCENARIO === 'desktop') {
       await verifyDesktopStatusRow(browser);
       return;

@@ -1324,15 +1324,7 @@ const verifyIntroDismissals = async browser => {
     assert.equal(await seen(), '1', 'a backdrop click counts as having read the notice');
     await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     assert.equal(await intro.count(), 0, 'the first-visit notice does not repeat after reload');
-    const helpButton = page.getByRole('button', { name: '처리·보관 방식 자세히', exact: true });
-    await helpButton.click();
-    await intro.waitFor({ state: 'visible' });
-    await intro.locator('#local-processing-details').waitFor({ state: 'visible' });
-    assert.equal(await intro.locator('.local-processing-setup').count(), 0, 'help omits first-use preparation');
-    assert.equal(await intro.getByRole('button', { name: /자세히|간단히/ }).count(), 0);
-    await intro.getByRole('button', { name: '확인', exact: true }).click();
-    await intro.waitFor({ state: 'hidden' });
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리·보관 방식 자세히');
+    assert.equal(await page.getByRole('button', { name: '처리·보관 방식 자세히', exact: true }).count(), 0, 'the notice is first-visit only, with no persistent re-open action');
     await page.evaluate(() => window.localStorage.removeItem('localProcessingIntroSeen'));
     await page.reload({ waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     await intro.getByRole('button', { name: '시작하기', exact: true }).click();

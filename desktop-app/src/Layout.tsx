@@ -36,7 +36,7 @@ export interface LayoutProps {
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMeetingId, onTabChange, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason, resumeSelectionBlocked, onOpenSettings, analysisStatus, showAsrBenchmark }) => {
-    const { mode, collapse, expand, close } = useSidebarCollapse();
+    const { mode, narrow, expand, close } = useSidebarCollapse();
     const slotRef = useRef<HTMLDivElement>(null);
     const closeOverlay = () => {
         if (mode !== 'overlay') return;
@@ -59,12 +59,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
     } : undefined;
     return (
         <div className="barorok-app-frame flex min-w-[320px] flex-col overflow-hidden text-foreground">
-            <div className="barorok-shell-body flex min-h-0 flex-1 flex-row">
+            <div className={`barorok-shell-body flex min-h-0 flex-1 ${narrow ? 'shell-narrow flex-col' : 'flex-row'}`}>
                 <div ref={slotRef} className={`barorok-sidebar-slot ${mode === 'expanded' ? 'sidebar-slot-expanded' : 'sidebar-slot-rail'}`}>
                 {mode === 'overlay' && <div className="sidebar-rail-spacer" aria-hidden="true" />}
                 <Sidebar
                     mode={mode}
-                    onCollapse={mode === 'overlay' ? closeOverlay : collapse}
+                    onCollapse={closeOverlay}
                     onExpand={expand}
                     onRequestClose={closeOverlay}
                     activeTab={activeTab}
@@ -84,7 +84,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, activeTab, selectedMee
                     analysisStatus={analysisStatus}
                 />
                 </div>
-                {mode === 'overlay' && <button type="button" className="sidebar-scrim" aria-label="메뉴 닫기" tabIndex={-1} onClick={closeOverlay} />}
+                {mode === 'overlay' && <button type="button" className="sidebar-scrim" aria-label="메뉴 밖 닫기" tabIndex={-1} onClick={closeOverlay} />}
                 <main inert={mode === 'overlay'} className="barorok-workspace custom-scrollbar min-w-0 flex-1 overflow-auto p-4 sm:p-6 xl:p-8">
                     <div className="barorok-workspace-content">
                         {children}

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import {
     AlertTriangle,
     CheckCircle2,
@@ -74,8 +74,29 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
     recheckingReadiness = false,
     refreshingAnalysisStatus = false,
     children,
-}) => (
-    <div className="writer-action-row" data-stage={row.stage} data-state={row.state}>
+}) => {
+    const rootRef = useRef<HTMLDivElement>(null);
+    const helpButtonRef = useRef<HTMLButtonElement>(null);
+    useEffect(() => {
+        if (!showHelp || !row.help) return;
+        const outside = (event: PointerEvent) => {
+            if (event.target instanceof Node && !rootRef.current?.contains(event.target)) onToggleHelp();
+        };
+        const escape = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape' || event.defaultPrevented) return;
+            if (event.target instanceof Element && event.target.closest('[aria-modal="true"]')) return;
+            event.preventDefault();
+            onToggleHelp();
+            helpButtonRef.current?.focus();
+        };
+        document.addEventListener('pointerdown', outside);
+        document.addEventListener('keydown', escape);
+        return () => {
+            document.removeEventListener('pointerdown', outside);
+            document.removeEventListener('keydown', escape);
+        };
+    }, [showHelp, row.help, onToggleHelp]);
+    return <div ref={rootRef} className="writer-action-row" data-stage={row.stage} data-state={row.state}>
         <div className={`writer-status-line writer-status-${row.busy ? 'busy' : row.tone}`}>
             <div
                 ref={statusRef}
@@ -97,6 +118,7 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
             </div>
             {row.help && (
                 <button
+                    ref={helpButtonRef}
                     type="button"
                     className="writer-status-help-toggle"
                     aria-label="문제 해결 도움말"
@@ -110,7 +132,7 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
             )}
         </div>
         {row.help && (
-            <div id="writer-status-help" className="writer-status-help" hidden={!showHelp}>
+            <div id="writer-status-help" className="writer-status-help" role="note" aria-label="문제 해결 안내" hidden={!showHelp}>
                 {row.help}
             </div>
         )}
@@ -151,5 +173,5 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
             })}
             {children}
         </div>
-    </div>
-);
+    </div>;
+};

@@ -272,8 +272,8 @@ for (const [readinessState, state] of [['checking', 'readiness-checking'], ['ser
     {
       stage: 'readiness', state: 'no-response', tone: 'warning', busy: false,
       title: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`,
-      message: '잠시 뒤 다시 확인해 주세요.',
-      help: `계속되면 Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행하세요.`,
+      message: '연결 프로그램 실행 후 ‘다시 확인’을 눌러 주세요.',
+      help: `Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하세요. 이미 실행 중이면 종료 후 다시 실행해 주세요.`,
       actions: [{ kind: 'recheck-engine', label: '다시 확인' }],
       blocksStart: true,
     },

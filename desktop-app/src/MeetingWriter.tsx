@@ -7,7 +7,7 @@ import type { AnalyzeResult } from './analysisMeetingPersistence';
 
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Info, Loader2, ChevronUp, Plus, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
+import { AlertCircle, CheckCircle2, CircleHelp, FileAudio, FolderOpen, Loader2, ChevronUp, Plus, Pause, RefreshCw, Settings, ShieldCheck, Square, Trash2, UploadCloud, X } from 'lucide-react';
 import {
     ANALYSIS_RESUME_DRAFTS_UPDATED_EVENT,
     AnalysisResumeDraft,
@@ -41,7 +41,7 @@ import {
     toUserFacingError,
     type UserErrorCause,
 } from './apiError';
-import { getAnalysisDurationLimitError } from './analysisMediaLimit';
+import { getAnalysisDurationLimitError, MAX_ANALYSIS_DURATION_SECONDS } from './analysisMediaLimit';
 import { formatAnalysisDuration, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import {
     DEFAULT_CONTEXT_TEMPLATE_ID,
@@ -66,9 +66,9 @@ import type { LocalEngineProbePayload } from './localEngineConnection';
 import { LocalEngineCodeDialog } from './LocalEngineCodeDialog';
 import { useLocalEngineConnectionControls } from './useLocalEngineConnectionControls';
 import { WriterActionRow } from './WriterActionRow';
-import { selectWriterStatusRow, type WriterStatusAction } from './writerStatusRow';
-import { LocalProcessingNotice, type LocalProcessingNoticeMode } from './LocalProcessingNotice';
 import { LocalProcessingFlow } from './LocalProcessingFlow';
+import { selectWriterStatusRow, type WriterStatusAction } from './writerStatusRow';
+import { LocalProcessingNotice } from './LocalProcessingNotice';
 import { hasSeenLocalProcessingIntro } from './localProcessingIntro';
 import { getRuntimeEnvironment } from './runtimeEnvironment';
 
@@ -596,12 +596,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     const [webConnectionCheckPending, setWebConnectionCheckPending] = useState(false);
     const [connectionCheckRequired, setConnectionCheckRequired] = useState(false);
     // The web build explains local processing once per browser before the user installs the engine.
-    const [localProcessingNotice, setLocalProcessingNotice] = useState<LocalProcessingNoticeMode | null>(() => (
+    const [showLocalProcessingIntro, setShowLocalProcessingIntro] = useState(() => (
         LOCAL_ENGINE_CONNECTION_UI_ENABLED
         && getRuntimeEnvironment().kind === 'web-local-engine'
         && !hasSeenLocalProcessingIntro()
-            ? 'intro'
-            : null
     ));
     const [title, setTitle] = useState('');
     const [date, setDate] = useState(() => toLocalDateTimeInputValue());
@@ -2846,13 +2844,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     onClose={() => setOperationToast(null)}
                 />
             )}
-            {localProcessingNotice && (
+            {showLocalProcessingIntro && (
                 <LocalProcessingNotice
-                    key={localProcessingNotice}
-                    mode={localProcessingNotice}
                     runtime={localEngineConnection.runtime}
                     storageMessage={filePrivacyMessage}
-                    onClose={() => setLocalProcessingNotice(null)}
+                    onClose={() => setShowLocalProcessingIntro(false)}
                 />
             )}
             <div className="writer-header">
@@ -2865,9 +2861,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     <section className="writer-section writer-info-section" aria-label="회의 정보">
                     <div className="writer-field-grid">
                         <div className="writer-field writer-field-wide">
-                            <label htmlFor="meeting-title">회의 제목</label>
+                            <label htmlFor="meeting-title">회의 제목 <span className="writer-required-mark" aria-hidden="true">필수</span></label>
                             <Input
                                 id="meeting-title"
+                                aria-label="회의 제목"
                                 required
                                 aria-required="true"
                                 aria-invalid={hasAttemptedStart && !title.trim()}
@@ -2882,12 +2879,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                             />
                         </div>
                         <div className="writer-field">
-                            <label htmlFor="meeting-date">일시</label>
-                            <Input id="meeting-date" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={requiredFieldsDescribed && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                            <label htmlFor="meeting-date">일시 <span className="writer-required-mark" aria-hidden="true">필수</span></label>
+                            <Input id="meeting-date" aria-label="일시" type="datetime-local" value={date} onChange={e => setDate(e.target.value)} required aria-required="true" aria-invalid={hasAttemptedStart && !date} aria-describedby={requiredFieldsDescribed && !date ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                         <div className="writer-field">
-                            <label htmlFor="meeting-purpose">회의 목적</label>
-                            <textarea rows={3} className="input-field writer-purpose-input" id="meeting-purpose" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={requiredFieldsDescribed && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
+                            <label htmlFor="meeting-purpose">회의 목적 <span className="writer-required-mark" aria-hidden="true">필수</span></label>
+                            <textarea rows={3} className="input-field writer-purpose-input" id="meeting-purpose" aria-label="회의 목적" value={meetingPurpose} onChange={e => setMeetingPurpose(e.target.value)} placeholder="예: 월간 현황 점검, 후속 조치 중심" required aria-required="true" aria-invalid={hasAttemptedStart && !meetingPurpose.trim()} aria-describedby={requiredFieldsDescribed && !meetingPurpose.trim() ? 'writer-form-error' : undefined} disabled={isAnalyzing} />
                         </div>
                         <button
                             type="button"
@@ -3059,6 +3056,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                                     {['MP4', 'MOV', 'WAV', 'MP3', 'M4A'].map(format => (
                                         <span key={format}>{format}</span>
                                     ))}
+                                    <span className="file-duration-limit">최대 {MAX_ANALYSIS_DURATION_SECONDS / 3600}시간</span>
                                 </div>
                             </div>
                         </div>
@@ -3184,20 +3182,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                             <ShieldCheck size={18} aria-hidden="true" />
                             <span>이 PC에서 분석·요약합니다</span>
                         </h3>
-                        <p className="writer-privacy-description">
-                            영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.
-                        </p>
                         <LocalProcessingFlow />
-                        <button
-                            type="button"
-                            className="writer-local-promise-help"
-                            aria-label="처리·보관 방식 자세히"
-                            aria-haspopup="dialog"
-                            onClick={() => setLocalProcessingNotice('help')}
-                        >
-                            <Info size={16} aria-hidden="true" />
-                            처리·보관 방식 자세히
-                        </button>
                     </section>
                     </div>
                     {formBannerMessage && <StatusBanner tone="error">{formBannerMessage}</StatusBanner>}

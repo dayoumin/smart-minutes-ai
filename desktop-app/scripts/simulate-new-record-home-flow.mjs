@@ -298,7 +298,7 @@ const runLongTermScene = async browser => {
 };
 
 const runIHomeLayoutScene = async browser => {
-  for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 2044, height: 1149 }]) {
+  for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }, { width: 860, height: 900 }, { width: 2044, height: 1149 }]) {
     const context = await browser.newContext({ viewport });
     const page = await context.newPage();
     await installBaseRoutes(page);
@@ -337,24 +337,46 @@ const runIHomeLayoutScene = async browser => {
               action: rect('.writer-action-row'), cta: rect('.writer-start-button'), status: rect('.writer-status-title'), recent: rect('.recent-meetings'),
             };
           });
-          assert.ok(Math.abs(layout.info.width - 280) <= 1, 'the information column remains 280px');
+          assert.ok(Math.abs(layout.info.width - 248) <= 1, 'metadata reserves 224px for inputs and 24px padding');
+          assert.ok(layout.upload.bottom <= layout.action.top + 1, 'file selection and analysis action stay connected');
           if (viewport.width >= 1440) {
-            assert.ok(layout.upload.width >= 380 && layout.upload.width <= 504 && layout.guide.width >= 380,
-              `wide upload stays compact while guidance has readable space: ${JSON.stringify(layout)}`);
-            assert.ok(Math.abs(layout.guide.left - layout.upload.right - 24) <= 1, 'wide guide is separated from upload by 24px');
-            assert.ok(layout.guide.top > layout.upload.top && layout.guide.top < layout.upload.top + 48, 'wide guidance panel aligns with the drop area');
+            assert.ok(layout.upload.width > layout.guide.width && layout.guide.width === 288, 'the illustration supports the wider upload column');
+            assert.ok(Math.abs(layout.guide.left - layout.upload.right - 32) <= 1, 'the PC illustration sits on the right with a stable gap');
           } else {
-            assert.ok(layout.upload.bottom <= layout.action.top + 1 && layout.action.bottom <= layout.guide.top + 1,
-              'narrow work area orders file selection, analysis action, then guidance');
+            assert.ok(Math.abs(layout.upload.width - layout.content.width) <= 1 && layout.action.bottom <= layout.guide.top + 1, 'narrow work area stacks the promise after the actions');
           }
-          assert.ok(Math.abs(layout.cta.left - layout.status.right - 16) <= 1,
-            `ready status remains 16px before the start button: ${JSON.stringify(layout)}`);
+          assert.ok(layout.cta.top >= layout.status.bottom + 12 && layout.cta.right <= layout.action.right + 1,
+            `status has its own row above the right-aligned start action: ${JSON.stringify(layout)}`);
           assert.ok(layout.cta.top >= 0 && layout.cta.bottom <= viewport.height, 'analysis start is reachable inside the desktop viewport');
           assert.ok(layout.recent.top >= Math.max(layout.action.bottom, layout.guide.bottom) - 1, 'recent records follow the upload and guidance work');
           const guidance = page.getByRole('region', { name: '처리·보관 안내', exact: true });
           await guidance.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor();
-          assert.equal(await guidance.getByRole('img').isVisible(), true, 'the explanation and picture share one visible panel');
-          assert.equal(await guidance.getByRole('button', { name: '처리·보관 방식 자세히', exact: true }).isVisible(), true);
+          assert.equal(await guidance.getByRole('img').isVisible(), true, 'the PC boundary illustration makes local processing visible');
+          const balance = await guidance.evaluate(el => {
+            const screen = el.querySelector('.local-illustration-screen').getBoundingClientRect();
+            const nodes = [...el.querySelectorAll('.local-illustration-node')].map(node => node.getBoundingClientRect());
+            const centers = nodes.map(node => node.x + node.width / 2);
+            return { left: nodes[0].left - screen.left, right: screen.right - nodes[2].right, gaps: [centers[1] - centers[0], centers[2] - centers[1]] };
+          });
+          assert.ok(Math.abs(balance.left - balance.right) <= 1 && Math.abs(balance.gaps[0] - balance.gaps[1]) <= 1,
+            `the picture has symmetric side margins and equally spaced processing nodes: ${JSON.stringify(balance)}`);
+          await guidance.getByText('회의 요약', { exact: false }).waitFor();
+          for (const id of ['meeting-title', 'meeting-date', 'meeting-purpose']) {
+            assert.equal(await page.locator(`label[for="${id}"] .writer-required-mark`).innerText(), '필수');
+            assert.equal(await page.locator(`#${id}`).getAttribute('aria-required'), 'true');
+          }
+          if (!hasFile) await page.getByText('최대 2시간', { exact: true }).waitFor();
+          assert.equal(await guidance.getByText('영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.', { exact: true }).count(), 0, 'the approved layout omits the subtitle');
+          assert.equal(await guidance.getByRole('button', { name: '처리·보관 방식 자세히', exact: true }).count(), 0, 'the persistent details link is removed');
+          if (viewport.width < 1440) {
+            const spacing = await guidance.evaluate(el => {
+              const text = el.querySelector('.writer-local-promise > span').getBoundingClientRect();
+              const picture = el.querySelector('.local-flow-illustration').getBoundingClientRect();
+              return { gap: picture.left - text.right, topDifference: picture.top - text.top };
+            });
+            assert.ok(Math.abs(spacing.gap - 24) <= 1 && Math.abs(spacing.topDifference) <= 1,
+              `narrow guidance keeps a fixed gap and top alignment: ${JSON.stringify(spacing)}`);
+          }
           await assertNoHorizontalOverflow(page);
           if (hasFile) {
             const filename = await page.locator('.selected-file-main [title]').first().evaluate(el => {
@@ -622,73 +644,34 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     // The processing promise is fixed copy, so it shows even before (or without) an engine answer.
     const privacyNote = page.getByRole('region', { name: '처리·보관 안내', exact: true });
     await privacyNote.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor({ timeout: 10000 });
-    await privacyNote.getByText('영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.', { exact: true }).waitFor();
+    assert.equal(await privacyNote.getByText('영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.', { exact: true }).count(), 0, 'the approved layout omits the subtitle');
     const promiseOverflow = await privacyNote.evaluate(el => el.scrollHeight - el.clientHeight);
     assert.ok(promiseOverflow <= 1, 'privacy guidance is readable without clipping');
     assert.equal(await privacyNote.evaluate(el => Boolean(el.closest('.writer-work-column'))), true, 'privacy guidance stays beside the file work');
-    // The panel combines the explanation, picture and an explicit help action.
+    // The short local-processing promise remains visible without a persistent details action.
     assert.equal(await page.getByText('외부 AI 서비스 없이', { exact: false }).count(), 0);
     assert.equal(await page.locator('.writer-file-support').getByText('이 PC', { exact: false }).count(), 0);
-    // The local-processing picture follows the action in the same work column.
-    const flow = page.getByRole('img', { name: '이 PC 안에서 영상·음성 분석부터 대화록·요약까지 처리' });
-    await flow.waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await privacyNote.getByRole('img').isVisible(), true);
     const headerLayout = await page.evaluate(() => ({
-      flowTop: Math.round(document.querySelector('.local-flow')?.getBoundingClientRect().top ?? -1),
+      flowTop: Math.round(document.querySelector('.writer-privacy')?.getBoundingClientRect().top ?? -1),
       startBottom: Math.round(document.querySelector('.writer-start-button')?.getBoundingClientRect().bottom ?? Infinity),
-      flowInWorkColumn: Boolean(document.querySelector('.local-flow')?.closest('.writer-work-column')),
+      flowInWorkColumn: Boolean(document.querySelector('.writer-privacy')?.closest('.writer-work-column')),
     }));
     assert.equal(headerLayout.flowInWorkColumn, true);
-    assert.ok(headerLayout.flowTop >= headerLayout.startBottom, 'the picture follows analysis start instead of displacing the input header');
+    assert.ok(headerLayout.flowTop >= headerLayout.startBottom, 'the local-processing promise follows analysis start');
     assert.ok(headerLayout.startBottom <= 720, `analysis start must stay on the first 1280x720 screen (bottom ${headerLayout.startBottom})`);
     const helpTitle = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
     // The first-visit notice belongs to the web connection build; the default dev UI opens straight to the writer.
     assert.equal(await page.getByRole('dialog', { name: helpTitle }).count(), 0, 'first-visit notice must not open without the connection build flag');
 
-    const helpButton = privacyNote.getByRole('button', { name: '처리·보관 방식 자세히', exact: true });
-    assert.equal(await helpButton.getAttribute('aria-haspopup'), 'dialog');
-    await helpButton.click();
-    const help = page.getByRole('dialog', { name: helpTitle });
-    await help.waitFor({ state: 'visible', timeout: 10000 });
-    await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '확인');
-    // Help and the intro share the complete details; neither has a compact version.
-    for (const term of ['처리', '보관', '인터넷', '삭제']) {
-      assert.equal(await help.locator('dt').getByText(term, { exact: true }).count(), 1, `help must explain ${term}`);
-    }
-    // Each row leads with its symbol. Deletion also explains delayed cleanup and separate copies.
-    assert.equal(await help.locator('dt svg').count(), 4, 'every help row starts with a symbol');
-    for (const box of await help.locator('dd').evaluateAll(rows => rows.map(row => ({ label: row.previousElementSibling.textContent, text: row.textContent, height: row.getBoundingClientRect().height })))) {
-      const maxHeight = box.label === '삭제' ? 72 : 48;
-      assert.ok(box.height <= maxHeight, `help row must stay concise: "${box.text}" (${box.height}px)`);
-    }
-    assert.equal(await help.getByRole('button', { name: '처리 방식 자세히 보기' }).count(), 0);
-    assert.equal(await help.getByRole('button', { name: '시작하기' }).count(), 0);
-    assert.equal(await help.getByText('웹사이트 접속과 프로그램·모델 다운로드에는 인터넷을 사용합니다.').count(), 0);
-    // Without an engine answer the storage row still states the local-only promise instead of guessing a retention.
-    await help.getByText('회의록은 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
-    assert.equal(await help.getByText('분석용 임시 음성은 완료 후 삭제', { exact: false }).count(), 0);
-    // The install sentence is for the first visit; someone opening help is already using the writer.
-    assert.equal(await help.getByText('처음 한 번', { exact: false }).count(), 0, 'help must not repeat the first-visit install sentence');
-    // The dialog's height is capped to the window, so its box always fits; content that does not fit scrolls inside it.
-    const helpOverflow = await help.evaluate(element => element.scrollHeight - element.clientHeight);
-    assert.ok(helpOverflow <= 0, `help must show all four rows without scrolling at 1280x720 (overflow ${helpOverflow}px)`);
-    await page.keyboard.press('Tab');
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용', 'the scrollable help content is keyboard accessible');
-    await page.keyboard.press('Tab');
-    assert.equal(await page.evaluate(() => document.activeElement?.textContent?.trim()), '확인', 'focus must stay inside the help dialog');
-    await page.evaluate(() => { if (document.activeElement instanceof HTMLElement) document.activeElement.blur(); });
-    await page.keyboard.press('Tab');
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '처리 방식 안내 내용', 'Tab from outside the help returns to the reading region');
-    await page.keyboard.press('Escape');
-    await help.waitFor({ state: 'hidden', timeout: 10000 });
-    await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '처리·보관 방식 자세히');
-    assert.equal(await page.evaluate(() => window.localStorage.getItem('localProcessingIntroSeen')), null, 'closing help must not mark the first-visit notice as seen');
+    assert.equal(await privacyNote.getByRole('button', { name: '처리·보관 방식 자세히', exact: true }).count(), 0);
     // The stacked fallback keeps privacy guidance readable without horizontal scrolling.
     await page.setViewportSize({ width: 800, height: 720 });
     assert.equal(await privacyNote.isVisible(), true, 'the promise line stays in a narrow window');
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth), 0);
     await page.setViewportSize({ width: 1280, height: 720 });
     await settleHomePaint(page);
-    console.log('ok - new-record home keeps the local processing note and help without an engine answer');
+    console.log('ok - new-record home keeps the local processing note without a repeated details link');
 
     // 참석자·주요 용어 fold beside the 회의 정보 heading: closed by default, so the form keeps its height.
     const optionalToggle = page.getByRole('button', { name: '참석자·주요 용어 (선택)' });

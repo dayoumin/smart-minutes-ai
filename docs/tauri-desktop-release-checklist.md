@@ -80,10 +80,14 @@
 - [x] 빌드 Python에서 `ssl.create_default_context()`가 성공한다. 해당 Python이 `codex-rejected-cas.pem` 같은 추가 정책 파일을 요구하면 파일을 발견해 수집하며, 인증서 검증을 끄거나 빈 파일로 우회하지 않는다. 이 이름은 현재 Codex 제공 Python에 해당하며 모든 Python의 필수 파일로 가정하지 않는다.
 - [x] `backend\.venv-desktop\Scripts\python.exe -B -X utf8 -m unittest tests.test_sidecar_ssl_runtime`이 통과한다. 실제 최소 frozen 실행 파일의 정책 파일 SHA 일치, SSL 기본 컨텍스트 생성, `CERT_REQUIRED`·hostname 검사 유지, 로컬 HTTP 요청 성공을 확인한다.
 - [x] 최종 `releases\lmo_audio\binaries\_internal`에 빌드가 발견한 정책 파일이 같은 SHA로 들어 있고 `release-manifest.json`의 코드 파일 목록에도 포함돼 있다. 빌드에서 이 정책을 요구하지 않으면 그 사실과 검사한 Python 경로를 기록한다.
-- [ ] 새 빌드의 별도 QA 복사본에서 실제 로컬 요약 요청 성공, 자동 저장, 같은 프로필 재실행 후 요약 재열기를 확인한다. 최소 frozen 검사나 Vite 모의 화면 검사를 이 증거로 대신하지 않는다.
+- [x] 새 빌드의 별도 QA 복사본에서 실제 로컬 요약 요청 성공, 자동 저장, 같은 프로필 재실행 후 요약 재열기를 확인한다. 2026-10-23 `07e071c7`의 30초 WAV/Qwen4B 검사로 확인했으며, 장문 품질·초기 상태 회복 문제의 종료로 확대하지 않는다.
 - [ ] 업데이트/전달 패키지를 만드는 경우 최종 패키지에도 같은 리소스가 들어 있는지 확인한다.
 
 2026-10-23 현재 상태: 현재 `.venv-desktop`의 통신 초기화와 최소 frozen 회귀 검사 1개가 통과했다. 정책 파일은 906바이트, SHA256 `c916ce1b14ed8ca69e9b5c9fab22799a900dd610d6d4ec9b1347f4fd48e53718`이다. 격리된 clean 브랜치 `codex/ui-home-release-20261023`의 `371b066`에서 `corepack pnpm build -NoClearWebViewCache`가 exit0이며 중간 폴더 실행 smoke와 최종 deploy 읽기 전용 무결성 검사를 통과했다. 정책 파일의 최종 SHA·manifest 포함도 일치한다. 빌드 전후 설정·모델·사용자 WebView 저장소 34파일의 SHA가 모두 같다(`.tmp/home-release-20261023/postbuild-protection.json`). 이후 채택한 I안과 추가 화면 수정의 실제 요약·자동 저장·재실행 검사는 **사용자 결정으로 회사 PC에 이관**했다. `todo.md`의 회사 이어하기 항목에 따라 최종 소스 재빌드·실제 모델 검사 증거로 닫는다. 이 상태를 회사 PC·전달 ZIP 또는 모든 수동 QA 완료로 해석하지 않는다.
+
+2026-10-23 후속 확인(`D:\Projects\LMO_audio`): P2 수정·독립 재검토 후 `07e071c7`을 커밋하고 `corepack pnpm build -NoClearWebViewCache` 전체 빌드가 exit0이다. 중간 실행 smoke·최종 설치본 읽기 전용 무결성, HEAD 일치·dirty=false, SSL 정책 파일 SHA 일치를 확인했다. 보호61항목의 사용자 파일·설정·기존 WebView 기록 SHA와 모델 파일 크기가 불변이다(모델 전체 SHA 검사는 아님). 별도 QA 복사본·전용 프로필에서 실제30초 음성의15구간/2화자 분석·자동 저장, 시스템 Ollama0.34.2의 `qwen3.5:4b` 요약·자동 저장·정상 종료/같은 프로필 재실행 후 같은 대화록/요약과 backend overview 일치를 확인했다. 정리 전 저장 잠금·요약 후 저장 활성화도 실제 EXE에서 통과했다. 재실행 첫 음성 확인 실패는 `다시 확인`으로 회복 후 실제 재생 시간이0.53초를 넘어갔다. 초기 요약 모델 상태는 설정의 준비 상태 재확인 뒤 회복했다. 두 초기 상태 문제는 기존 release QA 행과 TODO에 미해결로 유지한다. 원본 WAV는 SHA 불변이다. 근거 `.tmp/release-20261023/{build.log,protected-after.json,final-qa.json,open.json,retry-audio.json,play.json}`. 사용자 설치본의 요약 설정은 바꾸지 않았으며 시험 복사본만 Qwen을 사용했다. 새 업데이트/전달 ZIP·HTTPS 웹·설치 엔진·장문 품질·다른 PC 검증은 수행하지 않았고 공개 배포 보류를 유지한다.
+
+2026-10-23 초기 상태 후속 수정 검증: 첫 모델/음성 조회의 시작 실패 고착, 모델 준비 중 성공 응답의 고착, 기존 요약에서 첫 모델 확인 전 재생성 허용을 UI에서 수정했다. 네이티브의 읽기 전용 조회만45초 안에서 회복하며 유한 JSON 본문도 요청 시간 제한·취소에 포함했다. 집중12·브라우저 승인21·인증 경계10검사, 화면3시나리오, 타입/lint, 독립2관점 재검토 통과. `corepack pnpm --dir desktop-app desktop:build:exe`로 UI EXE를 컴파일해 검증된07e071c7 sidecar/모델이 있는 **별도 QA 복사본에만** 반영했다. `dirty=true` 시험용이며 정식 deploy 갱신·clean portable 재빌드 완료로 표시하지 않는다. 앱·시스템 Ollama 동시 새 시작 및 같은 프로필 정상 재시작2회에서 수동 준비 상태 확인·음성 재시도 각0회, 30초 음성 실제 재생과 요약 재생성POST200·기존 요약 재열기 통과. 초기 준비9.4초/6.1초, 전체26.5초/11.4초이며 성능 일반화 자료는 아니다. 최종 source/EXE SHA·backend overview 일치는 `.tmp/native-startup-fix/{provenance,final-report,cycle-1,cycle-2}.json`을 따른다. 앞 문단의 두 초기 상태 결함은 이 표본에서 해소했으며, 웹·설치 엔진·업데이트/전달 ZIP·장문 품질·공개 배포 보류는 유지한다.
 
 ## 3. 리소스와 모델 경로
 

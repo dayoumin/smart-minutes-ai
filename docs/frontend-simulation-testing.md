@@ -1,5 +1,11 @@
 # Frontend Simulation Testing
 
+## Native startup read recovery — 2026-10-23
+
+`corepack pnpm --dir desktop-app test:desktop-startup-read` checks bounded native read recovery, caller cancellation, stalled JSON bodies, authentication responses and transient readiness answers (12 cases). `test:desktop-startup-ui` uses the caller's `APP_URL` and native bridge mocks: initial connection refusal must recover summary/audio without a refresh; background checks preserve the audio source. Run the default scenario, `--completed --preparing`, and `--completed --managed` serially. The completed-summary scenario failed before the initial status gate was added. Missing models and browser permission requests are not retried. These are mocked UI checks; the actual EXE restart/generation evidence is in the existing release checklist and release QA row, with `.tmp/native-startup-fix/final-report.json` recording the local result.
+
+Dedicated server: repository-root `corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5198 --strictPort --configLoader runner`; `APP_URL=http://127.0.0.1:5198/`, `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`, `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`. HTTP200 and the LMO 회의록 title were verified. The session-owned server was stopped after checks; the same command restores it.
+
 ## Remote integration with local work preserved — 2026-10-22
 
 Integrated `4320cec..77555e3` (14 origin/main commits) in `D:\Projects\audio`.

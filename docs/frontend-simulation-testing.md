@@ -1,5 +1,193 @@
 # Frontend Simulation Testing
 
+## Fixed narrow promise and first-visit-only details — 2026-10-23
+
+The persistent processing/storage link and its help-only dialog mode are removed.
+The full notice remains only for first visits to the web connection surface, using
+the existing `localProcessingIntroSeen` key/session fallback. Closing with the primary
+button, Escape or backdrop remembers the visit. Returning browsers do not get it again.
+The default Vite UI does not show the web intro automatically.
+
+Narrow guidance uses a content-width heading,24px gap and224px laptop, anchored to
+the work column's left edge. Live860↔1024 resizing preserved picture x523.546875/y579
+and the24px text-to-picture gap, with no horizontal overflow. Wide guidance uses a
+fixed22px heading-to-picture gap and natural illustration height, preserving its
+approved y169 position after link removal and preventing status-height-driven movement.
+Screenshots: `.tmp/browser-home-check-20261023/fixed-promise-{860,1024,wide}.png`.
+
+Passed with `corepack pnpm --dir desktop-app`: i-layout (now16 combinations including
+860px, fixed-gap/top alignment and link absence), processing-help (remaining guidance
+and optional-input stability), local-engine-connection-ui intro-dismissal (all close
+methods, keyboard containment, reload/revisit and no re-open link), typecheck and
+changed-file ESLint. Home tests used `APP_URL=http://127.0.0.1:5196/`; the intro scenario
+used the same server with `?view=minutes&localEngineConnection=1`. Playwright used the
+existing project-local browser cache. These are UI simulations, not deployed HTTPS
+or actual engine-analysis verification.
+
+Actual in-app browser follow-up: a fresh isolated origin on127.0.0.1:5197 showed
+the complete first-visit notice. Clicking 시작하기 closed it. A full page reload
+showed zero notice dialogs; closing that tab and opening the same URL in a new tab
+also showed zero. The removed details link stayed absent. The URL used
+`/?view=minutes&localEngineConnection=1`; existing5196 records/storage were untouched.
+The temporary server command was `corepack pnpm --dir desktop-app exec vite --host
+127.0.0.1 --port 5197 --strictPort --configLoader runner`, cwd `D:\Projects\audio`.
+The test tabs and temporary server were closed after verification. Evidence:
+`.tmp/browser-home-check-20261023/first-visit-{notice,after-reload,revisit}-live.png`.
+
+## Approved laptop proposal without subtitle — 2026-10-23
+
+The later approved image proposal replaces the simple PC frame with a code-native
+laptop bezel/camera and SVG keyboard deck, trackpad and front lip. The user removed
+the subtitle; the headline, processing steps, external-AI boundary and full-help
+action remain. On the1440px live screen both upload/action and guidance groups span
+y125–491 (366px), and the heading rows align. At1024px the guidance stacks below the
+actions with a compact laptop. No horizontal overflow or overlapping controls was
+observed. Screenshots: `.tmp/browser-home-check-20261023/laptop-layout-{wide,narrow}.png`.
+The existing i-layout12 combinations and processing-help scenarios passed after
+updating both obsolete subtitle assertions. Typecheck/changed-file ESLint and
+independent scoped source/visual review passed, with no required findings remaining.
+
+Later refinement raises only the wide illustration content8px (screen y185→177),
+preserving both groups'125–491 anchors. The full-help link uses13px normal muted
+text while retaining underline/focus and dialog behavior. The no-response message
+now requests launching the connection program and pressing the actual retry action;
+the help names its Windows Start-menu entry. Runtime-boundary checks and type/lint
+passed. Live1440px/860px checks cover the copy, overflow and both help surfaces.
+Screenshot: `.tmp/browser-home-check-20261023/laptop-refined-wide.png`.
+
+The subsequently approved status/action spacing uses a44px minimum status block
+(20px title,4px gap,20px message), then12px before the right-aligned40px buttons.
+Single-line/ready states reserve the same minimum space. At1440px the title/message
+share x568, status y403–447, buttons y459–499 and the start button ends exactly at
+the upload edge x1064. The12 layout combinations, help/recovery stability at
+1440/1024/860px and changed-script ESLint passed. Screenshot:
+`.tmp/browser-home-check-20261023/status-actions-aligned-wide.png`.
+
+## Required inputs and balanced local-benefit layout — 2026-10-23
+
+The three required fields show their requirement before submission while retaining
+their accessible names and required attributes. The pre-selection format row shows
+the two-hour limit from the same constant used for validation. The PC illustration
+uses three equal columns: input, processing on this PC, and transcript/meeting summary.
+Its lighter frame supports the upload action. Narrow layouts group the text/link
+and shorten the illustration instead of spreading the text across its height.
+
+Validation passed using `corepack pnpm --dir desktop-app`:
+`NEW_RECORD_HOME_SCENARIO=i-layout test:new-record-home-flow` (12 combinations),
+`NEW_RECORD_HOME_SCENARIO=processing-help test:new-record-home-flow`, and
+`WRITER_READINESS_SCENARIO=help-stability test:writer-model-readiness`
+(1440/1024/860px). Scenario selectors were set as environment variables, with
+`APP_URL=http://127.0.0.1:5196/` and
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`.
+Typecheck, changed-file ESLint and independent visual/source review passed.
+The 1440px live screen has equal28px icon-to-screen edge margins and86px icon
+center gaps, with no horizontal overflow. Screenshots:
+`.tmp/browser-home-check-20261023/balanced-layout-{wide,narrow}.png`.
+Capture after viewport settlement; an immediate capture after resizing can retain
+the previous frame. This verifies Vite UI behavior, not an HTTPS/local-engine run.
+
+## Help-popup stability and local-processing illustration — 2026-10-23
+
+The live connection-error help reproduced a46px downward movement of the local
+promise and recent records while the start button stayed still. Prior checks
+covered only the button. `WriterActionRow` now renders supplementary help as a
+positioned popup with outside/Escape dismissal and modal-Escape priority.
+`WRITER_READINESS_SCENARIO=help-stability` checks exact rectangles for the header,
+upload, start, local promise and recent records before/after help and readiness
+recovery at1440/1024/860px. It also checks Settings opened with the keyboard:
+Escape stays owned by Settings and returns focus to its opener. These cases pass.
+
+The local benefit now has a responsive PC-boundary illustration on the right:
+520px upload vs288px supporting illustration at the widest work column, with
+a32px gap. Narrower containers stack the benefit below the actions. The illustration
+uses existing icons and CSS with reserved geometry, no external image loading.
+The16px heading, external-AI non-transmission sentence and full-help action remain
+visible. `NEW_RECORD_HOME_SCENARIO=i-layout` passed12 width/file/record combinations;
+`processing-help`, typecheck, changed-file ESLint and independent source review passed.
+The popup modal-priority issue found in review was fixed and independently rechecked.
+Commands use `corepack pnpm --dir desktop-app`, the existing5196 server and the
+project-local Playwright cache. Live-browser screenshots:
+`.tmp/browser-home-check-20261023/local-advantage-{wide,narrow}.png`.
+
+## Approved layout implementation — 2026-10-23
+
+Current source uses fixed208px wide navigation and a64px narrow header with
+the explicit `메뉴` button. The240px overlay retains Escape/outside dismissal,
+Tab cycling, inert workspace, settings focus restoration, unsaved edits and
+audio continuity. Legacy sidebar collapse storage is ignored. The sidebar
+simulation now checks these contracts, including focus returning to the brand
+after widening the header. Independent source review caught that missing
+expanded-mode focus target; it was fixed and reviewed again.
+
+The home source now shares a1120px heading/body width, uses248px for metadata
+(224px inputs+24px padding), and keeps upload/action/local-processing promise
+in one work column. The local-processing title, external-AI non-transmission
+sentence and full-help action remain visible. The permanent flow picture and
+large empty-recent-record box were removed from this surface only.
+
+Validation used the existing5196 server and `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`:
+`corepack pnpm --dir desktop-app typecheck`, changed-source/script ESLint,
+`test:sidebar-collapse wide`, and `test:new-record-home-flow` with
+`NEW_RECORD_HOME_SCENARIO=i-layout`, `processing-help`, `term-overflow`.
+The home layout passed12 width/file/record combinations (1440/1024/2044px),
+full help/optional fields, and40-character terms with reachable remove actions.
+The sidebar test initially expected a seeded recovery draft to remain after
+opening the menu despite its empty backend-status mock. It now preserves the
+original notification assertion before opening, while independently checking
+the menu and retention contracts. Actual browser screenshots are in
+`.tmp/browser-home-check-20261023/approved-layout-{wide,narrow}.png`.
+These are frontend checks, with mocked APIs in simulations. The live browser
+still reports no engine response; actual analysis/HTTPS/release remain separate.
+
+## Live browser home-screen check — 2026-10-23
+
+Visual follow-up: the upload area now has a light brand tint and a filled file
+selection control; guidance has a white background. The upload column places
+status copy above recovery/start actions in both ready and blocked states.
+`NEW_RECORD_HOME_SCENARIO=i-layout` passed all 12 width/file/recent-record
+combinations (1440/1024/2044px), including long filenames and the new status-above-action
+contract. `NEW_RECORD_HOME_SCENARIO=processing-help` passed guidance/dialog and
+optional-field position checks. Commands used `corepack pnpm --dir desktop-app
+test:new-record-home-flow`, `APP_URL=http://127.0.0.1:5196/` and
+`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\audio\.cache\ms-playwright`.
+Typecheck, changed-script ESLint and scoped independent review passed.
+In the live browser's actual connection-error state at1440px, the title fits
+one line in the400px upload column; opening help leaves the start button at
+y=451, height40px. The1024px view was also inspected. Screenshots:
+`.tmp/browser-home-check-20261023/home-refined-{1440,1024}.png`.
+Engine readiness/real analysis remains unverified in this browser session.
+
+Follow-up after user feedback: the rail reopen button now precedes the brand
+button, keeping collapse/reopen on the same top row. Section headings and the
+unfiled-list empty note are 13px; primary navigation remains 14px. Typecheck,
+changed-file ESLint and `test:sidebar-collapse wide` passed (the latter runs
+wide, narrow overlay/focus/audio and denied-storage scenarios). Independent
+scoped source review found no required fixes. This supersedes the prior
+logo-first rail placement; it does not claim the deferred visual proposals
+are implemented.
+
+Checked current `b83225f` frontend source in the Codex in-app browser at
+`http://127.0.0.1:5196/` (title `LMO 회의록`), without engine mocks.
+Session server: repository-root `corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5196 --strictPort --configLoader runner`.
+The server and deliverable browser tab remain open for follow-up.
+
+- 1440×900: upload and processing/storage guidance appear side by side;
+  expanding optional participants/terms leaves the analysis button at y=403.
+- 1024×768: menu collapses to the icon rail; expand, Escape dismissal with
+  focus return, list-icon reopening and collapse work. Upload and analysis
+  button remain visible; guidance stacks below the upload controls.
+- 860×720: fields and upload stack vertically without document horizontal
+  overflow; analysis controls and guidance require scrolling. The guidance
+  dialog opens and closes through its confirmation button.
+- Processing/storage guidance text and dialog were inspected visually.
+  No audio file was selected or submitted, and no analysis was started.
+- The connection check eventually displayed `LMO 회의록 연결이 응답하지 않습니다`
+  with recovery controls. This run verifies the source UI only; it does not
+  establish engine readiness, production HTTPS behavior or Chrome/Edge permissions.
+
+Screenshots: `.tmp/browser-home-check-20261023/{home-1440,home-1024,menu-1024}.png`.
+Temporary viewport overrides were reset after checking.
+
 ## Native startup read recovery — 2026-10-23
 
 `corepack pnpm --dir desktop-app test:desktop-startup-read` checks bounded native read recovery, caller cancellation, stalled JSON bodies, authentication responses and transient readiness answers (12 cases). `test:desktop-startup-ui` uses the caller's `APP_URL` and native bridge mocks: initial connection refusal must recover summary/audio without a refresh; background checks preserve the audio source. Run the default scenario, `--completed --preparing`, and `--completed --managed` serially. The completed-summary scenario failed before the initial status gate was added. Missing models and browser permission requests are not retried. These are mocked UI checks; the actual EXE restart/generation evidence is in the existing release checklist and release QA row, with `.tmp/native-startup-fix/final-report.json` recording the local result.

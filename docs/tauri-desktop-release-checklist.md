@@ -288,9 +288,10 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
    - `-ExistingInstallation` 없이 deploy 폴더에 smoke를 실행하면 기록·로그가 있는 설치본에서는 실행 전에 거부된다. 검사를 통과시키려고 기록·로그·설정을 지우지 않는다.
 9. `releases\lmo_audio\release-manifest.json`의 `commit`이 `git rev-parse HEAD`와 같고 `dirty=false`인지 확인한다.
 10. 공유/전달 목적이면 `corepack pnpm package:handoff`를 실행하고 zip 경로, 크기, 포함/제외 모델 검수 결과를 기록한다.
-11. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다.
+11. `git fetch origin` 후 behind가 없을 때 `git push origin main`을 실행한다. push 조건은 `AGENTS.md` 「브랜치·배포 공통 규칙」 2를 따른다. pre-push hook이 없는 지금은 커밋까지만 하고 사용자 확인 뒤 push한다. `--no-verify`·force-push는 쓰지 않는다.
+12. 사용자에게 전달한 릴리스이면 annotated 태그 `vX.Y.Z`(설치 파일 버전 그대로, 예: `v0.1.10-beta-20261021`)를 만들고 메시지에 manifest commit·dirty, 산출물 SHA256, 검증 결과를 적는다. 태그 push도 사용자 확인 뒤 한다. 웹 Worker 배포는 같은 블록의 규칙 4·5·7(`prod-YYYY-MM-DD.N`)을 따르고, 클라우드 세션에서는 실행하지 않는다.
 
-단순 문구/아이콘 변경처럼 배포가 필요 없는 경우에는 5~10번을 생략할 수 있다. 사용자가 "빌드" 또는 "전달"을 요청한 경우에는 5~10번을 생략하지 않는다.
+단순 문구/아이콘 변경처럼 배포가 필요 없는 경우에는 5~10번과 12번을 생략할 수 있다. 사용자가 "빌드" 또는 "전달"을 요청한 경우에는 5~10번을 생략하지 않는다.
 
 정식 배포 갱신:
 

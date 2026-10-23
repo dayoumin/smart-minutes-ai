@@ -34,6 +34,12 @@
 
 # 0. Immediate queue
 
+- [ ] 2026-10-23 **브랜치·배포 공통 규칙 v2 적용 후속** (정본: playbook `stack/release-flow.md`, `AGENTS.md` 블록)
+  - pre-push hook 도입(AI 지침·hook 변경이라 사용자 확인 필요): 제안은 `.githooks/pre-push`(sh, Git for Windows에서도 실행)에서 `corepack pnpm check:quick`을 돌려 실패하면 push를 막는 것이다. 각 PC에서 `git config core.hooksPath .githooks`를 한 번 설정한다. `check:quick`은 PowerShell 전용이라 Linux 클라우드 세션에서는 hook을 켜지 않고 커밋까지만 한다. 시간이 길면 `-SkipSimulations` 등 좁은 범위를 정한다.
+  - 웹 Worker `barorok`: 지금은 `corepack pnpm --dir deploy/cloudflare run deploy`(`wrangler.mjs deploy`, 맨 `wrangler deploy` 래퍼)로 배포한다. 정본 4절의 `pnpm release <staging|production>`·`pnpm release:rollback`으로 옮긴다(환경 분리, 트래픽 없는 version 업로드 후 승격, smoke, `prod-YYYY-MM-DD.N` 태그에 version ID·smoke 결과 기록, 비밀값은 `wrangler versions secret put`). 옮긴 뒤 `deploy` 스크립트는 지우거나 `release`로만 가게 한다. 구현은 사용자가 원할 때 진행한다.
+  - 인증 위치: `wrangler.mjs`는 `XDG_CONFIG_HOME=<저장소>/.cache/cloudflare-auth`(gitignore, keyring 사용)를 쓴다. 규칙 5에 맞게 저장소 밖 경로나 keyring 전용으로 바꿀지 `pnpm release` 전환 때 정한다.
+  - 데스크톱 버전 기준: 태그 `vX.Y.Z`는 설치 파일 버전이어야 하는데 `desktop-app/src-tauri/tauri.conf.json`은 `0.1.0`, 엔진은 `0.1.10-beta-20261021`이다. 다음 데스크톱 릴리스 전에 포터블 버전의 기준 값을 하나로 정한다.
+
 - [ ] 2026-10-23 **회사에서 이어하기: I안 후속 화면·실제 분석 확인**
   - 2026-10-23 이 체크아웃에서 최신 `07e071c7` 전체 portable 빌드·중간 smoke·deploy 무결성이 통과했다. 별도 복사본/프로필의 실제30초 분석(15구간·2화자)→Qwen4B 요약→자동 저장→정상 종료/재실행·재열기와 재시도 후 음성 재생도 확인했다. 보호61항목·원본 WAV 불변. 개발 UI 검증만 있던 아래 기록을 보완하되, HTTPS 웹/설치 엔진·내보내기 실물·장문 품질·업데이트/신규 설치 패키지는 아직 미검증이다. 근거와 범위는 릴리스 체크리스트의 같은 날짜 후속 확인과 `.tmp/release-20261023/final-qa.json`을 따른다.
   - [x] 실제 실행 초기 상태 회복(2026-10-23): 숨겨진 상세 화면의 초기 단발 모델 조회와 음성 HEAD가 엔진 시작 전 실패한 뒤 갱신되지 않는 경로, 기존 요약의 첫 모델 확인 전 재생성 허용을 수정했다. 네이티브 읽기만45초 안에서 자동 회복하고 준비 중 응답·JSON 본문 제한·이전 요청 취소를 포함한다. 실제 미커밋 시험 EXE의 동시 시작/같은 프로필 정상 재시작2회에서 수동 준비 상태 확인/음성 재시도 각0회, 음성 재생·실제 요약 재생성POST200·요약 재열기 통과. 집중12검사·화면3시나리오·타입/lint·독립2관점 재검토 통과. 정식 clean 빌드 반영은 별도이며 source/EXE SHA와 상세 증거는 `.tmp/native-startup-fix/{final-report,provenance,cycle-1,cycle-2}.json` 및 기존 release QA 공존 행에서 관리한다.

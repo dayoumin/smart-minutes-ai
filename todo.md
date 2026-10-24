@@ -39,6 +39,7 @@
   - 웹 Worker `barorok`: 지금은 `corepack pnpm --dir deploy/cloudflare run deploy`(`wrangler.mjs deploy`, 맨 `wrangler deploy` 래퍼)로 배포한다. 정본 4절의 `pnpm release <staging|production>`·`pnpm release:rollback`으로 옮긴다(환경 분리, 트래픽 없는 version 업로드 후 승격, smoke, `prod-YYYY-MM-DD.N` 태그에 version ID·smoke 결과 기록, 비밀값은 `wrangler versions secret put`). 옮긴 뒤 `deploy` 스크립트는 지우거나 `release`로만 가게 한다. 구현은 사용자가 원할 때 진행한다.
   - 인증 위치: `wrangler.mjs`는 `XDG_CONFIG_HOME=<저장소>/.cache/cloudflare-auth`(gitignore, keyring 사용)를 쓴다. 규칙 5에 맞게 저장소 밖 경로나 keyring 전용으로 바꿀지 `pnpm release` 전환 때 정한다.
   - (결정 2026-10-24) 버전 태그 기준: `vX.Y.Z`는 설치 엔진의 `engineVersion` 그대로 쓴다(다음 공개부터, 예: `v0.1.10-beta-20261021`). 포터블 데스크톱은 지금처럼 commit으로 식별하고 태그를 만들지 않는다. 포터블을 버전 붙여 정식 배포하게 되면 그때 `tauri.conf.json`·`Cargo.toml`을 엔진 버전과 맞추는 방법을 정한다. 이미 공개된 `0.1.10-beta-20261021`은 빌드 커밋을 기록에서 확인할 수 있을 때만 소급 태그한다.
+  - playbook 반영 상태: 이 저장소의 블록 v2 반영은 2026-10-24 완료(정본과 글자 일치 확인). playbook `stack/release-flow.md` 8절 표의 smart-minutes-ai 행(지금 "대기")은 playbook 쪽에서 "완료, hook 없음, 태그는 설치 엔진 `engineVersion`"으로 갱신한다. 이 저장소에서는 playbook을 고치지 않는다.
 
 - [ ] 2026-10-23 **회사에서 이어하기: I안 후속 화면·실제 분석 확인**
   - 2026-10-23 이 체크아웃에서 최신 `07e071c7` 전체 portable 빌드·중간 smoke·deploy 무결성이 통과했다. 별도 복사본/프로필의 실제30초 분석(15구간·2화자)→Qwen4B 요약→자동 저장→정상 종료/재실행·재열기와 재시도 후 음성 재생도 확인했다. 보호61항목·원본 WAV 불변. 개발 UI 검증만 있던 아래 기록을 보완하되, HTTPS 웹/설치 엔진·내보내기 실물·장문 품질·업데이트/신규 설치 패키지는 아직 미검증이다. 근거와 범위는 릴리스 체크리스트의 같은 날짜 후속 확인과 `.tmp/release-20261023/final-qa.json`을 따른다.

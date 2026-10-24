@@ -90,6 +90,44 @@ const bufferJsonResponse = async (response: Response, signal: AbortSignal): Prom
     }
 };
 
+/** A finite metadata request, including error bodies, that shares one deadline with its caller. */
+export const requestFiniteEngineJson = async (
+    client: Pick<LocalEngineClient, 'request'>,
+    path: string,
+    init: RequestInit = {},
+    timeoutMs = 15000,
+): Promise<Response> => {
+    const controller = new AbortController();
+    const callerSignal = init.signal;
+    const abortFromCaller = () => controller.abort();
+    let timedOut = false;
+    const timer = globalThis.setTimeout(() => { timedOut = true; controller.abort(); }, timeoutMs);
+    if (callerSignal?.aborted) controller.abort();
+    else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
+    try {
+        if (controller.signal.aborted) throw new DOMException('The operation was aborted.', 'AbortError');
+        const response = await awaitWithAbort(client.request(path, { ...init, signal: controller.signal }), controller.signal);
+        // Authorization is decided from headers. A stalled error body must not hold recovery open.
+        if (response.status === 401 || response.status === 403) {
+            void response.body?.cancel().catch(() => {});
+            const rejected = new Response(null, { status: response.status, statusText: response.statusText, headers: response.headers });
+            Object.defineProperties(rejected, {
+                url: { value: response.url }, redirected: { value: response.redirected }, type: { value: response.type },
+            });
+            return rejected;
+        }
+        return await bufferJsonResponse(response, controller.signal);
+    } catch (error) {
+        if (timedOut && !callerSignal?.aborted) {
+            throw new DOMException('The local engine did not answer in time.', 'TimeoutError');
+        }
+        throw error;
+    } finally {
+        globalThis.clearTimeout(timer);
+        callerSignal?.removeEventListener('abort', abortFromCaller);
+    }
+};
+
 const resolveEngineApiUrl = (path: string, baseUrl: string): URL => {
     if (!/^\/api(?:\/|$)/.test(path)) {
         throw new TypeError('Local engine requests require a relative /api path.');

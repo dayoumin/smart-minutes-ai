@@ -35,7 +35,7 @@
 # 0. Immediate queue
 
 - [ ] 2026-10-23 **브랜치·배포 공통 규칙 v2 적용 후속** (정본: playbook `stack/release-flow.md`, `AGENTS.md` 블록)
-  - pre-push hook 도입(AI 지침·hook 변경이라 사용자 확인 필요): 제안은 `.githooks/pre-push`(sh, Git for Windows에서도 실행)에서 `corepack pnpm check:quick`을 돌려 실패하면 push를 막는 것이다. 각 PC에서 `git config core.hooksPath .githooks`를 한 번 설정한다. `check:quick`은 PowerShell 전용이라 Linux 클라우드 세션에서는 hook을 켜지 않고 커밋까지만 한다. 시간이 길면 `-SkipSimulations` 등 좁은 범위를 정한다.
+  - (선택, 보류) pre-push hook 도입: 2026-10-24 판단으로 지금은 만들지 않는다. hook의 효과는 Windows PC 작업에서 AI가 push 전에 묻는 횟수를 줄이는 것뿐이고, 안전은 사용자 확인으로 이미 지켜진다. Linux 클라우드 세션에서는 `check:quick`이 돌지 않아 hook이 있어도 묻게 된다. PC에서 매번 묻는 것이 번거로워지면 그때 아래 가벼운 버전으로 만든다(AI 지침·hook 변경이라 사용자 확인 필요). 제안은 `.githooks/pre-push`(sh, Git for Windows에서도 실행)에서 타입 검사와 빠른 백엔드 테스트만 돌려(브라우저 시뮬레이션 제외, 예: `check:quick -SkipSimulations`) 실패하면 push를 막는 것이다. 각 PC에서 `git config core.hooksPath .githooks`를 한 번 설정한다. `check:quick`은 PowerShell 전용이라 Linux 클라우드 세션에서는 hook을 켜지 않고 커밋까지만 한다.
   - 웹 Worker `barorok`: 지금은 `corepack pnpm --dir deploy/cloudflare run deploy`(`wrangler.mjs deploy`, 맨 `wrangler deploy` 래퍼)로 배포한다. 정본 4절의 `pnpm release <staging|production>`·`pnpm release:rollback`으로 옮긴다(환경 분리, 트래픽 없는 version 업로드 후 승격, smoke, `prod-YYYY-MM-DD.N` 태그에 version ID·smoke 결과 기록, 비밀값은 `wrangler versions secret put`). 옮긴 뒤 `deploy` 스크립트는 지우거나 `release`로만 가게 한다. 구현은 사용자가 원할 때 진행한다.
   - 인증 위치: `wrangler.mjs`는 `XDG_CONFIG_HOME=<저장소>/.cache/cloudflare-auth`(gitignore, keyring 사용)를 쓴다. 규칙 5에 맞게 저장소 밖 경로나 keyring 전용으로 바꿀지 `pnpm release` 전환 때 정한다.
   - 데스크톱 버전 기준: 태그 `vX.Y.Z`는 설치 파일 버전이어야 하는데 `desktop-app/src-tauri/tauri.conf.json`은 `0.1.0`, 엔진은 `0.1.10-beta-20261021`이다. 다음 데스크톱 릴리스 전에 포터블 버전의 기준 값을 하나로 정한다.

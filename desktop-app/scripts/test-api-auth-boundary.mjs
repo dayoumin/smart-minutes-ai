@@ -15,11 +15,12 @@ const memberName = expression => ts.isIdentifier(expression) ? expression.text
     : ts.isElementAccessExpression(expression) && ts.isStringLiteral(expression.argumentExpression)
       ? expression.argumentExpression.text : '';
 
-await test('all frontend HTTP transports stay within the three explicit boundaries', () => {
+await test('all frontend HTTP transports stay within explicit engine and public-release boundaries', () => {
   const allowed = new Map([
     ['apiBase.ts', 1], // Native startup only; cannot resolve through its own common client.
     ['localEngineClient.ts', 1], // The native fetch adapter.
     ['localEngineClientCore.ts', 1], // The injected common transport.
+    ['localEngineRelease.ts', 1], // Public same-origin release metadata; no engine/session credentials.
   ]);
   const found = new Map();
   const files = [...sourceFiles(src), new URL('../public/local-audio-worker.js', import.meta.url)];
@@ -29,6 +30,22 @@ await test('all frontend HTTP transports stay within the three explicit boundari
     const visit = node => {
       if (ts.isCallExpression(node) && memberName(node.expression) === 'fetch') {
         assert.ok(allowed.has(name), `${name}: direct fetch bypasses common authorization`);
+        if (name === 'localEngineRelease.ts') {
+          const [url, options] = node.arguments;
+          assert.ok(ts.isNewExpression(url) && url.expression.getText(tree) === 'URL');
+          assert.equal(url.arguments[0]?.getText(tree), "'/downloads/engine-beta.json'");
+          assert.equal(url.arguments[1]?.getText(tree), 'origin');
+          assert.ok(ts.isObjectLiteralExpression(options));
+          for (const prop of options.properties) {
+            assert.ok(ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name), 'public lookup options must be explicit');
+            assert.ok(['signal', 'cache', 'credentials', 'redirect', 'method'].includes(prop.name.text), 'public lookup must not carry a body or headers');
+          }
+          const props = new Map(options.properties.map(prop => [prop.name?.getText(tree), prop.initializer?.getText(tree)]));
+          assert.equal(props.get('credentials'), "'omit'");
+          assert.equal(props.get('redirect'), "'error'");
+          assert.ok(!props.has('headers'), 'public release lookup must not forward engine credentials');
+          assert.ok(!props.has('method') || props.get('method') === "'GET'", 'public release lookup is read-only');
+        }
         found.set(name, (found.get(name) ?? 0) + 1);
       }
       if (ts.isNewExpression(node) && ['EventSource', 'WebSocket', 'XMLHttpRequest'].includes(memberName(node.expression))) {

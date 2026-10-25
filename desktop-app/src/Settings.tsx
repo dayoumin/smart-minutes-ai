@@ -9,6 +9,7 @@ import {
 } from './downloadPreferences';
 import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
+import { requestFiniteEngineJson } from './localEngineClientCore';
 import { readApiErrorMessage } from './apiError';
 import { MeetingCleanupPanel } from './MeetingCleanupPanel';
 import { LOCAL_ENGINE_NAME, withJosa } from './brand';
@@ -417,16 +418,9 @@ const getSettingsFailureMessage = (error: unknown): string => {
         : `설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. ${getEngineRecoveryStep()}`;
 };
 
-const fetchWithTimeout = async (url: string, init: RequestInit = {}): Promise<Response> => {
-    const controller = new AbortController();
-    const timeoutId = window.setTimeout(() => controller.abort(), SETTINGS_FETCH_TIMEOUT_MS);
-
-    try {
-        return await localEngineClient.request(toLocalEngineApiPath(url), { ...init, signal: controller.signal });
-    } finally {
-        window.clearTimeout(timeoutId);
-    }
-};
+const fetchWithTimeout = (url: string, init: RequestInit = {}): Promise<Response> => (
+    requestFiniteEngineJson(localEngineClient, toLocalEngineApiPath(url), init, SETTINGS_FETCH_TIMEOUT_MS)
+);
 
 export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general', initialSection, onMeetingsDeleted }) => {
     const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);

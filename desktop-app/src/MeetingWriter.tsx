@@ -60,6 +60,7 @@ import {
     type AnalysisResumeSyncStatus,
 } from './analysisResumeState';
 import { localEngineClient } from './localEngineClient';
+import { requestFiniteEngineJson } from './localEngineClientCore';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
 import { canUseLocalEngineCapability, transportFromHealthEvidence } from './localEngineConnection';
 import type { LocalEngineProbePayload } from './localEngineConnection';
@@ -325,30 +326,10 @@ const sleep = (ms: number, signal?: AbortSignal): Promise<void> => new Promise(r
 });
 
 /** A preparation request that a stop can abort and that fails with a TimeoutError if the engine stops answering. */
-const requestWithinPreparationTimeout = async (
+const requestWithinPreparationTimeout = (
     path: string,
     init: RequestInit = {},
-): Promise<Response> => {
-    const controller = new AbortController();
-    let timedOut = false;
-    const timerId = window.setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-    }, PREPARATION_REQUEST_TIMEOUT_MS);
-    const callerSignal = init.signal;
-    const abortFromCaller = () => controller.abort();
-    if (callerSignal?.aborted) controller.abort();
-    else callerSignal?.addEventListener('abort', abortFromCaller, { once: true });
-    try {
-        return await localEngineClient.request(path, { ...init, signal: controller.signal });
-    } catch (error) {
-        if (timedOut) throw new DOMException('The local engine did not answer in time.', 'TimeoutError');
-        throw error;
-    } finally {
-        window.clearTimeout(timerId);
-        callerSignal?.removeEventListener('abort', abortFromCaller);
-    }
-};
+): Promise<Response> => requestFiniteEngineJson(localEngineClient, path, init, PREPARATION_REQUEST_TIMEOUT_MS);
 
 // One sentence for missing required models. Point at 모델 받기 only when Settings can actually download one of them.
 const describeMissingModels = (models: ModelStatus[] = [], diarizationDuringAnalysis = false): string => {

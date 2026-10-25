@@ -295,7 +295,7 @@ pairing/session 최소 PoC를 먼저 통과한다.
 - 현재 약 443MB인 검사 설치 파일은 Wrangler 단일 업로드 한도(315MB)를 넘는다. 이번에는 별도 S3 키 없이 인증·만료·고정 key·크기 제한을 적용한 임시 Worker로 분할 업로드(multipart upload)하고 전체를 다시 읽어 해시를 확인한다. 확인 후 임시 Worker는 삭제한다. [공식 업로드 기준](https://developers.cloudflare.com/r2/objects/upload-objects/)
 - 계정 확인: `corepack pnpm --dir deploy/cloudflare whoami`.
 - 계정 로그인: `corepack pnpm --dir deploy/cloudflare login`. 사용자가 브라우저에서 계정 인증을 완료한다. 토큰을 채팅이나 소스에 붙여 넣지 않는다.
-- 로컬 배포 검사: `corepack pnpm --dir deploy/cloudflare check` (`wrangler deploy --dry-run`). 실제 배포: `corepack pnpm --dir deploy/cloudflare run deploy` (`deploy`는 pnpm 내장 명령과 구분해 반드시 `run`을 붙인다).
+- 로컬 배포 검사: `corepack pnpm --dir deploy/cloudflare check` (`wrangler deploy --dry-run`). 실제 배포: `corepack pnpm --dir deploy/cloudflare run deploy` (`deploy`는 pnpm 내장 명령과 구분해 반드시 `run`을 붙인다). 이 경로는 `pnpm release`가 생길 때까지의 임시 경로이며, `AGENTS.md` 「브랜치·배포 공통 규칙」 4·5에 따라 사용자 요청 때만 PC에서 실행한다(클라우드 세션은 명령과 대상 SHA만 안내).
 
 Wrangler `4.151.1`은 별도 의존성으로 고정했다. 설치는 저장소 루트에서 `corepack pnpm --dir deploy/cloudflare install --store-dir .cache/pnpm-cloudflare`로 한다. Windows 인증 저장소 모듈이 없으면 `.cache/cloudflare-auth/.wrangler/native/keyring` 폴더를 만든 뒤 `corepack pnpm --dir .cache/cloudflare-auth/.wrangler/native/keyring add @napi-rs/keyring@1.3.0 --store-dir .cache/pnpm-cloudflare`로 준비한다. 전역 설치나 인증 저장소 비활성화로 우회하지 않는다.
 

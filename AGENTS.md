@@ -9,6 +9,20 @@
 - For exploratory work where the user says "루프를 돌리자", gives a rough goal, or asks to decide which P2 findings matter now, use the project skill `.agents/skills/lmo-audio-iterative-dev-loop`. Keep the loop bounded: smallest useful slice, narrow verification, big/small review only when useful, then fix only blockers and current-goal P2s.
 - Treat P2 findings as triage items, not automatic work. Fix P2s that affect the current user flow, release/runtime reliability, saved data, or test confidence. Defer or ignore speculative P2s, and record useful deferred items in `todo.md` or `roadmap.md`.
 
+<!-- BEGIN:release-rules v2 · 정본: playbook/stack/release-flow.md -->
+## 브랜치·배포 공통 규칙
+1. 장기 브랜치는 `main` 하나다. 작업 브랜치·worktree는 짧게 쓰고 병합 후 지운다.
+2. 검증(저장소 지침이 정한 검사, 없으면 타입 검사와 관련 테스트)을 마친 작업은 AI가 `main`에 직접 push한다. 단, push 전 hook이 실제로 도는 환경(`git config core.hooksPath`가 저장소 hook 폴더를 가리키고 pre-push가 있음)이어야 하고, `git revert`로 다 되돌아가지 않는 변경(DB·데이터 스크립트, 인증·권한·비밀값, 사용자 기록, 배포·빌드·CI, AI 지침·hook)은 사용자 확인 후 push한다. 조건이 안 되면 커밋까지만 하고 묻는다. `--no-verify`·force-push는 쓰지 않는다.
+3. push는 운영 트래픽·데이터를 바꾸지 않는다. 미리 빌드해 트래픽 없는 버전으로 올리는 것까지만 된다.
+4. 배포·롤백·DB 구조 변경·비밀값 변경은 사용자가 요청할 때만 `pnpm release`로 한다. `pnpm release`가 없으면 그 저장소 배포 문서의 기존 경로를 쓰고, 그것도 없으면 묻는다. 맨 `wrangler deploy`·`wrangler secret put`과 대시보드 직접 변경은 하지 않는다.
+5. 클라우드 세션은 4의 작업을 실행하지 않고, PC에서 실행할 명령과 대상 SHA만 안내한다. Cloudflare 토큰을 저장소·`.env*`·`.dev.vars`·클라우드 작업 공간에 두거나 요청하지 않는다.
+6. DB migration은 추가만 하고 새 버전 승격 전에 적용한다. 삭제·이름 변경은 다음 릴리스에서, Durable Object 생성·삭제·이름 변경은 단독 릴리스로 한다. 원격 데이터 쓰기는 승인된 예약 작업이나 사용자가 요청한 스크립트로, 복원 지점을 남긴 뒤에만 한다.
+7. 운영 릴리스와 롤백마다 annotated 태그 `prod-YYYY-MM-DD.N`(UTC 날짜)을 남긴다. 데스크톱 앱은 `vX.Y.Z`(설치 파일 버전)를 쓴다.
+8. GitHub Actions는 push·pull_request 때 돌지 않는다. 예약 데이터 작업과 수동 실행만 둔다.
+<!-- END:release-rules -->
+
+이 저장소 메모: pre-push hook이 아직 없으므로 규칙 2에 따라 커밋까지만 하고 push 전에 묻는다. 웹 Worker `barorok`에는 `pnpm release`가 없어 규칙 4의 기존 경로(`corepack pnpm --dir deploy/cloudflare run deploy`, `docs/web-local-engine-followup-plan.md`)를 임시로 쓴다. 규칙 7의 `vX.Y.Z`는 버전이 붙는 유일한 설치 파일인 웹 연결용 설치 엔진(`Barorok-Local-Engine-Setup-<engineVersion>.exe`)의 `engineVersion` 그대로다(예: `v0.1.10-beta-20261021`). 포터블 데스크톱(`lmo_audio`)은 버전 없이 `release-manifest.json`의 commit으로 식별하므로 태그를 따로 만들지 않는다. `tauri.conf.json`의 `0.1.0`은 릴리스 버전이 아니다. 상세 순서는 `docs/tauri-desktop-release-checklist.md` 7절, 후속은 `todo.md`의 「브랜치·배포 공통 규칙 v2 적용 후속」.
+
 ## Audio Performance Work
 
 When changing audio preprocessing, STT quality, diarization quality, or long-file performance:
@@ -44,7 +58,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - In user-facing text and documentation, use `업데이트 패키지` for updating an existing installation and `신규 설치 패키지` for starting on a new PC or in a new folder. State ZIP separately as the archive format; do not call the latter `전달 ZIP`, `전달용 슬림 zip`, or `handoff zip`. Keep existing command, script, path, and schema identifiers such as `package:handoff` unchanged. Explain that core program files overlap: updates preserve existing settings/models/data, while a new-install package adds default settings and the diarization model; Whisper, Ollama executable, and Ollama summary models require separate preparation in the current slim package.
 
 - Before building, packaging, or verifying the portable desktop app, read `docs/tauri-desktop-release-checklist.md`; it is the single detailed source for release commands, build venv recovery, pip cache workarounds, and deploy-folder verification.
-- For user-ready release work, follow the fixed sequence in `docs/tauri-desktop-release-checklist.md`: classify scope, run narrow checks, review risky changes, commit, build, verify manifest, then push.
+- For user-ready release work, follow the fixed sequence in `docs/tauri-desktop-release-checklist.md`: classify scope, run narrow checks, review risky changes, commit, build, verify manifest, then push only as the 브랜치·배포 공통 규칙 block allows (rule 2).
 - Before changing desktop release, update, verify, or handoff scripts, the web deploy or local engine installer, where the app stores files, the stored-record format, or the web/engine contract version, check section 6-1 (data safety) of `docs/tauri-desktop-release-checklist.md`.
 - When the user says "build" without explicitly asking for a frontend/Vite/web build, treat it as a user-ready portable release build and run from the repo root: `corepack pnpm build`. Do not substitute `corepack pnpm --dir desktop-app build`, because that only updates web assets.
 - When the user asks for a build intended to share, deliver, hand off, or run on another PC, create and report the new-install package (`신규 설치 패키지`, ZIP) after the clean portable build: `corepack pnpm package:handoff`. Do not present the full `releases\lmo_audio` folder size as the normal transfer artifact unless the user explicitly wants all embedded models.

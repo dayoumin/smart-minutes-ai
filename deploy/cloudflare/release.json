@@ -1,17 +1,18 @@
 {
-  "version": "0.1.10-beta-20261021",
-  "engineVersion": "0.1.10-beta-20261021",
+  "version": "0.1.11-beta-20261021",
+  "engineVersion": "0.1.11-beta-20261021",
   "origin": "https://barorok.ecomarin.workers.dev",
-  "downloadPath": "/downloads/Barorok-Local-Engine-Setup-0.1.10-beta-20261021.exe",
+  "downloadPath": "/downloads/Barorok-Local-Engine-Setup-0.1.11-beta-20261021.exe",
   "previousDownloadPath": "/downloads/Barorok-Local-Engine-Setup-0.1.5-beta-20261018.exe",
   "previousDownloadPaths": [
     "/downloads/Barorok-Local-Engine-Setup-0.1.5-beta-20261018.exe",
     "/downloads/Barorok-Local-Engine-Setup-0.1.5-beta-20261020-installerfix.exe",
     "/downloads/Barorok-Local-Engine-Setup-0.1.8-beta-20261020.exe",
-    "/downloads/Barorok-Local-Engine-Setup-0.1.9-beta-20261020.exe"
+    "/downloads/Barorok-Local-Engine-Setup-0.1.9-beta-20261020.exe",
+    "/downloads/Barorok-Local-Engine-Setup-0.1.10-beta-20261021.exe"
   ],
-  "bytes": 442841356,
-  "sha256": "dca637330e3f010d346b9d60ea426e50fb59cab304266c3ef026b776a9979f6b",
+  "bytes": 442842027,
+  "sha256": "f074b179a8c548632946299a045dd7abcb77802d690f62c1cbc23c848d0c2b77",
   "signed": false,
   "testRelease": true
 }

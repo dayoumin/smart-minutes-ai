@@ -34,6 +34,14 @@
 
 # 0. Immediate queue
 
+- [x] 2026-10-25 **신규 설치 ZIP 실물·첫 실행 점검 완료**: clean `1ebd2d9`에서 정식 `corepack pnpm package:handoff` 성공. 474,057,309바이트/4,996항목의 ZIP을 CRC 추출·HEAD 기본 설정·개인 자료 제외·모델 포함/제외·SSL 리소스·새 추출본 sidecar/4형식 export·fresh WebView 실제 EXE 첫 실행/모델 준비 안내·정상 종료까지 확인했다. 원본10파일 SHA/20모델 메타데이터 불변. 전달 파일은 `releases/handoff/lmo_audio_no_ollama_no_whisper_1ebd2d9.zip`, 근거 `.tmp/new-install-qa-20261025/final-report.json`. 모델 준비 전 분석 가능이나 다른 PC/시스템 Ollama 없는 조건을 검증한 것으로 세지 않는다.
+
+- [x] 2026-10-25 **공개 HTTPS 웹 장애·복구 표본 점검 완료**: 실제0.1.11 설치 payload4957파일 검증 복사본·전용 자료와 작업 IAB에서 서버 미실행/지연/끊김/복구·실제 음성 생성 기록의 오프라인 reload/재열기·복구 재생을 통과했다. 원본145파일 SHA·85모델 메타데이터 불변, 정상 종료 뒤 프로세스·포트·mutex/event 해제. `.tmp/web-failure-qa-20261025/final-report.json`, 배포 체크리스트의 웹 실제 결과를 따른다. Chrome/Edge 권한·회사 정책·다른 PC는 별도 인계 목록을 유지한다.
+- [x] 공개 웹 유한 JSON 본문 기한 수정·배포·재검증(2026-10-25): 공개 기준을 Git으로 복원한 `e796ea3`를 배포했다. 부분 JSON200/500 정체에서 약20초 실패 안내·Esc/입력 보존·정상 회복 통과, 이전 공개 번들은 같은 시험에서 실패했다. 독립 agent 검사 P2를 수정·재점검했고 공개6자산/설치0.1.11 메타·기존 링크5개·실제 설정/기록 재열기/음성 재생을 확인했다. 근거 `.tmp/public-json-deadline-20261025`, [배포 체크리스트](docs/release-checklist.md#공개-웹-json-본문-기한-수정배포--2026-10-25). 다른 PC·회사 권한 관문은 별도 목록을 유지한다.
+- [ ] 다른 PC·회사 환경 인계: [배포 체크리스트의 대상 PC 목록](docs/release-checklist.md#다른-pc회사-환경에서-이어서-확인할-항목)에 일반 권한 첫 실행·Chrome/Edge 권한/정책·첫 모델 준비·업데이트/재설치 보존·다른 하드웨어·회사 편집기/접근성을 분리했다. 이 PC의 검증 완료 항목을 반복 미완료로 세지 않는다.
+
+- [x] 2026-10-25 **이번 데스크톱 장애·복구 및 실제 분석·자동 저장·업데이트 이관 점검 완료**: clean 후보 `1ebd2d9`에서 실제 EXE 장애5조건, 30초 음성의 구/새 버전 기록 생성·자동 저장·정상 재실행, `8eac988→1ebd2d9` 업데이트 후 기록/음성·104파일 보존을 확인했다. 실제 EXE3사본·저장 record/서버 결과·SSL 리소스 SHA도 재대조했다. 원본 설치본 교체·현재 미커밋 전체의 통합 배포는 하지 않았다. 현재 완료/미실행 구분은 [배포 체크리스트의 현재 판정](docs/release-checklist.md#현재-판정--2026-10-25)을 따른다. 아래 과거 대기 기록보다 이 후보의 해당 범위 판정이 우선한다.
+
 - [x] 2026-10-23 첫 화면 UI 마감·도움말 배치 안정화: 메뉴 접기 기호 제거, 넓은 창 고정 메뉴·좁은 창 텍스트 메뉴, 필수 입력·최대2시간 사전 안내, 노트북으로 로컬 처리 장점을 표현했다. 상태 제목/설명4px·아래 버튼12px·버튼 사이8px, 팝업 도움말의 본문 밀림 방지와 설정 모달 초점 우선권을 확인했다. 노트북은 넓은 창의 승인 위치를 유지하고 좁은 창은 문구에서24px 고정 간격으로 배치한다. 상시 자세히 링크는 제거하고 브라우저별 첫 접속 안내만 유지했다. 화면16조합·도움말3너비·메뉴/키보드/음성 연속성·첫 안내 닫기/새로고침/새 탭 재접속·타입/lint·독립 검토 통과. 운영 HTTPS·실제 엔진 분석은 이번 UI 검증에 포함하지 않는다. 상세는 `docs/design.md`·`docs/frontend-simulation-testing.md`를 따른다.
 
 - [x] 2026-10-23 승인 첫 화면 배치 시안 반영: 넓은 창 메뉴 고정·좁은 창 텍스트 메뉴·업로드부터 분석까지 한 열·큰 빈 목록 축소·제목/본문 폭 통일·현재 작성 메뉴 표시. 로컬 처리/외부 AI 미전송 장점은 분석 아래 항상 유지했다. 12개 화면 조합·긴 용어·전체 안내·메뉴/키보드/입력/음성 연속성·타입/lint·독립 리뷰 및 초점 복귀 수정 확인 완료. 운영 배포/실제 엔진 분석은 완료로 세지 않는다. 상세는 `docs/frontend-simulation-testing.md`의 승인 배치 절.
@@ -63,7 +71,7 @@
 - [ ] 2026-10-22 **업데이트 패키지·신규 설치 패키지 데이터 보호 보강** (다음 `package:update`·`package:handoff` 전)
   - 빌드 전 2관점 agent 검토에서 나온 위험을 같은 날 소스에서 보강했다(`11b7eff5`에 커밋 완료). 업데이트 payload와 신규 설치 패키지는 빌드 manifest 목록(`portablePayloadFiles`)대로 만들고 설치본 파일을 빌드 해시와 대조한다. `backend`에서는 이전 manifest 목록에 있고 바뀌지 않은 파일만 지워, 사용자가 둔 파일과 별칭 모델 위치(`backend\models\stt`·`diarization`)를 보존한다. 배포 동기화(`Sync-PortableToDeploy`)도 같은 규칙으로 바꿨다.
   - 업데이트 적용과 패키지 생성에 `portable_data_safety.ps1` 검사를 걸었고, `backend\logs`·`database`·DB 파일도 보존한다. 앱으로 Ollama를 받은 설치본의 README 누락(업데이트 생성·검증, 신규 설치 패키지)과 Whisper를 넣은 신규 설치 패키지 검사(`-ExistingInstallation`)도 고쳤다. 독립 agent 검토의 P2 4건(비정상 경로 표기 `.`·`..`·끝의 점, 예전 신규 설치 패키지 목록 불신, 업데이트 검증 범위, 핵심 규칙 테스트)과 P3 대부분을 반영했다. 임시 fixture로 업데이트15/15·`check:quick`(릴리스 모듈 포함 backend153건) 통과, 새·변경 테스트는 수정 전 코드에서 실패하고 사용자 자료 보호 줄을 빼도 실패함을 확인했다.
-  - 남은 것: 실제 설치본에서 `package:update` 적용과 `package:handoff` 생성 확인, 바뀐 배포 동기화로 한 번 빌드. 목록 없는 오래된 설치본과 업데이트 패키지의 `runtime` 범위는 `docs/tauri-desktop-release-checklist.md` 6-1 "알려진 한계"에 둔다.
+  - 남은 것: 실제 설치본에서 `package:update` 적용과 `package:handoff` 생성 확인, 바뀐 배포 동기화로 한 번 빌드. 목록 없는 오래된 설치본과 업데이트 패키지의 `runtime` 범위는 `docs/release-checklist.md` 6-1 "알려진 한계"에 둔다.
   - **2026-10-22 작업 종료·10-23 재개**: 독립 agent 3관점의 재검토에서 새 확정 P1/P2는 없었고 집중 검사26개(배포6·업데이트4·전달2·인증10·실제 소켓4)가 통과했다. 실제 deploy는 `a150589b`/dirty=false/15:34 빌드이며 읽기 전용 무결성 검사도 통과했다. 이후 변경은 배포 스크립트·문서·테스트라 실행 파일·sidecar 재컴파일 없이 포장 단계를 재실행할 수 있다. 최신 후보 완성·실제 업데이트·오늘 신규 설치 패키지는 아직 미완료다.
   - 실제 시험은 `.tmp/release-real-qa-20261022/previous/lmo_audio`와 전용 `webview-profile`에서 했다. 실제 WebView 프로필 인자와 health의 backend 경로·17864를 확인했다. `QA 업데이트 보존 1022`(job `267feb12-e1e5-4b25-89af-2391c114a177`)는 30초 음성 → 대화록·2명 구분 → 자동 저장을 완료했고 오디오 readyState=4/duration=30을 확인했다. 소요6분12초는 파일 복사·메모리 압박과 겹친 결과이며 속도 정상·음성 재생·재열기·업데이트 후 보존의 증거는 아니다. 시험 기록·프로필·원본은 그대로 남긴다. 원본 deploy 사용자 파일35개와 기존 데스크톱 IndexedDB8개는 종료 시 SHA 불변이다.
   - 재포장 시 `src-tauri/binaries`가 `.gitkeep`만 있어 첫 실행이 실패했다. 검증된 deploy의 sidecar와 `_internal`을 같은 중간 경로로 복구했다(소스 재컴파일 없음). 두 번째 포장은 파일 복사 중 가용 메모리0.8GB/5%와 실제 분석 지연이 겹쳐 소유 PowerShell만 중지했다. deploy 동기화 전이며 **중간 `target/release/portable/lmo_audio`는 완성본으로 쓰면 안 된다**. 사용자 요청으로 오늘 재시작하지 않는다.
@@ -514,7 +522,7 @@
   - 빌드 후 최종 실행 기준은 `releases\lmo_audio` 폴더 전체다. `lmo_audio.exe`만 따로 빼서 실행하지 않는다.
   - 빌드 후 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify_portable.ps1 -PortableDir releases\lmo_audio`로 manifest, sidecar, 모델, health, export smoke를 확인한다.
   - 실제 앱 검증은 `releases\lmo_audio\lmo_audio.exe` 실행 기준으로 한다. 개발 서버나 웹 브라우저 테스트 결과만으로 완료 처리하지 않는다.
-  - 데스크탑앱 한계 체크는 `docs\tauri-desktop-release-checklist.md`의 `0-1. 데스크탑앱 한계 체크`를 기준으로 본다.
+  - 데스크탑앱 한계 체크는 `docs\release-checklist.md`의 `0-1. 데스크탑앱 한계 체크`를 기준으로 본다.
   - 최소 수동 시나리오: 앱 실행 시 콘솔 창 없음, 필수 모델 준비 상태, 짧은 MP4/WAV 대화록 작성, 참석자 구분 실행 가능/불가 상태, 저장공간 부족 안내, HWPX/TXT/DOCX 다운로드, 다운로드 위치와 내부 결과 폴더 구분.
   - Ollama 정리 모델이 없으면 대화록 작성은 완료되어야 하고, 전체 요약/주제별 정리/참석자별 정리는 준비 필요 또는 별도 실행 상태로 남아야 한다.
   - 실패 시 `releases\lmo_audio\logs\analysis.log`, `releases\lmo_audio\backend\logs`, `releases\lmo_audio\backend\outputs`, `releases\lmo_audio\backend\temp`를 확인하고 원인을 기록한다.
@@ -523,11 +531,11 @@
   - 일반 사용자 배포본에서 최상위에는 `lmo_audio.exe`, `START_HERE.txt`처럼 사용자가 직접 볼 파일만 남기고, `models`, `backend`, `binaries`, `runtime` 같은 내부 리소스 폴더는 `_internal` 또는 앱 관리 데이터 폴더 아래로 숨기는 구조를 검토한다.
   - 모델 파일은 실제로 여러 필수 파일로 구성되므로 단일 파일로 합치지 않는다. 대신 앱/패키징/검증 코드가 역할 기반 모델 registry를 통해 내부 경로를 찾게 한다.
   - `faster-whisper-large-v3`, `speaker-diarization-community-1` 같은 구체 모델명이 backend, Settings UI, verify/release script에 직접 박혀 있는 지점을 줄이고, `stt`, `diarization`, `summary` 역할 기준으로 교체 가능하게 만든다.
-  - 변경 시 `docs\tauri-desktop-release-checklist.md`의 리소스와 모델 경로 기준, 신규 설치 패키지(ZIP), manifest, `verify_portable.ps1`, `/api/models/status`, 설정 모델 탭을 함께 갱신한다.
+  - 변경 시 `docs\release-checklist.md`의 리소스와 모델 경로 기준, 신규 설치 패키지(ZIP), manifest, `verify_portable.ps1`, `/api/models/status`, 설정 모델 탭을 함께 갱신한다.
 - [x] 0-0-0순위: 집 PC에서 먼저 portable 빌드/모델 경로 기준 맞추기
   - 2026-10-20 점검: 닫음. 원래 체크아웃에 `models\` 두 모델, `releases\lmo_audio`, `backend\.venv-desktop`이 있고 README·체크리스트에 옛 `backend\models` 경로가 없다.
   - 이번 `origin/main` 병합 충돌은 옛 기준(`backend\models\...`, `lmo_audio\models\...`, `backend\.venv`)과 현재 기준(`models\...`, `releases\lmo_audio\models\...`, `backend\.venv-desktop`)이 섞여서 났다.
-  - 집에서 작업을 시작하면 먼저 `README.md`, `docs/tauri-desktop-release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.
+  - 집에서 작업을 시작하면 먼저 `README.md`, `docs/release-checklist.md`, 이 `todo.md`가 같은 기준인지 확인한다.
   - 재빌드용 모델 원본은 프로젝트 루트 `models\faster-whisper-large-v3`, `models\speaker-diarization-community-1`로 맞춘다.
   - 최종 실행/검증 기준은 `releases\lmo_audio` 하나로 맞춘다.
   - portable 빌드 Python은 기본적으로 `backend\.venv-desktop\Scripts\python.exe`를 사용하고, 다른 Python을 쓸 때는 `scripts\release_portable.ps1 -Python <python.exe 경로>`로 명시한다.
@@ -600,12 +608,12 @@
     - 손상된 venv 또는 패키지 설치 상태
   - 전체 앱을 새로 만들기 전에, ASR 런타임(venv/패키지)만 분리 재구성해서 재현 여부를 먼저 확인한다.
 - [x] 0-0-1순위: 푸시 안전 기준 정리
-  - 2026-10-20 점검: 닫음. 상시 규칙으로 `docs/tauri-desktop-release-checklist.md`의 고정 순서와 worktree 브랜치 작업을 따른다.
+  - 2026-10-20 점검: 닫음. 상시 규칙으로 `docs/release-checklist.md`의 고정 순서와 worktree 브랜치 작업을 따른다.
   - 현재처럼 워크트리가 많이 더러운 상태에서는 `main`에 바로 푸시하지 않는다.
   - 내가 작업한 파일만 별도 브랜치에서 선별 커밋 후 푸시한다.
   - 빌드 전 검증 작업과 기능 개발 변경이 섞여 있으면 푸시 단위를 먼저 분리한다.
 - [x] 2026-05-13 portable release 문서 단일화
-  - build venv, sidecar packaging, portable release, deploy-folder 검증 절차의 상세 원본은 `docs/tauri-desktop-release-checklist.md` 하나로 둔다.
+  - build venv, sidecar packaging, portable release, deploy-folder 검증 절차의 상세 원본은 `docs/release-checklist.md` 하나로 둔다.
   - `AGENTS.md`에는 체크리스트를 먼저 읽으라는 짧은 운영 규칙만 남기고, 새 시행착오도 체크리스트에 추가한다.
 - [x] 2026-05-13 clean manifest 재생성
   - 2026-10-20 점검: 지금 `releases\lmo_audio

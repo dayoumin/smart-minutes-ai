@@ -23,7 +23,7 @@ If the request implies sharing, handoff, company delivery, another PC, or a zip 
 
 ## Required Workflow
 
-1. Read `AGENTS.md` and `docs\tauri-desktop-release-checklist.md`.
+1. Read `AGENTS.md` and `docs\release-checklist.md`.
 2. Run `git -c core.excludesFile= status --short --branch --untracked-files=all` and note whether the manifest will be dirty.
 3. Build from the repository root:
 

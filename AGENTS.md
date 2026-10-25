@@ -21,7 +21,7 @@
 8. GitHub Actions는 push·pull_request 때 돌지 않는다. 예약 데이터 작업과 수동 실행만 둔다.
 <!-- END:release-rules -->
 
-이 저장소 메모: pre-push hook이 아직 없으므로 규칙 2에 따라 커밋까지만 하고 push 전에 묻는다. 웹 Worker `barorok`에는 `pnpm release`가 없어 규칙 4의 기존 경로(`corepack pnpm --dir deploy/cloudflare run deploy`, `docs/web-local-engine-followup-plan.md`)를 임시로 쓴다. 규칙 7의 `vX.Y.Z`는 버전이 붙는 유일한 설치 파일인 웹 연결용 설치 엔진(`Barorok-Local-Engine-Setup-<engineVersion>.exe`)의 `engineVersion` 그대로다(예: `v0.1.10-beta-20261021`). 포터블 데스크톱(`lmo_audio`)은 버전 없이 `release-manifest.json`의 commit으로 식별하므로 태그를 따로 만들지 않는다. `tauri.conf.json`의 `0.1.0`은 릴리스 버전이 아니다. 상세 순서는 `docs/tauri-desktop-release-checklist.md` 7절, 후속은 `todo.md`의 「브랜치·배포 공통 규칙 v2 적용 후속」.
+이 저장소 메모: pre-push hook이 아직 없으므로 규칙 2에 따라 커밋까지만 하고 push 전에 묻는다. 웹 Worker `barorok`에는 `pnpm release`가 없어 규칙 4의 기존 경로(`corepack pnpm --dir deploy/cloudflare run deploy`, `docs/web-local-engine-followup-plan.md`)를 임시로 쓴다. 규칙 7의 `vX.Y.Z`는 버전이 붙는 유일한 설치 파일인 웹 연결용 설치 엔진(`Barorok-Local-Engine-Setup-<engineVersion>.exe`)의 `engineVersion` 그대로다(예: `v0.1.10-beta-20261021`). 포터블 데스크톱(`lmo_audio`)은 버전 없이 `release-manifest.json`의 commit으로 식별하므로 태그를 따로 만들지 않는다. `tauri.conf.json`의 `0.1.0`은 릴리스 버전이 아니다. 상세 순서는 `docs/release-checklist.md` 7절, 후속은 `todo.md`의 「브랜치·배포 공통 규칙 v2 적용 후속」.
 
 ## Audio Performance Work
 
@@ -57,9 +57,9 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 
 - In user-facing text and documentation, use `업데이트 패키지` for updating an existing installation and `신규 설치 패키지` for starting on a new PC or in a new folder. State ZIP separately as the archive format; do not call the latter `전달 ZIP`, `전달용 슬림 zip`, or `handoff zip`. Keep existing command, script, path, and schema identifiers such as `package:handoff` unchanged. Explain that core program files overlap: updates preserve existing settings/models/data, while a new-install package adds default settings and the diarization model; Whisper, Ollama executable, and Ollama summary models require separate preparation in the current slim package.
 
-- Before building, packaging, or verifying the portable desktop app, read `docs/tauri-desktop-release-checklist.md`; it is the single detailed source for release commands, build venv recovery, pip cache workarounds, and deploy-folder verification.
-- For user-ready release work, follow the fixed sequence in `docs/tauri-desktop-release-checklist.md`: classify scope, run narrow checks, review risky changes, commit, build, verify manifest, then push only as the 브랜치·배포 공통 규칙 block allows (rule 2).
-- Before changing desktop release, update, verify, or handoff scripts, the web deploy or local engine installer, where the app stores files, the stored-record format, or the web/engine contract version, check section 6-1 (data safety) of `docs/tauri-desktop-release-checklist.md`.
+- Before building, packaging, or verifying the portable desktop app, read `docs/release-checklist.md`; it is the single detailed source for release commands, build venv recovery, pip cache workarounds, and deploy-folder verification.
+- For user-ready release work, follow the fixed sequence in `docs/release-checklist.md`: classify scope, run narrow checks, review risky changes, commit, build, verify manifest, then push only as the 브랜치·배포 공통 규칙 block allows (rule 2).
+- Before changing desktop release, update, verify, or handoff scripts, the web deploy or local engine installer, where the app stores files, the stored-record format, or the web/engine contract version, check section 6-1 (data safety) of `docs/release-checklist.md`.
 - When the user says "build" without explicitly asking for a frontend/Vite/web build, treat it as a user-ready portable release build and run from the repo root: `corepack pnpm build`. Do not substitute `corepack pnpm --dir desktop-app build`, because that only updates web assets.
 - When the user asks for a build intended to share, deliver, hand off, or run on another PC, create and report the new-install package (`신규 설치 패키지`, ZIP) after the clean portable build: `corepack pnpm package:handoff`. Do not present the full `releases\lmo_audio` folder size as the normal transfer artifact unless the user explicitly wants all embedded models.
 - Use `backend\.venv-desktop\Scripts\python.exe` as the normal portable release build Python. Temporary venvs are emergency fallbacks only and must be called out in the work summary.
@@ -68,7 +68,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 - Before diagnosing a portable bug, record the launched executable, backend directory from `/api/health`, and whether the app is dev, sidecar, or packaged portable.
 - Prefer `scripts/verify_portable.ps1 -PortableDir releases\lmo_audio -ExistingInstallation` (read-only) before rerunning a full portable build. The default mode launches the app and refuses a deploy folder that holds records or logs; never delete them to make it pass.
 - If intermediate portable packaging is locked, verify `lmo_audio` directly and rebuild only the missing layer.
-- When a new portable build lesson is learned, update `docs/tauri-desktop-release-checklist.md` instead of duplicating the detailed procedure here.
+- When a new portable build lesson is learned, update `docs/release-checklist.md` instead of duplicating the detailed procedure here.
 
 ## Windows Runtime Pitfalls
 
@@ -134,5 +134,5 @@ Related docs:
 - `docs/audio-preprocessing-eval-template.csv`
 - `docs/design.md`
 - `docs/frontend-simulation-testing.md`
-- `docs/tauri-desktop-release-checklist.md`
+- `docs/release-checklist.md`
 - `todo.md`

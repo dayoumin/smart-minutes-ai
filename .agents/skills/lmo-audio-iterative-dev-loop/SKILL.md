@@ -35,7 +35,7 @@ Ask at most one clarifying question only if a wrong assumption would change the 
 
 1. Read `AGENTS.md` and any directly relevant project doc:
    - UI/copy: `docs/design.md`
-   - release/runtime: `docs/tauri-desktop-release-checklist.md`
+   - release/runtime: `docs/release-checklist.md`
    - frontend simulation: `docs/frontend-simulation-testing.md`
 2. Inspect the current worktree with:
    - `git -c core.excludesFile= status --short --branch --untracked-files=all`

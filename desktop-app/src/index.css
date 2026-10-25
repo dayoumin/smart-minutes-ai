@@ -1363,6 +1363,23 @@
     @apply text-[15px] leading-7 text-foreground;
   }
 
+  .detail-summary-review-note {
+    @apply mb-5 flex flex-wrap items-baseline gap-x-3 gap-y-1 text-sm leading-6 text-muted-foreground;
+  }
+
+  .detail-summary-review-note p {
+    @apply m-0 min-w-0 flex-1 basis-72 break-keep;
+  }
+
+  .detail-summary-review-note button {
+    @apply shrink-0 text-primary underline underline-offset-2;
+  }
+
+  .detail-summary-review-note button:focus-visible {
+    outline: 2px solid var(--brand-primary);
+    outline-offset: 3px;
+  }
+
   /* Summary sections read as one document: headings and lists, no boxed cards. */
   #organize-mode-panel-summary .detail-subtle-card {
     @apply rounded-none border-0 bg-transparent p-0;

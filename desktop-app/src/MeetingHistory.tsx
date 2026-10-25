@@ -4508,6 +4508,18 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                 )}
                                 {/* Same reserved line as the report tab: starting, finishing or failing never moves the body. */}
                                 <DetailStatusLine status={organizeStatus} action={organizeGeneratingKind ? undefined : renderModelSetupAction('summary')} />
+                                <div className="detail-summary-review-note" aria-label="AI 요약 확인 안내">
+                                    <p>AI가 정리한 내용에는 누락이나 잘못된 해석이 있을 수 있습니다. 중요한 내용은 대화록과 대조해 주세요.</p>
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setDetailTab('script');
+                                            requestAnimationFrame(() => document.getElementById('meeting-detail-tab-script')?.focus());
+                                        }}
+                                    >
+                                        대화록 확인
+                                    </button>
+                                </div>
                                 {shouldShowContextPreview && (
                                     <div className="detail-context-preview" aria-label="선택한 정리 기준 설명">
                                         <div className="min-w-0">

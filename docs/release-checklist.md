@@ -363,7 +363,7 @@ CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261
 
 현재 루트 점검 명령:
 
-Windows의 push 전 자동 검사는 각 체크아웃에서 `git config core.hooksPath .githooks`로 켠다. `.githooks/pre-push`가 `scripts/check_pre_push.ps1`을 실행해 타입 검사·엔진 인증/공개 버전/작업 상태 계약·빠른 백엔드 검사를 직렬 수행하고, 하나라도 실패하면 push를 막는다. 소스에 미커밋·미추적 파일이 있으면 먼저 멈춰 검사 대상과 push할 커밋이 어긋나지 않게 한다. 로컬 설정 등 보존할 변경은 직접 커밋하지 말고 안전하게 임시 보관한 뒤 검사한다. 전체 린트·패키징·브라우저·실모델 검사를 대신하지 않으며 기존 프로젝트 Python/Node를 재사용한다. 실제 push 없이 `git hook run pre-push`로 설치와 차단 동작을 확인할 수 있다. PowerShell이 없는 클라우드 세션은 이 hook을 우회해 push하지 않는다.
+Windows의 push 전 자동 검사는 각 체크아웃에서 `git config core.hooksPath .githooks`로 켠다. `.githooks/pre-push`가 `scripts/check_pre_push.ps1`을 실행해 타입 검사·엔진 인증/공개 버전/작업 상태 계약·빠른 백엔드 검사를 직렬 수행하고, 하나라도 실패하면 push를 막는다. 소스에 미커밋·미추적 파일이 있으면 먼저 멈춰 검사 대상과 push할 커밋이 어긋나지 않게 한다. 로컬 설정 등 보존할 변경은 직접 커밋하지 말고 안전하게 임시 보관한 뒤 검사한다. 전체 린트·패키징·브라우저·실모델 검사를 대신하지 않으며 기존 프로젝트 Python/Node를 재사용한다. 실제 push 없이 검사하려면 `.tmp/pre-push-empty-refs.txt`에 빈 파일을 만들고 `git hook run --to-stdin=.tmp/pre-push-empty-refs.txt pre-push`로 설치와 차단 동작을 확인한다. 입력 파일을 생략한 수동 호출은 현재 도구 환경에서 입력 종료를 기다릴 수 있으므로 사용하지 않는다. 실제 push에서는 Git이 ref 목록과 입력 종료를 전달한다. PowerShell이 없는 클라우드 세션은 이 hook을 우회해 push하지 않는다.
 
 ```powershell
 corepack pnpm check:quick

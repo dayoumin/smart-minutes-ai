@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 $PrePushRepoRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
-$PrePushSourcePaths = @("desktop-app", "backend", "scripts", "tests", "configs", "package.json", "pnpm-lock.yaml", ".githooks", ".gitattributes")
+$PrePushSourcePaths = @("desktop-app", "backend", "scripts", "tests", "configs", "deploy", "installer", "package.json", "pnpm-lock.yaml", ".githooks", ".gitattributes", ".github", ".agents", ".claude", "AGENTS.md")
 
 function Invoke-PrePushCommand([string]$FilePath, [string[]]$ArgumentList) {
     & $FilePath @ArgumentList
@@ -51,56 +51,114 @@ function Get-PrePushScope([string]$RefUpdates) {
     Assert-PrePushRefUpdates $RefUpdates
     $updates = @($RefUpdates -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
     if ($updates.Count -eq 0) {
-        return [pscustomobject]@{ DocumentationOnly = $false; Reason = "No push range supplied." }
+        return [pscustomobject]@{ DocumentationOnly = $false; Paths = @(); ForceCore = $true; Reason = "No push range supplied." }
     }
+    $paths = @{}
+    $documentationOnly = $true
+    $forceCore = $false
+    $reason = "Only approved documentation paths or ref deletions."
     foreach ($line in $updates) {
         $parts = $line.Trim() -split '\s+'
         if ($parts[1] -eq ('0' * 40)) { continue }
         if ($parts[3] -eq ('0' * 40)) {
-            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "New remote ref." }
+            $documentationOnly = $false; $forceCore = $true; $reason = "New remote ref."
+            continue
         }
         $remoteCommit = & git rev-parse --verify --quiet ($parts[3] + '^{commit}')
         if ($LASTEXITCODE -ne 0) {
-            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Remote base is not available locally." }
+            $documentationOnly = $false; $forceCore = $true; $reason = "Remote base is not available locally."
+            continue
         }
         # Inspect every outgoing commit, even changes later reverted. Combined merge entries
         # include resolutions without counting code already present on the remote parent again.
         # No rename detection: both deleted/added paths and executable/symlink modes stay visible.
         $changes = @(& git -c core.quotepath=false log --format= --raw --no-renames --diff-merges=dense-combined "$remoteCommit..$($parts[1])" --)
         if ($LASTEXITCODE -ne 0) {
-            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Could not inspect the push range." }
+            $documentationOnly = $false; $forceCore = $true; $reason = "Could not inspect the push range."
+            continue
         }
         # A merge can retain an older parent's code without changing it relative to
         # every parent. Compare the final tree too, so that remote code regressions stay visible.
         $tipChanges = @(& git -c core.quotepath=false diff --raw --no-renames $remoteCommit $parts[1] --)
         if ($LASTEXITCODE -ne 0) {
-            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Could not inspect the final pushed tree." }
+            $documentationOnly = $false; $forceCore = $true; $reason = "Could not inspect the final pushed tree."
+            continue
         }
         $changes += $tipChanges
         foreach ($change in $changes) {
             if ([string]::IsNullOrWhiteSpace($change)) { continue }
             if ($change -notmatch '^(?<parents>:+)(?<metadata>[^\t]+)\t(?<path>.+)$') {
-                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Unrecognized change metadata." }
+                $documentationOnly = $false; $forceCore = $true; $reason = "Unrecognized change metadata."
+                continue
             }
             $parentCount = $Matches.parents.Length
             $path = $Matches.path
             $fields = $Matches.metadata -split ' '
             $modeCount = $parentCount + 1
             if ($fields.Count -ne (2 * $modeCount + 1) -or $fields[-1] -notmatch '^[A-Z]+\d*$') {
-                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Unrecognized change metadata." }
+                $documentationOnly = $false; $forceCore = $true; $reason = "Unrecognized change metadata."
+                continue
             }
             $modes = $fields[0..$parentCount]
             $objectIds = $fields[$modeCount..(2 * $modeCount - 1)]
             if (@($objectIds | Where-Object { $_ -notmatch '^[a-f0-9]+$' }).Count -gt 0) {
-                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Unrecognized change metadata." }
+                $documentationOnly = $false; $forceCore = $true; $reason = "Unrecognized change metadata."
+                continue
             }
-            if (@($modes | Where-Object { $_ -notin @('000000', '100644') }).Count -gt 0 `
-                -or -not (Test-PrePushDocumentationPath $path)) {
-                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Code, configuration or automation changed." }
+            $paths[$path] = $true
+            if (@($modes | Where-Object { $_ -notin @('000000', '100644') }).Count -gt 0) {
+                $documentationOnly = $false; $forceCore = $true; $reason = "Executable or link modes require core checks."
+            }
+            if (-not (Test-PrePushDocumentationPath $path)) {
+                $documentationOnly = $false
+                if (-not $forceCore) { $reason = "Code, configuration or automation changed." }
             }
         }
     }
-    return [pscustomobject]@{ DocumentationOnly = $true; Reason = "Only approved documentation paths or ref deletions." }
+    return [pscustomobject]@{
+        DocumentationOnly = $documentationOnly; Paths = @($paths.Keys | Sort-Object)
+        ForceCore = $forceCore; Reason = $reason
+    }
+}
+
+function Get-PrePushCheckPlan($Scope) {
+    $frontend = $false; $backend = $false; $hook = $false
+    if (-not $Scope.DocumentationOnly) {
+        if ($Scope.ForceCore -or @($Scope.Paths).Count -eq 0) {
+            $frontend = $true; $backend = $true; $hook = $true
+        }
+        foreach ($path in $Scope.Paths) {
+            if (Test-PrePushDocumentationPath $path) { continue }
+            if ($path -match '(^|/)(AGENTS\.md|\.agents/|\.claude/)' `
+                -or $path -match '^\.githooks/' `
+                -or $path -in @("scripts/check_pre_push.ps1", "tests/test_pre_push_hook.py", "scripts/run_release_checks.ps1")) {
+                $frontend = $true; $backend = $true; $hook = $true
+            }
+            elseif ($path -match '^desktop-app/src/.+\.(tsx?|jsx?|css)$') {
+                $frontend = $true
+                # Transport, persistence and engine-facing workflows keep both sides' contracts.
+                if ($path -match '^desktop-app/src/(api[^/]*|[Ll]ocalEngine[^/]*|useLocalEngine[^/]*|runtimeEnvironment|[Uu]pdate[^/]*|desktopRelease|meetingRepository|meetingGeneration|meetingDeletion|meetingKnowledge|brand|types|Settings|MeetingWriter|writerStatusRow)\.') {
+                    $backend = $true
+                }
+            }
+            elseif ($path -match '^desktop-app/(eslint\.config\.js|tsconfig[^/]*\.json)$' `
+                -or $path -match '^desktop-app/scripts/test-(api-auth-boundary|desktop-release|update-activity)\.mjs$') {
+                $frontend = $true
+            }
+            elseif ($path -match '^backend/(test_)?(analysis_errors|job_checkpoints|storage_preflight)\.py$') {
+                # These owned modules/tests have no frontend imports or response-schema consumers.
+                $backend = $true
+            }
+            else {
+                # Shared configuration, native/build code and unowned paths retain the old core.
+                $frontend = $true; $backend = $true
+            }
+        }
+    }
+    return [pscustomobject]@{
+        Frontend = $frontend; Backend = $backend; Hook = $hook
+        Reason = $Scope.Reason
+    }
 }
 
 function Get-PrePushPython {
@@ -111,25 +169,34 @@ function Get-PrePushPython {
     throw "Pre-push requires an existing Windows backend virtual environment."
 }
 
-function Invoke-PrePushChecks {
+function Invoke-PrePushChecks([bool]$Frontend = $true, [bool]$Backend = $true, [bool]$Hook = $false) {
     $previousPythonPath = $env:PYTHONPATH
     Push-Location $PrePushRepoRoot
     try {
-        Write-Host "Pre-push: frontend types, engine boundary contracts and fast backend tests."
-        Invoke-PrePushCommand "corepack" @("pnpm", "--dir", "desktop-app", "typecheck")
-        Invoke-PrePushCommand "corepack" @(
-            "pnpm", "--dir", "desktop-app", "exec", "node", "--experimental-strip-types",
-            "--test", "--test-concurrency=1", "scripts/test-api-auth-boundary.mjs",
-            "scripts/test-desktop-release.mjs", "scripts/test-update-activity.mjs"
-        )
-        $python = Get-PrePushPython
-        $env:PYTHONPATH = (Join-Path $PrePushRepoRoot "backend") + ";" + $PrePushRepoRoot
-        if ($previousPythonPath) { $env:PYTHONPATH += ";" + $previousPythonPath }
-        Invoke-PrePushCommand $python @(
-            "-X", "utf8", "-B", "-m", "unittest", "backend.test_analysis_errors",
-            "backend.test_brand", "backend.test_job_checkpoints", "backend.test_storage_preflight",
-            "backend.test_update_activity"
-        )
+        Write-Host "Pre-push groups: frontend=$Frontend backend=$Backend hook=$Hook"
+        if ($Frontend) {
+            Invoke-PrePushCommand "corepack" @("pnpm", "--dir", "desktop-app", "typecheck")
+            Invoke-PrePushCommand "corepack" @(
+                "pnpm", "--dir", "desktop-app", "exec", "node", "--experimental-strip-types",
+                "--test", "--test-concurrency=1", "scripts/test-api-auth-boundary.mjs",
+                "scripts/test-desktop-release.mjs", "scripts/test-update-activity.mjs"
+            )
+        }
+        if ($Backend -or $Hook) {
+            $python = Get-PrePushPython
+            $env:PYTHONPATH = (Join-Path $PrePushRepoRoot "backend") + ";" + $PrePushRepoRoot
+            if ($previousPythonPath) { $env:PYTHONPATH += ";" + $previousPythonPath }
+        }
+        if ($Backend) {
+            Invoke-PrePushCommand $python @(
+                "-X", "utf8", "-B", "-m", "unittest", "backend.test_analysis_errors",
+                "backend.test_brand", "backend.test_job_checkpoints", "backend.test_storage_preflight",
+                "backend.test_update_activity"
+            )
+        }
+        if ($Hook) {
+            Invoke-PrePushCommand $python @("-X", "utf8", "-B", "-m", "unittest", "tests.test_pre_push_hook")
+        }
         Write-Host "Pre-push checks passed."
     }
     finally {
@@ -154,7 +221,8 @@ if ($MyInvocation.InvocationName -ne ".") {
         }
         else {
             Write-Host ("Pre-push: " + $scope.Reason)
-            Invoke-PrePushChecks
+            $plan = Get-PrePushCheckPlan $scope
+            Invoke-PrePushChecks -Frontend $plan.Frontend -Backend $plan.Backend -Hook $plan.Hook
         }
     }
     catch {

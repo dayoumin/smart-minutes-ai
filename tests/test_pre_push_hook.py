@@ -1,22 +1,30 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import tempfile
 import unittest
 from contextlib import contextmanager
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = ROOT / "scripts" / "check_pre_push.ps1"
 
 
+def isolated_git_environment() -> dict[str, str]:
+    # A hook exports repository/worktree variables; fixture Git must use its own cwd.
+    return {key: value for key, value in os.environ.items() if not key.upper().startswith("GIT_")}
+
+
 def run_powershell(source: str, *, cwd=ROOT) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["powershell", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command",
          "$ErrorActionPreference = 'Stop'; " + source],
-        cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30,
+        cwd=cwd, env=isolated_git_environment(), capture_output=True,
+        text=True, encoding="utf-8", errors="replace", timeout=30,
     )
 
 
@@ -33,7 +41,8 @@ def fixture_repository():
             return subprocess.check_output(
                 ["git", "-c", "core.excludesFile=", "-c", "user.name=Hook Test",
                  "-c", "user.email=hook-test@example.invalid", *args],
-                cwd=fixture, text=True, encoding="utf-8", errors="replace", stderr=subprocess.PIPE, timeout=15,
+                cwd=fixture, env=isolated_git_environment(), text=True,
+                encoding="utf-8", errors="replace", stderr=subprocess.PIPE, timeout=15,
             ).strip()
 
         for relative, text in {
@@ -70,12 +79,172 @@ def run_fixture_hook(fixture: Path, ref_updates: str):
     ref_file.write_text(ref_updates, encoding="utf-8")
     return subprocess.run(
         ["git", "-c", "core.hooksPath=.githooks", "hook", "run", f"--to-stdin={ref_file}", "pre-push"],
-        cwd=fixture, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+        cwd=fixture, env=isolated_git_environment(), capture_output=True,
+        text=True, encoding="utf-8", errors="replace", timeout=15,
     )
 
 
 @unittest.skipUnless(os.name == "nt", "The repository pre-push checks use Windows PowerShell.")
 class PrePushHookTest(unittest.TestCase):
+    def test_actual_hook_dispatches_selected_groups_in_isolated_repositories(self):
+        for changed, expected in (
+            ("desktop-app/src/Layout.tsx", ["types", "node"]),
+            ("backend/analysis_errors.py", ["backend"]),
+            ("configs/brand.json", ["types", "node", "backend"]),
+            ("AGENTS.md", ["types", "node", "backend", "hook"]),
+        ):
+            with self.subTest(changed=changed), fixture_repository() as (fixture, git):
+                record = fixture / ".tmp" / "commands.txt"
+                record.parent.mkdir()
+                script = fixture / "scripts" / "check_pre_push.ps1"
+                marker = 'if ($MyInvocation.InvocationName -ne ".") {'
+                source = script.read_text(encoding="utf-8")
+                self.assertEqual(source.count(marker), 1)
+                # Stub tool execution only inside the disposable fixture, never in the real hook.
+                recorder = (
+                    "function Get-PrePushPython { 'qa-python' }\n"
+                    "function Invoke-PrePushCommand([string]$FilePath, [string[]]$ArgumentList) {\n"
+                    f"[IO.File]::AppendAllText('{record}', ($FilePath + '|' + ($ArgumentList -join ' ')) + [Environment]::NewLine)\n"
+                    "}\n"
+                )
+                script.write_text(source.replace(marker, recorder + marker), encoding="utf-8")
+                git("add", ".")
+                git("commit", "-qm", "Fixture command recorder")
+                base = git("rev-parse", "HEAD")
+                target = fixture / changed
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_text("Changed owned input\n", encoding="utf-8")
+                git("add", ".")
+                git("commit", "-qm", "Input change")
+                head = git("rev-parse", "HEAD")
+                result = run_fixture_hook(fixture, f"refs/heads/main {head} refs/heads/main {base}\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+                actual = []
+                for line in record.read_text(encoding="utf-8").splitlines():
+                    if "tests.test_pre_push_hook" in line:
+                        actual.append("hook")
+                    elif line.startswith("qa-python|"):
+                        actual.append("backend")
+                    elif "typecheck" in line:
+                        actual.append("types")
+                    else:
+                        actual.append("node")
+                self.assertEqual(actual, expected)
+
+    def test_selected_groups_execute_only_their_commands_without_recursive_hook_calls(self):
+        for frontend, backend, hook, expected in (
+            (True, False, False, ["types", "node"]),
+            (False, True, False, ["backend"]),
+            (True, True, True, ["types", "node", "backend", "hook"]),
+        ):
+            with self.subTest(frontend=frontend, backend=backend, hook=hook):
+                python_lookup = "'qa-python'" if backend or hook else "throw 'Unexpected Python lookup'"
+                result = run_powershell(
+                    f". '{SCRIPT}'; $script:calls = @(); "
+                    f"function Get-PrePushPython {{ {python_lookup} }}; "
+                    "function Invoke-PrePushCommand($FilePath, $ArgumentList) { "
+                    "if ($ArgumentList -contains 'tests.test_pre_push_hook') { $script:calls += 'hook' } "
+                    "elseif ($FilePath -eq 'qa-python') { $script:calls += 'backend' } "
+                    "elseif ($ArgumentList -contains 'typecheck') { $script:calls += 'types' } "
+                    "else { $script:calls += 'node' } }; "
+                    f"Invoke-PrePushChecks -Frontend ${str(frontend).lower()} -Backend ${str(backend).lower()} -Hook ${str(hook).lower()}; "
+                    "ConvertTo-Json -InputObject @($script:calls) -Compress"
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(json.loads(result.stdout.strip().splitlines()[-1]), expected)
+
+    def test_check_plan_uses_owned_paths_and_unions_all_groups(self):
+        cases = (
+            (["docs/notes.md"], False, (False, False, False)),
+            (["desktop-app/src/Layout.tsx"], False, (True, False, False)),
+            (["desktop-app/src/index.css"], False, (True, False, False)),
+            (["desktop-app/scripts/test-update-activity.mjs"], False, (True, False, False)),
+            (["backend/analysis_errors.py"], False, (False, True, False)),
+            (["backend/test_storage_preflight.py"], False, (False, True, False)),
+            (["desktop-app/src/Layout.tsx", "backend/job_checkpoints.py"], False, (True, True, False)),
+            (["configs/brand.json"], False, (True, True, False)),
+            (["desktop-app/src/localEngineClientCore.ts"], False, (True, True, False)),
+            (["desktop-app/src/meetingRepository.ts"], False, (True, True, False)),
+            (["desktop-app/src/UpdateProvider.tsx"], False, (True, True, False)),
+            (["desktop-app/src-tauri/tauri.conf.json"], False, (True, True, False)),
+            (["backend/main.py"], False, (True, True, False)),
+            (["backend/new_module.py"], False, (True, True, False)),
+            (["scripts/new_tool.ps1"], False, (True, True, False)),
+            (["AGENTS.md", "backend/analysis_errors.py"], False, (True, True, True)),
+            (["docs/AGENTS.md"], False, (True, True, True)),
+            ([".agents/README.md"], False, (True, True, True)),
+            (["scripts/check_pre_push.ps1"], False, (True, True, True)),
+            (["tests/test_pre_push_hook.py"], False, (True, True, True)),
+            (["docs/notes.md"], True, (True, True, True)),
+            ([], True, (True, True, True)),
+        )
+        # One shell process keeps the matrix cheap; all production classification runs in PowerShell.
+        payload = json.dumps([{"paths": paths, "force": force} for paths, force, _ in cases])
+        result = run_powershell(
+            f". '{SCRIPT}'; $cases = ConvertFrom-Json '{payload}'; $plans = @(); "
+            "foreach ($case in $cases) { $scope = [pscustomobject]@{ "
+            "DocumentationOnly=((-not $case.force) -and $case.paths.Count -eq 1 -and $case.paths[0] -eq 'docs/notes.md'); "
+            "Paths=@($case.paths); ForceCore=$case.force; Reason='matrix' }; "
+            "$plans += Get-PrePushCheckPlan $scope }; ConvertTo-Json -InputObject $plans -Compress"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        for (paths, force, expected), plan in zip(cases, json.loads(result.stdout), strict=True):
+            with self.subTest(paths=paths, force=force):
+                self.assertEqual(tuple(plan[name] for name in ("Frontend", "Backend", "Hook")), expected)
+
+    def test_scope_collects_frontend_backend_and_hook_changes_across_refs(self):
+        with fixture_repository() as (fixture, git):
+            base = git("rev-parse", "HEAD")
+            frontend = fixture / "desktop-app" / "src" / "Layout.tsx"
+            frontend.parent.mkdir(parents=True)
+            frontend.write_text("export const layout = 1;\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "Frontend")
+            frontend_head = git("rev-parse", "HEAD")
+            (fixture / "backend" / "job_checkpoints.py").write_text("VALUE = 2\n", encoding="utf-8")
+            (fixture / "AGENTS.md").write_text("Workflow guidance\n", encoding="utf-8")
+            git("add", ".")
+            git("commit", "-qm", "Backend and workflow")
+            head = git("rev-parse", "HEAD")
+            refs = (f"refs/heads/main {head} refs/heads/main {frontend_head}\n"
+                    f"refs/heads/other {head} refs/heads/other {base}")
+            scope = read_scope(fixture, refs)
+            self.assertEqual(set(scope["Paths"]), {
+                "desktop-app/src/Layout.tsx", "backend/job_checkpoints.py", "AGENTS.md",
+            })
+            result = run_powershell(
+                f". '{SCRIPT}'; Get-PrePushCheckPlan (Get-PrePushScope '{refs}') | ConvertTo-Json -Compress",
+                cwd=fixture,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            plan = json.loads(result.stdout)
+            self.assertTrue(all(plan[name] for name in ("Frontend", "Backend", "Hook")))
+
+    def test_release_checks_include_the_push_contract_tests(self):
+        push = SCRIPT.read_text(encoding="utf-8")
+        release = (ROOT / "scripts" / "run_release_checks.ps1").read_text(encoding="utf-8")
+        for pattern in (r'"(scripts/test-[^"\n]+\.mjs)"', r'"((?:backend|tests)\.test_[^"\n]+)"'):
+            required = set(re.findall(pattern, push))
+            self.assertTrue(required, "The parity check must inspect an actual push test list")
+            self.assertLessEqual(required, set(re.findall(pattern, release)))
+
+    def test_hook_git_environment_cannot_redirect_fixture_operations(self):
+        with patch.dict(os.environ, {
+            "GIT_DIR": str(ROOT / ".git"), "GIT_WORK_TREE": str(ROOT),
+            "GIT_INDEX_FILE": str(ROOT / ".tmp" / "must-not-write-index"),
+            "GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.bare", "GIT_CONFIG_VALUE_0": "true",
+        }):
+            self.assertFalse(any(key.upper().startswith("GIT_") for key in isolated_git_environment()))
+            with fixture_repository() as (fixture, git):
+                self.assertEqual(Path(git("rev-parse", "--show-toplevel")).resolve(), fixture)
+                base = git("rev-parse", "HEAD")
+                (fixture / "README.md").write_text("Isolated documentation\n", encoding="utf-8")
+                git("add", "README.md")
+                git("commit", "-qm", "Isolated docs")
+                head = git("rev-parse", "HEAD")
+                result = run_fixture_hook(fixture, f"refs/heads/main {head} refs/heads/main {base}\n")
+                self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_documentation_only_range_still_requires_the_checked_out_head(self):
         with fixture_repository() as (fixture, git):
             base = git("rev-parse", "HEAD")
@@ -154,6 +323,8 @@ class PrePushHookTest(unittest.TestCase):
                 head = git("rev-parse", "HEAD")
                 scope = read_scope(fixture, f"refs/heads/main {head} refs/heads/main {base}")
                 self.assertFalse(scope["DocumentationOnly"])
+                if case in ("executable_doc", "symlink_doc"):
+                    self.assertTrue(scope["ForceCore"])
 
     def test_ambiguous_or_mixed_ref_ranges_require_checks(self):
         with fixture_repository() as (fixture, git):
@@ -220,7 +391,7 @@ class PrePushHookTest(unittest.TestCase):
                 if case == "doc_conflict":
                     merge = subprocess.run(
                         ["git", "merge", "--no-ff", "--no-commit", merge_branch],
-                        cwd=fixture, capture_output=True, timeout=15,
+                        cwd=fixture, env=isolated_git_environment(), capture_output=True, timeout=15,
                     )
                     self.assertEqual(merge.returncode, 1)
                     doc.write_text("Resolved documentation\n", encoding="utf-8")
@@ -270,7 +441,9 @@ class PrePushHookTest(unittest.TestCase):
                     self.assertFalse(json.loads(result.stdout.strip().splitlines()[-1])["DocumentationOnly"])
 
     def test_git_hook_reads_the_actual_push_ref_input(self):
-        other = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=ROOT, text=True).strip()
+        other = subprocess.check_output(
+            ["git", "rev-parse", "HEAD^"], cwd=ROOT, env=isolated_git_environment(), text=True,
+        ).strip()
         temporary_root = (ROOT / ".tmp").resolve()
         temporary_root.mkdir(exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="pre-push-refs-", dir=temporary_root) as directory:
@@ -280,14 +453,19 @@ class PrePushHookTest(unittest.TestCase):
             ref_input.write_text(f"refs/heads/other {other} refs/heads/main {'0' * 40}\n", encoding="utf-8")
             result = subprocess.run(
                 ["git", "-c", "core.hooksPath=.githooks", "hook", "run", f"--to-stdin={ref_input}", "pre-push"],
-                cwd=ROOT, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15,
+                cwd=ROOT, env=isolated_git_environment(), capture_output=True,
+                text=True, encoding="utf-8", errors="replace", timeout=15,
             )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Push target must match", result.stderr)
 
     def test_push_ref_must_match_the_checked_out_commit(self):
-        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
-        other = subprocess.check_output(["git", "rev-parse", "HEAD^"], cwd=ROOT, text=True).strip()
+        head = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=ROOT, env=isolated_git_environment(), text=True,
+        ).strip()
+        other = subprocess.check_output(
+            ["git", "rev-parse", "HEAD^"], cwd=ROOT, env=isolated_git_environment(), text=True,
+        ).strip()
         for target, accepted in ((head, True), (other, False)):
             with self.subTest(accepted=accepted):
                 ref_update = f"refs/heads/other {target} refs/heads/main {'0' * 40}"
@@ -311,7 +489,7 @@ class PrePushHookTest(unittest.TestCase):
                 subprocess.run(
                     ["git", "-c", "core.excludesFile=", "-c", "user.name=Hook Test",
                      "-c", "user.email=hook-test@example.invalid", *args],
-                    cwd=fixture, check=True, capture_output=True, timeout=15,
+                    cwd=fixture, env=isolated_git_environment(), check=True, capture_output=True, timeout=15,
                 )
 
             configs = fixture / "configs"

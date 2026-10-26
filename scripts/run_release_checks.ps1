@@ -31,6 +31,8 @@ $BackendQuickModules = @(
 
 $BackendReleaseModules = @(
     "backend.test_api",
+    "backend.test_update_activity",
+    "tests.test_pre_push_hook",
     "tests.test_update_package_scripts"
 )
 
@@ -138,6 +140,16 @@ if (-not $SkipFrontend) {
 
     Invoke-Step "frontend lint" {
         Invoke-External "corepack" @("pnpm", "--dir", "desktop-app", "run", "lint")
+    }
+
+    if ($Tier -in @("release", "portable")) {
+        Invoke-Step "frontend engine and update contracts" {
+            Invoke-External "corepack" @(
+                "pnpm", "--dir", "desktop-app", "exec", "node", "--experimental-strip-types",
+                "--test", "--test-concurrency=1", "scripts/test-api-auth-boundary.mjs",
+                "scripts/test-desktop-release.mjs", "scripts/test-update-activity.mjs"
+            )
+        }
     }
 }
 else {

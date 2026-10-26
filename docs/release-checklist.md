@@ -368,10 +368,17 @@ Windows의 push 전 자동 검사는 각 체크아웃에서 `git config core.hoo
 | 실제 push에 포함되는 변경 | 자동 검사 |
 | --- | --- |
 | 일반 문서만 변경 | 타입·Node·Python 검사 모두 생략. 미커밋 코드를 검사하지 않으므로 그 코드의 정리도 요구하지 않는다. |
-| 코드·설정·검사·배포·자동화 변경이 하나라도 포함 | 미커밋·미추적 소스가 있으면 먼저 멈춘다. 소스가 깨끗하면 타입 검사·엔진 인증/공개 버전/작업 상태 계약·빠른 백엔드 검사를 직렬 실행하고, 실패하면 push를 막는다. |
-| 신규 원격 ref, 원격 기준 커밋이 로컬에 없음, 변경 범위 판정 실패·수동 빈 입력 | 위의 코드 검사 경로로 처리한다. |
+| 일반 프론트 `desktop-app/src/`의 TS/TSX/JS/JSX/CSS, 프론트 ESLint·TypeScript 설정, 아래 Node 계약 검사 파일 | 프론트 타입 검사와 Node 계약 3모듈(16검사). 아래 공통 계약 예외는 양쪽을 검사한다. |
+| `backend/analysis_errors.py`·`job_checkpoints.py`·`storage_preflight.py` 및 각 `test_*.py` | 직접 소유가 확인된 빠른 백엔드 5모듈(35검사). 다른 백엔드 파일은 아직 이 축소 대상이 아니다. |
+| 프론트/백엔드 혼합, 공통 계약·설정·네이티브·빌드·배포·미분류 코드 | 프론트·백엔드 그룹을 모두 실행한다. |
+| hook·AI 지침·`check_pre_push.ps1`·`run_release_checks.ps1`·`test_pre_push_hook.py` | 프론트·백엔드와 hook 자체 회귀를 실행한다. |
+| 신규 원격 ref, 원격 기준 커밋이 로컬에 없음, 변경 범위 판정 실패·수동 빈 입력·실행 권한·심볼릭 링크 | 보수적으로 프론트·백엔드와 hook 자체 회귀를 실행한다. |
 
-일반 문서의 허용 범위는 루트 `README.md`·`todo.md`·`roadmap.md`·`PROJECT_SPEC.md`, `docs/` 아래 `.md`·`.txt`, 일반 폴더의 `README.md`다. `AGENTS.md`, `.agents`·`.claude` 아래 파일, `docs/index.html`·CSV·MDX 등은 이 허용 범위에 넣지 않는다. 실행 권한이나 심볼릭 링크가 있는 문서도 검사한다. 마지막 커밋만 보지 않고 Git이 알려 준 실제 원격 tip 이후의 모든 전송 커밋·병합 결과와 최종 파일 상태를 함께 살핀다. 앞선 코드 변경을 나중에 되돌렸어도 검사하며, 이름 변경은 이전·이후 경로를 함께 판정한다. 원격에 이미 있는 코드를 다시 담는 문서 병합은 생략할 수 있지만, 병합 결과가 원격 코드를 과거 상태로 되돌리면 검사한다. 여러 ref 중 하나라도 코드 변경·신규 ref·판정 불가이면 검사한다. ref 삭제만 전송하면 실행할 코드가 없어 검사를 생략한다.
+코드 검사 경로는 미커밋·미추적 소스가 있으면 먼저 멈춘다. 여러 경로와 ref에서 필요한 그룹을 모두 모아 직렬 실행하며, 어느 검사든 실패하면 push를 막는다. 공통 계약 예외는 `src/`의 `api*`, `localEngine*`, `LocalEngine*`, `useLocalEngine*`, `runtimeEnvironment`, `Update*`·`update*`, `desktopRelease`, `meetingRepository`·`meetingGeneration`·`meetingDeletion`·`meetingKnowledge`, `brand`, `types`, `Settings`, `MeetingWriter`, `writerStatusRow` 파일이다. `configs/`·`src-tauri/`·package/lock·공개 자산 등 분류되지 않은 경로도 양쪽을 유지한다. 이 목록은 전체 테스트 의존성 자동 추적기가 아니며, 변경한 기능의 전용 검사·데이터 안전 검토는 별도로 수행한다.
+
+프론트 Node 그룹은 `scripts/test-api-auth-boundary.mjs`·`test-desktop-release.mjs`·`test-update-activity.mjs`, 백엔드 그룹은 `backend.test_analysis_errors`·`test_brand`·`test_job_checkpoints`·`test_storage_preflight`·`test_update_activity`다. 일반 프론트 소스와 위 독립 백엔드의 소유를 확인한 범위만 축소하며, API·저장·브랜드·네이티브 경계와 미확인 파일은 기존 양쪽 검사를 유지한다.
+
+일반 문서의 허용 범위는 루트 `README.md`·`todo.md`·`roadmap.md`·`PROJECT_SPEC.md`, `docs/` 아래 `.md`·`.txt`, 일반 폴더의 `README.md`다. `AGENTS.md`, `.agents`·`.claude` 아래 파일, `docs/index.html`·CSV·MDX 등은 이 허용 범위에 넣지 않는다. 실행 권한이나 심볼릭 링크가 있는 문서도 검사한다. 마지막 커밋만 보지 않고 Git이 알려 준 실제 원격 tip 이후의 모든 전송 커밋·병합 결과와 최종 파일 상태를 함께 살핀다. 앞선 코드 변경을 나중에 되돌렸어도 검사하며, 이름 변경은 이전·이후 경로를 함께 판정한다. 원격에 이미 있는 코드를 다시 담는 문서 병합은 생략할 수 있지만, 병합 결과가 원격 코드를 과거 상태로 되돌리면 검사한다. ref 삭제만 전송하면 실행할 코드가 없어 검사를 생략한다. 실행 권한·링크·범위 판정 실패는 문서 경로가 뒤에 나오더라도 보수적 검사 상태를 취소하지 않는다.
 
 코드 검사 전에 로컬 설정 등 보존할 변경은 직접 커밋하지 말고 안전하게 임시 보관한다. 이 hook은 전체 린트·패키징·브라우저·실모델 검사를 대신하지 않으며 기존 프로젝트 Python/Node를 재사용한다. 같은 커밋의 이전 검사 결과를 재사용하는 캐시는 없다.
 
@@ -384,7 +391,7 @@ corepack pnpm check:portable
 ```
 
 - `check:quick`: 수정 중 반복 실행한다. 프론트 타입체크/린트, 가벼운 백엔드 unittest, 배포 스크립트 계약 테스트를 실행한다.
-- `check:release`: 배포 후보에서 실행한다. `check:quick` 범위에 백엔드 API unittest, 업데이트 패키지 테스트, 프론트 사용자 흐름 시뮬레이션을 추가한다.
+- `check:release`: 배포 후보에서 실행한다. `check:quick` 범위에 백엔드 API·업데이트 작업 상태 unittest, hook 자체 회귀, 업데이트 패키지 테스트, 프론트 엔진/업데이트 Node 계약 3모듈과 사용자 흐름 시뮬레이션을 추가한다. push의 모든 검사 그룹을 포함하며 `-SkipFrontend`·`-SkipBackend`·`-SkipSimulations`로 일부를 생략한 결과는 부분 검증으로 기록한다.
 - `check:portable`: 이미 `releases\lmo_audio`를 만든 뒤 실행한다. `check:release` 범위에 portable 폴더의 읽기 전용 무결성 검사(`-ExistingInstallation`)를 추가한다. 앱 실행 smoke는 빌드 중 깨끗한 중간 빌드 폴더에서 이미 실행하며, 사용자 기록이 있을 수 있는 deploy 폴더에서는 다시 실행하지 않는다.
 - 실제 모델을 사용하는 STT smoke는 기본 자동 게이트에서 제외한다. 필요할 때 `scripts\run_release_checks.ps1 -Tier release -IncludeModelSmoke`로 별도 실행한다.
 - `check:release`·`check:portable`은 Node 22.6 이상이 필요하다(2026-10-20). `test:generation-flow`·`test:topic-generation-ui`가 `node --experimental-strip-types`로 TypeScript를 바로 불러오기 때문이고, 더 낮은 Node에서는 `bad option: --experimental-strip-types`로 실패한다. 빌드 PC에서 먼저 `node --version`을 확인한다.

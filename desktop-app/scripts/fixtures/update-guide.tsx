@@ -10,7 +10,7 @@ import type { LocalEngineAuthorizationState } from '../../src/localEngineConnect
 import { getRuntimeEnvironment } from '../../src/runtimeEnvironment';
 import '../../src/index.css';
 
-const Harness = () => {
+export const Harness = () => {
     const [busy, setBusy] = useState(false);
     const [required, setRequired] = useState(false);
     const [authorization, setAuthorization] = useState<LocalEngineAuthorizationState>('authenticated');
@@ -28,7 +28,8 @@ const Harness = () => {
             <aside className="w-52"><UpdateEntry /></aside>
             <input aria-label="작성 중인 내용" defaultValue="저장 전 내용 유지" />
             <WriterActionRow row={{ actions: [{ kind: 'download', label: '설치 파일' }], stage: 'connection', state: 'intro', tone: 'info', busy: false, title: '설치', message: '', help: null, blocksStart: true }}
-                statusRef={{ current: null }} showHelp={false} onToggleHelp={() => undefined} onAction={() => undefined}
+                {...{ showHelp: false, onToggleHelp: () => undefined }}
+                statusRef={{ current: null }} onAction={() => undefined}
                 installerUrl={`${location.origin}/downloads/engine-test.exe`}><button>분석 시작</button></WriterActionRow>
         </UpdateProvider>
     </LocalEngineConnectionContext.Provider>;

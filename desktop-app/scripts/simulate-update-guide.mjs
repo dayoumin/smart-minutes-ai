@@ -88,6 +88,22 @@ try {
         await until(() => receive.isEnabled());
         assert.equal(await countDownloads(), 0, 'opening guidance never downloads');
         assert.equal(await page.locator('[inert]').count(), 1);
+        // A background dialog can retain a window key handler while its contents are inert.
+        await page.evaluate(() => {
+            window.__backgroundTabEvents = 0;
+            window.addEventListener('keydown', event => {
+                if (event.key === 'Tab') window.__backgroundTabEvents++;
+            });
+        });
+        const closeGuide = dialog.getByRole('button', { name: '업데이트 안내 닫기', exact: true });
+        await closeGuide.focus();
+        await page.keyboard.press('Tab');
+        assert.equal(await dialog.getByRole('button', { name: desktop ? '다시 확인' : '나중에', exact: true })
+            .evaluate(element => element === document.activeElement), true, 'Tab moves within the active guide');
+        await closeGuide.focus();
+        await page.keyboard.press('Shift+Tab');
+        assert.equal(await receive.evaluate(element => element === document.activeElement), true, 'reverse Tab wraps within the guide');
+        assert.equal(await page.evaluate(() => window.__backgroundTabEvents), 0, 'the background dialog cannot intercept guide navigation');
         if (!desktop) {
             // Home regression: expire during an in-flight preflight without closing the guide.
             hold = true; gate = new Promise(resolve => { releaseCheck = resolve; });

@@ -21,6 +21,7 @@ await test('all frontend HTTP transports stay within explicit engine and public-
     ['localEngineClient.ts', 1], // The native fetch adapter.
     ['localEngineClientCore.ts', 1], // The injected common transport.
     ['localEngineRelease.ts', 1], // Public same-origin release metadata; no engine/session credentials.
+    ['desktopRelease.ts', 1], // Public desktop release metadata; fixed origin, no credentials.
   ]);
   const found = new Map();
   const files = [...sourceFiles(src), new URL('../public/local-audio-worker.js', import.meta.url)];
@@ -30,19 +31,28 @@ await test('all frontend HTTP transports stay within explicit engine and public-
     const visit = node => {
       if (ts.isCallExpression(node) && memberName(node.expression) === 'fetch') {
         assert.ok(allowed.has(name), `${name}: direct fetch bypasses common authorization`);
-        if (name === 'localEngineRelease.ts') {
+        if (name === 'localEngineRelease.ts' || name === 'desktopRelease.ts') {
           const [url, options] = node.arguments;
-          assert.ok(ts.isNewExpression(url) && url.expression.getText(tree) === 'URL');
-          assert.equal(url.arguments[0]?.getText(tree), "'/downloads/engine-beta.json'");
-          assert.equal(url.arguments[1]?.getText(tree), 'origin');
+          if (name === 'localEngineRelease.ts') {
+            assert.ok(ts.isNewExpression(url) && url.expression.getText(tree) === 'URL');
+            assert.equal(url.arguments[0]?.getText(tree), "'/downloads/engine-beta.json'");
+            assert.equal(url.arguments[1]?.getText(tree), 'origin');
+          } else {
+            assert.ok(ts.isTemplateExpression(url));
+            assert.equal(url.head.text, '');
+            assert.equal(url.templateSpans.length, 1);
+            assert.equal(url.templateSpans[0].expression.getText(tree), 'DESKTOP_RELEASE_ORIGIN');
+            assert.equal(url.templateSpans[0].literal.text, '/downloads/desktop-beta.json');
+          }
           assert.ok(ts.isObjectLiteralExpression(options));
           for (const prop of options.properties) {
             assert.ok(ts.isPropertyAssignment(prop) && ts.isIdentifier(prop.name), 'public lookup options must be explicit');
-            assert.ok(['signal', 'cache', 'credentials', 'redirect', 'method'].includes(prop.name.text), 'public lookup must not carry a body or headers');
+            assert.ok(['signal', 'cache', 'credentials', 'redirect', 'method', 'referrerPolicy'].includes(prop.name.text), 'public lookup must not carry a body or headers');
           }
           const props = new Map(options.properties.map(prop => [prop.name?.getText(tree), prop.initializer?.getText(tree)]));
           assert.equal(props.get('credentials'), "'omit'");
           assert.equal(props.get('redirect'), "'error'");
+          if (name === 'desktopRelease.ts') assert.equal(props.get('referrerPolicy'), "'no-referrer'");
           assert.ok(!props.has('headers'), 'public release lookup must not forward engine credentials');
           assert.ok(!props.has('method') || props.get('method') === "'GET'", 'public release lookup is read-only');
         }

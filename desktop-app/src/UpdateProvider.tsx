@@ -117,6 +117,7 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
         const keydown = (event: KeyboardEvent) => {
             if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); close(); }
             if (event.key !== 'Tab') return;
+            event.stopPropagation();
             const items = [...(dialogRef.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex="0"]') ?? [])];
             const first = items[0];
             const last = items[items.length - 1];

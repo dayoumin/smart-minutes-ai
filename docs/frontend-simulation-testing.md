@@ -1,5 +1,33 @@
 # Frontend Simulation Testing
 
+## Explicit update guidance — 2026-10-26
+
+`simulate-update-guide.mjs` mounts the production update provider and buttons in a focused fixture for web and mocked Tauri runtimes. Start an owned Vite server after checking the port; this run used `corepack pnpm --dir desktop-app exec vite --host 127.0.0.1 --port 5188 --strictPort --configLoader runner` from the repository root. Set `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright` and `APP_URL=http://127.0.0.1:5188`, then run `corepack pnpm --dir desktop-app test:update-guide`. Optional `QA_OUTPUT_DIR` writes screenshots.
+
+The test owns a temporary HTTP proxy on an OS-assigned free loopback port and closes it with the browser. It serves actual artifact200/503 responses: Chromium's `a[download]` requests bypass Playwright page routing, so a page route counter alone does not prove whether a download occurred. The first sandboxed Vite process listened without responding to HTTP on this PC; verifying its PID/command, stopping that owned process and restarting the same command outside the sandbox restored HTTP readiness. Do not classify initial `page.goto` timeouts as UI failures.
+
+Passed scenarios include no file request before a receive click, busy and preflight races, cancel/reopen invalidation, older-engine unknown-status confirmation, explicit download,503 preserving the original tab/input, native browser-action failure, first install, required update, unavailable desktop publication, keyboard/focus and stable work-surface position. This fixture is not a real installed engine or packaged EXE test; release follow-up belongs in `docs/release-checklist.md`.
+
+### 다음 업데이트 흐름 변경 시 재사용 기준
+
+| 확인할 사용자 상황 | 현재 자동 검사 | 집에서 실제 설치본으로 추가할 증거 |
+| --- | --- | --- |
+| 안내만 보기·나중에 하기 | 받기 클릭 전 파일 요청 없음, 닫기·초점 복귀·작업면 위치 보존 | 실제 웹·EXE에서 작업을 유지하며 안내 진입 |
+| 작업 중 새 버전 발견 | 모의 작업 상태와 다운로드 직전 작업 시작으로 받기 차단 | 실제 분석·요약, 설정 창을 닫아도 계속되는 모델 받기·다른 창 작업 |
+| 안내 취소·다시 열기 | 이전 클릭 무효화, 이전 수동 확인 재사용 금지 | 느린 실제 연결에서도 취소 후 다운로드가 시작되지 않음 |
+| 구버전·상태 미확인 | 확인 체크 전 차단, 명시적 확인 후에도 새 작업 감지 시 차단 | 이전 설치 엔진과 첫 설치의 연결·권한·수동 확인 절차 |
+| 안내 중 인증 만료·재연결 | 요청 중 만료·이전 busy 뒤 만료·재연결 시나리오 추가, **아직 미실행** | 실제 연결 인증 변경 후 확인 상태 복구와 작업 차단 유지 |
+| 파일 받기·오류·복구 | 로컬 HTTP200/503, 기존 탭·입력 보존, 모의 Tauri의 브라우저 열기 실패 | 공개 HTTPS·실제 Windows 기본 브라우저의 파일·해시·저장 위치, 오류 후 재시도 |
+| 데스크톱 공개 버전·첫 기능 배포 | 별도 계약 검사에서 같은/이전 빌드·잘못된 공개 정보 거부, UI에서 미공개 안내 | 기존 앱 최초 수동 업데이트, 실제 새 EXE의 버전 비교·수동 적용·자료 보존 |
+
+시뮬레이션(simulation)은 웹과 모의 Tauri 환경에서 공통 컴포넌트의 동작을 확인한다. Tauri 명령·엔진 응답을 모사하므로 실제 설치본의 전역 작업 상태 전달, 공개 배포 파일, 설치·업데이트 스크립트, 재시작 후 자료 보존을 입증하지 않는다. `test:desktop-release`·`test:update-activity`는 별도의 계약·작업 상태 검사이며 브라우저 시뮬레이션과 구분한다.
+
+2026-10-26 추가 에이전트 검토·수정: 인증을 고정했던 기존 fixture가 놓친 `activityChecking`·이전 `busy` 잔류 P2를 수정했다. 인증이 바뀌면 안내의 이전 조회·다운로드 요청·수동 확인을 무효화하고 미확인 상태로 초기화한다. 인증 없는 웹에서는 조회를 시작하지 않고 재연결하면 새로 확인한다. fixture에 인증 전환 제어를 넣고 요청 중 인증 만료·이전 busy 뒤 만료·재연결 회귀 시나리오를 추가했다. 타입 검사·변경 파일 린트·스크립트 문법 검사와 독립 에이전트 재검토를 통과했으며 남은 P1/P2는 없었다. **추가·수정된 브라우저 시나리오는 아직 실행하지 않았다.** 위 브라우저 통과 목록은 이 P2 수정 전 결과이며, 집에서 전체 집중 시뮬레이션을 재실행해 갱신한다. 회사 PC·핫스팟에서는 서버·브라우저·실제 다운로드·전체 빌드를 실행하지 않았다.
+
+이번 가벼운 검사는 로컬 캐시를 재사용하도록 `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`, `COREPACK_ENABLE_NETWORK=0`을 해당 프로세스에만 설정하고 `corepack pnpm --dir desktop-app typecheck`, `corepack pnpm --dir desktop-app exec eslint src/UpdateProvider.tsx`, `node --check desktop-app/scripts/simulate-update-guide.mjs`, `git diff --check`로 실행했다. 문법 검사 통과는 브라우저 동작 통과를 뜻하지 않는다.
+
+회사 PC·핫스팟에서 이어갈 때는 기존 결과가 적용 가능한지 소스·설정 변경을 먼저 확인하고, 네트워크 다운로드나 전체 빌드를 반복하지 않는다. 실제 파일 다운로드·적용·실행은 `todo.md`의 「집에서 업데이트 안내의 실제 다운로드·적용·재시작 검증」을 따른다. 결과의 정본은 `docs/release-checklist.md`의 해당 QA 행이며, 반복 발견 원인·재현법은 이 절에 보완한다.
+
 ## Fixed narrow promise and first-visit-only details — 2026-10-23
 
 The persistent processing/storage link and its help-only dialog mode are removed.

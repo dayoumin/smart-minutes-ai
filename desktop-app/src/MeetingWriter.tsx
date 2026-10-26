@@ -811,6 +811,17 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     const hasWriterCloseRisk = isAnalyzing || isExtractingAudio || hasDraftableInput;
 
     useEffect(() => {
+        window.dispatchEvent(new CustomEvent('backend-task:state', {
+            detail: { source: 'writer-update-activity', active: isAnalyzing || isExtractingAudio },
+        }));
+        return () => {
+            window.dispatchEvent(new CustomEvent('backend-task:state', {
+                detail: { source: 'writer-update-activity', active: false },
+            }));
+        };
+    }, [isAnalyzing, isExtractingAudio]);
+
+    useEffect(() => {
         window.dispatchEvent(new CustomEvent('close-guard:state', {
             detail: { source: 'meeting-writer', active: hasWriterCloseRisk },
         }));
@@ -2625,7 +2636,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 return;
             case 'download':
             case 'update':
-                // Native links in the row.
+                // WriterActionRow opens the explicit installation/update guide.
                 return;
             default:
                 // Only these replace the pressed button with a check; the code dialog keeps its own focus.

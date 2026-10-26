@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import release from './release.json' with { type: 'json' };
-import handler, { parseByteRange } from './src/index.ts';
+import handler, { parseByteRange, serveDesktopDownload } from './src/index.ts';
 
 assert.deepEqual(parseByteRange('bytes=0-7', 32), { offset: 0, length: 8 });
 assert.deepEqual(parseByteRange('bytes=8-', 32), { offset: 8, length: 24 });
@@ -64,4 +64,46 @@ assert.equal((await call(release.downloadPath, { headers: { 'If-None-Match': ful
 assert.equal((await (await call('/downloads/engine-beta.json')).json()).signed, false);
 metadata.customMetadata.sha256 = 'b'.repeat(64);
 assert.equal((await call(release.downloadPath)).status, 503);
+
+// Desktop release metadata is a separate contract. Unpublished/missing objects never become links.
+assert.equal((await call('/downloads/desktop-beta.json')).status, 404);
+assert.equal((await call('/downloads/desktop-beta.json')).headers.get('access-control-allow-origin'), '*');
+assert.equal((await call('/downloads/lmo_audio_update_unknown.zip')).status, 404);
+const desktopPayload = {
+    schemaVersion: 1, type: 'portable-update', origin: 'https://barorok.ecomarin.workers.dev',
+    commit: 'd'.repeat(40), generatedAt: '2026-10-26T09:12:34.1234567+09:00',
+    downloadPath: `/downloads/lmo_audio_update_${'d'.repeat(40)}.zip`, bytes: 32, sha256: 'e'.repeat(64),
+};
+const desktopCall = (path, init, publication = { release: desktopPayload }) => serveDesktopDownload(
+    new Request(`https://barorok.ecomarin.workers.dev${path}`, init), env, publication,
+);
+const feedPath = '/downloads/desktop-beta.json';
+assert.equal((await desktopCall(feedPath)).status, 503, 'object hash must match before advertising a release');
+assert.equal((await desktopCall(feedPath)).headers.get('access-control-allow-origin'), '*');
+assert.equal((await desktopCall(feedPath, { method: 'POST' })).status, 405);
+metadata.customMetadata.sha256 = desktopPayload.sha256;
+const desktopFeed = await desktopCall(feedPath);
+assert.equal(desktopFeed.status, 200);
+assert.equal(desktopFeed.headers.get('cache-control'), 'no-store');
+assert.equal(desktopFeed.headers.get('access-control-allow-origin'), '*');
+assert.deepEqual(await desktopFeed.json(), desktopPayload);
+assert.equal(await (await desktopCall(feedPath, { method: 'HEAD' })).text(), '');
+assert.equal((await desktopCall('/downloads/wrong.zip')).status, 404);
+assert.equal((await desktopCall(feedPath, undefined, { release: { ...desktopPayload, downloadPath: '/downloads/setup.exe' } })).status, 503);
+const desktopFull = await desktopCall(desktopPayload.downloadPath);
+assert.equal(desktopFull.status, 200);
+assert.match(desktopFull.headers.get('content-disposition'), /\.zip/);
+assert.deepEqual(Buffer.from(await desktopFull.arrayBuffer()), data);
+const desktopPartial = await desktopCall(desktopPayload.downloadPath, { headers: { Range: 'bytes=8-15' } });
+assert.equal(desktopPartial.status, 206);
+assert.equal(desktopPartial.headers.get('content-range'), 'bytes 8-15/32');
+assert.deepEqual(Buffer.from(await desktopPartial.arrayBuffer()), data.subarray(8, 16));
+assert.equal((await desktopCall(desktopPayload.downloadPath, { method: 'HEAD' })).headers.get('content-length'), '32');
+metadata.size = 31;
+assert.equal((await desktopCall(feedPath)).status, 503);
+assert.equal((await desktopCall(desktopPayload.downloadPath)).status, 503);
+env.RELEASES.head = async () => null;
+assert.equal((await desktopCall(feedPath)).status, 503);
+env.RELEASES.head = async () => { throw new Error('R2 unavailable'); };
+assert.equal((await desktopCall(feedPath)).status, 503);
 console.log('Download HTTP/range/metadata checks passed');

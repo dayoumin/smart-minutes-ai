@@ -28,6 +28,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response, StreamingResponse, JSONResponse
 
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
+from update_activity import UpdateActivityMiddleware, UpdateRequestActivity
 from brand import BRAND_NAME, with_josa
 from config_normalization import (
     DEFAULT_LONG_AUDIO_CHUNK_SECONDS,
@@ -111,6 +112,7 @@ BASE_DIR = normalize_windows_path(BASE_DIR)
 app = FastAPI(title="NIFS AI Meeting API")
 
 ANALYSIS_JOBS = AnalysisJobRegistry()
+UPDATE_REQUEST_ACTIVITY = UpdateRequestActivity()
 GENERATION_STATUS_LOCK = threading.RLock()
 LOCAL_ENGINE_SESSION_STORE = LocalEngineSessionStore()
 LOCAL_ENGINE_BROWSER_APPROVAL = BrowserApprovalCoordinator(LOCAL_ENGINE_SESSION_STORE)
@@ -224,6 +226,7 @@ RECOVERABLE_SOURCE_EXTENSIONS = {
 }
 AUDIO_EXTRACT_SOURCE_EXTENSIONS = RECOVERABLE_SOURCE_EXTENSIONS
 
+app.add_middleware(UpdateActivityMiddleware, activity=UPDATE_REQUEST_ACTIVITY)
 app.add_middleware(
     LocalEngineAuthMiddleware,
     enforcement_enabled=api_auth_enforcement_enabled,
@@ -239,6 +242,21 @@ app.add_middleware(
     allow_headers=["Accept", "Authorization", "Content-Type", "Range", DESKTOP_ACTION_TOKEN_HEADER],
     expose_headers=["Content-Disposition", "WWW-Authenticate", "Content-Range", "Accept-Ranges"],
 )
+
+
+@app.get("/api/update-activity")
+async def update_activity() -> JSONResponse:
+    busy = UPDATE_REQUEST_ACTIVITY.is_active() or ANALYSIS_JOBS.has_active()
+    with GENERATION_STATUS_LOCK:
+        busy = busy or bool(ACTIVE_GENERATIONS)
+    for lock, statuses in (
+        (MODEL_DOWNLOAD_STATUS_LOCK, MODEL_DOWNLOAD_STATUS),
+        (OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK, OLLAMA_RUNTIME_DOWNLOAD_STATUS),
+        (OLLAMA_PULL_STATUS_LOCK, OLLAMA_PULL_STATUS),
+    ):
+        with lock:
+            busy = busy or any(bool(status.get("active")) for status in statuses.values())
+    return JSONResponse({"busy": busy}, headers={"Cache-Control": "no-store"})
 
 
 def sse_event(payload: dict | str, event: str | None = None) -> str:

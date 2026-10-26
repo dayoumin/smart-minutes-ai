@@ -402,7 +402,7 @@ def bearer_token_from_headers(headers: Mapping[str, str]) -> str:
 
 def required_capability_for_request(method: str, path: str) -> str | None:
     normalized_method = method.upper()
-    if path == "/api/health" or path.startswith("/api/analyze"):
+    if path in {"/api/health", "/api/update-activity"} or path.startswith("/api/analyze"):
         return "analysis"
     if path.startswith("/api/tools/extract-audio"):
         return "analysis"

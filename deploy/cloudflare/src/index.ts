@@ -1,4 +1,51 @@
 import release from '../release.json' with { type: 'json' };
+import desktopPublication from '../desktop-release.json' with { type: 'json' };
+import { parseDesktopRelease } from '../../../desktop-app/src/desktopRelease.ts';
+
+const notPrepared = () => new Response('Download is being prepared', {
+    status: 503, headers: { 'Cache-Control': 'no-store' },
+});
+
+// An unpublished descriptor stays honest: no desktop download is offered until a verified ZIP exists.
+export async function serveDesktopDownload(request: Request, env: Env, publication: unknown): Promise<Response> {
+    const response = request.method !== 'GET' && request.method !== 'HEAD'
+        ? new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } })
+        : await createDesktopDownloadResponse(request, env, publication);
+    if (new URL(request.url).pathname === '/downloads/desktop-beta.json') {
+        // This public, credential-free feed is also read by the packaged Tauri WebView.
+        response.headers.set('Access-Control-Allow-Origin', '*');
+    }
+    return response;
+}
+
+async function createDesktopDownloadResponse(request: Request, env: Env, publication: unknown): Promise<Response> {
+    const payload = publication && typeof publication === 'object'
+        ? (publication as Record<string, unknown>).release : null;
+    const desktop = parseDesktopRelease(payload);
+    const pathname = new URL(request.url).pathname;
+    if (!desktop) return payload === null
+        ? new Response('Desktop update not published', { status: 404, headers: { 'Cache-Control': 'no-store' } })
+        : notPrepared();
+    const downloadPath = new URL(desktop.downloadUrl).pathname;
+    if (pathname !== '/downloads/desktop-beta.json' && pathname !== downloadPath) {
+        return new Response('Not found', { status: 404 });
+    }
+    try {
+        const object = await env.RELEASES.head(downloadPath.slice('/downloads/'.length));
+        if (!object || object.size !== desktop.bytes || object.customMetadata?.sha256 !== desktop.sha256) return notPrepared();
+        if (pathname === '/downloads/desktop-beta.json') {
+            return new Response(request.method === 'HEAD' ? null : JSON.stringify(payload), {
+                headers: {
+                    'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+                    'X-Content-Type-Options': 'nosniff',
+                },
+            });
+        }
+        return serveArtifact(request, env, { ...desktop, downloadPath });
+    } catch {
+        return notPrepared();
+    }
+}
 
 export function parseByteRange(value: string, size: number): { offset: number; length: number } | null {
     if (!Number.isSafeInteger(size) || size <= 0) return null;
@@ -16,30 +63,7 @@ export function parseByteRange(value: string, size: number): { offset: number; l
     return { offset, length: Math.min(end, size - 1) - offset + 1 };
 }
 
-export default {
-    async fetch(request, env): Promise<Response> {
-        const pathname = new URL(request.url).pathname;
-        if (!pathname.startsWith('/downloads/')) return env.ASSETS.fetch(request);
-        if (request.method !== 'GET' && request.method !== 'HEAD') {
-            return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
-        }
-        if (pathname === release.previousDownloadPath || release.previousDownloadPaths.includes(pathname)) {
-            return new Response(null, {
-                status: 307,
-                headers: { Location: release.downloadPath, 'Cache-Control': 'no-store' },
-            });
-        }
-        if (pathname !== release.downloadPath && pathname !== '/downloads/engine-beta.json') {
-            return new Response('Not found', { status: 404 });
-        }
-        if (release.bytes <= 0 || !/^[a-f0-9]{64}$/.test(release.sha256)) {
-            return new Response('Download is being prepared', { status: 503, headers: { 'Cache-Control': 'no-store' } });
-        }
-        if (pathname === '/downloads/engine-beta.json') {
-            return new Response(request.method === 'HEAD' ? null : JSON.stringify(release), {
-                headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
-            });
-        }
+async function serveArtifact(request: Request, env: Env, release: { bytes: number; sha256: string; downloadPath: string }): Promise<Response> {
         const etag = `"sha256-${release.sha256}"`;
         const headers = new Headers({
             'Content-Type': 'application/octet-stream',
@@ -82,5 +106,33 @@ export default {
         } catch {
             return new Response('Download temporarily unavailable', { status: 503, headers: { 'Cache-Control': 'no-store' } });
         }
+}
+
+export default {
+    async fetch(request, env): Promise<Response> {
+        const pathname = new URL(request.url).pathname;
+        if (!pathname.startsWith('/downloads/')) return env.ASSETS.fetch(request);
+        if (pathname === '/downloads/desktop-beta.json' || pathname.startsWith('/downloads/lmo_audio_update_')) {
+            return serveDesktopDownload(request, env, desktopPublication);
+        }
+        if (request.method !== 'GET' && request.method !== 'HEAD') {
+            return new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } });
+        }
+        if (pathname === release.previousDownloadPath || release.previousDownloadPaths.includes(pathname)) {
+            return new Response(null, {
+                status: 307,
+                headers: { Location: release.downloadPath, 'Cache-Control': 'no-store' },
+            });
+        }
+        if (pathname !== release.downloadPath && pathname !== '/downloads/engine-beta.json') {
+            return new Response('Not found', { status: 404 });
+        }
+        if (release.bytes <= 0 || !/^[a-f0-9]{64}$/.test(release.sha256)) return notPrepared();
+        if (pathname === '/downloads/engine-beta.json') {
+            return new Response(request.method === 'HEAD' ? null : JSON.stringify(release), {
+                headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+            });
+        }
+        return serveArtifact(request, env, release);
     },
 } satisfies ExportedHandler<Env>;

@@ -1,5 +1,5 @@
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
@@ -61,6 +61,40 @@ fn get_backend_base_url(config: State<'_, BackendConfig>) -> String {
 #[tauri::command]
 fn get_desktop_action_token(config: State<'_, BackendConfig>) -> String {
     config.desktop_action_token.clone()
+}
+
+/// Read the identity beside the running portable executable, never the working directory or Git.
+#[tauri::command]
+fn get_desktop_release_identity() -> Option<serde_json::Value> {
+    if cfg!(debug_assertions) {
+        return None;
+    }
+    let executable = std::env::current_exe().ok()?;
+    let file = fs::File::open(executable.parent()?.join("release-manifest.json")).ok()?;
+    // Payload inventories may be large; cap reads even if a local file changes while being read.
+    const MAX_MANIFEST_BYTES: u64 = 32 * 1024 * 1024;
+    let mut content = Vec::new();
+    file.take(MAX_MANIFEST_BYTES + 1).read_to_end(&mut content).ok()?;
+    if content.len() > MAX_MANIFEST_BYTES as usize {
+        return None;
+    }
+    desktop_release_identity_from_bytes(&content)
+}
+
+fn desktop_release_identity_from_bytes(content: &[u8]) -> Option<serde_json::Value> {
+    // Windows PowerShell 5.1 writes these UTF-8 manifests with a BOM.
+    let json = content.strip_prefix(&[0xef, 0xbb, 0xbf]).unwrap_or(content);
+    let manifest: serde_json::Value = serde_json::from_slice(json).ok()?;
+    if manifest.get("app")?.as_str()? != "lmo_audio" || manifest.get("dirty")?.as_bool()? {
+        return None;
+    }
+    let commit = manifest.get("commit")?.as_str()?;
+    let generated_at = manifest.get("generatedAt")?.as_str()?;
+    if commit.len() != 40 || !commit.bytes().all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value))
+        || generated_at.is_empty() || generated_at.len() > 40 {
+        return None;
+    }
+    Some(serde_json::json!({ "commit": commit, "generatedAt": generated_at }))
 }
 
 fn bytes_to_hex(bytes: &[u8]) -> String {
@@ -198,7 +232,7 @@ fn open_saved_file_location(saved_path: String) -> Result<(), String> {
 
 #[tauri::command]
 fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
-    if !url.starts_with("https://ollama.com/") {
+    if !url.starts_with("https://ollama.com/") && !is_desktop_update_download_url(&url) {
         return Err("Unsupported external URL.".to_string());
     }
 
@@ -206,6 +240,55 @@ fn open_external_url(app: AppHandle, url: String) -> Result<(), String> {
     app.shell()
         .open(url, None)
         .map_err(|error| format!("Could not open external URL: {error}"))
+}
+
+fn is_desktop_update_download_url(url: &str) -> bool {
+    let desktop_commit = url.strip_prefix("https://barorok.ecomarin.workers.dev/downloads/lmo_audio_update_")
+        .and_then(|value| value.strip_suffix(".zip"));
+    desktop_commit.map(|commit| commit.len() == 40
+        && commit.bytes().all(|value| value.is_ascii_digit() || (b'a'..=b'f').contains(&value)))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod desktop_update_tests {
+    use super::{desktop_release_identity_from_bytes, is_desktop_update_download_url};
+
+    #[test]
+    fn desktop_release_identity_only_exposes_clean_build_identity_and_handles_windows_bom() {
+        let manifest = serde_json::json!({
+            "app": "lmo_audio", "dirty": false, "commit": "a".repeat(40),
+            "generatedAt": "2026-10-26T11:15:48.0878238+09:00", "repoRoot": "private-path",
+        });
+        let expected = serde_json::json!({ "commit": manifest["commit"], "generatedAt": manifest["generatedAt"] });
+        let plain = serde_json::to_vec(&manifest).unwrap();
+        assert_eq!(desktop_release_identity_from_bytes(&plain), Some(expected.clone()));
+        let mut bom = vec![0xef, 0xbb, 0xbf];
+        bom.extend_from_slice(&plain);
+        assert_eq!(desktop_release_identity_from_bytes(&bom), Some(expected));
+        for (key, value) in [
+            ("dirty", serde_json::json!(true)), ("app", serde_json::json!("other")),
+            ("commit", serde_json::json!("0.1.0")), ("generatedAt", serde_json::json!("")),
+        ] {
+            let mut invalid = manifest.clone();
+            invalid[key] = value;
+            assert_eq!(desktop_release_identity_from_bytes(&serde_json::to_vec(&invalid).unwrap()), None);
+        }
+        assert_eq!(desktop_release_identity_from_bytes(b"not JSON"), None);
+    }
+
+    #[test]
+    fn desktop_update_browser_action_only_accepts_exact_trusted_zip_urls() {
+        let url = format!("https://barorok.ecomarin.workers.dev/downloads/lmo_audio_update_{}.zip", "a".repeat(40));
+        assert!(is_desktop_update_download_url(&url));
+        for candidate in [format!("{url}?token=x"), format!("{url}#fragment"),
+            url.replace("https:", "http:"), url.replace(".zip", ".exe"),
+            url.replace("barorok.ecomarin.workers.dev", "other.example"),
+            url.replace(&"a".repeat(40), "aaaaaaa"),
+        ] {
+            assert!(!is_desktop_update_download_url(&candidate));
+        }
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -300,6 +383,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_backend_base_url,
             get_desktop_action_token,
+            get_desktop_release_identity,
             restart_backend,
             set_close_guard_active,
             open_saved_file_location,

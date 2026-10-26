@@ -140,7 +140,7 @@ export const useLocalEngineConnectionControls = ({
         if (action === 'pair' || action === 'open-code') {
             await beginPairing();
         }
-        // Download and update navigation are native links in the render path.
+        // WriterActionRow opens the explicit installation/update guide for these actions.
     }, [beginPairing, probe]);
 
     const installerNotice = import.meta.env.VITE_LOCAL_ENGINE_TEST_RELEASE === 'true' && installerUrl

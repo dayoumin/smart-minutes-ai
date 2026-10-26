@@ -13,6 +13,7 @@ import { requestFiniteEngineJson } from './localEngineClientCore';
 import { readApiErrorMessage } from './apiError';
 import { MeetingCleanupPanel } from './MeetingCleanupPanel';
 import { LOCAL_ENGINE_NAME, withJosa } from './brand';
+import { beginSettingsUpdateActivity } from './updateActivity';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
@@ -462,6 +463,21 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [ollamaRuntimeDownload, setOllamaRuntimeDownload] = useState<OllamaRuntimeDownloadStatus | null>(null);
     const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
+    const settingsWorkActive = isSaving || isRestartingBackend || cleanupBusy
+        || Object.values(deletingOllamaModels).some(Boolean)
+        || Object.values(modelDownloads).some(status => status.active)
+        || Boolean(ollamaRuntimeDownload?.active)
+        || Object.values(ollamaPulls).some(status => status.active);
+    useEffect(() => {
+        window.dispatchEvent(new CustomEvent('backend-task:state', {
+            detail: { source: 'settings-status', active: settingsWorkActive },
+        }));
+    }, [settingsWorkActive]);
+    useEffect(() => () => {
+        window.dispatchEvent(new CustomEvent('backend-task:state', {
+            detail: { source: 'settings-status', active: false },
+        }));
+    }, []);
     const [isCheckingModels, setIsCheckingModels] = useState(false);
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [openSummaryModelMenu, setOpenSummaryModelMenu] = useState('');
@@ -723,6 +739,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             return;
         }
 
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
@@ -764,6 +781,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
             setMessage('');
             setErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
+        } finally {
+            finishUpdateActivity();
         }
     }, [apiBase, isCurrentModelDownloadRequest, loadModelsStatus, pollModelDownloadStatus, updateModelDownloadStatus]);
 
@@ -847,6 +866,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [isCurrentOllamaRuntimeRequest, pollOllamaRuntimeDownloadStatus]);
 
     const handleDownloadOllamaRuntime = useCallback(async () => {
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setErrorMessage('');
         setMessage('');
         setOllamaInstallPrompted(false);
@@ -885,6 +905,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             setMessage('');
             setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기를 시작하지 못했습니다.');
+        } finally {
+            finishUpdateActivity();
         }
     }, [apiBase, beginOllamaRuntimePolling, isCurrentOllamaRuntimeRequest, loadModelsStatus, updateOllamaRuntimeDownloadStatus]);
 
@@ -973,6 +995,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             return;
         }
 
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setErrorMessage('');
         setMessage('');
         if (useInlineCustomNotice) setCustomSummaryModelNotice('');
@@ -1021,6 +1044,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             if (!isCurrentPullRequest(targetModel, requestId)) return;
             setMessage('');
             setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
+        } finally {
+            finishUpdateActivity();
         }
     }, [apiBase, isCurrentPullRequest, loadModelsStatus, pollOllamaPullStatus, summaryModelInput, updateOllamaPullStatus]);
 
@@ -1071,6 +1096,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         setMessage('');
         setOllamaInstallPrompted(false);
         setOllamaInstallNoticeMessage('');
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setDeletingOllamaModels(previous => ({ ...previous, [targetModel]: true }));
         try {
             const base = apiBase || await getApiBase();
@@ -1096,6 +1122,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         } catch (error) {
             setErrorMessage(error instanceof Error ? error.message : '모델 목록 변경 중 오류가 발생했습니다.');
         } finally {
+            finishUpdateActivity();
             setDeletingOllamaModels(previous => ({ ...previous, [targetModel]: false }));
         }
     }, [apiBase, applySettingsToForm, loadModelsStatus]);
@@ -1434,6 +1461,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         };
         const requestKey = generalSettingsKey(requestValues);
 
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setIsSaving(true);
         setSaveState('saving');
         setErrorMessage('');
@@ -1481,6 +1509,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');
             setSaveState('idle');
         } finally {
+            finishUpdateActivity();
             setIsSaving(false);
         }
     }, [
@@ -1503,6 +1532,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             return;
         }
 
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setIsSaving(true);
         setSaveState('saving');
         setErrorMessage('');
@@ -1540,6 +1570,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setErrorMessage(error instanceof Error ? error.message : '요약 모델 저장 중 오류가 발생했습니다.');
             setSaveState('idle');
         } finally {
+            finishUpdateActivity();
             setIsSaving(false);
         }
     }, [apiBase, applySettingsToForm, loadModelsStatus, settings, summaryModelInput]);
@@ -1614,6 +1645,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         if (settings && currentGeneralKeyRef.current !== lastSavedGeneralKeyRef.current) {
             await saveGeneralSettings();
         }
+        const finishUpdateActivity = beginSettingsUpdateActivity();
         setIsRestartingBackend(true);
         settingsLoadSeqRef.current += 1;
         modelStatusRequestIdRef.current += 1;
@@ -1637,6 +1669,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const recovered = await loadSettings();
             if (recovered) setMessage('재시작은 확인하지 못했지만 분석 기능에 다시 연결했습니다.');
         } finally {
+            finishUpdateActivity();
             setIsRestartingBackend(false);
         }
     };

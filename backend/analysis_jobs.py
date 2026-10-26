@@ -58,3 +58,8 @@ class AnalysisJobRegistry:
     def has(self, job_id: str) -> bool:
         with self._lock:
             return job_id in self._jobs
+
+    def has_active(self) -> bool:
+        """Admission, cancellation and cleanup still own the entry until remove()."""
+        with self._lock:
+            return bool(self._jobs)

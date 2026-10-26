@@ -5,6 +5,7 @@ import type { AnalysisMeetingView } from './MeetingWriter';
 import { MeetingHistory } from './MeetingHistory';
 import type { MeetingDetailOpenRequest, MeetingDetailTab } from './MeetingHistory';
 import { Settings } from './Settings';
+import { UpdateProvider } from './UpdateProvider';
 import type { SettingsSection, SettingsTab } from './Settings';
 import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
@@ -379,7 +380,11 @@ export const App: React.FC = () => {
     };
 
     return (
-        <>
+        <UpdateProvider
+            busy={analysisStatus.active || remoteAnalysisActive || backendTaskActive}
+            isBusy={() => analysisStatus.active || remoteAnalysisActive || backendTaskActive
+                || [...backendTaskSourcesRef.current.values()].some(Boolean)}
+        >
             <AnalysisRecoveryCoordinator />
             <Layout
                 activeTab={activeTab}
@@ -488,7 +493,7 @@ export const App: React.FC = () => {
                     analysisActive={analysisStatus.active || remoteAnalysisActive || backendTaskActive}
                 />
             )}
-        </>
+        </UpdateProvider>
     );
 };
 

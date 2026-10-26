@@ -106,7 +106,7 @@ export const getLocalEngineConnectionView = ({
                     : `${installedCore} → ${latestCore}`,
                 help: `설치된 버전 ${snapshot.engineVersion}, 최신 버전 ${latestRelease.version}. 다운로드한 설치 파일을 실행해 주세요. 설치가 끝나면 자동으로 다시 확인합니다. 분석 중이라면 끝난 뒤 설치해 주세요.`,
                 primaryAction: 'update',
-                primaryLabel: '최신 설치 파일 받기',
+                primaryLabel: '업데이트 안내',
                 secondaryAction: 'probe',
                 secondaryLabel: '다시 확인',
                 analysisReady: ready,

@@ -12,8 +12,8 @@ import {
     Upload,
     XCircle,
 } from 'lucide-react';
-import { LOCAL_ENGINE_NAME } from './brand';
 import { Button } from './components/common';
+import { useUpdateControls } from './UpdateContext';
 import type { WriterStatusAction, WriterStatusRow } from './writerStatusRow';
 
 interface WriterActionRowProps {
@@ -75,6 +75,7 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
     refreshingAnalysisStatus = false,
     children,
 }) => {
+    const { openGuide } = useUpdateControls();
     const rootRef = useRef<HTMLDivElement>(null);
     const helpButtonRef = useRef<HTMLButtonElement>(null);
     useEffect(() => {
@@ -140,18 +141,16 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
             {row.actions.map(action => {
                 const href = action.kind === 'download' ? installerUrl : action.kind === 'update' ? updateUrl : undefined;
                 if (href) {
-                    const downloadName = action.kind === 'download' ? `${LOCAL_ENGINE_NAME} 설치 파일 받기` : undefined;
                     return (
-                        <a
+                        <Button
                             key={action.kind}
-                            className="btn btn-outline writer-hint-action"
-                            href={href}
-                            aria-label={downloadName}
-                            title={downloadName}
+                            variant="outline"
+                            className="writer-hint-action"
+                            onClick={() => openGuide(action.kind === 'download' ? 'install' : 'update')}
                         >
                             {actionIcon(action, false)}
-                            {action.label}
-                        </a>
+                            {action.kind === 'download' ? '설치 안내' : '업데이트 안내'}
+                        </Button>
                     );
                 }
                 if (action.kind === 'download' || action.kind === 'update') return null;

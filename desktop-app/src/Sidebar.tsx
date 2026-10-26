@@ -25,6 +25,7 @@ import { AppToast, ProgressBar, type AppToastMessage } from './components/common
 import { SidebarRecordMoveMenu } from './SidebarRecordMoveMenu';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import type { SidebarMode } from './useSidebarCollapse';
+import { UpdateEntry } from './UpdateEntry';
 
 export interface SidebarProps {
     mode?: SidebarMode;
@@ -909,6 +910,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                     <strong>{BRAND_NAME}</strong>
                 </button>
                 <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}>메뉴{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
+                <UpdateEntry compact />
                 {onOpenSettings && <button type="button" data-settings-focus-fallback className="sidebar-rail-button sidebar-rail-settings" aria-label="설정" title="설정" onClick={onOpenSettings}><Settings size={18} aria-hidden="true" /></button>}
             </div> : <>
             <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -1341,6 +1343,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                                 설정
                             </button>
                         )}
+                        <UpdateEntry />
                         {onOpenAsrBenchmark && (
                         <button
                             type="button"

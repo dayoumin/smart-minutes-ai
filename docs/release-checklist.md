@@ -12,7 +12,7 @@
 
 ## 최신 웹·설치 엔진 조합 검증 — 2026-10-26
 
-CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261026`을 검증했다. 공개 배포·데스크톱 산출물의 최종 판정은 아래 웹 QA와 구분하여 `.tmp/release-combo-20261026`의 배포 로그·`package-report.json`·보존 검사 결과를 확인한다. 이 절을 작성한 시점에는 운영 웹을 아직 바꾸지 않았다.
+CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261026`을 검증했다. 다운로드 정보·GPU 정책을 커밋한 `46fab033`에서 데스크톱 전체 빌드와 정식 배포 폴더 검사를 통과했다(`dirty=false`, 당시 HEAD 일치). 실행 코드 변경 없이 빌드 후 QA 기록을 보완한 것이므로 배포 산출물은 manifest의 `46fab033`으로 식별한다. `.tmp/release-combo-20261026`의 배포 로그·`package-report.json`·보존 검사 결과를 함께 확인한다.
 
 | 범위 | 판정·증거 |
 | --- | --- |
@@ -20,9 +20,19 @@ CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261
 | 최신 엔진 0.1.12 + 최신 웹 | 실제 새 30초 분석·저장 성공(`web-analyze012.log`). 이전 엔진이 만든 기록의 음성 재생·실제 TXT 저장·요약200·새로고침 뒤 요약 보존 성공(`web-reopen012.log`, `summary-result.json`). 기존 소스의 Qwen 비추론 JSON 처리가 포함된 엔진으로 해결했으며 제품 코드는 추가 수정하지 않았다. |
 | 연결 종료·재시작 | 같은 QA 실행 파일·자료 폴더·17863에서 정상 종료→오프라인 재열기→재시작→새로고침·재열기 성공. 대화록/요약 보존과 음성 재생 확인. 오프라인에서는 기록은 보이고 음성은 연결 복구 안내가 나온다. `recovery-result.json` |
 | 최종 설치 파일 | 431,952,029bytes, SHA256 `db7882287c138261991bb381853c133e651a884734169e24831771332f05a373`. 설치 파일을 실행하지 않고 추출한 payload 4,892개 해시와 빌드 manifest 일치. `installer012-verification.json`. 미서명 beta이며 `distributionReady=false`다. |
+| 공개 배포 | Worker `barorok` version `2c951ec2-03d7-4c18-a355-af69cd79d742`로 배포. 이전 version은 `b71f13df-d93c-4ae4-ac14-f47f497094df`다. 설치 파일 전체 R2 read-back SHA, 공개 자산10개 SHA·metadata·HEAD/Range·이전 링크6개 검증 성공. 임시 업로드 Worker와 토큰 삭제 확인. `public-verification.json`, `upload-verification.json`, `upload-worker-delete.log`. 로컬 annotated 태그는 `prod-2026-10-26.1`, `v0.1.12-beta-20261026`이며 원격 push는 별도다. |
+| 실제 공개 웹 | 자산 대체 없이 새 기록의 요약·IndexedDB 저장 완료·새로고침 뒤 표시를 확인했다. 실제 엔진 정상 종료→오프라인 재열기→재시작 후 요약/대화록 보존과 음성 재생0.508초를 확인했다. 별도 음성 재확인 버튼을 누르지 않았다. 마지막 공개 웹 재열기에서도 음성0.529초·저장 요약 표시·설정200·페이지 오류0건. `public-summary-persist.log`, `summary-persistence-result.json`, `public-recovery.log`(호출 환경 `PUBLIC_WEB=1`), `public-browser-result.json`. |
+| 정식 데스크톱 폴더·자료 | 루트 `corepack pnpm build -NoClearWebViewCache` 전체 빌드, 깨끗한 중간 폴더의 runtime/export 검사와 정식 폴더의 읽기 전용 무결성 검사 성공. 기존 설정·기록·모델/프로필 보호 대상61개 불변. `build-desktop.log`, `protected-after.json`. |
+| 두 데스크톱 패키지·실제 첫 실행 | 업데이트 폴더 `releases/updates/lmo_audio_update_46fab03` 1,136,807,160bytes, 신규 설치 ZIP `releases/handoff/lmo_audio_no_ollama_no_whisper_46fab03.zip` 463,047,428bytes·SHA256 `32a45f08a8d63d03adb805d226abac8443a3eb7cf3078857c52aaaa95d954e9f`. 업데이트4,915파일·ZIP4,916파일을 빌드 원본 해시와 대조했고 기본 설정 일치·개인 자료 제외·ZIP 추출·모델 원본5개 SHA 불변을 확인했다. ZIP 추출본을 새 WebView 프로필에서 실제 실행하여 자체 frozen 서버 경로/health200·설정 화면·웹 엔진17863/데스크톱17864 공존·정상 종료를 확인했다. `package-report.json`, `native-new-install-result.json`, `native-new-install-polled.log`. 초기 서버 준비 중 응답 실패를 즉시 최종 실패로 처리한 검사 대신 전체 JSON 준비를 제한 시간 안에서 기다렸다. 새 설치 ZIP에서 모델을 추가로 준비한 뒤의 신규 분석은 이번 실행에 포함하지 않았다. |
 | 집중 자동 검사 | `corepack pnpm`의 typecheck·lint, 경계 Node 검사23건, `check:quick -SkipFrontend`154건, `backend/.venv-desktop/Scripts/python.exe` Python3.12.14의 generation gateway25건, 다운로드 HTTP/Range 검사와 웹 배포 dry-run 통과. 프론트 검사는 별도로 실행했다. |
 
-브라우저는 별도 Chromium QA 프로필을 사용했다. 공개 HTTPS origin의 정적 자산만 로컬 최신 빌드로 대체했고 엔진 API는 실제 실행 파일에 연결했다. 로컬 연결 권한은 자동화로 허용했으므로 사람의 Chrome/Edge 권한창·회사 정책 검증으로 확대하지 않는다. 모델은 QA 폴더에서 재사용했으며 실제 사용자 설치 엔진0.1.8과 자료는 변경하지 않았다. 입력은 동작 확인용30초 표본으로, 한국어 인식 품질·장문 요약·장시간 성능 판정이 아니다. 최신 NSIS의 실제 기존 설치 업데이트/제거는 별도 시험 PC 항목으로 유지한다. 다른 PC와 모델 최초 준비의 종료 증거는 아래 기존 인계 표를 따른다.
+브라우저는 별도 Chromium QA 프로필을 사용했다. 배포 전에는 공개 HTTPS origin의 정적 자산만 로컬 최신 빌드로 대체했고 엔진 API는 실제 실행 파일에 연결했다. 배포 후 공개 웹 검사는 자산 대체 없이 실행했다. 로컬 연결 권한은 자동화로 허용했으므로 사람의 Chrome/Edge 권한창·회사 정책 검증으로 확대하지 않는다. 모델은 QA 폴더에서 재사용했으며 실제 사용자 설치 엔진0.1.8과 자료는 변경하지 않았다. 입력은 동작 확인용30초 표본으로, 한국어 인식 품질·장문 요약·장시간 성능 판정이 아니다. 최신 NSIS의 실제 기존 설치 업데이트/제거는 별도 시험 PC 항목으로 유지한다. 다른 PC와 모델 최초 준비의 종료 증거는 아래 기존 인계 표를 따른다.
+
+같은 날의 QA 보정: 최초 새 기록의 요약 검사는 HTTP200 뒤1.5초만 기다리고 reload하여 브라우저 저장 완료를 입증하지 못했다. 보완 후 정확한 요약·`completed`가 IndexedDB와 화면에 반영된 뒤 reload하여 통과했다. 설정 검사는 기본 설정 창에서 필요한 `/api/settings`200을 확인하며, 그 창에서 새 `/api/models/status` 요청이 항상 생긴다고 가정하지 않는다. Python urllib의 공개 자산 요청은 Cloudflare1010/403에 막혔으나 Node fetch와 실제 브라우저는 정상이며 보안 설정을 낮추지 않았다.
+
+| QA 추적 항목 | 상태·마지막 확인 | 필요한 증거·종료 기준 |
+| --- | --- | --- |
+| 공개 웹 첫 재시작 검사에서 음성 요소 대기30초 초과1회 | 미분류·추적, 2026-10-26. `public-browser.log`와 당시 엔진 access log 보존. 이후 실제 공개 웹 재시작/재생은 통과했지만 최초 실패 원인이 해결됐다고 단정하지 않는다. 제품 결함 여부 미확정이며 데이터 손실은 관측하지 않았다. | 같은 버전·QA 프로필/캐시 상태·시스템 부하·실제 권한을 기록하고 cold start의 HEAD/GET 실패 시각과 Console/Network를 함께 수집한다. 실패 원인을 확인하고 필요 시 수정·독립 재검토한 뒤 같은 조건의 재시작/기록 전환·추가 재확인 없는 재생 성공 증거로 닫는다. 재현돼 계획 작업이 되면 기존 runtime QA/TODO 항목으로 승격한다. |
 
 ## 이전 판정 — 2026-10-25
 

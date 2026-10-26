@@ -21,7 +21,7 @@
 8. GitHub Actions는 push·pull_request 때 돌지 않는다. 예약 데이터 작업과 수동 실행만 둔다.
 <!-- END:release-rules -->
 
-이 저장소 메모: pre-push hook이 아직 없으므로 규칙 2에 따라 커밋까지만 하고 push 전에 묻는다. 웹 Worker `barorok`에는 `pnpm release`가 없어 규칙 4의 기존 경로(`corepack pnpm --dir deploy/cloudflare run deploy`, `docs/web-local-engine-followup-plan.md`)를 임시로 쓴다. 규칙 7의 `vX.Y.Z`는 버전이 붙는 유일한 설치 파일인 웹 연결용 설치 엔진(`Barorok-Local-Engine-Setup-<engineVersion>.exe`)의 `engineVersion` 그대로다(예: `v0.1.10-beta-20261021`). 포터블 데스크톱(`lmo_audio`)은 버전 없이 `release-manifest.json`의 commit으로 식별하므로 태그를 따로 만들지 않는다. `tauri.conf.json`의 `0.1.0`은 릴리스 버전이 아니다. 상세 순서는 `docs/release-checklist.md` 7절, 후속은 `todo.md`의 「브랜치·배포 공통 규칙 v2 적용 후속」.
+이 저장소 메모: Windows에서는 각 체크아웃에서 `git config core.hooksPath .githooks`로 pre-push hook을 활성화한다. hook은 미커밋·미추적 소스가 있으면 멈추고 `scripts/check_pre_push.ps1`로 타입 검사·엔진 경계 계약·빠른 백엔드 검사를 실행한다. 전체 빌드·브라우저·실모델 검사는 별도다. PowerShell이 없는 클라우드 세션에서는 커밋까지만 하며, hook·AI 지침 등 규칙 2의 확인 대상 변경은 hook 통과 뒤에도 사용자 확인 후 push한다. 웹 Worker `barorok`에는 `pnpm release`가 없어 규칙 4의 기존 경로(`corepack pnpm --dir deploy/cloudflare run deploy`, `docs/web-local-engine-followup-plan.md`)를 임시로 쓴다. 규칙 7의 `vX.Y.Z`는 버전이 붙는 유일한 설치 파일인 웹 연결용 설치 엔진(`Barorok-Local-Engine-Setup-<engineVersion>.exe`)의 `engineVersion` 그대로다(예: `v0.1.10-beta-20261021`). 포터블 데스크톱(`lmo_audio`)은 버전 없이 `release-manifest.json`의 commit으로 식별하므로 태그를 따로 만들지 않는다. `tauri.conf.json`의 `0.1.0`은 릴리스 버전이 아니다. 상세 순서는 `docs/release-checklist.md` 7절, 후속은 `todo.md`의 「브랜치·배포 공통 규칙 v2 적용 후속」.
 
 ## Audio Performance Work
 

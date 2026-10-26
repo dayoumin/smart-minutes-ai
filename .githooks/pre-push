@@ -1,0 +1,4 @@
+#!/bin/sh
+set -eu
+repo_root=$(git rev-parse --show-toplevel)
+exec powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$repo_root/scripts/check_pre_push.ps1"

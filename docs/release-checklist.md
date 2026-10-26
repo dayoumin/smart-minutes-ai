@@ -363,7 +363,19 @@ CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261
 
 현재 루트 점검 명령:
 
-Windows의 push 전 자동 검사는 각 체크아웃에서 `git config core.hooksPath .githooks`로 켠다. `.githooks/pre-push`가 `scripts/check_pre_push.ps1`을 실행해 타입 검사·엔진 인증/공개 버전/작업 상태 계약·빠른 백엔드 검사를 직렬 수행하고, 하나라도 실패하면 push를 막는다. 소스에 미커밋·미추적 파일이 있으면 먼저 멈춰 검사 대상과 push할 커밋이 어긋나지 않게 한다. 로컬 설정 등 보존할 변경은 직접 커밋하지 말고 안전하게 임시 보관한 뒤 검사한다. 전체 린트·패키징·브라우저·실모델 검사를 대신하지 않으며 기존 프로젝트 Python/Node를 재사용한다. 실제 push 없이 검사하려면 `.tmp/pre-push-empty-refs.txt`에 빈 파일을 만들고 `git hook run --to-stdin=.tmp/pre-push-empty-refs.txt pre-push`로 설치와 차단 동작을 확인한다. 입력 파일을 생략한 수동 호출은 현재 도구 환경에서 입력 종료를 기다릴 수 있으므로 사용하지 않는다. 실제 push에서는 Git이 ref 목록과 입력 종료를 전달한다. PowerShell이 없는 클라우드 세션은 이 hook을 우회해 push하지 않는다.
+Windows의 push 전 자동 검사는 각 체크아웃에서 `git config core.hooksPath .githooks`로 켠다. `.githooks/pre-push`가 `scripts/check_pre_push.ps1`을 실행한다. 검사 생략 여부와 관계없이 실제 전송 대상이 현재 HEAD와 같은지 먼저 확인한다.
+
+| 실제 push에 포함되는 변경 | 자동 검사 |
+| --- | --- |
+| 일반 문서만 변경 | 타입·Node·Python 검사 모두 생략. 미커밋 코드를 검사하지 않으므로 그 코드의 정리도 요구하지 않는다. |
+| 코드·설정·검사·배포·자동화 변경이 하나라도 포함 | 미커밋·미추적 소스가 있으면 먼저 멈춘다. 소스가 깨끗하면 타입 검사·엔진 인증/공개 버전/작업 상태 계약·빠른 백엔드 검사를 직렬 실행하고, 실패하면 push를 막는다. |
+| 신규 원격 ref, 원격 기준 커밋이 로컬에 없음, 변경 범위 판정 실패·수동 빈 입력 | 위의 코드 검사 경로로 처리한다. |
+
+일반 문서의 허용 범위는 루트 `README.md`·`todo.md`·`roadmap.md`·`PROJECT_SPEC.md`, `docs/` 아래 `.md`·`.txt`, 일반 폴더의 `README.md`다. `AGENTS.md`, `.agents`·`.claude` 아래 파일, `docs/index.html`·CSV·MDX 등은 이 허용 범위에 넣지 않는다. 실행 권한이나 심볼릭 링크가 있는 문서도 검사한다. 마지막 커밋만 보지 않고 Git이 알려 준 실제 원격 tip 이후의 모든 전송 커밋·병합 결과와 최종 파일 상태를 함께 살핀다. 앞선 코드 변경을 나중에 되돌렸어도 검사하며, 이름 변경은 이전·이후 경로를 함께 판정한다. 원격에 이미 있는 코드를 다시 담는 문서 병합은 생략할 수 있지만, 병합 결과가 원격 코드를 과거 상태로 되돌리면 검사한다. 여러 ref 중 하나라도 코드 변경·신규 ref·판정 불가이면 검사한다. ref 삭제만 전송하면 실행할 코드가 없어 검사를 생략한다.
+
+코드 검사 전에 로컬 설정 등 보존할 변경은 직접 커밋하지 말고 안전하게 임시 보관한다. 이 hook은 전체 린트·패키징·브라우저·실모델 검사를 대신하지 않으며 기존 프로젝트 Python/Node를 재사용한다. 같은 커밋의 이전 검사 결과를 재사용하는 캐시는 없다.
+
+실제 push 없이 검사하려면 `.tmp/pre-push-empty-refs.txt`에 빈 파일을 만들고 `git hook run --to-stdin=.tmp/pre-push-empty-refs.txt pre-push`를 실행한다. 빈 입력은 범위를 판정할 수 없어 코드 검사 경로를 확인한다. 문서 전용 생략을 재현할 때는 입력 파일에 실제 local ref/OID와 remote ref/OID를 지정해야 한다. 입력 파일을 생략한 수동 호출은 현재 도구 환경에서 입력 종료를 기다릴 수 있으므로 사용하지 않는다. 실제 push에서는 Git이 ref 목록과 입력 종료를 전달한다. PowerShell이 없는 클라우드 세션은 이 hook을 우회해 push하지 않는다.
 
 ```powershell
 corepack pnpm check:quick

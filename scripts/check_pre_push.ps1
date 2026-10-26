@@ -27,7 +27,7 @@ function Assert-PrePushRefUpdates([string]$RefUpdates) {
     foreach ($line in ($RefUpdates -split "`r?`n")) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         $parts = $line.Trim() -split '\s+'
-        if ($parts.Count -ne 4 -or $parts[1] -notmatch '^[a-fA-F0-9]{40}$') {
+        if ($parts.Count -ne 4 -or $parts[1] -notmatch '^[a-fA-F0-9]{40}$' -or $parts[3] -notmatch '^[a-fA-F0-9]{40}$') {
             throw "Invalid pre-push ref input."
         }
         if ($parts[1] -eq ('0' * 40)) { continue }
@@ -36,6 +36,71 @@ function Assert-PrePushRefUpdates([string]$RefUpdates) {
             throw "Push target must match the checked-out HEAD. Check out the target commit and run its checks first."
         }
     }
+}
+
+function Test-PrePushDocumentationPath([string]$Path) {
+    if ($Path -match '(^|/)(\.agents|\.claude)/' -or $Path -match '(^|/)AGENTS\.md$') {
+        return $false
+    }
+    return $Path -match '^(README|todo|roadmap|PROJECT_SPEC)\.md$' `
+        -or $Path -match '^docs/.+\.(md|txt)$' `
+        -or $Path -match '(^|/)README\.md$'
+}
+
+function Get-PrePushScope([string]$RefUpdates) {
+    Assert-PrePushRefUpdates $RefUpdates
+    $updates = @($RefUpdates -split "`r?`n" | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    if ($updates.Count -eq 0) {
+        return [pscustomobject]@{ DocumentationOnly = $false; Reason = "No push range supplied." }
+    }
+    foreach ($line in $updates) {
+        $parts = $line.Trim() -split '\s+'
+        if ($parts[1] -eq ('0' * 40)) { continue }
+        if ($parts[3] -eq ('0' * 40)) {
+            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "New remote ref." }
+        }
+        $remoteCommit = & git rev-parse --verify --quiet ($parts[3] + '^{commit}')
+        if ($LASTEXITCODE -ne 0) {
+            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Remote base is not available locally." }
+        }
+        # Inspect every outgoing commit, even changes later reverted. Combined merge entries
+        # include resolutions without counting code already present on the remote parent again.
+        # No rename detection: both deleted/added paths and executable/symlink modes stay visible.
+        $changes = @(& git -c core.quotepath=false log --format= --raw --no-renames --diff-merges=dense-combined "$remoteCommit..$($parts[1])" --)
+        if ($LASTEXITCODE -ne 0) {
+            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Could not inspect the push range." }
+        }
+        # A merge can retain an older parent's code without changing it relative to
+        # every parent. Compare the final tree too, so that remote code regressions stay visible.
+        $tipChanges = @(& git -c core.quotepath=false diff --raw --no-renames $remoteCommit $parts[1] --)
+        if ($LASTEXITCODE -ne 0) {
+            return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Could not inspect the final pushed tree." }
+        }
+        $changes += $tipChanges
+        foreach ($change in $changes) {
+            if ([string]::IsNullOrWhiteSpace($change)) { continue }
+            if ($change -notmatch '^(?<parents>:+)(?<metadata>[^\t]+)\t(?<path>.+)$') {
+                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Unrecognized change metadata." }
+            }
+            $parentCount = $Matches.parents.Length
+            $path = $Matches.path
+            $fields = $Matches.metadata -split ' '
+            $modeCount = $parentCount + 1
+            if ($fields.Count -ne (2 * $modeCount + 1) -or $fields[-1] -notmatch '^[A-Z]+\d*$') {
+                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Unrecognized change metadata." }
+            }
+            $modes = $fields[0..$parentCount]
+            $objectIds = $fields[$modeCount..(2 * $modeCount - 1)]
+            if (@($objectIds | Where-Object { $_ -notmatch '^[a-f0-9]+$' }).Count -gt 0) {
+                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Unrecognized change metadata." }
+            }
+            if (@($modes | Where-Object { $_ -notin @('000000', '100644') }).Count -gt 0 `
+                -or -not (Test-PrePushDocumentationPath $path)) {
+                return [pscustomobject]@{ DocumentationOnly = $false; Reason = "Code, configuration or automation changed." }
+            }
+        }
+    }
+    return [pscustomobject]@{ DocumentationOnly = $true; Reason = "Only approved documentation paths or ref deletions." }
 }
 
 function Get-PrePushPython {
@@ -77,13 +142,20 @@ function Invoke-PrePushChecks {
 if ($MyInvocation.InvocationName -ne ".") {
     try {
         Push-Location $PrePushRepoRoot
+        $scope = $null
         try {
             $refUpdates = if ([Console]::IsInputRedirected) { [Console]::In.ReadToEnd() } else { "" }
-            Assert-PrePushRefUpdates $refUpdates
-            Assert-PrePushSourcesCommitted
+            $scope = Get-PrePushScope $refUpdates
+            if (-not $scope.DocumentationOnly) { Assert-PrePushSourcesCommitted }
         }
         finally { Pop-Location }
-        Invoke-PrePushChecks
+        if ($scope.DocumentationOnly) {
+            Write-Host "Pre-push: documentation-only push; skipping typecheck, Node and Python tests."
+        }
+        else {
+            Write-Host ("Pre-push: " + $scope.Reason)
+            Invoke-PrePushChecks
+        }
     }
     catch {
         [Console]::Error.WriteLine($_.Exception.Message)

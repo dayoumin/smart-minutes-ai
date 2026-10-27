@@ -1,8 +1,11 @@
 import ctypes
+import importlib.util
 import logging
 import os
 import re
 import sys
+import sysconfig
+import threading
 from pathlib import Path
 from typing import Dict, List
 from .transcript_review import issue
@@ -13,6 +16,8 @@ _COHERE_MODEL = None
 _COHERE_MODEL_CACHE_KEY = None
 _FASTER_WHISPER_MODEL = None
 _FASTER_WHISPER_MODEL_CACHE_KEY = None
+_CUDA_DLL_HANDLES: dict[str, object] = {}
+_CUDA_DLL_LOCK = threading.Lock()
 
 
 def _ensure_hf_module_cache() -> None:
@@ -38,6 +43,47 @@ def _looks_like_cuda_runtime_error(exc: Exception) -> bool:
     )
 
 
+def _cuda_library_directories() -> list[Path]:
+    # Optional libraries in this Python environment, then an already downloaded
+    # app-managed Ollama runtime. Never start Ollama or download anything here.
+    site_packages = Path(sysconfig.get_path("purelib"))
+    directories = [site_packages / "nvidia" / name / "bin" for name in ("cublas", "cudnn")]
+    # CTranslate2's Windows wheel bundles cuDNN. Locate it without relying on
+    # a previous status request having imported the engine and loaded its DLLs.
+    engine_spec = importlib.util.find_spec("ctranslate2")
+    if engine_spec and engine_spec.submodule_search_locations:
+        directories.extend(Path(location) for location in engine_spec.submodule_search_locations)
+    from ollama_utils import find_embedded_ollama_executable
+
+    executable = find_embedded_ollama_executable()
+    if executable:
+        directories.append(Path(executable).parent / "lib" / "ollama" / "cuda_v12")
+    return directories
+
+
+def _load_cuda_library(dll_name: str) -> None:
+    with _CUDA_DLL_LOCK:
+        if dll_name in _CUDA_DLL_HANDLES:
+            return
+        try:
+            library = ctypes.WinDLL(dll_name)
+        except OSError as original_error:
+            for directory in _cuda_library_directories():
+                candidate = directory / dll_name
+                if not candidate.is_file():
+                    continue
+                try:
+                    # Absolute loading lets Windows find dependencies alongside
+                    # the DLL without changing global PATH or copying libraries.
+                    library = ctypes.WinDLL(str(candidate.resolve()))
+                    break
+                except OSError:
+                    continue
+            else:
+                raise original_error
+        _CUDA_DLL_HANDLES[dll_name] = library
+
+
 def _windows_cuda_runtime_is_usable(verbose: bool = True) -> bool:
     if sys.platform != "win32":
         return True
@@ -45,7 +91,7 @@ def _windows_cuda_runtime_is_usable(verbose: bool = True) -> bool:
     required_dlls = ("cublas64_12.dll", "cudnn64_9.dll")
     for dll_name in required_dlls:
         try:
-            ctypes.WinDLL(dll_name)
+            _load_cuda_library(dll_name)
         except OSError:
             if verbose:
                 print(f"[STT] CUDA runtime preflight failed: {dll_name} could not be loaded.")
@@ -63,20 +109,30 @@ def get_stt_device_status() -> dict:
     }
 
     try:
-        import torch
+        import ctranslate2
+        gpu_detected = ctranslate2.get_cuda_device_count() > 0
     except Exception:
         logging.exception("Failed to inspect GPU availability")
         status["gpu_reason"] = "GPU 상태를 확인하지 못해 CPU를 사용합니다."
         return status
 
-    gpu_detected = bool(torch.cuda.is_available())
     status["gpu_detected"] = gpu_detected
     if not gpu_detected:
         status["gpu_reason"] = "사용 가능한 NVIDIA GPU를 찾지 못했습니다."
         return status
 
+    try:
+        compute_types = ctranslate2.get_supported_compute_types("cuda")
+    except Exception:
+        logging.exception("Failed to inspect STT CUDA compute support")
+        status["gpu_reason"] = "GPU는 감지됐지만 가속 기능을 확인하지 못했습니다. CPU를 사용해 주세요."
+        return status
+    if "float16" not in compute_types:
+        status["gpu_reason"] = "이 GPU는 음성 인식에 필요한 가속 방식을 지원하지 않습니다. CPU를 사용해 주세요."
+        return status
+
     if not _windows_cuda_runtime_is_usable(verbose=False):
-        status["gpu_reason"] = "CUDA 런타임 DLL이 준비되지 않아 GPU 가속을 사용할 수 없습니다."
+        status["gpu_reason"] = "GPU는 감지됐지만 실행 라이브러리가 준비되지 않았습니다. CPU를 사용해 주세요."
         return status
 
     status["selected_device_allowed"].append("cuda")
@@ -140,8 +196,10 @@ def transcribe_audio_fallback_whisper(
 ) -> List[Dict]:
     import traceback
 
-    if device == "auto" and not _windows_cuda_runtime_is_usable():
-        print("[STT] CUDA was detected but required runtime DLLs are missing; using CPU instead of auto.")
+    if device in {"auto", "cuda"} and not _windows_cuda_runtime_is_usable():
+        if device == "cuda":
+            raise RuntimeError("CUDA runtime DLLs are not available for speech recognition. Select CPU or prepare the GPU runtime.")
+        print("[STT] Required CUDA runtime DLLs are missing; using CPU instead of auto.")
         device = "cpu"
 
     compute_type = "int8" if device in {"auto", "cpu"} else "float16"

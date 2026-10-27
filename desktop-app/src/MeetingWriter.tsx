@@ -247,6 +247,8 @@ interface ReadinessCheck {
     models?: ModelsPayload;
     /** The engine answered /api/health, even if it is not ready yet. */
     reachable?: boolean;
+    /** A refused request needs the user's connection flow, not another background request. */
+    connectionRequired?: boolean;
 }
 
 interface ReadinessOptions {
@@ -916,7 +918,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 const message = '연결 상태를 확인해야 분석을 시작할 수 있습니다.';
                 setReadinessState('error');
                 setReadinessMessage(message);
-                return { state: 'error', message };
+                return { state: 'error', message, connectionRequired: true };
             }
             if (!healthResponse.ok) throw new Error(`health ${healthResponse.status}`);
 
@@ -932,7 +934,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 const message = '연결 상태를 확인해야 분석을 시작할 수 있습니다.';
                 setReadinessState('error');
                 setReadinessMessage(message);
-                return { state: 'error', message };
+                return { state: 'error', message, connectionRequired: true };
             }
             if (!modelsResponse.ok) {
                 const body = await modelsResponse.text().catch(() => '');
@@ -1003,12 +1005,11 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             setReadinessRound(round => round + 1);
             const superseded = () => cancelled || loopId !== readinessLoopRef.current;
             const deadline = Date.now() + BACKEND_READY_TIMEOUT_MS;
-            let finalCheckDone = false;
 
             while (!superseded()) {
                 const pastDeadline = Date.now() >= deadline;
-                // One strict check at the deadline, then soft checks every few seconds until the engine answers.
-                const check = await refreshReadiness({ soft: !pastDeadline || finalCheckDone });
+                // After the grace period keep explicit failures actionable while polling for recovery.
+                const check = await refreshReadiness({ soft: !pastDeadline });
                 if (superseded()) return;
 
                 if (check.state === 'ready') {
@@ -1023,18 +1024,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
 
                 if (check.state === 'missing-models') {
                     // Only a model download can clear this on its own (a GPU or reinstall problem cannot), and it can
-                    // finish while Settings is closed: keep a slow, soft check for that case only.
+                    // finish while Settings is closed: keep a slow check for that case only.
                     const downloadPending = (check.models?.models || []).some(model => model.required && !model.installed && model.downloadable);
                     if (!downloadPending) return;
-                    finalCheckDone = true;
                     do {
                         await sleep(READINESS_SLOW_POLL_MS);
                     } while (!superseded() && document.visibilityState === 'hidden');
                     continue;
                 }
                 if (pastDeadline) {
-                    if (check.state === 'error') return;
-                    finalCheckDone = true;
+                    if (check.state === 'error' && (isTauriRuntime() || check.connectionRequired)) return;
                 }
                 await sleep(pastDeadline ? READINESS_SLOW_POLL_MS : BACKEND_READY_INTERVAL_MS);
             }
@@ -1139,7 +1138,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         checkRequested: webConnectionCheckPending,
         onProbeCompleted: webConnectionRecoveryStarted ? recheckDevelopmentReadiness : undefined,
     });
-    const { setShowHelp: setStatusHelpOpen } = connectionControls;
     // 45s of checking without an answer turns the row into a warning (design.md 동작 줄 v2). With a connection
     // step, only while connected, so a reconnect starts again from the plain check.
     const watchReadinessResponse = (!localEngineConnectionRequired || connectionControls.view.analysisReady)
@@ -1185,10 +1183,6 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     });
     // Empty required fields point at the list of what is left (#writer-form-error) only while it is on screen.
     const requiredFieldsDescribed = writerStatusRow.state === 'required-fields';
-    // Help explains one state; a new state starts folded.
-    useEffect(() => {
-        setStatusHelpOpen(false);
-    }, [setStatusHelpOpen, writerStatusRow.state]);
     // A check the user started replaces the button they pressed; focus moves to the line that reports
     // it instead of falling to the page. Checks started by the page itself (load, reconnect) leave focus alone.
     const statusFocusRequestedRef = useRef(false);
@@ -1220,6 +1214,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         || (localEngineConnectionRequired && !localEngineAnalysisReady)
         || writerStatusRow.blocksStart
         || analysisStartBlocked;
+
+    const showStartAction = Boolean(file) && !writerStatusRow.blocksStart;
+    const startActionFocusedRef = useRef(false);
+    useEffect(() => {
+        if (showStartAction || !startActionFocusedRef.current) return;
+        startActionFocusedRef.current = false;
+        if (!document.activeElement || document.activeElement === document.body) {
+            writerStatusRef.current?.focus({ preventScroll: true });
+        }
+    }, [showStartAction]);
 
     const handleCheckWebConnection = async () => {
         // Hand ownership to the coordinator before probing; old anonymous checks must not undo pairing.
@@ -2606,6 +2610,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
 
     const handleStatusRowAction = (action: WriterStatusAction) => {
         switch (action.kind) {
+            case 'focus-required':
+                document.getElementById(missingRequiredInputs[0]?.focusId ?? 'meeting-title')?.focus();
+                return;
             case 'models':
                 onOpenSettings?.();
                 return;
@@ -2623,6 +2630,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 void (localEngineConnectionRequired ? handleRecheckUnresponsiveEngine() : handleCheckWebConnection());
                 return;
             case 'troubleshoot':
+                if (localEngineConnectionRequired) setEngineRecheckStarted(true);
                 onOpenTroubleshooting?.();
                 return;
             case 'choose-file':
@@ -3041,7 +3049,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                                     <UploadCloud size={22} />
                                 </div>
                                 <div className="file-drop-copy min-w-0">
-                                    <div className="file-drop-title">영상 또는 음성 파일을 놓아주세요</div>
+                                    <div className="file-drop-title truncate" title={resumeSelectionActive ? selectedResumeDraft?.sourceFilename : undefined}>
+                                        {resumeSelectionActive && selectedResumeDraft ? selectedResumeDraft.sourceFilename : '영상 또는 음성 파일을 놓아주세요'}
+                                    </div>
                                 </div>
                                 <span className="file-drop-zone-action" aria-hidden="true">파일 선택</span>
                                 <div className="file-drop-format-list" aria-label="지원 형식">
@@ -3062,7 +3072,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                                     <div className="truncate text-sm font-semibold text-foreground" title={file.name}>
                                         {file.name}
                                     </div>
-                                    <div className="mt-1 text-xs text-muted-foreground">{selectedFileMeta}</div>
+                                    <div className="mt-1 truncate text-xs text-muted-foreground" title={resumeDraftFileMismatch ? selectedResumeDraft?.sourceFilename : undefined}>
+                                        {resumeDraftFileMismatch && selectedResumeDraft ? `원본: ${selectedResumeDraft.sourceFilename}` : selectedFileMeta}
+                                    </div>
                                 </div>
                             </div>
                             <div className="selected-file-actions">
@@ -3145,16 +3157,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     <WriterActionRow
                         row={writerStatusRow}
                         statusRef={writerStatusRef}
-                        showHelp={connectionControls.showHelp}
-                        onToggleHelp={() => setStatusHelpOpen(previous => !previous)}
                         onAction={handleStatusRowAction}
                         installerUrl={connectionControls.installerUrl}
                         updateUrl={connectionControls.updateUrl}
                         recheckingReadiness={isRecheckingEngine}
                         refreshingAnalysisStatus={analysisStatusRefreshPending}
                     >
-                        <Button
+                        {showStartAction && <Button
                             className="writer-start-button"
+                            onFocus={() => { startActionFocusedRef.current = true; }}
+                            onBlur={() => { startActionFocusedRef.current = false; }}
                             onClick={handleStartClick}
                             aria-disabled={startButtonOperationallyDisabled || undefined}
                             aria-describedby="writer-local-engine-requirement"
@@ -3163,7 +3175,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                         >
                             {isAnalyzing && <Loader2 size={15} className="animate-spin" aria-hidden="true" />}
                             {isAnalyzing ? '분석 중' : resumeSelectionActive ? '이어하기' : '분석 시작'}
-                        </Button>
+                        </Button>}
                     </WriterActionRow>
                     {localEngineConnectionRequired && connectionControls.codeDialogOpen && (
                         <LocalEngineCodeDialog onClose={connectionControls.closeCodeDialog} />
@@ -3172,7 +3184,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     <section className="writer-privacy" aria-label="처리·보관 안내">
                         <h3 className="writer-local-promise">
                             <ShieldCheck size={18} aria-hidden="true" />
-                            <span>이 PC에서 분석·요약합니다</span>
+                            <span>보안 걱정 NO, 외부 AI 전송 없음</span>
                         </h3>
                         <LocalProcessingFlow />
                     </section>

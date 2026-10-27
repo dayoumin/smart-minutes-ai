@@ -107,6 +107,11 @@ const statusRowOf = page => page.locator('.writer-action-row');
 const statusOf = page => page.locator('#writer-local-engine-requirement');
 const rowState = page => statusRowOf(page).getAttribute('data-state');
 const isAriaDisabled = async locator => (await locator.getAttribute('aria-disabled')) === 'true';
+const expectQuietReady = async (page, timeout = 15000) => {
+  await page.waitForFunction(() => document.querySelector('.writer-action-row')?.dataset.state === 'ready', null, { timeout });
+  assert.equal(await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).count(), 0, 'normal readiness needs no connection notice');
+  assert.equal(await statusOf(page).locator('.writer-status-title, .writer-status-icon').count(), 0, 'normal readiness is quiet without success text or an icon');
+};
 
 const verifyDefaultWriterGuidance = async browser => {
   const url = new URL(APP_URL);
@@ -178,11 +183,11 @@ const verifyDefaultWriterGuidance = async browser => {
       const rowText = async () => ({
         state: await rowState(page),
         title: (await statusOf(page).locator('.writer-status-title').allInnerTexts())[0] ?? '',
-        message: (await statusOf(page).locator('.writer-status-message').allInnerTexts())[0] ?? null,
-        buttons: await statusRowOf(page).locator('.writer-action-buttons > :is(button, a):not(.writer-start-button)').allInnerTexts(),
+        message: (await statusOf(page).locator('.writer-status-message:not(.sr-only)').allInnerTexts())[0] ?? null,
+        buttons: await statusRowOf(page).locator('.writer-status-actions > :is(button, a)').allInnerTexts(),
       });
       // Normal readiness uses the same compact status with or without connection setup.
-      const emptyReadyRow = { state: 'ready', title: '이 PC와 연결됨', message: null, buttons: [] };
+      const emptyReadyRow = { state: 'ready', title: '', message: null, buttons: [] };
       if (scenario === 'anonymous') {
         await page.waitForFunction(() => {
           const button = document.querySelector('.writer-start-button');
@@ -192,7 +197,7 @@ const verifyDefaultWriterGuidance = async browser => {
         // The provider's background reconnect may probe; the writer must not start connecting.
         assert.equal(pairStartCount, 0, 'a working anonymous development API keeps its existing flow');
         assert.deepEqual(await rowText(), emptyReadyRow);
-        assert.equal(await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).count(), 1, 'normal readiness is adjacent to start even without a connection setup step');
+        await expectQuietReady(page);
         assert.equal(await analyze.getAttribute('aria-describedby'), 'writer-local-engine-requirement');
       } else {
         if (scenario === 'outage-recovery') {
@@ -200,61 +205,56 @@ const verifyDefaultWriterGuidance = async browser => {
           assert.equal((await rowText()).title, '분석 준비 확인 중');
           assert.ok(healthCount > 0);
           await page.clock.runFor(47_000);
-          // The development UI speaks as the web app: the engine's web name, 다시 확인, and `?` for the rest.
+          // A timeout offers recovery while automatic checks continue.
           await page.locator('.writer-action-row[data-state="no-response"]').waitFor();
           assert.deepEqual(await rowText(), {
             state: 'no-response',
             title: `${withJosa(LOCAL_ENGINE_NAME, '이/가')} 응답하지 않습니다`,
-            message: '잠시 뒤 다시 확인해 주세요.',
-            buttons: ['다시 확인'],
+            message: null,
+            buttons: ['문제해결'],
           });
-          assert.equal(await statusRowOf(page).getByRole('button', { name: '문제 해결 도움말' }).count(), 1);
+          assert.equal(await statusRowOf(page).getByRole('button', { name: '문제 해결 도움말' }).count(), 0);
         } else {
           await page.locator('.writer-action-row[data-state="connection-check-required"]').waitFor();
           assert.deepEqual(await rowText(), {
-            state: 'connection-check-required', title: '연결 상태를 확인해야 합니다', message: '연결 확인을 눌러 주세요.', buttons: ['연결 확인'],
+            state: 'connection-check-required', title: '연결 상태를 확인해야 합니다', message: null, buttons: ['문제해결'],
           });
           assert.equal(await page.getByRole('button', { name: '모델 받기', exact: true }).count(), 0);
         }
         assert.equal(await page.locator('.status-banner, .writer-action-bar').count(), 0, 'no banner or old action bar');
         assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).count(), 0);
-        assert.equal(await analyze.isDisabled(), true);
-        await statusRowOf(page).getByRole('button', { name: scenario === 'outage-recovery' ? '다시 확인' : '연결 확인', exact: true }).click();
+        assert.equal(await analyze.count(), 0, 'blocked readiness offers its recovery action without a start button');
+        await statusRowOf(page).getByRole('button', { name: '문제해결', exact: true }).click();
         // Recovery hands the row to the connection status line until the anonymous API answers again.
         const rail = statusRowOf(page);
         if (scenario === 'outage-recovery') {
-          await statusOf(page).getByText('연결하지 못했습니다', { exact: true }).waitFor();
-          // Headless Chromium may report the loopback permission as undecided, which adds the allow hint.
-          assert.ok([
-            `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인해 주세요.`,
-            `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하고, Chrome이 물으면 ‘허용’을 눌러 주세요.`,
-          ].includes(await statusOf(page).locator('.writer-status-message').innerText()), 'an unanswered check says to run the engine');
-          assert.equal(await rail.locator('a[href=""]').count(), 0);
+          await page.getByRole('heading', { name: '연결 문제 해결', exact: true }).waitFor();
+          await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
           healthUp = true;
-          await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+          await page.clock.runFor(6_000);
           // Back to the development UI's own row once the anonymous API answers.
           await page.waitForFunction(() => document.querySelector('.writer-action-row')?.getAttribute('data-state') === 'ready');
+          await expectQuietReady(page);
           assert.deepEqual(await rowText(), emptyReadyRow);
           assert.equal(await analyze.isEnabled(), true, 'a recovered anonymous API is usable without reloading');
         } else {
-          await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+          await rail.getByRole('button', { name: '문제해결', exact: true }).click();
           assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
           await statusOf(page).getByText('분석 준비 확인 중', { exact: true }).waitFor();
           assert.equal(await page.getByText('분석 준비 완료', { exact: true }).count(), 0);
-          assert.equal(await analyze.isDisabled(), true, 'model readiness must complete after pairing');
+          assert.equal(await analyze.count(), 0, 'model readiness must complete before start appears');
           const deadline = Date.now() + 10_000;
           while (!heldModelCount && Date.now() < deadline) await sleep(50);
           assert.ok(heldModelCount > 0);
           modelReady = false;
           holdAuthenticatedModels = false;
           releaseModels();
-          await rail.getByRole('button', { name: '모델 받기', exact: true }).waitFor();
-          assert.equal(await analyze.textContent(), '분석 시작', 'the start button keeps its action name while blocked');
-          assert.equal(await isAriaDisabled(analyze), true);
+          await rail.getByRole('button', { name: '문제해결', exact: true }).waitFor();
+          assert.equal(await analyze.count(), 0, 'missing models expose only the model preparation action');
           assert.equal(await page.getByRole('button', { name: '준비 필요', exact: true }).count(), 0);
           modelReady = true;
           await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-          await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).waitFor();
+          await expectQuietReady(page);
           assert.equal(await analyze.isEnabled(), true);
         }
         assert.ok(probeCount > 0);
@@ -346,10 +346,10 @@ const verifySummaryReadinessAfterPairing = async browser => {
     assert.equal(await summaryButton.isDisabled(), true, 'a skipped summary cannot start while the model status is unauthenticated');
     await page.getByRole('button', { name: '새 회의록', exact: true }).click();
     const rail = statusRowOf(page);
-    await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
     assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     await page.waitForFunction(() => document.querySelector('.writer-action-row')?.dataset.state === 'ready');
-    await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).waitFor();
+    await expectQuietReady(page);
     await row.locator('button[title]').filter({ hasText: record.title }).click();
     await detail.getByRole('tab', { name: '기록 정리', exact: true }).click();
     await page.waitForFunction(() => {
@@ -371,13 +371,14 @@ const verifySummaryReadinessAfterPairing = async browser => {
   }
 };
 
-// Connected but a required model is missing: the rail must not claim 분석 준비 완료, and 모델 받기 must be there (WR-2).
+// A missing model offers the common recovery action, which opens the model settings directly (WR-2).
 const verifyMissingModelsAfterPairing = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(15000);
   // The first-visit notice is covered by the main flow; this scenario starts from a returning browser.
   await page.addInitScript(() => window.localStorage.setItem('localProcessingIntroSeen', '1'));
   const sessionToken = 'missing-models-ui-test-session-token';
+  let modelInstalled = false;
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/api/**', route => {
@@ -387,9 +388,9 @@ const verifyMissingModelsAfterPairing = async browser => {
     if (path === '/api/models/status') {
       if (!authorized) return json({ detail: 'local engine authorization required' }, 401);
       return json({
-        ready: false,
+        ready: modelInstalled,
         errors: [],
-        models: [{ key: 'stt_faster_whisper', label: 'faster-whisper', installed: false, required: true, downloadable: true }],
+        models: [{ key: 'stt_faster_whisper', label: 'faster-whisper', installed: modelInstalled, required: true, downloadable: true }],
         summary_ready: false,
       });
     }
@@ -411,31 +412,38 @@ const verifyMissingModelsAfterPairing = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
     const rail = statusRowOf(page);
-    await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
     assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     const status = statusOf(page);
     await status.getByText('모델을 받아야 분석할 수 있습니다', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await rowState(page), 'models-missing');
-    assert.equal(await status.getByText('음성 인식', { exact: true }).count(), 1, 'the sub-line lists what to download');
+    assert.equal(await status.locator('.writer-status-message').count(), 0, 'the first screen shows only the issue title');
     assert.equal(await page.getByText('분석 준비 완료', { exact: true }).count(), 0, 'connected is not ready while a required model is missing');
     assert.equal(await statusOf(page).getByText('이 PC와 연결됨', { exact: true }).count(), 0, 'only the first blocked step is named');
     assert.equal(await page.getByText('준비할 모델', { exact: true }).count(), 0, 'no readiness banner below the form');
     assert.equal(await page.locator('.status-banner').count(), 0);
-    assert.equal(await rail.getByRole('button', { name: '문제 해결 도움말' }).count(), 0, '모델 받기 is the whole fix, so there is no ?');
+    assert.equal(await rail.getByRole('button', { name: '문제 해결 도움말' }).count(), 0, 'the common recovery action replaces a separate help popup');
+    assert.deepEqual(await rail.locator('.writer-status-actions > :is(button, a)').allInnerTexts(), ['문제해결']);
+    assert.equal(await rail.getByRole('button', { name: '문제해결', exact: true }).locator('svg.lucide-settings').count(), 1, 'recovery uses the shared settings icon');
     const start = rail.getByRole('button', { name: '분석 시작', exact: true });
-    assert.equal(await isAriaDisabled(start), true);
-    assert.equal(await start.evaluate(element => element.hasAttribute('disabled')), false, 'a blocked start stays focusable');
-    assert.equal(await start.getAttribute('aria-describedby'), 'writer-local-engine-requirement');
-    await start.focus();
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
+    assert.equal(await start.count(), 0, 'missing models expose their recovery action without a start button');
     assert.equal(await page.getByRole('dialog', { name: '설정', exact: true }).count(), 0);
-    await rail.getByRole('button', { name: '모델 받기', exact: true }).click();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
     const settingsDialog = page.getByRole('dialog', { name: '설정', exact: true });
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await page.getByRole('tab', { name: '모델' }).getAttribute('aria-selected'), 'true', '모델 받기 opens Settings > 모델');
+    await settingsDialog.locator('#settings-analysis-models').waitFor();
+    await page.waitForFunction(() => document.activeElement?.closest('#settings-analysis-models') !== null);
+    assert.equal(await settingsDialog.getByRole('tab').count(), 0, 'the common recovery action targets analysis models in the integrated settings');
+    assert.equal(await rail.getByRole('button', { name: '다시 확인', exact: true }).count(), 0, 'a missing model has a download destination, not a retry');
+    await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
+    modelInstalled = true;
+    await expectQuietReady(page);
+    assert.equal(await start.count(), 0, 'readiness alone does not expose start before selecting a file');
+    await page.setInputFiles('#meeting-file-input', { name: 'prepared.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('model readiness fixture') });
+    await start.waitFor({ state: 'visible' });
+    assert.equal(await isAriaDisabled(start), false, 'a completed model installation is detected without a retry or focus event');
     assert.deepEqual(errors, []);
-    console.log('ok - connected web app shows 모델 받기 instead of claiming readiness');
+    console.log('ok - missing models open model settings through the common recovery action');
   } catch (error) {
     console.error('missing models body:', (await page.locator('body').innerText()).slice(0, 2000));
     throw error;
@@ -453,7 +461,7 @@ const waitUntil = async (condition, message, timeoutMs = 10_000) => {
 };
 
 // Connected, then the engine stops answering the readiness check (design.md 동작 줄 v2 응답 없음):
-// 45s of 분석 준비 확인 중 becomes a warning whose 다시 확인 checks the connection, then readiness.
+// 45s of checking offers recovery while automatic readiness checks continue.
 const verifyReadinessNoResponse = async browser => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
   page.setDefaultTimeout(15000);
@@ -520,150 +528,57 @@ const verifyReadinessNoResponse = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
     await waitForRowState('ready');
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
+    await expectQuietReady(page);
+    assert.equal(await start.count(), 0, 'a ready connection still asks for a file first');
+    await page.setInputFiles('#meeting-file-input', { name: 'recovery.mp3', mimeType: 'audio/mpeg', buffer: Buffer.from('recovery fixture') });
+    await start.waitFor({ state: 'visible' });
     assert.equal(await isAriaDisabled(start), false);
 
-    // The engine stops answering. The next check (window focus) keeps the last answer until its request gives up.
-    engine = 'silent';
-    const healthBefore = healthRequests;
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await waitUntil(async () => healthRequests > healthBefore, 'the focus check reaches the engine');
-    assert.equal(await rowState(page), 'ready');
-    await page.clock.runFor(15_000);
-    await waitForRowState('readiness-checking');
-    await expectWarningAfter45s();
-    assert.deepEqual(await status.evaluate(element => [
-      element.querySelector('.writer-status-title')?.textContent,
-      element.querySelector('.writer-status-message')?.textContent,
-    ]), [noResponseTitle, '잠시 뒤 다시 확인해 주세요.']);
-    assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-warning');
-    assert.deepEqual(await rail.getByRole('button').allInnerTexts(), ['', '다시 확인', '분석 시작'], '?, one fix, then 분석 시작');
-    assert.equal(await isAriaDisabled(start), true);
-    assert.equal(await page.locator('#writer-readiness-hint, #writer-engine-checking, .status-banner').count(), 0, 'no banner or old hint line');
-    const helpToggle = rail.getByRole('button', { name: '문제 해결 도움말', exact: true });
-    await helpToggle.click();
-    assert.equal(await page.locator('#writer-status-help').innerText(),
-      `계속되면 Windows 시작 메뉴에서 ${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 실행하세요.`);
-
-    // 다시 확인 checks the connection first. The engine never answers it, so after 15s the row says the
-    // connection failed instead of checking forever.
-    const probesBeforeRecheck = probes;
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitForRowState('readiness-checking');
-    assert.equal(await warningShown(), 0, 'the old warning gives way to the new check');
-    assert.equal(await page.locator('#writer-status-help').count(), 0);
-    await waitUntil(() => page.evaluate(() => document.activeElement?.id === 'writer-local-engine-requirement'),
-      'focus follows to the line that reports the check');
-    await waitUntil(async () => probes > probesBeforeRecheck, 'the press checks the connection');
-    await sleep(300);
-    assert.equal(probes, probesBeforeRecheck + 1, 'one connection check per press');
-    // The probe's 15s started at the click, so each side keeps a 2s margin like expectWarningAfter45s.
-    const expectFailedAfter15s = async waitingState => {
-      await page.clock.runFor(13_000);
-      assert.equal(await rowState(page), waitingState, '13s in, the check is still waiting');
-      await page.clock.runFor(4_000);
-      await waitForRowState('unreachable');
-      assert.equal(await status.locator('.writer-status-title').innerText(), '연결하지 못했습니다');
-      assert.equal(await warningShown(), 0);
-    };
-    await expectFailedAfter15s('readiness-checking');
-
-    // The connection row's own 다시 확인 also gives up after 15s instead of spinning.
-    const probesBeforeRowCheck = probes;
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitUntil(async () => probes > probesBeforeRowCheck, 'the row check reaches the engine');
-    await waitForRowState('checking');
-    await status.getByText('연결 확인 중', { exact: true }).waitFor();
-    await expectFailedAfter15s('checking');
-
-    // The engine answers again: 다시 확인 recovers without a reload.
-    engine = 'answer';
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitForRowState('ready');
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
-    assert.equal(await warningShown(), 0);
-    assert.equal(await isAriaDisabled(start), false, 'a recovered engine unlocks 분석 시작');
-
-    // Health answers but the model check never does: the same 45s warning.
-    engine = 'models-silent';
-    const modelsBefore = modelRequests;
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await waitUntil(async () => modelRequests > modelsBefore, 'the focus check asks for model status');
-    assert.equal(await rowState(page), 'ready');
-    await page.clock.runFor(15_000);
-    await waitForRowState('readiness-checking');
-    await expectWarningAfter45s();
-
-    // The engine answers again on its own: the slow re-check finds it without a click, and the next
-    // check that waits starts from the plain spinner, not the warning it once had.
-    engine = 'answer';
-    await waitUntil(async () => {
-      await page.clock.runFor(5_000);
-      return (await rowState(page)) === 'ready';
-    }, 'the slow re-check finds the engine again', 30_000);
-    assert.equal(await warningShown(), 0);
-    engine = 'models-silent';
-    const modelsBeforeRetry = modelRequests;
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    await waitUntil(async () => modelRequests > modelsBeforeRetry, 'the next focus check asks for model status');
-    await page.clock.runFor(15_000);
-    await waitForRowState('readiness-checking');
-    assert.equal(await warningShown(), 0, 'an answered check leaves no warning for the next one');
-    await expectWarningAfter45s();
-
-    // The engine goes away and comes back: the reconnect starts a fresh 45s instead of keeping the warning.
-    engine = 'gone';
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitForRowState('unreachable');
-    assert.equal(await status.locator('.writer-status-title').innerText(), '연결하지 못했습니다', 'a refused check after connecting is not a first visit');
-    assert.equal(await warningShown(), 0);
-    engine = 'models-silent';
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitForRowState('readiness-checking');
-    assert.equal(await warningShown(), 0, 'no warning left over from before the reconnect');
-    await expectWarningAfter45s();
-
-    engine = 'answer';
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitForRowState('ready');
-    assert.equal(await isAriaDisabled(start), false);
-
-    // An engine that answers, even with an error, is not silent: each answer restarts the 45s, so the loop's
-    // own check at 45s reports the error without a 응답하지 않습니다 in between.
+    for (const mode of ['silent', 'models-silent']) {
+      await start.focus();
+      engine = mode;
+      const requestsBefore = mode === 'silent' ? healthRequests : modelRequests;
+      await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+      await waitUntil(() => (mode === 'silent' ? healthRequests : modelRequests) > requestsBefore, 'focus asks for readiness');
+      await page.clock.runFor(15_000);
+      await waitForRowState('readiness-checking');
+      assert.equal(await start.count(), 0, 'a pending failed check removes the unavailable start action');
+      await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
+      await expectWarningAfter45s();
+      assert.equal(await status.locator('.writer-status-message').count(), 0, 'timeout details are available in troubleshooting');
+      assert.equal(await rail.getByRole('button', { name: '다시 확인', exact: true }).count(), 0);
+      assert.equal(await start.count(), 0, 'an outage exposes only its recovery action');
+      await rail.getByRole('button', { name: '문제해결', exact: true }).click();
+      await page.getByRole('heading', { name: '연결 문제 해결', exact: true }).waitFor();
+      await page.getByRole('button', { name: '설정 닫기', exact: true }).click();
+      engine = 'answer';
+      await waitUntil(async () => {
+        await page.clock.runFor(5_000);
+        return (await rowState(page)) === 'ready';
+      }, 'automatic readiness recovers without a retry or reload', 30_000);
+      await expectQuietReady(page);
+      assert.equal(await isAriaDisabled(start), false);
+    }
     engine = 'models-failing';
-    await page.evaluate(() => {
-      window.__noResponseRowStates = [];
-      new MutationObserver(() => window.__noResponseRowStates.push(document.querySelector('.writer-action-row')?.dataset.state))
-        .observe(document.querySelector('.writer-action-row'), { attributes: true, attributeFilter: ['data-state'] });
-    });
-    let answeredModels = modelRequests;
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    // One second at a time, so the engine answers about once per page second like the real loop.
     for (let step = 0; step < 60 && (await rowState(page)) !== 'readiness-error'; step += 1) {
-      await waitUntil(async () => modelRequests > answeredModels || (await rowState(page)) === 'readiness-error', 'the next soft check');
-      answeredModels = modelRequests;
       await sleep(50);
       await page.clock.runFor(1_000);
     }
     await waitForRowState('readiness-error');
     assert.equal(await status.locator('.writer-status-title').innerText(), '분석 준비 상태를 확인하지 못했습니다');
-    assert.deepEqual(await page.evaluate(() => window.__noResponseRowStates), ['readiness-checking', 'readiness-error'],
-      'no 응답하지 않습니다 while the engine answers');
-
-    // 다시 확인 from that error when the engine has gone silent: it re-checks readiness only (no
-    // connection check), its request gives up after 15s, and the spinner that follows turns into the
-    // warning 45s later instead of running on.
-    engine = 'silent';
-    const healthBeforeRecheck = healthRequests;
-    const probesBeforeReadinessRecheck = probes;
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await waitUntil(async () => healthRequests > healthBeforeRecheck, 'the readiness re-check reaches the engine');
-    await page.clock.runFor(15_000);
-    await waitForRowState('readiness-checking');
-    await expectWarningAfter45s();
-    assert.equal(probes, probesBeforeReadinessRecheck, 'this 다시 확인 re-checks readiness, not the connection');
+    assert.equal(await rail.getByRole('button', { name: '다시 확인', exact: true }).count(), 0);
+    assert.equal(await start.count(), 0, 'a model-status failure exposes only its recovery destination');
+    assert.deepEqual(await rail.locator('.writer-hint-action').allInnerTexts(), ['문제해결']);
+    engine = 'answer';
+    await waitUntil(async () => {
+      await page.clock.runFor(5_000);
+      return (await rowState(page)) === 'ready';
+    }, 'a transient model-status error recovers automatically', 30_000);
+    await expectQuietReady(page);
+    assert.equal(await isAriaDisabled(start), false);
     assert.deepEqual(errors, []);
-    console.log('ok - a connected engine that stops answering readiness warns after 45s and 다시 확인 recovers');
+    console.log('ok - readiness timeouts and model-status errors offer recovery and reconnect automatically');
   } catch (error) {
     console.error('no-response body:', (await page.locator('body').innerText()).slice(0, 2000));
     throw error;
@@ -705,87 +620,34 @@ const verifyBrowserBlockedConnection = async browser => {
     const status = statusOf(page);
     await status.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).waitFor();
     assert.equal(await rowState(page), 'browser-blocked', 'the automatic check reports the block before any click');
-    assert.equal(await status.innerText().then(text => text.includes('사이트 정보에서 ‘기기에 있는 앱’을 허용해 주세요.')), true);
+    assert.equal(await status.locator('.writer-status-message').count(), 0, 'permission guidance belongs in the recovery destination');
     assert.ok(!(await rail.innerText()).includes(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행`), 'a browser block is not explained as a stopped engine');
     assert.equal(await rail.getByRole('link').count(), 0, 'reinstalling is not offered for a denied permission');
-    assert.deepEqual(await rail.getByRole('button').allInnerTexts(), ['', '다시 확인', '분석 시작'], 'one fix beside 분석 시작, plus ?');
+    assert.deepEqual(await rail.getByRole('button').allInnerTexts(), ['문제해결']);
     assert.ok(probes >= 1);
-
-    // ? opens the longer guidance outside the live region and folds when the state changes.
-    const helpToggle = rail.getByRole('button', { name: '문제 해결 도움말', exact: true });
-    const lineHeightBefore = (await rail.locator('.writer-status-line').boundingBox()).height;
-    assert.equal(await helpToggle.getAttribute('aria-expanded'), 'false');
-    assert.equal(await page.locator('#writer-status-help').isVisible(), false);
-    await helpToggle.click();
-    assert.equal(await helpToggle.getAttribute('aria-expanded'), 'true');
-    await page.locator('#writer-status-help').getByText(/주소창 왼쪽의 사이트 정보 아이콘/).waitFor();
-    assert.equal(await page.locator('[role="status"] #writer-status-help, [aria-live] #writer-status-help').count(), 0, 'help is outside the live region');
-    assert.equal(await page.locator('.writer-action-row [aria-live]').count(), 0, 'no aria-live over the whole action row');
-    assert.equal((await rail.locator('.writer-status-line').boundingBox()).height, lineHeightBefore, 'the 24px ? does not grow the status line');
-    // Below 40rem the buttons sit under the line and the opened help goes under them, so 분석 시작 does not move.
-    await page.setViewportSize({ width: 920, height: 720 });
-    try {
-      const topOf = locator => locator.evaluate(element => Math.round(element.getBoundingClientRect().top));
-      const startTop = await topOf(rail.locator('.writer-start-button'));
-      assert.ok(await topOf(page.locator('#writer-status-help')) > startTop, 'narrow: the help opens under the buttons');
-      await helpToggle.click();
-      assert.equal(await page.locator('#writer-status-help').isVisible(), false);
-      assert.equal(await topOf(rail.locator('.writer-start-button')), startTop, 'narrow: folding ? leaves 분석 시작 in place');
-      await helpToggle.click();
-    } finally {
-      await page.setViewportSize({ width: 1280, height: 900 });
-    }
-
-    // The user allows access but the engine is still not running.
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: '설정', exact: true });
+    await settings.getByText(/주소창 왼쪽의 사이트 정보 아이콘/).waitFor();
+    assert.equal(await settings.getByRole('link', { name: '연결 프로그램 받기' }).count(), 0, 'permission refusal does not offer reinstall');
     await page.evaluate(() => { window.__loopbackPermission = 'granted'; });
-    const probesBeforeClick = probes;
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await status.getByText('연결 확인 중', { exact: true }).waitFor();
-    assert.equal(await rowState(page), 'checking', 'a fast failure still shows the retry happening');
-    assert.equal(await page.locator('#writer-status-help').count(), 0, 'the check folds the help');
-    await status.getByText(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인해 주세요.`, { exact: true }).waitFor();
+    const before = probes;
+    await settings.locator('#settings-troubleshooting').getByRole('button', { name: '다시 확인', exact: true }).click();
+    await waitUntil(() => probes > before, 'recovery checks the connection after permissions change');
+    await settings.locator('#settings-troubleshooting').getByText(/Windows 시작 메뉴에서/).waitFor();
+    assert.equal(await settings.getByText('이미 설치했다면', { exact: true }).count(), 0, 'run instructions are not repeated in a second row');
+    await settings.getByRole('button', { name: '설정 닫기', exact: true }).click();
     assert.equal(await rowState(page), 'unreachable');
-    assert.equal(await status.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).count(), 0);
-    assert.ok(probes > probesBeforeClick);
-
-    // Retrying from the plain failure also shows the check instead of looking unchanged.
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await status.getByText('연결 확인 중', { exact: true }).waitFor();
-    await status.getByText(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행한 뒤 다시 확인해 주세요.`, { exact: true }).waitFor();
-
-    // A background re-check (window focus, or every 10s) keeps the settled line, its buttons and open help.
-    const plainHelpToggle = rail.getByRole('button', { name: '문제 해결 도움말', exact: true });
-    await plainHelpToggle.click();
-    await page.locator('#writer-status-help').getByText(/Windows 시작 메뉴에서/).waitFor();
-    await page.evaluate(() => {
-      window.__rowStates = [];
-      new MutationObserver(() => window.__rowStates.push(document.querySelector('.writer-action-row')?.dataset.state))
-        .observe(document.querySelector('.writer-action-row'), { attributes: true, attributeFilter: ['data-state'] });
-    });
-    const probesBeforeFocus = probes;
-    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
-    const focusDeadline = Date.now() + 5000;
-    while (probes === probesBeforeFocus && Date.now() < focusDeadline) await sleep(50);
-    assert.ok(probes > probesBeforeFocus, 'window focus started a background re-check');
-    await sleep(800);
-    assert.deepEqual(await page.evaluate(() => window.__rowStates), [], 'a background re-check does not flash 연결 확인 중');
-    assert.equal(await rowState(page), 'unreachable');
-    assert.equal(await plainHelpToggle.getAttribute('aria-expanded'), 'true', 'the help the user opened stays open');
-    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), '문제 해결 도움말', 'focus stays where the user left it');
-    await plainHelpToggle.click();
-    assert.equal(await page.locator('#writer-status-help').isVisible(), false);
-
-    // The engine now answers, but the browser refuses to let the page read it.
+    const recovery = rail.getByRole('button', { name: '문제해결', exact: true });
+    await recovery.click();
     engineAnswersOpaque = true;
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await status.getByText('연결 확인 중', { exact: true }).waitFor();
-    await status.getByText('브라우저가 연결을 막고 있습니다', { exact: true }).waitFor();
-    assert.match(await status.innerText(), /요청을 바꾸는 확장 프로그램을 꺼 주세요/);
-    assert.doesNotMatch(await rail.innerText(), /기기에 있는 앱/, 'the permission is already allowed here');
-    assert.doesNotMatch(await rail.innerText(), /실행한 뒤/);
-    await rail.getByRole('button', { name: '문제 해결 도움말', exact: true }).click();
-    await page.locator('#writer-status-help').getByText(/다시 설치해 주세요/).waitFor();
-    console.log('ok - browser blocks are told apart from a stopped engine and retries visibly check');
+    await settings.locator('#settings-troubleshooting').getByRole('button', { name: '다시 확인', exact: true }).click();
+    await settings.getByText(/다시 설치해 주세요/).waitFor();
+    await settings.getByText(/로컬 AI 도우미 같은 확장 프로그램을 끈 뒤/).waitFor();
+    await settings.getByRole('button', { name: '설정 닫기', exact: true }).click();
+    assert.equal(await status.locator('.writer-status-message').count(), 0, 'extension details are shown in the recovery destination');
+    assert.doesNotMatch(await rail.innerText(), /기기에 있는 앱|실행한 뒤/);
+    assert.equal(await recovery.evaluate(el => el === document.activeElement), true);
+    console.log('ok - browser permission and extension blocks open cause-specific recovery');
   } finally { await page.close(); }
 };
 
@@ -863,7 +725,7 @@ const verifyPermissionPromptWaitsForUser = async browser => {
     await status.getByText('Chrome이 ‘기기에 있는 앱’을 물으면 ‘허용’을 눌러 주세요.', { exact: true }).waitFor();
     assert.equal(await rowState(page), 'checking');
     await page.waitForFunction(() => document.querySelector('.writer-action-row')?.dataset.state === 'unreachable');
-    await status.getByText(`${withJosa(LOCAL_ENGINE_NAME, '을/를')} 실행하고, Chrome이 물으면 ‘허용’을 눌러 주세요.`, { exact: true }).waitFor();
+    assert.equal(await status.locator('.writer-status-message').count(), 0, 'an unanswered permission attempt exposes only its issue title');
     assert.equal(await page.evaluate(() => window.__promptsShown), 1);
     await page.evaluate(() => window.dispatchEvent(new Event('focus')));
     await sleep(1500);
@@ -872,8 +734,12 @@ const verifyPermissionPromptWaitsForUser = async browser => {
 
     // The user clicks again and allows this time.
     await page.evaluate(() => { window.__allowWhenAsked = true; });
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
+    const settings = page.getByRole('dialog', { name: '설정', exact: true });
+    await settings.locator('#settings-troubleshooting').getByRole('button', { name: '다시 확인', exact: true }).click();
+    await settings.getByRole('button', { name: '모델 설정 열기', exact: true }).waitFor();
+    await settings.getByRole('button', { name: '설정 닫기', exact: true }).click();
+    await expectQuietReady(page);
     assert.equal(await page.evaluate(() => window.__promptsShown), 2);
     assert.equal(engineRequests[0], '/api/probe', 'the first request to this PC is the user\'s own check');
     assert.ok(engineRequests.includes('/api/pair/start'));
@@ -923,14 +789,13 @@ const verifyAutomaticEngineConnection = async browser => {
   });
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
-    const status = statusOf(page);
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
+    await expectQuietReady(page);
     assert.equal(await page.evaluate(() => document.activeElement?.tagName), 'BODY', 'a connection the page made itself does not move focus');
     assert.equal(starts, 1);
     assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
     assert.equal(await page.getByRole('dialog', { name: '이 브라우저 연결' }).count(), 0);
     await page.reload({ waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
+    await expectQuietReady(page);
     assert.equal(starts, 1, 'reload restores the same browser instead of creating another connection');
     assert.ok(restores > 0);
     console.log('ok - installed engine connects automatically and survives reload without code or confirmation');
@@ -1020,26 +885,29 @@ const verifyInputStage = async browser => {
   const expectRow = async (state, title, message) => {
     await waitState(state);
     assert.equal(await status.locator('.writer-status-title').innerText(), title, `${state}: title`);
-    assert.equal(await status.locator('.writer-status-message').innerText(), message, `${state}: sub-line`);
+    assert.equal(await status.locator('.writer-status-message:not(.sr-only)').count(), 0, `${state}: no visible problem sub-line`);
+    assert.equal(await rail.locator('.writer-status-help-toggle, #writer-status-help').count(), 0, `${state}: details live at the recovery destination`);
+    if (state === 'required-fields') {
+      assert.equal(await page.locator('#writer-form-error').textContent(), message, 'missing fields remain available to field descriptions');
+      assert.ok((await page.locator('#writer-form-error').getAttribute('class')).split(/\s+/).includes('sr-only'));
+    }
   };
   const fixButtons = () => rail.locator('.writer-hint-action').allInnerTexts();
   const activeId = () => page.evaluate(() => document.activeElement?.id ?? '');
-  const pressBlockedStart = async state => {
-    assert.equal(await isAriaDisabled(start), true, `${state}: 분석 시작 is blocked`);
-    assert.equal(await start.evaluate(element => element.hasAttribute('disabled')), false, `${state}: but stays focusable`);
-    await start.focus();
-    await page.keyboard.press('Enter');
-    await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
+  const expectBlockedStartAbsent = async state => {
+    assert.equal(await start.count(), 0, `${state}: only the applicable recovery controls are exposed`);
   };
   const expectNoOldSurfaces = async state => {
     assert.equal(await page.locator('.status-banner').count(), 0, `${state}: no banner under the form`);
     assert.equal(await page.locator('[id="writer-form-error"]').count(), state === 'required-fields' ? 1 : 0, `${state}: one list id at most`);
     assert.equal(await page.locator('#writer-resume-note, #writer-same-file-note, .writer-analysis-blocked-note').count(), 0,
       `${state}: nothing said again under the upload area or below the form`);
-    assert.equal(await start.getAttribute('aria-describedby'), 'writer-local-engine-requirement', `${state}: one description`);
-    assert.doesNotMatch(await start.innerText(), /준비 필요|이어하기 불가/);
+    if (await start.count()) {
+      assert.equal(await start.getAttribute('aria-describedby'), 'writer-local-engine-requirement', `${state}: one description`);
+      assert.doesNotMatch(await start.innerText(), /준비 필요|이어하기 불가/);
+    }
   };
-  // The first screen at 1280x720 (design.md 새 회의록): 분석 시작 and the whole status line fit without scrolling.
+  // The reserved action area and the whole status line fit without scrolling, including when start is absent.
   const expectFirstScreen = async state => {
     await page.setViewportSize({ width: 1280, height: 720 });
     try {
@@ -1047,9 +915,9 @@ const verifyInputStage = async browser => {
         document.querySelector('.barorok-workspace')?.scrollTo(0, 0);
         window.scrollTo(0, 0);
         const bottom = selector => Math.round(document.querySelector(selector)?.getBoundingClientRect().bottom ?? Infinity);
-        return { start: bottom('.writer-start-button'), status: bottom('#writer-local-engine-requirement') };
+        return { actions: bottom('.writer-action-buttons'), status: bottom('#writer-local-engine-requirement') };
       });
-      assert.ok(box.start <= 720 && box.status <= 720, `${state}: 분석 시작 and the status line fit 1280x720 (${JSON.stringify(box)})`);
+      assert.ok(box.actions <= 720 && box.status <= 720, `${state}: actions and the status line fit 1280x720 (${JSON.stringify(box)})`);
     } finally {
       await page.setViewportSize({ width: 1280, height: 900 });
     }
@@ -1060,39 +928,45 @@ const verifyInputStage = async browser => {
   }, drafts);
   try {
     await page.goto(APP_URL, { waitUntil: 'networkidle', timeout: PAGE_GOTO_TIMEOUT_MS });
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor();
+    await expectQuietReady(page);
     await waitState('ready');
     assert.equal(await page.locator('#writer-form-error').count(), 0, 'before 분석 시작 nothing is listed');
-    assert.equal(await start.getAttribute('aria-disabled'), null);
+    assert.equal(await start.count(), 0, 'file selection is the only initial primary action');
     await expectFirstScreen('ready');
+    await page.setInputFiles('#meeting-file-input', okFile);
+    await start.waitFor({ state: 'visible' });
+    // Selecting a file may derive its title; clear it to exercise both missing metadata fields.
+    await page.locator('#meeting-title').fill('');
     // In page coordinates: moving focus to a field may scroll the window, which is not the row moving.
-    const startBox = () => start.evaluate(element => {
+    const actionBox = () => rail.locator('.writer-action-buttons').evaluate(element => {
       const box = element.getBoundingClientRect();
       return { x: box.x + window.scrollX, y: box.y + window.scrollY, width: box.width, height: box.height };
     });
-    const readyBox = await startBox();
+    const readyBox = await actionBox();
     const rowHeight = async () => Math.round((await rail.boundingBox()).height);
-    assert.equal(await rowHeight(), 40, 'the row is the 40px line, without an empty help row under it');
+    const readyRowHeight = await rowHeight();
+    assert.ok((await actionBox()).height >= 40, 'the action area reserves at least a 40px button height');
 
     // Required fields: 분석 시작 stays available, lists what is left in screen order and goes to the first empty field.
     await start.click();
-    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 제목, 회의 목적, 영상·음성 파일');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 제목, 회의 목적');
     assert.equal(await activeId(), 'meeting-title', 'focus moves to the first empty field on screen');
     assert.equal(await start.getAttribute('aria-disabled'), null, 'empty fields alone do not block 분석 시작');
-    assert.equal(await status.locator('.writer-status-message').getAttribute('id'), 'writer-form-error');
-    assert.equal(await page.locator('#meeting-file-drop').getAttribute('aria-describedby'), 'writer-form-error');
+    assert.equal(await page.locator('#writer-form-error').count(), 1);
+    assert.equal(await page.locator('#meeting-file-drop').count(), 0, 'the chosen file is retained while metadata is corrected');
     assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), 'writer-form-error');
     assert.equal(await page.locator('#meeting-date').getAttribute('aria-describedby'), null, 'a filled field is not described as missing');
     assert.equal(await page.getByText('필수 항목을 확인해 주세요', { exact: false }).count(), 0, 'the old error sentence is gone');
     await expectNoOldSurfaces('required-fields');
-    assert.deepEqual(await startBox(), readyBox, '분석 시작 does not move');
-    assert.equal(await rowHeight(), 40);
+    assert.deepEqual(await actionBox(), readyBox, 'the reserved action area does not move');
+    assert.equal(await rowHeight(), readyRowHeight);
     await page.locator('#meeting-title').fill('입력 단계 확인');
-    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 목적, 영상·음성 파일');
+    await expectRow('required-fields', '필수 항목이 비어 있습니다', '회의 목적');
     assert.equal(await page.locator('#meeting-title').getAttribute('aria-describedby'), null);
+    assert.deepEqual(await fixButtons(), ['문제해결']);
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
+    assert.equal(await activeId(), 'meeting-purpose', 'the common recovery action focuses the next missing field');
     await page.locator('#meeting-purpose').fill('막힌 첫 단계만 말하는지 확인');
-    await expectRow('required-fields', '필수 항목이 비어 있습니다', '영상·음성 파일');
-    await page.setInputFiles('#meeting-file-input', okFile);
     await waitState('ready');
     assert.equal(await page.locator('#writer-form-error').count(), 0, 'the list disappears once everything is filled');
     assert.equal(await page.locator('#meeting-purpose').getAttribute('aria-describedby'), null);
@@ -1103,18 +977,17 @@ const verifyInputStage = async browser => {
     await page.locator('#meeting-title').fill('입력 단계 확인');
     await waitState('ready');
 
-    // A file over 2 hours: a warning that 다른 파일 선택 fixes; 분석 시작 is blocked and points at the line.
+    // A file over 2 hours: expose 다른 파일 선택 as the recovery without an unusable start.
     await page.setInputFiles('#meeting-file-input', { name: 'over.wav', mimeType: 'audio/wav', buffer: Buffer.alloc(64) });
     await expectRow('file-too-long', '파일이 2시간을 넘습니다', '2시간 이하의 음성·영상 파일을 선택해 주세요.');
     assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-warning');
-    assert.deepEqual(await fixButtons(), ['다른 파일 선택']);
+    assert.deepEqual(await fixButtons(), ['문제해결']);
     assert.equal(await page.getByText('선택한 파일은 약', { exact: false }).count(), 0, 'no banner repeats the length');
     await expectNoOldSurfaces('file-too-long');
-    await pressBlockedStart('file-too-long');
-    // The file card above changed; within the row, 분석 시작 stays on the line's top edge.
-    assert.equal(Math.round((await rail.boundingBox()).y), Math.round((await start.boundingBox()).y));
+    await expectBlockedStartAbsent('file-too-long');
+    assert.ok((await actionBox()).height >= 40, 'the recovery area keeps the reserved button height');
     const chooser = page.waitForEvent('filechooser');
-    await rail.getByRole('button', { name: '다른 파일 선택', exact: true }).focus();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).focus();
     await page.keyboard.press('Enter');
     await (await chooser).setFiles(okFile);
     await waitState('ready');
@@ -1134,20 +1007,20 @@ const verifyInputStage = async browser => {
     assert.deepEqual(await fixButtons(), []);
     assert.equal(await page.locator('#writer-analysis-start-blocked.sr-only').count(), 1, 'the reason stays only for the recovery card');
     await expectNoOldSurfaces('other-analysis');
-    await pressBlockedStart('other-analysis');
+    await expectBlockedStartAbsent('other-analysis');
 
     // The same file is already running: 상태 확인 asks the engine again.
     await page.setInputFiles('#meeting-file-input', samePath);
     await expectRow('same-file-running', '같은 파일 분석이 이미 진행 중입니다', '먼저 상태를 확인해 주세요.');
-    assert.deepEqual(await fixButtons(), ['상태 확인']);
+    assert.deepEqual(await fixButtons(), ['문제해결']);
     await expectNoOldSurfaces('same-file-running');
-    await pressBlockedStart('same-file-running');
+    await expectBlockedStartAbsent('same-file-running');
     // Hold the answer so the check 상태 확인 asked for can be seen: it spins and keeps its focus.
     let releaseCheck;
     holdStatuses = { promise: new Promise(resolve => { releaseCheck = resolve; }) };
     const requestsBefore = statusRequests;
     remoteDraft = { job_id: jobId, status: 'stopped', stage: 'stopped', resume_supported: true, completed_chunk_count: 2 };
-    const statusCheck = rail.getByRole('button', { name: '상태 확인', exact: true });
+    const statusCheck = rail.getByRole('button', { name: '문제해결', exact: true });
     assert.equal(await statusCheck.locator('svg.animate-spin').count(), 0, 'no spinner before it is pressed');
     await statusCheck.focus();
     await page.keyboard.press('Enter');
@@ -1162,24 +1035,24 @@ const verifyInputStage = async browser => {
     // The answer arrives through the draft store, so the focus effect may run just after the row paints.
     await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement', null, { timeout: 3000 });
 
-    // Resume: choose the file first, then the same file; 분석 시작 reads 이어하기 throughout.
+    // Resume: choose the matching file before the 이어하기 action appears.
     await page.locator('.writer-recovery').getByRole('button', { name: '이어서 분석', exact: true }).click();
     await page.getByRole('heading', { name: '이어하기', exact: true }).waitFor();
     await expectRow('resume-choose-file', '이어서 분석할 파일을 선택해 주세요', sameFile.name);
-    assert.deepEqual(await fixButtons(), ['파일 선택']);
+    assert.deepEqual(await fixButtons(), ['문제해결']);
     // No sentence above the form repeats the row; 새 분석 and 삭제 sit on the heading line, so the form keeps its place.
     assert.equal(await page.getByText('이전 분석 기록을 이어서 진행합니다', { exact: false }).count(), 0);
     assert.deepEqual(await page.locator('.writer-resume-actions').getByRole('button').allInnerTexts(), ['새 분석', '삭제']);
     await expectFirstScreen('resume-choose-file');
-    assert.equal(await start.innerText(), '이어하기');
+    assert.equal(await start.count(), 0, 'resume requires selecting its file first');
     await expectNoOldSurfaces('resume-choose-file');
-    await pressBlockedStart('resume-choose-file');
+    await expectBlockedStartAbsent('resume-choose-file');
     await page.setInputFiles('#meeting-file-input', okFile);
     await expectRow('resume-other-file', '선택한 파일이 다릅니다', `${sameFile.name} 파일을 다시 선택해 주세요.`);
-    assert.deepEqual(await fixButtons(), ['다른 파일 선택']);
-    assert.equal(await start.innerText(), '이어하기');
+    assert.deepEqual(await fixButtons(), ['문제해결']);
+    assert.equal(await start.count(), 0, 'a mismatched file offers only its replacement action');
     await expectNoOldSurfaces('resume-other-file');
-    await pressBlockedStart('resume-other-file');
+    await expectBlockedStartAbsent('resume-other-file');
     await page.setInputFiles('#meeting-file-input', samePath);
     await waitState('ready');
     assert.equal(await start.innerText(), '이어하기');
@@ -1219,9 +1092,9 @@ const verifyInputStage = async browser => {
     await expectRow('resume-unavailable', '이전 분석을 이어서 진행할 수 없습니다', '진행이 끝나거나 중단된 뒤 이어갈 수 있습니다.');
     assert.equal(await rail.locator('.writer-status-line').getAttribute('class'), 'writer-status-line writer-status-error');
     assert.deepEqual(await fixButtons(), [], 'the selected run outranks another analysis and the same file');
-    assert.equal(await start.innerText(), '이어하기');
+    assert.equal(await start.count(), 0, 'an unavailable resume does not expose an unusable continuation action');
     await expectNoOldSurfaces('resume-unavailable');
-    await pressBlockedStart('resume-unavailable');
+    await expectBlockedStartAbsent('resume-unavailable');
     // It finished there and its meeting is saved: nothing to resume, and no hint to analyze it again.
     await setDrafts([{ ...draft, status: 'completed', stage: 'completed', resumeEligible: false, resumeUnavailableReason: 'completed' }]);
     await expectRow('resume-completed', '이 분석은 이미 끝났습니다', '결과는 회의록에서 확인해 주세요.');
@@ -1229,10 +1102,11 @@ const verifyInputStage = async browser => {
     assert.equal(await page.getByText('새 분석으로 시작할 수 있습니다.', { exact: true }).count(), 0);
     assert.deepEqual(await fixButtons(), []);
     await expectNoOldSurfaces('resume-completed');
-    await pressBlockedStart('resume-completed');
+    await expectBlockedStartAbsent('resume-completed');
     remoteDraft = { job_id: jobId, status: 'stopped', stage: 'stopped', resume_supported: false, completed_chunk_count: 0 };
     await setDrafts([{ ...draft, status: 'stopped', stage: 'stopped', resumeEligible: false, completedChunkCount: 0 }]);
-    await page.waitForFunction(() => document.querySelector('.writer-status-message')?.textContent === '새 분석으로 시작할 수 있습니다.');
+    await waitState('resume-unavailable');
+    assert.equal(await status.locator('.writer-status-message').count(), 0, 'unavailable resume details are not repeated below its title');
     assert.equal(await rowState(page), 'resume-unavailable');
     assert.equal(await page.getByText('이전 분석 기록을 이어서 진행할 수 없습니다', { exact: false }).count(), 0, 'no banner repeats it');
     await expectNoOldSurfaces('resume-unavailable');
@@ -1430,7 +1304,7 @@ const run = async () => {
           body: JSON.stringify({ status: nativeDecision }),
         });
       }
-      assert.equal(payload.pairing_id, 'pairing-id-for-ui-test-2');
+      assert.equal(payload.pairing_id, `pairing-id-for-ui-test-${pairingStartCount}`);
       return route.fulfill({
         status: 200,
         contentType: 'application/json',
@@ -1528,20 +1402,14 @@ const run = async () => {
       .includes(await status.locator('.writer-status-message').innerText()), 'the first visit asks for 연결 확인 without promising an automatic connection');
     assert.equal(await page.getByRole('dialog', { name: introTitle }).count(), 0, 'the first-visit notice must not repeat in the same browser');
     const analyzeButton = page.getByRole('button', { name: '분석 시작', exact: true });
-    assert.equal(await analyzeButton.isDisabled(), true);
-    assert.equal(await isAriaDisabled(analyzeButton), true, 'one disabled look: the Button aria-disabled variant');
-    assert.deepEqual(await analyzeButton.evaluate(element => ({
-      nativeDisabled: element.hasAttribute('disabled'),
-      describedBy: element.getAttribute('aria-describedby'),
-      classes: [...element.classList].filter(name => name.includes('pending')),
-    })), { nativeDisabled: false, describedBy: 'writer-local-engine-requirement', classes: [] });
+    assert.equal(await analyzeButton.count(), 0, 'first connection setup exposes only the next applicable action');
     assert.deepEqual(await status.evaluate(element => ({
       role: element.getAttribute('role'), atomic: element.getAttribute('aria-atomic'),
     })), { role: 'status', atomic: 'true' });
     assert.equal(await page.locator('.writer-action-row [aria-live], .writer-action-bar').count(), 0, 'no live region over the whole row');
     assert.equal(await rail.getByRole('button', { name: '문제 해결 도움말' }).count(), 0, 'the first visit has no ?');
     // The writer states local processing once, under the title, instead of repeating it in the status row.
-    assert.equal(await page.locator('.writer-local-promise').getByText('회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', { exact: true }).count(), 1);
+    assert.equal(await page.getByRole('heading', { name: '보안 걱정 NO, 외부 AI 전송 없음', exact: true }).count(), 1);
     assert.equal(await rail.getByText('이 PC 밖으로', { exact: false }).count(), 0);
     assert.equal(await rail.getByRole('button', { name: '로컬 분석 안내' }).count(), 0);
 
@@ -1553,15 +1421,18 @@ const run = async () => {
       buffer: Buffer.from('connection ui fixture'),
     });
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
-    const startBoxAtIntro = await analyzeButton.boundingBox();
+    const actionArea = rail.locator('.writer-action-buttons');
+    const actionBoxAtIntro = await actionArea.boundingBox();
+    assert.equal(await analyzeButton.count(), 0, 'choosing a file cannot bypass connection setup');
 
     await rail.getByRole('button', { name: '연결 확인', exact: true }).click();
     await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
     await status.getByText('연결하지 못했습니다').waitFor({ state: 'visible' });
     assert.equal(await rowState(page), 'unreachable');
     assert.equal(await rail.getByRole('button', { name: '설치 파일 준비 중', exact: true }).count(), 0);
-    assert.equal(await rail.getByRole('button', { name: '문제 해결 도움말', exact: true }).getAttribute('aria-controls'), 'writer-status-help');
-    assert.deepEqual(await analyzeButton.boundingBox(), startBoxAtIntro, '분석 시작 does not move when the status changes');
+    assert.equal(await rail.getByRole('button', { name: '문제해결', exact: true }).count(), 1);
+    assert.deepEqual(await actionArea.boundingBox(), actionBoxAtIntro, 'the action area does not move when the status changes');
+    assert.equal(await analyzeButton.count(), 0, 'connection errors expose their recovery action without start');
 
     // At a narrow work surface the buttons drop below the status line, right-aligned and not stretched.
     await page.setViewportSize({ width: 760, height: 900 });
@@ -1570,17 +1441,23 @@ const run = async () => {
       const line = box('.writer-status-line');
       const buttons = box('.writer-action-buttons');
       const row = box('.writer-action-row');
-      return { below: buttons.top >= line.bottom, rightGap: Math.round(row.right - buttons.right), start: box('.writer-start-button').width };
+      const recovery = box('.writer-hint-action');
+      return { below: buttons.top >= line.bottom, rightGap: Math.round(row.right - buttons.right), recoveryWidth: recovery.width, areaWidth: buttons.width, actionHeight: buttons.height };
     });
     assert.equal(narrow.below, true, 'buttons sit under the status line');
     assert.equal(narrow.rightGap, 0, 'buttons are right-aligned');
-    assert.equal(Math.round(narrow.start), Math.round(startBoxAtIntro.width), 'buttons are not stretched');
+    assert.ok(narrow.recoveryWidth < narrow.areaWidth, 'the recovery action is not stretched');
+    assert.ok(narrow.actionHeight >= 40, 'the action area retains its reserved button height');
     await page.setViewportSize({ width: 1280, height: 900 });
 
     probeMode = 'reachable';
-    await rail.getByRole('button', { name: '다시 확인', exact: true }).click();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
+    const recoverySettings = page.getByRole('dialog', { name: '설정', exact: true });
+    await recoverySettings.locator('#settings-troubleshooting').getByRole('button', { name: '다시 확인', exact: true }).click();
+    await recoverySettings.getByRole('button', { name: '연결 시작', exact: true }).waitFor();
+    await recoverySettings.getByRole('button', { name: '설정 닫기', exact: true }).click();
     await status.getByText('이 브라우저를 연결해 주세요').waitFor({ state: 'visible' });
-    await rail.getByRole('button', { name: '연결 시작', exact: true }).click();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
 
     await status.getByText('연결 확인 중', { exact: true }).waitFor();
     assert.equal(await page.getByLabel('연결 코드', { exact: true }).count(), 0);
@@ -1588,9 +1465,9 @@ const run = async () => {
     await status.getByText('연결을 완료하지 못했습니다').waitFor({ state: 'visible' });
     // Decide before the click: the fresh request's first poll can arrive before the click resolves.
     nativeDecision = 'approved';
-    await rail.getByRole('button', { name: '다시 연결', exact: true }).click();
+    await rail.getByRole('button', { name: '문제해결', exact: true }).click();
 
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor({ state: 'visible' });
+    await expectQuietReady(page);
     assert.equal(await rowState(page), 'ready');
     assert.equal(await page.getByText('분석 준비 완료', { exact: true }).count(), 0, 'the old ready sentence is gone');
     assert.equal(await rail.locator('.writer-hint-action').count(), 0, 'nothing to fix, so no buttons besides 분석 시작');
@@ -1601,7 +1478,7 @@ const run = async () => {
     await analyzeButton.waitFor({ state: 'visible' });
     assert.equal(await analyzeButton.isEnabled(), true, 'a verified connection must unlock analysis');
     assert.equal(await analyzeButton.getAttribute('aria-disabled'), null);
-    assert.deepEqual(await analyzeButton.boundingBox(), startBoxAtIntro, '분석 시작 stays put when only 연결됨 is left');
+    assert.deepEqual(await actionArea.boundingBox(), actionBoxAtIntro, 'the action area stays put when start replaces the recovery action');
 
     for (const width of [760, 1100, 1536]) {
       await page.setViewportSize({ width, height: 900 });
@@ -1620,7 +1497,7 @@ const run = async () => {
     assert.equal(recoveredStatus, 200, 'the mounted provider must register request recovery');
     assert.equal(renewalRequests, 1);
     assert.equal(recoveryApiRequests, 2);
-    await status.getByText('이 PC와 연결됨', { exact: true }).waitFor({ state: 'visible' });
+    await expectQuietReady(page);
 
     authRecoveryMode = 'expired';
     recoveryApiRequests = 0;
@@ -1632,11 +1509,23 @@ const run = async () => {
     assert.equal(renewalRequests, 2, 'failed renewal must not loop');
     assert.equal(recoveryApiRequests, 1, 'failed renewal must not replay the API request');
     await status.getByText('연결이 만료되었습니다').waitFor({ state: 'visible' });
-    assert.deepEqual(await rail.locator('.writer-action-buttons').getByRole('button').allInnerTexts(), ['다시 확인', '다시 연결', '분석 시작']);
-    assert.equal(await analyzeButton.isDisabled(), true);
+    assert.deepEqual(await rail.locator('.writer-status-actions').getByRole('button').allInnerTexts(), ['문제해결']);
+    assert.equal(await analyzeButton.count(), 0, 'expired authorization offers only connection recovery');
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '연결 상태 보존 회의');
     assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '연결 전 입력 보존 확인');
     await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
+    authRecoveryMode = 'recover';
+    const pairingCountBeforeRecovery = pairingStartCount;
+    await rail.locator('.writer-status-actions').getByRole('button', { name: '문제해결', exact: true }).click();
+    await expectQuietReady(page);
+    assert.ok(pairingStartCount > pairingCountBeforeRecovery, 'expired connection recovery starts a fresh pairing');
+    assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '연결 상태 보존 회의');
+    assert.equal(await page.getByLabel('회의 목적', { exact: true }).inputValue(), '연결 전 입력 보존 확인');
+    await page.getByText('연결 확인.mp3').waitFor({ state: 'visible' });
+    if (process.env.LOCAL_ENGINE_UI_SCENARIO === 'connection-flow') {
+      console.log('ok - connection recovery destination preserves input, native approval and session expiry');
+      return;
+    }
     await verifySummaryReadinessAfterPairing(browser);
     await verifyMissingModelsAfterPairing(browser);
     await verifyReadinessNoResponse(browser);

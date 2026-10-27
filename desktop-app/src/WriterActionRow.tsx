@@ -1,8 +1,7 @@
-import React, { useEffect, useRef } from 'react';
+import React from 'react';
 import {
     AlertTriangle,
     CheckCircle2,
-    CircleHelp,
     Download,
     Info,
     Link2,
@@ -14,13 +13,11 @@ import {
 } from 'lucide-react';
 import { Button } from './components/common';
 import { useUpdateControls } from './UpdateContext';
-import type { WriterStatusAction, WriterStatusRow } from './writerStatusRow';
+import { getWriterVisibleActions, isWriterSetupRow, type WriterStatusAction, type WriterStatusRow } from './writerStatusRow';
 
 interface WriterActionRowProps {
     row: WriterStatusRow;
     statusRef: React.RefObject<HTMLDivElement | null>;
-    showHelp: boolean;
-    onToggleHelp: () => void;
     onAction: (action: WriterStatusAction) => void;
     installerUrl?: string;
     updateUrl?: string;
@@ -28,7 +25,7 @@ interface WriterActionRowProps {
     recheckingReadiness?: boolean;
     /** The saved analyses are being checked again (상태 확인 spins the same way). */
     refreshingAnalysisStatus?: boolean;
-    /** 분석 시작, always the last button. */
+    /** Start/resume appears last only after file selection and blocking issues are resolved. */
     children: React.ReactNode;
 }
 
@@ -40,7 +37,8 @@ const StatusIcon: React.FC<{ row: WriterStatusRow }> = ({ row }) => {
     return <Info size={16} />;
 };
 
-const actionIcon = (action: WriterStatusAction, spinning: boolean) => {
+const actionIcon = (action: WriterStatusAction, spinning: boolean, problem: boolean) => {
+    if (problem) return <Settings size={15} className={spinning ? 'animate-spin motion-reduce:animate-none' : undefined} aria-hidden="true" />;
     switch (action.kind) {
         case 'download':
         case 'update':
@@ -61,13 +59,11 @@ const actionIcon = (action: WriterStatusAction, spinning: boolean) => {
 };
 
 // The new-meeting action row: one status line naming the first blocked step, the buttons that fix it,
-// then 분석 시작. The line is the only live region and stays mounted even when it has nothing to say
-// (desktop app and development UI once ready); the `?` help sits outside it.
+// then 분석 시작 when available. The line is the only live region and stays mounted even when it has nothing to say
+// (desktop app and development UI once ready). Details live at the recovery destination.
 export const WriterActionRow: React.FC<WriterActionRowProps> = ({
     row,
     statusRef,
-    showHelp,
-    onToggleHelp,
     onAction,
     installerUrl,
     updateUrl,
@@ -76,100 +72,65 @@ export const WriterActionRow: React.FC<WriterActionRowProps> = ({
     children,
 }) => {
     const { openGuide } = useUpdateControls();
-    const rootRef = useRef<HTMLDivElement>(null);
-    const helpButtonRef = useRef<HTMLButtonElement>(null);
-    useEffect(() => {
-        if (!showHelp || !row.help) return;
-        const outside = (event: PointerEvent) => {
-            if (event.target instanceof Node && !rootRef.current?.contains(event.target)) onToggleHelp();
-        };
-        const escape = (event: KeyboardEvent) => {
-            if (event.key !== 'Escape' || event.defaultPrevented) return;
-            if (event.target instanceof Element && event.target.closest('[aria-modal="true"]')) return;
-            event.preventDefault();
-            onToggleHelp();
-            helpButtonRef.current?.focus();
-        };
-        document.addEventListener('pointerdown', outside);
-        document.addEventListener('keydown', escape);
-        return () => {
-            document.removeEventListener('pointerdown', outside);
-            document.removeEventListener('keydown', escape);
-        };
-    }, [showHelp, row.help, onToggleHelp]);
-    return <div ref={rootRef} className="writer-action-row" data-stage={row.stage} data-state={row.state}>
-        <div className={`writer-status-line writer-status-${row.busy ? 'busy' : row.tone}`}>
-            <div
-                ref={statusRef}
-                id="writer-local-engine-requirement"
-                className="writer-status"
-                role="status"
-                aria-atomic="true"
-                tabIndex={-1}
-            >
-                {row.title && (
-                    <>
-                        <span className="writer-status-icon" aria-hidden="true">
-                            <StatusIcon row={row} />
-                        </span>
-                        <strong className="writer-status-title">{row.title}</strong>
-                    </>
-                )}
-                {row.message && <span id={row.messageId} className="writer-status-message">{row.message}</span>}
-            </div>
-            {row.help && (
-                <button
-                    ref={helpButtonRef}
-                    type="button"
-                    className="writer-status-help-toggle"
-                    aria-label="문제 해결 도움말"
-                    title="문제 해결 도움말"
-                    aria-expanded={showHelp}
-                    aria-controls="writer-status-help"
-                    onClick={onToggleHelp}
+    const problem = !isWriterSetupRow(row);
+    return <div className="writer-action-row" data-stage={row.stage} data-state={row.state}>
+        <div className="writer-issue-row">
+            <div className={`writer-status-line writer-status-${row.busy ? 'busy' : row.tone}`}>
+                <div
+                    ref={statusRef}
+                    id="writer-local-engine-requirement"
+                    className="writer-status"
+                    role="status"
+                    aria-atomic="true"
+                    tabIndex={-1}
                 >
-                    <CircleHelp size={16} aria-hidden="true" />
-                </button>
-            )}
-        </div>
-        {row.help && (
-            <div id="writer-status-help" className="writer-status-help" role="note" aria-label="문제 해결 안내" hidden={!showHelp}>
-                {row.help}
+                    {row.title && (
+                        <>
+                            <span className="writer-status-icon" aria-hidden="true">
+                                <StatusIcon row={row} />
+                            </span>
+                            <strong className="writer-status-title">{row.title}</strong>
+                        </>
+                    )}
+                    {row.message && (!problem || row.messageId) && <span id={row.messageId} className={problem ? 'sr-only' : 'writer-status-message'}>{row.message}</span>}
+                </div>
             </div>
-        )}
-        <div className="writer-action-buttons">
-            {row.actions.map(action => {
-                const href = action.kind === 'download' ? installerUrl : action.kind === 'update' ? updateUrl : undefined;
-                if (href) {
+            <div className="writer-status-actions">
+                {getWriterVisibleActions(row).map(action => {
+                    const href = action.kind === 'download' ? installerUrl : action.kind === 'update' ? updateUrl : undefined;
+                    if (href) {
+                        return (
+                            <Button
+                                key={action.kind}
+                                variant="outline"
+                                className="writer-hint-action"
+                                onClick={() => openGuide(action.kind === 'download' ? 'install' : 'update')}
+                            >
+                                {actionIcon(action, false, problem)}
+                                {action.kind === 'download' ? '설치 안내' : '업데이트 안내'}
+                            </Button>
+                        );
+                    }
+                    if (action.kind === 'download' || action.kind === 'update') return null;
+                    const rechecking = action.kind === 'recheck-readiness' && recheckingReadiness;
+                    // A repeated 상태 확인 only queues one more check, so it spins without losing focus.
+                    const spinning = rechecking || (action.kind === 'refresh-analysis-status' && refreshingAnalysisStatus);
                     return (
                         <Button
                             key={action.kind}
                             variant="outline"
                             className="writer-hint-action"
-                            onClick={() => openGuide(action.kind === 'download' ? 'install' : 'update')}
+                            onClick={() => onAction(action)}
+                            disabled={action.disabled || rechecking}
                         >
-                            {actionIcon(action, false)}
-                            {action.kind === 'download' ? '설치 안내' : '업데이트 안내'}
+                            {actionIcon(action, spinning, problem)}
+                            {action.label}
                         </Button>
                     );
-                }
-                if (action.kind === 'download' || action.kind === 'update') return null;
-                const rechecking = action.kind === 'recheck-readiness' && recheckingReadiness;
-                // A repeated 상태 확인 only queues one more check, so it spins without losing focus.
-                const spinning = rechecking || (action.kind === 'refresh-analysis-status' && refreshingAnalysisStatus);
-                return (
-                    <Button
-                        key={action.kind}
-                        variant="outline"
-                        className="writer-hint-action"
-                        onClick={() => onAction(action)}
-                        disabled={action.disabled || rechecking}
-                    >
-                        {actionIcon(action, spinning)}
-                        {action.label}
-                    </Button>
-                );
-            })}
+                })}
+            </div>
+        </div>
+        <div className="writer-action-buttons">
             {children}
         </div>
     </div>;

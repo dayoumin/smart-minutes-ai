@@ -59,6 +59,22 @@ export const openExternalUrl = async (url: string): Promise<void> => {
     }
 };
 
+/** Native web link navigation preserves the editor even when noopener hides the new-window handle. */
+export const openExternalUrlPreservingPage = async (url: string): Promise<void> => {
+    if (getTauriInvoke()) return openExternalUrl(url);
+    const link = document.createElement('a');
+    link.href = url;
+    link.target = '_blank';
+    link.rel = 'noopener noreferrer';
+    link.hidden = true;
+    document.body.append(link);
+    try {
+        link.click();
+    } finally {
+        link.remove();
+    }
+};
+
 export const isTauriRuntime = (): boolean => {
     return getRuntimeEnvironment().kind === 'tauri-desktop';
 };

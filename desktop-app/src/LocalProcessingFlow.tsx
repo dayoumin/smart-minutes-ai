@@ -1,5 +1,5 @@
 import React from 'react';
-import { ArrowRight, AudioLines, CloudOff, FileAudio, FileText } from 'lucide-react';
+import { ArrowRight, AudioLines, FileAudio, FileText } from 'lucide-react';
 
 const STEPS = [
     { label: '영상·음성', Icon: FileAudio },
@@ -39,6 +39,5 @@ export const LocalProcessingFlow: React.FC = () => (
             <path className="local-laptop-trackpad" d="M117 19H171L173 23H115Z" />
             <path className="local-laptop-lip" d="M1 24H287L281 29Q280 31 275 31H13Q8 31 7 29Z" />
         </svg>
-        <div className="local-illustration-boundary"><CloudOff size={18} aria-hidden="true" />외부 AI 전송 없음</div>
     </div>
 );

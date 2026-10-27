@@ -162,7 +162,12 @@ const run = async (browser, { width, deniedStorage = false }) => {
     assert.equal(Math.round((await sidebar(page).boundingBox()).width), narrow ? width : 208);
     assert.equal(await page.getByRole('button', { name: '메뉴 접기', exact: true }).count(), 0);
     assert.equal(await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).count(), 0);
-    if (narrow) assert.equal(Math.round((await sidebar(page).boundingBox()).height), 64);
+    if (narrow) {
+      assert.equal(Math.round((await sidebar(page).boundingBox()).height), 64);
+      const menu = await sidebar(page).getByRole('button', { name: '메뉴', exact: true }).boundingBox();
+      const brand = await sidebar(page).getByRole('button', { name: `${BRAND_NAME} 첫 화면`, exact: true }).boundingBox();
+      assert.ok(menu.x < brand.x, 'the narrow menu comes before the brand on the left');
+    }
     if (deniedStorage) {
       await click(page, '설정');
       await page.getByRole('button', { name: '설정 닫기', exact: true }).click();

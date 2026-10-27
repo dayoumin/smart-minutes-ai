@@ -23,7 +23,7 @@ import {
 } from '../src/localEngineSession.ts';
 import { LocalEngineConnectionCoordinator } from '../src/localEngineConnectionCoordinator.ts';
 import { getLocalEngineConnectionView } from '../src/localEngineConnectionView.ts';
-import { selectWriterStatusRow } from '../src/writerStatusRow.ts';
+import { selectWriterStatusRow, getWriterVisibleActions } from '../src/writerStatusRow.ts';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
 
 const web = detectRuntimeEnvironment({
@@ -245,11 +245,24 @@ const rowInput = overrides => ({
   ...overrides,
 });
 const sttMissing = { key: 'stt_faster_whisper', label: 'faster-whisper', downloadable: true };
+for (const overrides of [
+  { readinessState: 'error' },
+  { readinessState: 'server-waiting', readinessNoResponse: true },
+  { connection: unreachableWithInstaller },
+]) {
+  const recovery = selectWriterStatusRow(rowInput({ ...overrides, canOpenTroubleshooting: true }));
+  assert.deepEqual(recovery.actions, [{ kind: 'troubleshoot', label: '연결 문제 해결' }]);
+  assert.equal(recovery.help, null);
+  assert.equal(recovery.blocksStart, true);
+}
+assert.deepEqual(selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [sttMissing], canOpenTroubleshooting: true,
+})).actions, [{ kind: 'models', label: '모델 받기' }], 'known missing models go directly to model preparation');
 const diarizationMissing = { key: 'diarization', label: 'pyannote', downloadable: false };
 const readyRow = selectWriterStatusRow(rowInput({}));
 assert.deepEqual(
   { stage: readyRow.stage, state: readyRow.state, title: readyRow.title, message: readyRow.message, actions: readyRow.actions, blocksStart: readyRow.blocksStart },
-  { stage: 'ready', state: 'ready', title: '이 PC와 연결됨', message: null, actions: [], blocksStart: false },
+  { stage: 'ready', state: 'ready', title: '', message: null, actions: [], blocksStart: false },
 );
 const blockedConnectionRow = selectWriterStatusRow(rowInput({
   connection: unreachableWithInstaller, readinessState: 'missing-models', missingModels: [sttMissing], gpuUnavailable: true,
@@ -347,7 +360,7 @@ assert.deepEqual(inputStateRow({}), readyRow, 'nothing blocked in the form leave
 assert.deepEqual(inputStateRow({ missingRequired: [] }), readyRow, 'before 분석 시작 is pressed, empty fields say nothing');
 const missingTwo = inputStateRow({ missingRequired: ['영상·음성 파일', '회의 목적'] });
 assert.deepEqual(rowSummary(missingTwo), {
-  ...inputSummary('required-fields', 'error', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 목적', [], false),
+  ...inputSummary('required-fields', 'error', '필수 항목이 비어 있습니다', '영상·음성 파일, 회의 목적', [{ kind: 'focus-required', label: '문제해결' }], false),
   messageId: 'writer-form-error',
 }, 'a list without a period; 분석 시작 stays available');
 assert.equal(inputStateRow({ missingRequired: ['회의 목적'] }).message, '회의 목적', 'the list shrinks as fields fill');
@@ -399,7 +412,7 @@ const desktopRow = overrides => selectWriterStatusRow(rowInput({
 }));
 const devRow = overrides => selectWriterStatusRow(rowInput({ connection: null, ...overrides }));
 const emptyLine = {
-  stage: 'ready', state: 'ready', tone: 'success', busy: false, title: '이 PC와 연결됨', message: null,
+  stage: 'ready', state: 'ready', tone: 'success', busy: false, title: '', message: null,
   messageId: undefined, help: null, actions: [], blocksStart: false,
 };
 assert.deepEqual(rowSummary(desktopRow({})), emptyLine, 'desktop: readiness is adjacent to start');
@@ -428,7 +441,7 @@ assert.deepEqual(rowSummary(desktopRow({ readinessState: 'missing-models', readi
   readinessSummary('readiness-blocked', 'warning', '분석을 시작할 수 없습니다', '잠시 뒤 다시 확인해 주세요.', [troubleshoot, recheckReadiness]));
 assert.deepEqual(desktopRow({ readinessState: 'error', canOpenTroubleshooting: false }).actions, [recheckReadiness]);
 assert.deepEqual(rowSummary(desktopRow({ readinessState: 'missing-models', missingModels: [diarizationMissing] })),
-  readinessSummary('models-reinstall', 'error', '필요한 모델이 없어 분석을 시작할 수 없습니다', `${withJosa(BRAND_NAME, '을/를')} 다시 설치해 주세요.`, []),
+  readinessSummary('models-reinstall', 'error', '필요한 모델이 없어 분석을 시작할 수 없습니다', `${withJosa(BRAND_NAME, '을/를')} 다시 설치해 주세요.`, [{ kind: 'troubleshoot', label: '문제해결' }]),
   'desktop: the whole app is reinstalled, and there is no installer link to offer');
 assert.deepEqual(rowSummary(devRow({ readinessState: 'missing-models', missingModels: [diarizationMissing], installerAvailable: false })),
   readinessSummary('models-reinstall', 'error', '필요한 모델이 없어 분석을 시작할 수 없습니다', `${withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 설치해 주세요.`, []));
@@ -987,5 +1000,19 @@ await assert.rejects(
   error => error?.name === 'AbortError',
 );
 assert.equal(slowHeaderResolverStarted, false, 'timeout must include base URL resolution');
+
+for (const kind of ['models', 'device', 'diarization', 'choose-file', 'refresh-analysis-status', 'focus-required', 'troubleshoot', 'pair']) {
+  const row = { ...readyRow, state: 'problem', stage: 'input', blocksStart: true, actions: [{ kind, label: 'original action' }] };
+  assert.deepEqual(getWriterVisibleActions(row), [{ kind, label: '문제해결' }], 'one shared label preserves the actual destination');
+}
+assert.deepEqual(getWriterVisibleActions({ ...sessionRow, actions: [
+  { kind: 'probe', label: '다시 확인' }, { kind: 'pair', label: '다시 연결', disabled: true },
+] }), [{ kind: 'probe', label: '문제해결' }], 'an unreachable expired session keeps an enabled recovery');
+assert.deepEqual(getWriterVisibleActions(desktopRow({ readinessState: 'error' })),
+  [{ kind: 'troubleshoot', label: '문제해결' }], 'desktop failure uses one recovery destination');
+assert.deepEqual(selectWriterStatusRow(rowInput({
+  readinessState: 'missing-models', missingModels: [diarizationMissing],
+  diarizationDuringAnalysis: false, canOpenTroubleshooting: true, installerAvailable: false,
+})).actions, [{ kind: 'troubleshoot', label: '문제해결' }], 'reinstallation guidance still has a destination without a download URL');
 
 console.log('ok - web/Tauri runtime boundary and local engine client');

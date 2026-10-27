@@ -11,6 +11,8 @@ from typing import Mapping
 
 import uvicorn
 
+from brand import BRAND_NAME
+from local_engine_browser_approval import BrowserApprovalCoordinator, BrowserApprovalDataError
 from local_engine_preflight import (
     InstallerTargetPaths,
     collect_installer_target_preflight,
@@ -27,6 +29,7 @@ from web_local_engine_runtime import (
     apply_web_local_engine_environment,
     approve_browser_connection,
     build_web_local_engine_environment,
+    confirm_browser_approval_recovery,
     engine_stop_event_name,
     load_web_local_engine_settings,
     make_pairing_code_presenter,
@@ -35,6 +38,7 @@ from web_local_engine_runtime import (
     prepare_web_local_engine_data,
     resolve_web_local_engine_layout,
     signal_engine_stop,
+    show_windows_message,
     validate_production_web_origin,
     windows_named_mutex_exists,
 )
@@ -70,6 +74,30 @@ def _configure_logging(log_path: Path) -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         encoding="utf-8",
     )
+
+
+def _configure_browser_approvals(approvals: BrowserApprovalCoordinator, path: Path, origin: str) -> bool:
+    try:
+        approvals.configure(
+            path, origin, approve_browser_connection,
+            recovery_prompt=confirm_browser_approval_recovery,
+        )
+        return True
+    except BrowserApprovalDataError:
+        # The declined native recovery dialog already explains how to retry.
+        logging.error("Saved browser approval recovery was declined")
+    except (OSError, ValueError):
+        logging.error("Saved browser approvals could not be loaded or recovered")
+        try:
+            show_windows_message(
+                f"{BRAND_NAME} 연결 정보 확인 필요",
+                "브라우저 연결 정보를 읽거나 복구하지 못했습니다. 연결은 차단된 상태로 유지됩니다.\n\n"
+                "회의록·설정·모델과 기존 연결 정보 파일은 삭제하지 않았습니다.\n"
+                "연결 프로그램을 다시 실행해 주세요. 문제가 계속되면 사용 지원에 문의해 주세요.",
+            )
+        except (OSError, RuntimeError):
+            logging.error("Browser approval recovery error could not be displayed")
+    return False
 
 
 def _arguments(argv: list[str] | None = None) -> argparse.Namespace:
@@ -207,12 +235,12 @@ def main(argv: list[str] | None = None) -> int:
         if stop_event.wait(timeout_seconds=0):
             return 0
 
-        try:
-            LOCAL_ENGINE_BROWSER_APPROVAL.configure(
-                layout.config_dir / "browser-approvals.json", origin, approve_browser_connection,
-            )
-        except (OSError, ValueError):
-            logging.error("Saved browser approvals could not be loaded")
+        if not _configure_browser_approvals(
+            LOCAL_ENGINE_BROWSER_APPROVAL, layout.config_dir / "browser-approvals.json", origin,
+        ):
+            # Release the single-instance mutex through finally: launching the
+            # normal shortcut again must offer recovery after a declined repair.
+            return 2
 
         LOCAL_ENGINE_PAIRING.code_presenter = make_pairing_code_presenter(
             layout,

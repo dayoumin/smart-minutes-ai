@@ -18,18 +18,31 @@ export type WriterStatusActionKind =
     | 'recheck-readiness'
     /** The user's own connection check, then a fresh readiness round. */
     | 'recheck-engine'
-    /** Desktop app: Settings > 일반 > 문제 해결, with focus on 재시작. */
+    /** Opens the runtime's connection help or native restart section in Settings. */
     | 'troubleshoot'
     /** Opens the file picker. */
     | 'choose-file'
     /** Asks the engine again how the saved analyses stand. */
-    | 'refresh-analysis-status';
+    | 'refresh-analysis-status'
+    | 'focus-required';
+// Keep the display label separate from the action so each problem retains its own destination.
 
 export interface WriterStatusAction {
     kind: WriterStatusActionKind;
     label: string;
     disabled?: boolean;
 }
+
+export const isWriterSetupRow = (row: WriterStatusRow): boolean =>
+    row.state === 'intro' || row.state === 'checking' || row.state === 'pairing' || row.stage === 'ready';
+
+export const getWriterVisibleActions = (row: WriterStatusRow): WriterStatusAction[] => {
+    if (isWriterSetupRow(row)) return row.actions;
+    const action = row.actions.find(candidate => candidate.kind === 'troubleshoot')
+        ?? [...row.actions].reverse().find(candidate => !candidate.disabled)
+        ?? row.actions.at(-1);
+    return action ? [{ ...action, label: '문제해결' }] : [];
+};
 
 export interface WriterStatusRow {
     stage: 'connection' | 'readiness' | 'input' | 'ready';
@@ -83,7 +96,7 @@ export interface SelectWriterStatusRowInput {
     connection: LocalEngineConnectionViewModel | null;
     /** Desktop app copy: 분석 기능, 문제 해결 instead of `?`, and nothing to download for a reinstall. */
     desktopApp?: boolean;
-    /** Desktop app: 문제 해결 can open Settings at its restart. */
+    /** Opens Settings at connection help (web) or restart (desktop). */
     canOpenTroubleshooting?: boolean;
     /** Development UI without the connection step: the engine refused the request until this browser connects. */
     connectionCheckRequired?: boolean;
@@ -349,7 +362,7 @@ const selectInputRow = (state: WriterInputState | undefined): WriterStatusRow | 
             title: '필수 항목이 비어 있습니다',
             message: state.missingRequired.join(', '),
             messageId: WRITER_REQUIRED_FIELDS_MESSAGE_ID,
-            actions: [],
+            actions: [{ kind: 'focus-required', label: '문제해결' }],
             blocksStart: false,
         });
     }
@@ -364,7 +377,7 @@ export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): Writer
             state: 'ready',
             tone: 'success',
             busy: false,
-            title: '이 PC와 연결됨',
+            title: '',
             message: null,
             help: null,
             actions: [],
@@ -375,7 +388,7 @@ export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): Writer
             state: 'ready',
             tone: 'success',
             busy: false,
-            title: '이 PC와 연결됨',
+            title: '',
             message: null,
             help: null,
             actions: [],
@@ -387,6 +400,23 @@ export const selectWriterStatusRow = (input: SelectWriterStatusRowInput): Writer
             stage: 'ready',
             blocksStart: false,
         }, input.installerNotice);
+    }
+    if (input.canOpenTroubleshooting
+        && (row.state === 'models-reinstall' || row.state === 'update-required')) {
+        return { ...row, help: null, actions: [{ kind: 'troubleshoot', label: '문제해결' }] };
+    }
+    if (!input.desktopApp && input.canOpenTroubleshooting
+        && ['no-response', 'readiness-error', 'readiness-blocked', 'unreachable', 'invalid-response', 'browser-blocked'].includes(row.state)) {
+        return {
+            ...row,
+            message: row.state === 'no-response'
+                ? '프로그램이 실행되면 자동으로 다시 연결합니다.'
+                : row.state === 'readiness-error' || row.state === 'readiness-blocked'
+                    ? '연결과 모델 준비 상태를 확인해 주세요.'
+                    : row.message,
+            help: null,
+            actions: [{ kind: 'troubleshoot', label: '연결 문제 해결' }],
+        };
     }
     return withInstallerNotice(row, input.installerNotice);
 };

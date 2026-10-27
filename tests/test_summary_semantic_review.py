@@ -64,6 +64,21 @@ class SavedPartialProbeTest(unittest.TestCase):
             self.assertNotIn("차기 회의는", probe["prompt"])
         self.assertEqual(events, original)
 
+    def test_category_claims_are_reviewed_and_keep_legacy_saved_notes_compatible(self):
+        events = saved_events()
+        note = events[1]["summary"]["notes"][0]
+        for field, text in (("problems", "검토 자료가 부족하다"), ("goals", "자료가 도착하면 검토하려 한다")):
+            note[field] = [{"text": text, "evidence": [copy.deepcopy(review.source_spans(SOURCE)[0])]}]
+        probes = review.build_probes(events, ["partial-1"], ["u1-n1"])
+        for field in ("problems", "goals"):
+            probe = next(p for p in probes if p["id"] == f"partial-1/u1-n1/{field}/0")
+            self.assertTrue(probe["prompt"].endswith("후보 주장: " + note[field][0]["text"]))
+            damaged = copy.deepcopy(events)
+            damaged[1]["summary"]["notes"][0][field][0]["evidence"][0]["quote"] = "altered quote"
+            with self.subTest(field=field), self.assertRaises(ValueError):
+                review.build_probes(damaged, ["partial-1"], ["u1-n1"])
+        # Existing tests above deliberately retain the old saved-note shape.
+
     def test_timeline_uses_source_order_without_candidate_note_content(self):
         timeline = next(probe for probe in review.build_probes(saved_events(), ["partial-1"], ["u1-n1"], schedule_mode="state") if probe["kind"] == "timeline_state")
         self.assertEqual(json.loads(timeline["prompt"].split("Utterances:\n", 1)[1]), review.source_spans(SOURCE))

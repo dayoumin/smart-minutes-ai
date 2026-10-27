@@ -7,7 +7,7 @@ import types
 import unittest
 from argparse import Namespace
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from brand import BRAND_NAME
 from web_local_engine_runtime import (
@@ -18,6 +18,7 @@ from web_local_engine_runtime import (
     approve_browser_connection,
     build_web_local_engine_environment,
     consume_pairing_helper_arm,
+    confirm_browser_approval_recovery,
     dispatch_windows_message,
     engine_stop_event_name,
     load_web_local_engine_settings,
@@ -34,6 +35,133 @@ from web_local_engine_runtime import (
 
 
 class WebLocalEngineRuntimeTest(unittest.TestCase):
+    def test_browser_approval_recovery_requires_explicit_yes_and_defaults_to_no(self):
+        for answer in (6, 7, 0):
+            with self.subTest(answer=answer), patch('web_local_engine_runtime.ctypes.WinDLL', create=True) as library:
+                library.return_value.MessageBoxW.return_value = answer
+                self.assertEqual(confirm_browser_approval_recovery('https://minutes.example'), answer == 6)
+                call = library.return_value.MessageBoxW.call_args.args
+                self.assertIn('https://minutes.example', call[1])
+                self.assertIn('회의록·설정·모델', call[1])
+                self.assertEqual(call[3] & 0xF, 4)  # YES/NO
+                self.assertEqual(call[3] & 0x300, 0x100)  # default NO
+        with patch('web_local_engine_runtime.ctypes.WinDLL', create=True) as library:
+            with self.assertRaises(ValueError):
+                confirm_browser_approval_recovery('http://minutes.example')
+            library.assert_not_called()
+
+    def test_server_recovers_only_after_native_consent_and_reports_backup_failure(self):
+        from local_engine_browser_approval import BrowserApprovalCoordinator
+        from local_engine_security import LocalEngineSessionStore
+        from web_local_engine_server import _configure_browser_approvals
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / 'browser-approvals.json'
+            damaged = b'{broken'
+            path.write_bytes(damaged)
+            for accepted in (False, True):
+                coordinator = BrowserApprovalCoordinator(LocalEngineSessionStore())
+                with (
+                    patch('web_local_engine_server.confirm_browser_approval_recovery', return_value=accepted) as consent,
+                    patch('web_local_engine_server.show_windows_message') as notice,
+                ):
+                    self.assertEqual(_configure_browser_approvals(coordinator, path, 'https://minutes.example'), accepted)
+                consent.assert_called_once_with('https://minutes.example')
+                notice.assert_not_called()
+                self.assertEqual(coordinator.available, accepted)
+                if not accepted:
+                    self.assertEqual(path.read_bytes(), damaged)
+            self.assertEqual(next(path.parent.glob('*.damaged-*')).read_bytes(), damaged)
+
+            path.write_bytes(damaged)
+            coordinator = BrowserApprovalCoordinator(LocalEngineSessionStore())
+            with (
+                patch('web_local_engine_server.confirm_browser_approval_recovery', return_value=True),
+                patch.object(Path, 'rename', side_effect=PermissionError('private path')),
+                patch('web_local_engine_server.show_windows_message') as notice,
+            ):
+                self.assertFalse(_configure_browser_approvals(coordinator, path, 'https://minutes.example'))
+            self.assertFalse(coordinator.available)
+            self.assertEqual(path.read_bytes(), damaged)
+            notice.assert_called_once()
+            self.assertNotIn('private path', notice.call_args.args[1])
+
+    def test_server_keeps_healthy_browser_registration_without_recovery_prompt(self):
+        from local_engine_browser_approval import BrowserApprovalCoordinator
+        from local_engine_security import LocalEngineSessionStore
+        from web_local_engine_server import _configure_browser_approvals
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / 'browser-approvals.json'
+            data = json.dumps({'format': 1, 'grants': {'a' * 64: 'https://minutes.example'}}).encode()
+            path.write_bytes(data)
+            coordinator = BrowserApprovalCoordinator(LocalEngineSessionStore())
+            with (
+                patch('web_local_engine_server.confirm_browser_approval_recovery') as consent,
+                patch('web_local_engine_server.show_windows_message') as notice,
+            ):
+                self.assertTrue(_configure_browser_approvals(coordinator, path, 'https://minutes.example'))
+            self.assertTrue(coordinator.available)
+            consent.assert_not_called()
+            notice.assert_not_called()
+            self.assertEqual(path.read_bytes(), data)
+
+    def test_declined_recovery_releases_single_instance_lock_for_shortcut_retry(self):
+        from local_engine_browser_approval import BrowserApprovalCoordinator
+        from local_engine_security import LocalEngineSessionStore
+        from web_local_engine_server import main
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            layout = self._layout(Path(temp_dir))
+            layout.config_dir.mkdir(parents=True)
+            path = layout.config_dir / 'browser-approvals.json'
+            damaged = b'{broken'
+            path.write_bytes(damaged)
+            backend = types.ModuleType('main')
+            backend.LOCAL_ENGINE_PAIRING = types.SimpleNamespace()
+            backend.LOCAL_ENGINE_BROWSER_APPROVAL = BrowserApprovalCoordinator(LocalEngineSessionStore())
+            backend.app = object()
+            lock_held = False
+            def acquire():
+                nonlocal lock_held
+                if lock_held:
+                    return False
+                lock_held = True
+                return True
+            def release():
+                nonlocal lock_held
+                lock_held = False
+            with (
+                patch('web_local_engine_server._resolve_startup_layout', return_value=layout),
+                patch('web_local_engine_server._resolve_startup_settings', return_value=('https://minutes.example', '1.2.3')),
+                patch('web_local_engine_server.prepare_web_local_engine_data'),
+                patch('web_local_engine_server.apply_web_local_engine_environment'),
+                patch('web_local_engine_server._configure_logging'),
+                patch('web_local_engine_server.WindowsNamedMutex') as mutex,
+                patch('web_local_engine_server.WindowsNamedEvent') as stop_event,
+                patch('web_local_engine_server.stop_embedded_ollama_server'),
+                patch('web_local_engine_server._create_server') as server,
+                patch('web_local_engine_server.confirm_browser_approval_recovery', side_effect=[False, True]) as consent,
+                patch('web_local_engine_server.show_windows_message') as notice,
+                patch.dict(sys.modules, {'main': backend}),
+            ):
+                mutex.return_value.acquire.side_effect = acquire
+                mutex.return_value.release.side_effect = release
+                stop_event.return_value.wait.return_value = False
+                self.assertEqual(main([]), 2)
+                self.assertFalse(lock_held)
+                self.assertFalse(backend.LOCAL_ENGINE_BROWSER_APPROVAL.available)
+                self.assertEqual(path.read_bytes(), damaged)
+                server.assert_not_called()
+                self.assertEqual(main([]), 0)
+                self.assertTrue(backend.LOCAL_ENGINE_BROWSER_APPROVAL.available)
+                self.assertFalse(lock_held)
+                self.assertEqual(consent.call_count, 2)
+                self.assertEqual(mutex.return_value.release.call_count, 2)
+                server.return_value.run.assert_called_once()
+                notice.assert_not_called()
+                self.assertEqual(next(path.parent.glob('*.damaged-*')).read_bytes(), damaged)
+
     def test_installed_browser_connection_needs_no_additional_native_dialog(self):
         with patch('web_local_engine_runtime.ctypes.WinDLL', create=True) as library:
             self.assertTrue(approve_browser_connection('https://minutes.example'))
@@ -361,7 +489,7 @@ class WebLocalEngineRuntimeTest(unittest.TestCase):
 
             backend = types.ModuleType("main")
             backend.LOCAL_ENGINE_PAIRING = types.SimpleNamespace()
-            backend.LOCAL_ENGINE_BROWSER_APPROVAL = types.SimpleNamespace(configure=lambda *args: None)
+            backend.LOCAL_ENGINE_BROWSER_APPROVAL = types.SimpleNamespace(configure=Mock())
             backend.app = object()
             with (
                 patch("web_local_engine_server._resolve_startup_layout", side_effect=resolve_after_creation) as resolve,
@@ -395,6 +523,10 @@ class WebLocalEngineRuntimeTest(unittest.TestCase):
             self.assertEqual(environment["MEETING_AI_BACKEND_DIR"], str(resolved.config_dir))
             self.assertEqual(environment["LMO_LOCAL_OLLAMA_RUNTIME_DIR"], str(resolved.runtime_dir / "ollama"))
             configure_logging.assert_called_once_with(resolved.logs_dir / "engine.log")
+            backend.LOCAL_ENGINE_BROWSER_APPROVAL.configure.assert_called_once_with(
+                resolved.config_dir / 'browser-approvals.json', 'https://minutes.example',
+                approve_browser_connection, recovery_prompt=confirm_browser_approval_recovery,
+            )
             mutex.assert_called_once_with(pairing_mutex_name(resolved))
             stop_event.assert_called_once_with(engine_stop_event_name(resolved))
             presenter.assert_called_once_with(resolved, origin="https://minutes.example")

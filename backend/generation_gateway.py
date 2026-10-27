@@ -233,14 +233,19 @@ def _needs_non_thinking_json(model_name: str) -> bool:
 
 def _generate_with_http(model_name: str, prompt: str) -> str:
     _ensure_runtime(model_name)
+    schema = _GENERATION_RESPONSE_SCHEMA.get()
     options = {
         "model": model_name,
         "prompt": prompt,
         "stream": False,
-        "format": _GENERATION_RESPONSE_SCHEMA.get() or "json",
+        "format": schema or "json",
     }
     if _needs_non_thinking_json(model_name):
         options["think"] = False
+        if schema:
+            # Categorized JSON exhausted Qwen's default 4096-token input/output
+            # window. Scope the larger budget to verified structured HTTP runs.
+            options["options"] = {"num_ctx": 8192}
     payload = json.dumps(options).encode("utf-8")
     request = urllib.request.Request(
         f"{get_ollama_base_url()}/api/generate",
@@ -255,6 +260,8 @@ def _generate_with_http(model_name: str, prompt: str) -> str:
         with open_request(request, timeout=600) as response:
             data = json.loads(response.read().decode("utf-8"))
         result = data.get("response", "") if isinstance(data, dict) else ""
+        if schema and isinstance(data, dict) and data.get("done_reason") == "length":
+            raise failure_for_code("invalid_model_response")
         if not isinstance(result, str) or not result.strip():
             raise failure_for_code("invalid_model_response")
     except Exception as error:

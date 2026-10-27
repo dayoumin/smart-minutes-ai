@@ -207,6 +207,9 @@ const runEmptyHomeScene = async browser => {
     await page.getByLabel('회의 제목', { exact: true }).fill('');
     await page.getByLabel('일시', { exact: true }).fill('');
     await page.getByLabel('회의 목적', { exact: true }).fill('');
+    assert.equal(await page.getByRole('button', { name: '분석 시작', exact: true }).count(), 0, 'choose a file before offering analysis');
+    await page.setInputFiles('#meeting-file-input', homeAudioFixture());
+    await page.getByLabel('회의 제목', { exact: true }).fill('');
     const start = page.getByRole('button', { name: '분석 시작', exact: true });
     await page.waitForFunction(() => document.querySelector('.writer-start-button')?.getAttribute('aria-disabled') !== 'true');
     assert.equal(await start.isEnabled(), true, 'empty fields keep the validation action reachable');
@@ -214,7 +217,7 @@ const runEmptyHomeScene = async browser => {
     await page.locator('.writer-action-row[data-state="required-fields"]').waitFor();
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-title');
     const missing = await page.locator('#writer-form-error').innerText();
-    assert.ok(missing.indexOf('회의 제목') < missing.indexOf('일시') && missing.indexOf('일시') < missing.indexOf('회의 목적') && missing.indexOf('회의 목적') < missing.indexOf('영상·음성 파일'), 'missing-field message follows the new reading order');
+    assert.ok(missing.indexOf('회의 제목') < missing.indexOf('일시') && missing.indexOf('일시') < missing.indexOf('회의 목적'), 'missing-field message follows the new reading order after file selection');
     await page.getByLabel('회의 제목', { exact: true }).fill('두 열 입력 검증');
     await start.click();
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-date');
@@ -222,8 +225,8 @@ const runEmptyHomeScene = async browser => {
     await start.click();
     assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-purpose');
     await page.getByLabel('회의 목적', { exact: true }).fill('입력 순서 확인');
-    await start.click();
-    assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-file-drop');
+    await page.getByRole('button', { name: 'weekly-meeting.wav 제거', exact: true }).click();
+    assert.equal(await start.count(), 0, 'removing the file removes analysis start');
 
     await page.setViewportSize({ width: 880, height: 768 });
     await settleHomePaint(page);
@@ -250,7 +253,7 @@ const readHomeLayout = page => page.evaluate(() => {
   const date = document.querySelector('#meeting-date');
   return {
     info: rect('.writer-info-column'), work: rect('.writer-work-column'),
-    drop: rect('.file-drop-zone, .selected-file-card'), cta: rect('.writer-start-button'), date: rect('#meeting-date'),
+    drop: rect('.file-drop-zone, .selected-file-card'), cta: rect('.writer-action-buttons'), date: rect('#meeting-date'),
     dateOverflow: date.scrollWidth - date.clientWidth,
     titleBeforeDate: before('#meeting-title', '#meeting-date'), dateBeforePurpose: before('#meeting-date', '#meeting-purpose'),
     purposeBeforeFile: before('#meeting-purpose', '.file-drop-zone, .selected-file-card'),
@@ -333,7 +336,8 @@ const runIHomeLayoutScene = async browser => {
             await page.setInputFiles('#meeting-file-input', { ...homeAudioFixture(), name: longName });
             await page.locator('.selected-file-card').getByText(longName, { exact: true }).waitFor();
           }
-          await page.locator('.writer-action-row[data-state="ready"]').getByText('이 PC와 연결됨', { exact: true }).waitFor();
+          await page.locator('.writer-action-row[data-state="ready"]').waitFor();
+          assert.equal(await page.locator('.writer-status-title, .writer-status-icon').count(), 0, 'normal readiness needs no persistent connection notice');
           await settleHomePaint(page);
           assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0, 'file selection never introduces a duplicate saved-record list');
           const layout = await page.evaluate(() => {
@@ -343,7 +347,7 @@ const runIHomeLayoutScene = async browser => {
             };
             return {
               info: rect('.writer-info-column'), content: rect('.writer-upload-layout'), upload: rect('.writer-upload-section'), guide: rect('.writer-privacy'),
-              action: rect('.writer-action-row'), cta: rect('.writer-start-button'), status: rect('.writer-status-title'),
+              action: rect('.writer-action-row'), cta: rect('.writer-action-buttons'), status: rect('.writer-status-line'),
             };
           });
           assert.ok(Math.abs(layout.info.width - 248) <= 1, 'metadata reserves 224px for inputs and 24px padding');
@@ -358,7 +362,9 @@ const runIHomeLayoutScene = async browser => {
             `status has its own row above the right-aligned start action: ${JSON.stringify(layout)}`);
           assert.ok(layout.cta.top >= 0 && layout.cta.bottom <= viewport.height, 'analysis start is reachable inside the desktop viewport');
           const guidance = page.getByRole('region', { name: '처리·보관 안내', exact: true });
-          await guidance.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor();
+          await guidance.getByRole('heading', { name: '보안 걱정 NO, 외부 AI 전송 없음', exact: true }).waitFor();
+          assert.equal(await guidance.locator('.local-illustration-boundary').count(), 0, 'the headline owns the non-transmission promise without a repeated caption');
+          assert.equal(await page.getByRole('button', { name: '분석 시작', exact: true }).count(), hasFile ? 1 : 0, 'analysis is offered only after selecting a file');
           assert.equal(await guidance.getByRole('img').isVisible(), true, 'the PC boundary illustration makes local processing visible');
           const balance = await guidance.evaluate(el => {
             const screen = el.querySelector('.local-illustration-screen').getBoundingClientRect();
@@ -565,12 +571,11 @@ const runPendingCancellationLockScene = async browser => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await dismissFirstVisitNotice(page);
     const writerStartButton = page.getByRole('button', { name: '분석 시작', exact: true });
-    await writerStartButton.waitFor({ timeout: 10000 });
     // The status row says why; the reason's text stays only as the recovery card's hidden description.
     await page.locator('.writer-action-row[data-state="other-analysis"]').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '진행 중인 분석이 있습니다');
     await page.locator('#writer-analysis-start-blocked.sr-only').waitFor({ state: 'attached', timeout: 10000 });
-    assert.equal(await writerStartButton.isDisabled(), true);
+    assert.equal(await writerStartButton.count(), 0, 'only recovery is offered while another analysis holds the engine');
     assert.equal(await page.locator('.sidebar-create-button').first().isDisabled(), true);
 
     await putMeeting(page, meetingAt('home-pending-recent', '정리 대기 중 최근 회의', Date.now() - 60 * 1000));
@@ -646,7 +651,7 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     // The processing promise is fixed copy, so it shows even before (or without) an engine answer.
     const privacyNote = page.getByRole('region', { name: '처리·보관 안내', exact: true });
-    await privacyNote.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor({ timeout: 10000 });
+    await privacyNote.getByRole('heading', { name: '보안 걱정 NO, 외부 AI 전송 없음', exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await privacyNote.getByText('영상·음성 파일과 대화록을 외부 AI 서버로 보내지 않습니다.', { exact: true }).count(), 0, 'the approved layout omits the subtitle');
     const promiseOverflow = await privacyNote.evaluate(el => el.scrollHeight - el.clientHeight);
     assert.ok(promiseOverflow <= 1, 'privacy guidance is readable without clipping');
@@ -657,7 +662,7 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     assert.equal(await privacyNote.getByRole('img').isVisible(), true);
     const headerLayout = await page.evaluate(() => ({
       flowTop: Math.round(document.querySelector('.writer-privacy')?.getBoundingClientRect().top ?? -1),
-      startBottom: Math.round(document.querySelector('.writer-start-button')?.getBoundingClientRect().bottom ?? Infinity),
+      startBottom: Math.round(document.querySelector('.writer-action-buttons')?.getBoundingClientRect().bottom ?? Infinity),
       flowInWorkColumn: Boolean(document.querySelector('.writer-privacy')?.closest('.writer-work-column')),
     }));
     assert.equal(headerLayout.flowInWorkColumn, true);
@@ -681,7 +686,7 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     assert.equal(await optionalToggle.getAttribute('aria-expanded'), 'false');
     assert.equal(await page.getByLabel('참석자 (선택)').isVisible(), false, 'optional fields start folded');
     const readStartPosition = () => page.evaluate(() => {
-      const button = document.querySelector('.writer-start-button');
+      const button = document.querySelector('.writer-action-buttons');
       const scrollingAncestors = [];
       let parent = button.parentElement;
       while (parent) {
@@ -696,7 +701,7 @@ const runPrivacyNoteWithoutEngineScene = async browser => {
     await optionalToggle.click();
     const foldButton = page.getByRole('button', { name: '참석자·주요 용어 접기' });
     assert.equal(await foldButton.getAttribute('aria-expanded'), 'true');
-    assert.equal(await page.evaluate(() => Math.round(document.querySelector('.writer-start-button').getBoundingClientRect().bottom)), startBottomFolded, 'expanding optional inputs leaves the work action in place');
+    assert.equal(await page.evaluate(() => Math.round(document.querySelector('.writer-action-buttons').getBoundingClientRect().bottom)), startBottomFolded, 'expanding optional inputs leaves the work action in place');
     assert.equal(await page.evaluate(() => window.localStorage.getItem('writerOptionalInfoOpen')), '1');
     await page.getByLabel('참석자 (선택)').fill('김수산, 이자원, 박해양');
     const keyTermInput = page.getByLabel('주요 용어 (선택)');
@@ -841,6 +846,89 @@ const runEngineDownDeleteScene = async browser => {
   }
 };
 
+const runStartVisibilityScene = async browser => {
+  for (const width of [1440, 860]) {
+    const page = await browser.newPage({ viewport: { width, height: 900 } });
+    let mode = 'ready';
+    let analysisRequests = 0;
+    await page.clock.install();
+    await installBaseRoutes(page);
+    await page.route('**/api/models/status', route => route.fulfill({
+      status: mode === 'error' ? 503 : 200, contentType: 'application/json',
+      body: JSON.stringify({ ready: mode === 'ready', errors: [], models: [
+        { key: 'stt_faster_whisper', required: true, installed: mode === 'ready', downloadable: true },
+      ] }),
+    }));
+    await page.route('**/api/analyze', route => { analysisRequests += 1; return route.abort(); });
+    const start = page.getByRole('button', { name: '분석 시작', exact: true });
+    const anchors = () => page.evaluate(() => Object.fromEntries(
+      ['.writer-action-buttons', '.writer-privacy'].map(selector => {
+        const box = document.querySelector(selector).getBoundingClientRect();
+        return [selector, { x: box.x, y: box.y, width: box.width, height: box.height }];
+      }),
+    ));
+    const waitState = state => page.locator(`.writer-action-row[data-state="${state}"]`).waitFor();
+    const assertAdjacentRecovery = async () => {
+      const geometry = await page.locator('.writer-issue-row').evaluate(el => {
+        const line=el.querySelector('.writer-status-line').getBoundingClientRect();
+        const title=el.querySelector('.writer-status-title').getBoundingClientRect();
+        const actions=el.querySelector('.writer-status-actions').getBoundingClientRect();
+        const button=el.querySelector('.writer-status-actions button').getBoundingClientRect();
+        return { gap:actions.left-line.right, center:(button.top+button.height/2)-(title.top+title.height/2), overflow:el.scrollWidth-el.clientWidth };
+      });
+      assert.ok(Math.abs(geometry.gap-12)<=1 && Math.abs(geometry.center)<=1 && geometry.overflow<=1,
+        `problem and recovery sit immediately side by side: ${JSON.stringify(geometry)}`);
+    };
+    try {
+      await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+      await waitState('ready');
+      assert.equal(await start.count(), 0, 'no start before file selection, including accessibility');
+      await page.setInputFiles('#meeting-file-input', homeAudioFixture());
+      await page.getByLabel('회의 제목', { exact: true }).fill('');
+      await start.click();
+      await waitState('required-fields');
+      assert.equal(await page.evaluate(() => document.activeElement?.id), 'meeting-title');
+      await page.getByLabel('회의 제목', { exact: true }).fill('시작 동작 확인');
+      await page.getByLabel('회의 목적', { exact: true }).fill('필요한 다음 행동만 보여주기');
+      await waitState('ready');
+      const stable = await anchors();
+      await start.focus();
+      mode = 'missing';
+      await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+      await waitState('models-missing');
+      assert.equal(await start.count(), 0);
+      await assertAdjacentRecovery();
+      await page.waitForFunction(() => document.activeElement?.id === 'writer-local-engine-requirement');
+      await page.locator('.writer-action-row').getByRole('button', { name: '문제해결', exact: true }).click();
+      const settings = page.getByRole('dialog', { name: '설정', exact: true });
+      await settings.locator('#settings-analysis-models').waitFor();
+      mode = 'ready';
+      await page.clock.runFor(6_000);
+      await waitState('ready');
+      await settings.getByRole('button', { name: '설정 닫기', exact: true }).click();
+      assert.equal(await start.evaluate(el => el === document.activeElement), true);
+      assert.deepEqual(await anchors(), stable, 'model recovery keeps shared surfaces still');
+      mode = 'error';
+      await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
+      await page.clock.runFor(47_000);
+      await waitState('readiness-error');
+      assert.equal(await start.count(), 0);
+      await page.locator('.writer-action-row').getByRole('button', { name: '문제해결', exact: true }).waitFor();
+      await assertAdjacentRecovery();
+      assert.deepEqual(await anchors(), stable, 'error offers recovery without moving the layout');
+      mode = 'ready';
+      await page.clock.runFor(6_000);
+      await waitState('ready');
+      await start.waitFor();
+      await page.getByRole('button', { name: 'weekly-meeting.wav 제거', exact: true }).click();
+      assert.equal(await start.count(), 0);
+      assert.deepEqual(await anchors(), stable);
+      assert.equal(analysisRequests, 0, 'validation and recovery never start analysis');
+      console.log(`ok - start visibility, recovery, focus and stable layout at ${width}px`);
+    } finally { await page.close(); }
+  }
+};
+
 const run = async () => {
   if (process.env.NEW_RECORD_HOME_SCENARIO === 'capture') {
     assert.ok(process.env.APP_URL, 'Capture requires APP_URL pointing to a caller-owned server.');
@@ -848,6 +936,10 @@ const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'start-visibility') {
+      await runStartVisibilityScene(browser);
+      return;
+    }
     if (process.env.NEW_RECORD_HOME_SCENARIO === 'capture') {
       await runEmptyHomeCapture(browser);
       return;

@@ -1,5 +1,6 @@
 import atexit
 import hashlib
+import json
 import ipaddress
 import logging
 import os
@@ -14,6 +15,7 @@ from pathlib import Path
 
 from process_utils import hidden_subprocess_kwargs
 from windows_process_job import WindowsProcessJob, start_owned_process
+from ollama_runtime_update import RuntimeOwnershipError
 
 _EMBEDDED_OLLAMA_PROCESS: subprocess.Popen | None = None
 _EMBEDDED_OLLAMA_JOB: WindowsProcessJob | None = None
@@ -244,6 +246,43 @@ def is_embedded_ollama_running() -> bool:
     """Inspect only our retained process; never probe or start a runtime."""
     with _EMBEDDED_OLLAMA_LOCK:
         return _EMBEDDED_OLLAMA_PROCESS is not None and _EMBEDDED_OLLAMA_PROCESS.poll() is None
+
+
+def managed_ollama_update_lock():
+    """Hold during bundle replacement so ordinary readiness checks cannot start it."""
+    return _EMBEDDED_OLLAMA_LOCK
+
+
+def stop_managed_ollama_for_update() -> None:
+    """Stop only the process retained by this backend, and require confirmed exit."""
+    with _EMBEDDED_OLLAMA_LOCK:
+        process = _EMBEDDED_OLLAMA_PROCESS
+        if _ollama_api_ready() and (process is None or process.poll() is not None):
+            raise RuntimeOwnershipError("The managed runtime endpoint is owned by another process. Close that app before updating.")
+        if process is not None and process.poll() is None:
+            try:
+                process.terminate()
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait(timeout=10)
+        if process is not None:
+            if process.poll() is None:
+                raise RuntimeError("The app-managed Ollama process did not stop.")
+        stop_embedded_ollama_server()
+        if _ollama_api_ready():
+            raise RuntimeOwnershipError("The managed runtime endpoint is still in use; update was not applied.")
+
+
+def verify_managed_ollama_version(expected_version: str | None = None) -> None:
+    if not using_embedded_ollama() or not ensure_ollama_server_running(timeout_seconds=30):
+        raise RuntimeError("The app-managed summary program did not restart.")
+    if not is_embedded_ollama_running():
+        raise RuntimeError("The summary program is not owned by this app.")
+    with urllib.request.urlopen(f"{get_ollama_base_url()}/api/version", timeout=5) as response:
+        version = str(json.load(response).get("version") or "").removeprefix("v")
+    if not version or (expected_version and version != expected_version.removeprefix("v")):
+        raise RuntimeError("The restarted summary program has an unexpected version.")
 
 
 def get_embedded_ollama_status() -> dict:

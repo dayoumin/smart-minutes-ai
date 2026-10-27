@@ -1,6 +1,7 @@
 import argparse
 import asyncio
 import copy
+import errno
 import hashlib
 import hmac
 import os
@@ -78,6 +79,9 @@ from model_manager import (
     read_ollama_model_inventory,
     resolve_model_path,
 )
+from ollama_catalog import (
+    CatalogSelectionError, CatalogUnavailableError, search_summary_models, verify_summary_catalog_model,
+)
 from media_limits import MediaDurationError, enforce_media_duration, validate_media_duration
 from analysis_errors import classify_analysis_failure
 from ollama_utils import (
@@ -94,7 +98,11 @@ from ollama_utils import (
     probe_ollama_server,
     using_embedded_ollama,
     wait_for_ollama_preparation,
+    managed_ollama_update_lock,
+    stop_managed_ollama_for_update,
+    verify_managed_ollama_version,
 )
+from ollama_runtime_update import RuntimeOwnershipError, checked_runtime_path, replace_runtime_bundle
 from pipeline.transcribe import get_stt_device_status
 from pipeline.transcript_display import SPEAKER_REVIEW_FLAG_ALIASES, speaker_review_flags
 from pipeline.transcript_review import review_fields
@@ -131,6 +139,7 @@ def _parse_json_form_field(raw_value: str | None, fallback):
     return parsed if isinstance(parsed, type(fallback)) else fallback
 OLLAMA_PULL_STATUS_LOCK = threading.RLock()
 OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK = threading.RLock()
+OLLAMA_MAINTENANCE_LOCK = threading.RLock()
 MODEL_DOWNLOAD_STATUS_LOCK = threading.RLock()
 CONFIG_LOCK = threading.RLock()
 JOB_STATE_LOCKS_LOCK = threading.Lock()
@@ -147,14 +156,18 @@ MODEL_DOWNLOAD_EXPECTED_BYTES = {
 }
 MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
 OLLAMA_RUNTIME_DOWNLOAD_KEY = "ollama_runtime"
-OLLAMA_RUNTIME_DEFAULT_VERSION = os.environ.get("LMO_OLLAMA_RUNTIME_VERSION", "v0.30.6")
+OLLAMA_RUNTIME_DEFAULT_VERSION = os.environ.get("LMO_OLLAMA_RUNTIME_VERSION", "v0.40.10")
 OLLAMA_RUNTIME_DOWNLOAD_URL = os.environ.get(
     "LMO_OLLAMA_RUNTIME_DOWNLOAD_URL",
     f"https://github.com/ollama/ollama/releases/download/{OLLAMA_RUNTIME_DEFAULT_VERSION}/ollama-windows-amd64.zip",
 )
-OLLAMA_RUNTIME_SHA256 = os.environ.get("LMO_OLLAMA_RUNTIME_SHA256", "").strip().lower()
+OLLAMA_RUNTIME_SHA256 = os.environ.get(
+    "LMO_OLLAMA_RUNTIME_SHA256",
+    "d52aea2d323bdd324bf66a4b1226844aa5fb665cc5974fbcceceda1ce3d934eb"
+    if OLLAMA_RUNTIME_DEFAULT_VERSION == "v0.40.10" and "LMO_OLLAMA_RUNTIME_DOWNLOAD_URL" not in os.environ else "",
+).strip().lower()
 try:
-    OLLAMA_RUNTIME_EXPECTED_BYTES = int(os.environ.get("LMO_OLLAMA_RUNTIME_EXPECTED_BYTES", "1600000000"))
+    OLLAMA_RUNTIME_EXPECTED_BYTES = int(os.environ.get("LMO_OLLAMA_RUNTIME_EXPECTED_BYTES", "1586229413"))
 except ValueError:
     OLLAMA_RUNTIME_EXPECTED_BYTES = 1600000000
 OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
@@ -1539,6 +1552,7 @@ def _ollama_runtime_snapshot() -> dict:
         ))
         status["available"] = bool(find_embedded_ollama_executable())
         status["executable_path"] = find_embedded_ollama_executable()
+        status.setdefault("update_required", False)
         return status
 
     embedded_executable = find_embedded_ollama_executable()
@@ -1560,6 +1574,7 @@ def _ollama_runtime_snapshot() -> dict:
             "progress_percent": None,
             "eta_seconds": None,
             "cancel_requested": False,
+            "update_required": False,
         }
 
     return {
@@ -1579,17 +1594,19 @@ def _ollama_runtime_snapshot() -> dict:
         "progress_percent": None,
         "eta_seconds": None,
         "cancel_requested": False,
+        "update_required": False,
     }
 
 
 def _set_ollama_runtime_download_status(**updates) -> dict:
     now = datetime.now().isoformat()
     with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
-        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {"key": OLLAMA_RUNTIME_DOWNLOAD_KEY})
+        current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or _ollama_runtime_snapshot())
         current.update(updates)
         current["key"] = OLLAMA_RUNTIME_DOWNLOAD_KEY
         current["updated_at"] = now
         current.setdefault("download_url", OLLAMA_RUNTIME_DOWNLOAD_URL)
+        current.setdefault("update_required", False)
         OLLAMA_RUNTIME_DOWNLOAD_STATUS[OLLAMA_RUNTIME_DOWNLOAD_KEY] = current
         return dict(current)
 
@@ -1720,12 +1737,16 @@ def _safe_extract_zip(archive: zipfile.ZipFile, extract_dir: Path) -> None:
         raise RuntimeError("Downloaded archive contains too many files.")
     total_uncompressed_bytes = 0
     for member in members:
+        if (member.external_attr >> 16) & 0o170000 == 0o120000:
+            raise RuntimeError("Downloaded archive contains a symbolic link.")
         total_uncompressed_bytes += max(0, int(member.file_size))
         if total_uncompressed_bytes > OLLAMA_RUNTIME_MAX_EXTRACTED_BYTES:
             raise RuntimeError("Downloaded archive is too large after extraction.")
         target_path = (extract_dir / member.filename).resolve()
         if target_path != extract_root and not str(target_path).lower().startswith(str(extract_root).lower() + os.sep):
             raise RuntimeError("Downloaded archive contains an unsafe path.")
+    if archive.testzip():
+        raise RuntimeError("Downloaded archive failed integrity validation.")
     archive.extractall(extract_dir)
 
 
@@ -1858,14 +1879,122 @@ def _run_ollama_runtime_download(target_path: Path) -> None:
             pass
 
 
-def _start_ollama_runtime_download() -> dict:
+def _runtime_update_active() -> bool:
+    with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
+        state = OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {}
+        return bool(state.get("active") and state.get("update"))
+
+
+def _raise_if_runtime_updating() -> None:
+    if _runtime_update_active():
+        raise HTTPException(status_code=409, detail="요약 프로그램 업데이트가 끝난 뒤 다시 시도해 주세요.")
+
+
+def _runtime_update_failure(exc: Exception) -> tuple[str, str]:
+    if isinstance(exc, RuntimeOwnershipError):
+        return "runtime_in_use", "다른 앱이 요약 프로그램을 사용 중입니다. 해당 앱을 닫은 뒤 다시 업데이트해 주세요."
+    if isinstance(exc, PermissionError):
+        return "permission_denied", "요약 프로그램 폴더에 접근하지 못했습니다. 실행 중인 앱과 폴더 권한을 확인한 뒤 다시 업데이트해 주세요."
+    if isinstance(exc, OSError) and (exc.errno == errno.ENOSPC or getattr(exc, "winerror", None) == 112):
+        return "insufficient_space", "요약 프로그램을 저장할 공간이 부족합니다. 여유 공간을 확보한 뒤 다시 업데이트해 주세요."
+    if isinstance(exc, zipfile.BadZipFile) or any(text in str(exc).lower() for text in ("checksum", "archive", "unexpected version")):
+        return "invalid_download", "받은 요약 프로그램 파일을 확인하지 못했습니다. 다시 업데이트해 주세요."
+    if isinstance(exc, urllib.error.HTTPError) and exc.code == 404:
+        return "download_unavailable", "요약 프로그램 업데이트 파일을 찾지 못했습니다. 잠시 뒤 다시 시도해 주세요."
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, ConnectionError)):
+        return "network_error", "요약 프로그램을 받지 못했습니다. 인터넷 연결을 확인한 뒤 다시 업데이트해 주세요."
+    if "automatic recovery failed" in str(exc):
+        return "recovery_failed", "업데이트 복구를 완료하지 못했습니다. 앱을 닫고 보존된 이전 프로그램 폴더를 확인해 주세요."
+    return "runtime_update_failed", "요약 프로그램 업데이트를 완료하지 못했습니다. 기존 프로그램은 보존했습니다. 다시 시도해 주세요."
+
+
+def _run_ollama_runtime_update(target_path: Path) -> None:
+    work_dir: Path | None = None
+    try:
+        target_path = checked_runtime_path(target_path, _ollama_runtime_target_candidates())
+        work_dir = Path(tempfile.mkdtemp(prefix=f".{target_path.name}-update-", dir=target_path.parent))
+        zip_part_path = work_dir / "runtime.zip.part"
+        _download_ollama_runtime_zip(target_path, zip_part_path)
+        if _ollama_runtime_cancel_requested():
+            raise InterruptedError("cancelled")
+        _set_ollama_runtime_download_status(status="extracting", message="요약 프로그램 파일을 확인하고 있습니다.")
+        extract_dir = work_dir / "extracted"
+        with zipfile.ZipFile(zip_part_path) as archive:
+            _safe_extract_zip(archive, extract_dir)
+        executable_candidates = [item for item in extract_dir.rglob("ollama.exe") if item.is_file()]
+        if len(executable_candidates) != 1:
+            raise RuntimeError("Downloaded archive must contain exactly one Ollama executable.")
+        source = executable_candidates[0].parent
+        # Check the staged binary before touching the currently installed bundle.
+        version = subprocess.run(
+            [str(source / "ollama.exe"), "--version"], capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=30,
+            env=ollama_subprocess_env(), **hidden_subprocess_kwargs(),
+        )
+        expected = OLLAMA_RUNTIME_DEFAULT_VERSION.removeprefix("v")
+        if version.returncode != 0 or not re.search(rf"(?<![\d.]){re.escape(expected)}(?![\d.])", version.stdout + version.stderr):
+            raise RuntimeError("Downloaded summary program has an unexpected version.")
+        if _ollama_runtime_cancel_requested():
+            raise InterruptedError("cancelled")
+        _set_ollama_runtime_download_status(status="installing", message="요약 프로그램을 업데이트하고 있습니다.")
+        with managed_ollama_update_lock():
+            executable = replace_runtime_bundle(
+                source, target_path, allowed_targets=_ollama_runtime_target_candidates(),
+                stop=stop_managed_ollama_for_update,
+                start_and_verify=lambda: verify_managed_ollama_version(expected),
+                restart_original=lambda: verify_managed_ollama_version(),
+                cancelled=_ollama_runtime_cancel_requested,
+            )
+        _set_ollama_runtime_download_status(
+            active=False, status="completed", available=True, executable_path=executable,
+            message="요약 프로그램을 업데이트했습니다. 모델 받기를 다시 눌러 주세요.",
+            error="", error_code="", update_required=False, cancel_requested=False,
+        )
+        with OLLAMA_PULL_STATUS_LOCK:
+            for state in OLLAMA_PULL_STATUS.values():
+                if state.get("error_code") == "runtime_update_required" and not state.get("active"):
+                    state.update(status="idle", message="", error="", error_code="")
+    except InterruptedError:
+        _mark_ollama_runtime_cancelled(str(target_path), "요약 프로그램 업데이트를 중지했습니다.")
+    except Exception as exc:
+        logging.exception("Failed to update app-managed Ollama runtime")
+        code, message = _runtime_update_failure(exc)
+        if _ollama_runtime_cancel_requested() and code != "recovery_failed":
+            _mark_ollama_runtime_cancelled(str(target_path), "요약 프로그램 업데이트를 중지했습니다.")
+            return
+        _set_ollama_runtime_download_status(
+            active=False, status="failed", available=bool(find_embedded_ollama_executable()),
+            executable_path=find_embedded_ollama_executable(), message=message,
+            error=str(exc), error_code=code, cancel_requested=False,
+        )
+    finally:
+        if work_dir is not None:
+            try:
+                shutil.rmtree(work_dir)
+            except OSError:
+                logging.warning("Could not remove runtime update staging directory %s", work_dir)
+
+
+def _start_ollama_runtime_download(update: bool = False) -> dict:
+    # All admissions use the same lock. Generation callers already hold their
+    # status lock, so preserve that order here to avoid an inverted acquisition.
+    with GENERATION_STATUS_LOCK, OLLAMA_MAINTENANCE_LOCK:
+        if update:
+            with OLLAMA_PULL_STATUS_LOCK:
+                pulls_active = any(item.get("active") for item in OLLAMA_PULL_STATUS.values())
+            if pulls_active or ACTIVE_GENERATIONS or ANALYSIS_JOBS.has_active():
+                raise HTTPException(status_code=409, detail="분석·요약·모델 받기가 끝난 뒤 요약 프로그램을 업데이트해 주세요.")
+        return _admit_ollama_runtime_download(update)
+
+
+def _admit_ollama_runtime_download(update: bool = False) -> dict:
     with OLLAMA_RUNTIME_DOWNLOAD_STATUS_LOCK:
         current = dict(OLLAMA_RUNTIME_DOWNLOAD_STATUS.get(OLLAMA_RUNTIME_DOWNLOAD_KEY) or {})
         if current.get("active"):
             return _ollama_runtime_snapshot()
 
     embedded_executable = find_embedded_ollama_executable()
-    if embedded_executable:
+    if embedded_executable and not update:
         _set_ollama_runtime_download_status(
             available=True,
             active=False,
@@ -1879,10 +2008,24 @@ def _start_ollama_runtime_download() -> dict:
         )
         return _ollama_runtime_snapshot()
 
-    target_path, preflight_error = _resolve_ollama_runtime_download_target()
+    if update:
+        if not embedded_executable:
+            _set_ollama_runtime_download_status(
+                active=False, status="failed", error_code="system_runtime_update_required",
+                message="PC에 설치한 Ollama를 공식 설치 프로그램으로 업데이트한 뒤 모델 받기를 다시 눌러 주세요.",
+            )
+            return _ollama_runtime_snapshot()
+        target_path = Path(embedded_executable).parent
+        try:
+            target_path = checked_runtime_path(target_path, _ollama_runtime_target_candidates())
+            preflight_error = _ollama_runtime_download_preflight(target_path)
+        except (OSError, RuntimeError) as exc:
+            _, preflight_error = _runtime_update_failure(exc)
+    else:
+        target_path, preflight_error = _resolve_ollama_runtime_download_target()
     if preflight_error:
         _set_ollama_runtime_download_status(
-            available=False,
+            available=bool(embedded_executable),
             active=False,
             status="failed",
             message=preflight_error,
@@ -1900,7 +2043,9 @@ def _start_ollama_runtime_download() -> dict:
             return _ollama_runtime_snapshot()
         OLLAMA_RUNTIME_DOWNLOAD_STATUS[OLLAMA_RUNTIME_DOWNLOAD_KEY] = {
             "key": OLLAMA_RUNTIME_DOWNLOAD_KEY,
-            "available": False,
+            "available": bool(embedded_executable),
+            "update": update,
+            "update_required": bool(current.get("update_required")),
             "active": True,
             "status": "starting",
             "message": "요약 프로그램 받기를 시작합니다.",
@@ -1917,7 +2062,7 @@ def _start_ollama_runtime_download() -> dict:
             "cancel_requested": False,
         }
 
-    worker = threading.Thread(target=_run_ollama_runtime_download, args=(target_path,), daemon=True)
+    worker = threading.Thread(target=_run_ollama_runtime_update if update else _run_ollama_runtime_download, args=(target_path,), daemon=True)
     worker.start()
     return _ollama_runtime_snapshot()
 
@@ -2042,6 +2187,22 @@ def _remember_summary_model(model_name: str, *, managed_by_app: bool = False) ->
         save_config(config)
 
 
+def _ollama_pull_failure(output: str) -> tuple[str, str]:
+    if re.search(r"requires\s+a\s+newer\s+version\s+of\s+ollama", output, re.IGNORECASE):
+        _set_ollama_runtime_download_status(update_required=True)
+        return "runtime_update_required", "요약 프로그램을 업데이트한 뒤 모델 받기를 다시 눌러 주세요."
+    lower = output.lower()
+    if "permission denied" in lower or "access is denied" in lower:
+        return "permission_denied", "모델 저장 폴더에 접근하지 못했습니다. 폴더 권한을 확인한 뒤 다시 받아 주세요."
+    if "no space left" in lower or "not enough space" in lower:
+        return "insufficient_space", "모델을 저장할 공간이 부족합니다. 여유 공간을 확보한 뒤 다시 받아 주세요."
+    if any(text in lower for text in ("manifest does not exist", "model not found", "file does not exist", "pull model manifest: 404")):
+        return "model_not_found", "이 모델을 찾지 못했습니다. 검색 결과에서 다른 모델을 선택해 주세요."
+    if any(text in lower for text in ("timeout", "connection", "no such host", "network", "tls", "eof")):
+        return "network_error", "모델을 받지 못했습니다. 인터넷 연결을 확인한 뒤 다시 받아 주세요."
+    return "model_download_failed", "모델을 받지 못했습니다. 다시 시도해 주세요."
+
+
 def _run_ollama_pull(model_name: str) -> None:
     started_at = datetime.now().isoformat()
     with OLLAMA_PULL_STATUS_LOCK:
@@ -2070,6 +2231,7 @@ def _run_ollama_pull(model_name: str) -> None:
             "updated_at": started_at,
             "exit_code": None,
             "error": "",
+            "error_code": "",
             "cancel_requested": False,
             "progress_percent": None,
             "eta_seconds": None,
@@ -2173,6 +2335,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 cancel_requested=False,
             )
         elif return_code == 0:
+            _set_ollama_runtime_download_status(update_required=False)
             _set_ollama_pull_status(
                 model_name,
                 active=False,
@@ -2185,11 +2348,13 @@ def _run_ollama_pull(model_name: str) -> None:
                 cancel_requested=False,
             )
         else:
+            error_code, message = _ollama_pull_failure(output)
             _set_ollama_pull_status(
                 model_name,
                 active=False,
                 status="failed",
-                message=_download_blocked_message(f"{model_name} 모델을", "요약 프로그램 설치 또는 요약 모델 준비를"),
+                message=message,
+                error_code=error_code,
                 exit_code=return_code,
                 error=output[-4000:],
                 cancel_requested=False,
@@ -2220,11 +2385,13 @@ def _run_ollama_pull(model_name: str) -> None:
             )
             return
         logging.exception("Failed to pull Ollama model %s", model_name)
+        error_code, message = _ollama_pull_failure(str(exc))
         _set_ollama_pull_status(
             model_name,
             active=False,
             status="failed",
-            message=_download_blocked_message(f"{model_name} 모델을", "요약 프로그램 설치 또는 요약 모델 준비를"),
+            message=message,
+            error_code=error_code,
             exit_code=None,
             error=str(exc),
             cancel_requested=False,
@@ -2365,7 +2532,8 @@ def _forget_summary_model(model_name: str) -> dict:
 
 
 def _start_ollama_pull(model_name: str) -> dict:
-    with OLLAMA_PULL_STATUS_LOCK:
+    with OLLAMA_MAINTENANCE_LOCK, OLLAMA_PULL_STATUS_LOCK:
+        _raise_if_runtime_updating()
         current = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
         if current.get("active"):
             return current
@@ -2378,6 +2546,7 @@ def _start_ollama_pull(model_name: str) -> dict:
             "updated_at": datetime.now().isoformat(),
             "exit_code": None,
             "error": "",
+            "error_code": "",
             "cancel_requested": False,
             "progress_percent": None,
             "eta_seconds": None,
@@ -2388,8 +2557,42 @@ def _start_ollama_pull(model_name: str) -> dict:
     return _ollama_pull_snapshot(model_name)
 
 
+@app.get("/api/models/ollama/search")
+async def search_ollama_models(q: str = "") -> dict:
+    """Search public metadata only; local engines and meeting data are untouched."""
+    try:
+        return await asyncio.to_thread(search_summary_models, q)
+    except CatalogSelectionError:
+        raise HTTPException(status_code=400, detail="모델 이름으로 검색해 주세요. 예: gemma4 또는 llama3.2:3b")
+    except CatalogUnavailableError:
+        raise HTTPException(status_code=503, detail="모델 목록을 가져오지 못했습니다. 인터넷 연결을 확인한 뒤 다시 검색해 주세요.")
+
+
+@app.post("/api/models/ollama/model")
+async def register_ollama_model(payload: dict = Body(...)) -> dict:
+    """Add a verified official model to the list; never choose, pull, or start it."""
+    model_name = _validate_local_summary_model_name(str((payload or {}).get("model") or ""))
+    try:
+        await asyncio.to_thread(verify_summary_catalog_model, model_name)
+    except CatalogSelectionError:
+        raise HTTPException(status_code=400, detail="이 모델은 PC에서 회의 요약에 사용할 수 없습니다. 검색 결과에서 다른 모델을 선택해 주세요.")
+    except CatalogUnavailableError:
+        raise HTTPException(status_code=503, detail="모델 정보를 확인하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 추가해 주세요.")
+    with CONFIG_LOCK:
+        config = load_config()
+        add_summary_user_model(config, model_name)
+        for option in config.get("summary", {}).get("user_models", []):
+            if option.get("model") == model_name and option.get("label") == "직접 입력":
+                option["label"] = "추가한 모델"
+                option["description"] = "Ollama 공식 목록에서 추가한 모델입니다."
+        save_config(config)
+        summary = copy.deepcopy(config.get("summary", {}))
+    return {"model": model_name, "summary": summary}
+
+
 @app.post("/api/models/ollama/pull")
 async def start_ollama_model_pull(payload: dict = Body(...)) -> dict:
+    _raise_if_runtime_updating()
     model_name = _validate_local_summary_model_name(str((payload or {}).get("model") or ""))
     if not _ollama_executable_available():
         return _set_ollama_pull_status(
@@ -2415,10 +2618,25 @@ def _require_desktop_action_token(request: Request) -> None:
         raise HTTPException(status_code=403, detail="desktop action token required")
 
 
-@app.post("/api/models/ollama/runtime/download")
-async def start_ollama_runtime_download(request: Request) -> dict:
+@app.post("/api/models/ollama/connect")
+async def connect_ollama_models(request: Request) -> dict:
+    """Explicitly prepare the existing runtime; never pull a model or install software."""
     _require_desktop_action_token(request)
-    return _start_ollama_runtime_download()
+    _raise_if_runtime_updating()
+    try:
+        ready = await asyncio.to_thread(ensure_ollama_server_running, timeout_seconds=15)
+    except Exception:
+        logging.exception("Failed to connect to the existing Ollama runtime")
+        raise HTTPException(status_code=503, detail="요약 프로그램을 실행하지 못했습니다. 다시 시도해 주세요.")
+    if not ready:
+        raise HTTPException(status_code=503, detail="요약 프로그램이 아직 응답하지 않습니다. 다시 시도해 주세요.")
+    return {"ready": True}
+
+
+@app.post("/api/models/ollama/runtime/download")
+async def start_ollama_runtime_download(request: Request, update: bool = False) -> dict:
+    _require_desktop_action_token(request)
+    return _start_ollama_runtime_download(update=True) if update else _start_ollama_runtime_download()
 
 
 @app.post("/api/models/ollama/runtime/stop")
@@ -2465,10 +2683,12 @@ async def get_model_download_status(key: str) -> dict:
 @app.delete("/api/models/ollama/model")
 async def delete_ollama_model(model: str, delete_files: bool = False, replacement_model: str = "") -> dict:
     model_name = _validate_ollama_model_name(model)
-    if delete_files:
-        replacement = _validate_local_summary_model_name(replacement_model) if replacement_model else ""
-        return _remove_ollama_model(model_name, replacement)
-    return _forget_summary_model(model_name)
+    with OLLAMA_MAINTENANCE_LOCK:
+        _raise_if_runtime_updating()
+        if delete_files:
+            replacement = _validate_local_summary_model_name(replacement_model) if replacement_model else ""
+            return _remove_ollama_model(model_name, replacement)
+        return _forget_summary_model(model_name)
 
 
 def _asr_benchmark_dirs() -> list[Path]:
@@ -3397,6 +3617,12 @@ def _prune_generation_progress_locked(now: float | None = None) -> None:
 
 
 def _begin_generation(job_id: str, kind: str) -> tuple[str, str]:
+    with OLLAMA_MAINTENANCE_LOCK:
+        _raise_if_runtime_updating()
+        return _admit_generation(job_id, kind)
+
+
+def _admit_generation(job_id: str, kind: str) -> tuple[str, str]:
     generation_key = (job_id, kind)
     _prune_generation_progress_locked()
     if generation_key in ACTIVE_GENERATIONS:
@@ -5978,7 +6204,9 @@ async def analyze_meeting(
     if mode == "real":
         analysis_job_id = _validate_job_id(job_id) if job_id else datetime.now().strftime("%Y%m%d_%H%M%S_%f")
         try:
-            cancel_event = ANALYSIS_JOBS.create(analysis_job_id, admission_pending=True)
+            with OLLAMA_MAINTENANCE_LOCK:
+                _raise_if_runtime_updating()
+                cancel_event = ANALYSIS_JOBS.create(analysis_job_id, admission_pending=True)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
         config = load_config()
@@ -6384,7 +6612,9 @@ async def stream_real_analysis(
     cancel_event = prepared_cancel_event
     if cancel_event is None:
         try:
-            cancel_event = ANALYSIS_JOBS.create(job_id)
+            with OLLAMA_MAINTENANCE_LOCK:
+                _raise_if_runtime_updating()
+                cancel_event = ANALYSIS_JOBS.create(job_id)
         except ValueError as exc:
             if prepared_upload_path and os.path.exists(prepared_upload_path):
                 os.remove(prepared_upload_path)

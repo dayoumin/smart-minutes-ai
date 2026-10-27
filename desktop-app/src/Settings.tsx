@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, Loader2, Mail, MoreVertical, RefreshCw, Trash2, X } from 'lucide-react';
-import { Button, ProgressBar, StatusBanner } from './components/common';
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, Download, Loader2, Mail, RefreshCw, Square, Trash2, X } from 'lucide-react';
+import { AppToast, Button, ProgressBar, StatusBanner } from './components/common';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
     DownloadFormat,
@@ -11,14 +11,19 @@ import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, r
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 import { requestFiniteEngineJson } from './localEngineClientCore';
 import { readApiErrorMessage } from './apiError';
-import { MeetingCleanupPanel } from './MeetingCleanupPanel';
+import { LocalEngineConnectionHelp } from './LocalEngineConnectionHelp';
+import { OllamaModelSearch } from './OllamaModelSearch';
+import { SettingsHint } from './SettingsHint';
 import { LOCAL_ENGINE_NAME, withJosa } from './brand';
 import { beginSettingsUpdateActivity } from './updateActivity';
 
 const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
+// A stopped engine is retried quietly, backing off so an idle Settings dialog does not keep the network busy.
+const SETTINGS_RETRY_BASE_MS = 5000;
+const SETTINGS_RETRY_MAX_MS = 30_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
 const OLLAMA_INSTALL_URL = 'https://ollama.com/download/windows';
-const OLLAMA_INSTALL_OPENED_NOTICE = '요약 프로그램(Ollama) 설치 화면이 열렸습니다. 설치가 끝나면 열린 Ollama 창은 닫아도 됩니다. 이 앱으로 돌아와 준비 상태 확인을 눌러 주세요.';
+const OLLAMA_INSTALL_OPENED_NOTICE = '설치한 뒤 이 화면으로 돌아오면 자동으로 확인합니다.';
 const SUPPORT_EMAIL_WORK = 'ecomarine@korea.kr';
 const SUPPORT_EMAIL_PERSONAL = 'ecomarin@naver.com';
 const SUPPORT_EMAIL_PERSONAL_FROM = new Date(2027, 3, 1);
@@ -76,21 +81,11 @@ const isLocalSummaryModel = (model?: string): boolean => {
 
 const isOllamaSummaryModel = (model?: string): boolean => Boolean(model && !isLocalSummaryModel(model));
 
-const getSummaryModelTraitLabel = (model?: string): string => {
-    const normalized = normalizeSummaryModelName(model);
-    if (normalized === 'gemma4:e2b') return '2B · 가볍고 빠름';
-    if (normalized === 'gemma4:e4b') return '4B · 정리 품질 우선';
-    return '';
-};
-
-const getOllamaModelSearchUrl = (model: string): string => (
-    `https://ollama.com/search?q=${encodeURIComponent(model)}`
-);
-
 interface SummaryModelOption {
     model?: string;
     label?: string;
     description?: string;
+    size?: string;
     url?: string;
     command?: string;
     source?: 'recommended' | 'user' | 'installed' | 'configured';
@@ -194,6 +189,7 @@ interface OllamaPullStatus {
     updated_at?: string;
     exit_code?: number | null;
     error?: string;
+    error_code?: string;
     progress_percent?: number | null;
     eta_seconds?: number | null;
     cancel_requested?: boolean;
@@ -219,7 +215,7 @@ interface OllamaRuntimeDownloadStatus {
     key: string;
     available: boolean;
     active: boolean;
-    status: 'idle' | 'starting' | 'running' | 'extracting' | 'cancelling' | 'completed' | 'failed' | 'cancelled';
+    status: 'idle' | 'starting' | 'running' | 'extracting' | 'installing' | 'cancelling' | 'completed' | 'failed' | 'cancelled' | 'update_required';
     message: string;
     target_path?: string;
     executable_path?: string;
@@ -227,11 +223,13 @@ interface OllamaRuntimeDownloadStatus {
     started_at?: string;
     updated_at?: string;
     error?: string;
+    error_code?: string;
     downloaded_bytes?: number;
     expected_bytes?: number;
     progress_percent?: number | null;
     eta_seconds?: number | null;
     cancel_requested?: boolean;
+    update_required?: boolean;
 }
 
 interface OllamaConnectionStatus {
@@ -254,7 +252,7 @@ interface SettingsProps {
     initialTab?: SettingsTab;
     /** Scroll a section into view on open (the writer's 문제 해결 button). */
     initialSection?: SettingsSection;
-    /** Records deleted from 회의록 정리, so the app can leave a meeting that no longer exists. */
+    /** Retained for callers using the former cleanup surface. */
     onMeetingsDeleted?: (ids: string[]) => void;
 }
 
@@ -336,49 +334,6 @@ const getOllamaRuntimeProgressPercent = (status?: OllamaRuntimeDownloadStatus | 
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
 };
 
-const getOllamaRuntimeStatusMessage = (status?: OllamaRuntimeDownloadStatus | null): string => {
-    if (status?.active) return '';
-    if (!status?.message || status.message === '요약 프로그램 받기를 시작합니다.') return '';
-    return status.message;
-};
-
-const getOllamaConnectionNotice = (connection?: OllamaConnectionStatus | null, summaryReason?: string): {
-    tone: 'info' | 'warning';
-    heading: string;
-    message: string;
-} | null => {
-    if (connection?.status === 'managed_starting' || summaryReason === 'runtime_preparing') {
-        return {
-            tone: 'info',
-            heading: '요약 프로그램을 준비하고 있습니다.',
-            message: '준비가 끝나면 모델 준비 상태를 다시 확인해 주세요.',
-        };
-    }
-    if (!connection) return null;
-    if (connection.status === 'system_stopped') {
-        return {
-            tone: 'warning',
-            heading: '기존 요약 프로그램이 실행되지 않습니다',
-            message: 'Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인하세요. 계속 같으면 회사 보안 정책이나 설치 상태 확인이 필요합니다.',
-        };
-    }
-    if (connection.status === 'missing') {
-        return {
-            tone: 'info',
-            heading: '요약 프로그램이 필요합니다',
-            message: '앱에서 받으면 보통은 별도 설치 없이 회의 요약 모델을 준비할 수 있습니다.',
-        };
-    }
-    if (connection.status === 'managed_stopped') {
-        return {
-            tone: 'info',
-            heading: '요약 프로그램은 필요한 작업을 시작할 때 실행됩니다.',
-            message: '모델 받기나 회의 정리를 시작하면 자동으로 실행합니다. 자동 실행에 실패하면 앱을 다시 열고, 계속 같으면 관리자에게 실행 허용을 요청해 주세요.',
-        };
-    }
-    return null;
-};
-
 const getOllamaPullProgressPercent = (status?: OllamaPullStatus): number => {
     if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
@@ -412,32 +367,23 @@ const isModelStatusCheckFailure = (message: string): boolean => (
     message.includes('모델 상태') || message.includes('확인하지 못했습니다') || message.includes('지연')
 );
 
-const getSettingsFailureMessage = (error: unknown): string => {
-    const isTimeout = error instanceof Error && error.name === 'AbortError';
-    return isTimeout
-        ? '설정을 불러오는 중입니다. 잠시 후 자동으로 다시 확인합니다.'
-        : `설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. ${getEngineRecoveryStep()}`;
-};
+// A timed-out read is still a failure to the user; "불러오는 중" inside an error popup read as endless loading.
+const getSettingsFailureMessage = (): string => (
+    `설정을 불러오지 못했습니다. 잠시 후 자동으로 다시 확인합니다. ${getEngineRecoveryStep()}`
+);
 
 const fetchWithTimeout = (url: string, init: RequestInit = {}): Promise<Response> => (
     requestFiniteEngineJson(localEngineClient, toLocalEngineApiPath(url), init, SETTINGS_FETCH_TIMEOUT_MS)
 );
 
-export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general', initialSection, onMeetingsDeleted }) => {
-    const [activeTab, setActiveTab] = useState<SettingsTab>(initialTab);
-    // 회의록 정리 opens in place of the 일반 page, so no second dialog stacks on this one.
-    const [generalView, setGeneralView] = useState<'settings' | 'cleanup'>('settings');
-    // While 회의록 정리 deletes, closing or switching away would hide which records stayed and why.
-    const [cleanupBusy, setCleanupBusy] = useState(false);
-    const cleanupButtonRef = useRef<HTMLButtonElement>(null);
-    const returnFocusToCleanupRef = useRef(false);
-    useEffect(() => {
-        if (generalView !== 'settings' || !returnFocusToCleanupRef.current) return;
-        returnFocusToCleanupRef.current = false;
-        cleanupButtonRef.current?.focus();
-    }, [generalView]);
+export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = false, initialTab = 'general', initialSection }) => {
     const [settings, setSettings] = useState<SettingsPayload | null>(null);
+    // Status side requests wait until the engine has answered once; a stopped engine only gets the settings retry.
+    const engineAnswered = Boolean(settings);
     const [models, setModels] = useState<ModelsPayload | null>(null);
+    // A failed refresh is not evidence that missing program files have been repaired.
+    const [modelRepairKeys, setModelRepairKeys] = useState<string[]>([]);
+    const requiresModelRepair = modelRepairKeys.some(key => key !== 'diarization' || settings?.diarization?.generate_during_analysis !== false);
     const [apiBase, setApiBase] = useState('');
     const [isLoading, setIsLoading] = useState(true);
     const [isSaving, setIsSaving] = useState(false);
@@ -448,22 +394,37 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [ollamaInstallNoticeMessage, setOllamaInstallNoticeMessage] = useState('');
     const [supportContactVisible, setSupportContactVisible] = useState(false);
     const [modelStatusErrorMessage, setModelStatusErrorMessage] = useState('');
+    // A repeated failure sets the same text, so this round keeps the automatic model-status retry scheduled.
+    const [modelStatusRetryRound, setModelStatusRetryRound] = useState(0);
     const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
-    const [preprocessingEnabled, setPreprocessingEnabled] = useState(true);
     const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(true);
     const [autoSaveHwpxCopy, setAutoSaveHwpxCopy] = useState(false);
     const [autoSaveAudioCopy, setAutoSaveAudioCopy] = useState(false);
+    const [modelRevealRequest, setModelRevealRequest] = useState(initialTab === 'models' ? 1 : 0);
     const [summaryModelInput, setSummaryModelInput] = useState('');
     const [customSummaryModelInput, setCustomSummaryModelInput] = useState('');
-    const [customSummaryCheckedModel, setCustomSummaryCheckedModel] = useState('');
-    const [customSummaryModelNotice, setCustomSummaryModelNotice] = useState('');
+    const [customSummarySearching, setCustomSummarySearching] = useState(false);
+    const [searchView, setSearchView] = useState(false);
+    const [searchResults, setSearchResults] = useState<SummaryModelOption[]>([]);
+    const [searchError, setSearchError] = useState('');
+    const [searchHasMore, setSearchHasMore] = useState(false);
+    const [searchPage, setSearchPage] = useState(0);
+    const [addingModel, setAddingModel] = useState('');
+    const [modelPage, setModelPage] = useState(0);
+    const [selectionFocusModel, setSelectionFocusModel] = useState('');
+    const selectionFocusOriginRef = useRef<Element | null>(null);
+    const lastAddedModelRef = useRef('');
+    const searchWasVisibleRef = useRef(false);
+    const [searchReturnTarget, setSearchReturnTarget] = useState<string | null>(null);
+    const [menuPosition, setMenuPosition] = useState({ left: 0, top: 0 });
+    const customSearchRequestRef = useRef(0);
     const [ollamaPulls, setOllamaPulls] = useState<Record<string, OllamaPullStatus>>({});
     const [ollamaRuntimeDownload, setOllamaRuntimeDownload] = useState<OllamaRuntimeDownloadStatus | null>(null);
     const [modelDownloads, setModelDownloads] = useState<Record<string, ModelDownloadStatus>>({});
     const [deletingOllamaModels, setDeletingOllamaModels] = useState<Record<string, boolean>>({});
-    const settingsWorkActive = isSaving || isRestartingBackend || cleanupBusy
+    const settingsWorkActive = isSaving || isRestartingBackend
         || Object.values(deletingOllamaModels).some(Boolean)
         || Object.values(modelDownloads).some(status => status.active)
         || Boolean(ollamaRuntimeDownload?.active)
@@ -479,8 +440,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }));
     }, []);
     const [isCheckingModels, setIsCheckingModels] = useState(false);
+    const [isConnectingSummary, setIsConnectingSummary] = useState(false);
+    const [summaryConnectionError, setSummaryConnectionError] = useState('');
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
     const [openSummaryModelMenu, setOpenSummaryModelMenu] = useState('');
+    const [modelDeleteConfirmation, setModelDeleteConfirmation] = useState<{ model: string; deleteFiles: boolean } | null>(null);
+    const modelDeleteConfirmationRef = useRef<{ model: string; deleteFiles: boolean } | null>(null);
+    const modelDeleteCancelRef = useRef<HTMLButtonElement | null>(null);
+    const [modelDeleteReturnModel, setModelDeleteReturnModel] = useState('');
     const mountedRef = useRef(true);
     const modelStatusRequestIdRef = useRef(0);
     const pullRequestIdsRef = useRef<Record<string, number>>({});
@@ -494,30 +461,80 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const closeButtonRef = useRef<HTMLButtonElement | null>(null);
     const summaryModelMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
     const summaryModelMenuFocusEdgeRef = useRef<'first' | 'last'>('first');
-    const summaryModelSelectRef = useRef<HTMLSelectElement | null>(null);
+    const summaryModelSearchRef = useRef<HTMLInputElement | null>(null);
     const previouslyFocusedElementRef = useRef<HTMLElement | null>(
         typeof document !== 'undefined' && document.activeElement instanceof HTMLElement ? document.activeElement : null,
     );
 
 
-    useEffect(() => {
-        setActiveTab(initialTab);
-    }, [initialTab]);
-
     const initialSectionHandledRef = useRef(false);
+    const [highlightedSetting, setHighlightedSetting] = useState<string | null>(null);
+    const highlightFrameRef = useRef(0);
+    const highlightSetting = useCallback((id: string) => {
+        setHighlightedSetting(null);
+        window.cancelAnimationFrame(highlightFrameRef.current);
+        highlightFrameRef.current = window.requestAnimationFrame(() => setHighlightedSetting(id));
+    }, []);
+    useEffect(() => () => window.cancelAnimationFrame(highlightFrameRef.current), []);
+    useEffect(() => {
+        if (!highlightedSetting) return;
+        const timeout = window.setTimeout(() => setHighlightedSetting(null), 1800);
+        return () => window.clearTimeout(timeout);
+    }, [highlightedSetting]);
+    const openModelSettings = () => {
+        setModelRevealRequest(value => value + 1);
+    };
+    useEffect(() => {
+        if (!modelRevealRequest) return;
+        let focusFrame = 0;
+        const frame = window.requestAnimationFrame(() => {
+            focusFrame = window.requestAnimationFrame(() => {
+                const target = document.getElementById('settings-analysis-models');
+                if (!target) return;
+                target.scrollIntoView({ block: 'nearest' });
+                target.focus({ preventScroll: true });
+                highlightSetting(target.id);
+
+            });
+        });
+        return () => {
+            window.cancelAnimationFrame(frame);
+            window.cancelAnimationFrame(focusFrame);
+        };
+    }, [modelRevealRequest, highlightSetting]);
     const restartButtonRef = useRef<HTMLButtonElement | null>(null);
+    const connectionHelpRef = useRef<HTMLDivElement | null>(null);
+    const supportReturnFocusRef = useRef<HTMLElement | null>(null);
+    const supportCloseRef = useRef<HTMLButtonElement | null>(null);
     const deviceSelectRef = useRef<HTMLSelectElement | null>(null);
     const diarizationToggleRef = useRef<HTMLInputElement | null>(null);
     const restartFocusPendingRef = useRef(false);
+    const closeSupportContact = useCallback(() => {
+        setSupportContactVisible(false);
+        const opener = supportReturnFocusRef.current;
+        const target = opener?.isConnected && opener.getClientRects().length > 0 && !opener.matches(':disabled')
+            ? opener : connectionHelpRef.current || dialogRef.current;
+        target?.focus({ preventScroll: true });
+        supportReturnFocusRef.current = null;
+    }, []);
+    useEffect(() => {
+        if (!supportContactVisible) return;
+        supportCloseRef.current?.focus({ preventScroll: true });
+    }, [supportContactVisible]);
+    const focusAnalysisSetting = (target: 'device' | 'diarization') => {
+        const control = target === 'device' ? deviceSelectRef.current : diarizationToggleRef.current;
+        control?.scrollIntoView({ block: 'center' });
+        control?.focus({ preventScroll: true });
+        highlightSetting(target === 'device' ? 'settings-analysis-device' : 'settings-analysis-diarization');
+    };
     useEffect(() => {
         // Scroll once when opened from a writer shortcut (문제 해결 / 분석 장치 / 참석자 구분), not on every return to the 일반 tab.
-        if (!initialSection || activeTab !== 'general' || initialSectionHandledRef.current) return undefined;
+        if (!initialSection || initialSectionHandledRef.current) return undefined;
         // Analysis controls only exist once settings have loaded; 재시작 is there from the start.
         if (initialSection !== 'troubleshooting' && (!settings || isRestartingBackend)) return undefined;
         let focusFrame = 0;
         const frame = window.requestAnimationFrame(() => {
             // Mark done only once it runs: StrictMode's mount-unmount-mount cancels the first frame.
-            initialSectionHandledRef.current = true;
             const sectionId = initialSection === 'device'
                 ? 'settings-analysis-device'
                 : initialSection === 'diarization' ? 'settings-analysis-diarization' : 'settings-troubleshooting';
@@ -526,15 +543,20 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             focusFrame = window.requestAnimationFrame(() => {
                 const target = initialSection === 'device'
                     ? deviceSelectRef.current
-                    : initialSection === 'diarization' ? diarizationToggleRef.current : restartButtonRef.current;
-                if (target && !target.disabled) target.focus({ preventScroll: true });
+                    : initialSection === 'diarization' ? diarizationToggleRef.current
+                        : isTauriRuntime() ? restartButtonRef.current : connectionHelpRef.current;
+                if (target && !target.matches(':disabled')) {
+                    target.focus({ preventScroll: true });
+                    highlightSetting(sectionId);
+                    initialSectionHandledRef.current = true;
+                }
             });
         });
         return () => {
             window.cancelAnimationFrame(frame);
             window.cancelAnimationFrame(focusFrame);
         };
-    }, [activeTab, initialSection, isRestartingBackend, settings]);
+    }, [highlightSetting, initialSection, isRestartingBackend, settings]);
 
     useEffect(() => {
         const previouslyFocusedElement = previouslyFocusedElementRef.current;
@@ -570,9 +592,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         [models],
     );
     const summaryModelOptions = useMemo(() => {
-        const recommendedModel = models?.summary_model_recommendation?.model || DEFAULT_SUMMARY_MODEL_OPTIONS[0]?.model || '';
-        const configuredModel = normalizeSummaryModelName(summaryModelStatus?.configured_model || settings?.summary?.model);
-        const baseOptions = [
+        const configuredModel = normalizeSummaryModelName(settings?.summary?.model || summaryModelStatus?.configured_model);
+        const baseOptions: SummaryModelOption[] = [
             ...DEFAULT_SUMMARY_MODEL_OPTIONS,
             ...(settings?.summary?.model_options || []),
             ...(settings?.summary?.user_models || []),
@@ -588,7 +609,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 source: 'configured' as const,
             }]
             : [];
-        const options = [...configuredOption, ...baseOptions];
+        const options = [...baseOptions, ...configuredOption];
         const seen = new Set<string>();
         const filtered = options.filter(option => {
             const model = normalizeSummaryModelName(option.model);
@@ -596,29 +617,95 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             seen.add(model);
             return true;
         });
-        return filtered.sort((left, right) => {
-            if (left.model === recommendedModel) return -1;
-            if (right.model === recommendedModel) return 1;
-            return 0;
-        });
-    }, [models?.summary_model_recommendation?.model, settings, summaryModelStatus]);
+        // Selection and readiness only change row controls, never catalog order.
+        return filtered;
+    }, [settings, summaryModelStatus]);
 
-    const applySettingsToForm = useCallback((nextSettings: SettingsPayload) => {
+    const inventoryConfirmed = Boolean(summaryModelStatus && summaryModelStatus.inventory_checked !== false
+        && (summaryModelStatus.inventory_checked === true || summaryModelStatus.installed || summaryModelStatus.installed_models?.length));
+    const modelPageCount = Math.max(1, Math.ceil(summaryModelOptions.length / 4));
+    const visibleModelPage = Math.min(modelPage, modelPageCount - 1);
+    const visibleSummaryModels = summaryModelOptions.slice(visibleModelPage * 4, visibleModelPage * 4 + 4);
+
+    useEffect(() => {
+        const wasVisible = searchWasVisibleRef.current;
+        searchWasVisibleRef.current = searchView;
+        if (searchView === wasVisible) return;
+        if (searchView) {
+            setSearchReturnTarget(null);
+            const frame = window.requestAnimationFrame(() => summaryModelSearchRef.current?.focus());
+            return () => window.cancelAnimationFrame(frame);
+        }
+        setSearchReturnTarget(lastAddedModelRef.current);
+        lastAddedModelRef.current = '';
+    }, [searchView]);
+
+    useEffect(() => {
+        if (searchView || searchReturnTarget === null) return;
+        const index = summaryModelOptions.findIndex(option => normalizeSummaryModelName(option.model) === searchReturnTarget);
+        if (searchReturnTarget && index < 0) return;
+        if (index >= 0 && visibleModelPage !== Math.floor(index / 4)) {
+            setModelPage(Math.floor(index / 4));
+            return;
+        }
+        const frame = window.requestAnimationFrame(() => {
+            // Keep the request across page/list renders. Only clear it after the
+            // correct page exists, and don't steal focus if the user moved on.
+            const active = document.activeElement;
+            if (active === document.body || active === dialogRef.current) {
+                const row = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('[data-model-name]') ?? [])
+                    .find(element => element.dataset.modelName === searchReturnTarget);
+                const target = row?.querySelector<HTMLElement>('button:not([disabled]), input:not([disabled])') ?? row ?? summaryModelSearchRef.current;
+                target?.focus({ preventScroll: true });
+            }
+            setSearchReturnTarget(null);
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [searchReturnTarget, searchView, summaryModelOptions, visibleModelPage]);
+
+    useEffect(() => {
+        if (!selectionFocusModel || isSaving || searchView) return;
+        const index = summaryModelOptions.findIndex(option => normalizeSummaryModelName(option.model) === selectionFocusModel);
+        if (index < 0) return;
+        const targetPage = Math.floor(index / 4);
+        if (visibleModelPage !== targetPage) {
+            // The rows no longer reorder on selection. Preserve a page the user
+            // visited while this save was pending instead of pulling them back.
+            setSelectionFocusModel('');
+            selectionFocusOriginRef.current = null;
+            return;
+        }
+        const frame = window.requestAnimationFrame(() => {
+            const active = document.activeElement;
+            // A delayed save must not take focus from a different control the user opened meanwhile.
+            if (active === document.body || active === selectionFocusOriginRef.current || active === dialogRef.current) {
+                const row = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('[data-model-name]') ?? [])
+                    .find(element => element.dataset.modelName === selectionFocusModel);
+                row?.querySelector<HTMLInputElement>('input[type="radio"]:not(:disabled)')?.focus({ preventScroll: true });
+            }
+            setSelectionFocusModel('');
+            selectionFocusOriginRef.current = null;
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [isSaving, searchView, selectionFocusModel, summaryModelOptions, visibleModelPage]);
+
+    const applyGeneralSettingsToForm = useCallback((nextSettings: SettingsPayload) => {
         setDiarizationDuringAnalysis(nextSettings.diarization?.generate_during_analysis ?? false);
         setSttDevice(nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu');
-        setPreprocessingEnabled(nextSettings.preprocessing?.enabled ?? true);
         setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
         setAutoSaveHwpxCopy(nextSettings.privacy?.auto_save_hwpx_copy ?? false);
         setAutoSaveAudioCopy(nextSettings.privacy?.auto_save_audio_copy ?? false);
-        const nextSummaryModel = normalizeSummaryModelName(nextSettings.summary?.model);
-        setSummaryModelInput(nextSummaryModel);
     }, []);
+
+    const applySettingsToForm = useCallback((nextSettings: SettingsPayload) => {
+        applyGeneralSettingsToForm(nextSettings);
+        setSummaryModelInput(normalizeSummaryModelName(nextSettings.summary?.model));
+    }, [applyGeneralSettingsToForm]);
 
     // Engine-backed values only: the download format is a browser preference saved on change.
     const generalSettingsKey = useCallback((values: {
         diarizationDuringAnalysis: boolean;
         sttDevice: 'cpu' | 'cuda';
-        preprocessingEnabled: boolean;
         preserveExtractedAudio: boolean;
         autoSaveHwpxCopy: boolean;
         autoSaveAudioCopy: boolean;
@@ -634,6 +721,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         mountedRef.current = true;
         return () => {
             mountedRef.current = false;
+            modelDeleteConfirmationRef.current = null;
             modelStatusRequestIdRef.current += 1;
             ollamaRuntimeRequestIdRef.current += 1;
             ollamaRuntimePollingRequestIdRef.current = null;
@@ -656,11 +744,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 return null;
             }
             setModels(nextModels);
+            setModelRepairKeys(nextModels.models.filter(model => model.required && !model.installed && !model.downloadable).map(model => model.key));
             if (nextModels.ollama_runtime_status) {
                 setOllamaRuntimeDownload(nextModels.ollama_runtime_status);
             }
             const payloadError = nextModels.errors?.find(Boolean) || '';
             setModelStatusErrorMessage(payloadError);
+            setModelStatusRetryRound(0);
             setErrorMessage(previous => (
                 previous.includes('분석 기능에 연결')
                 || previous.includes('모델 상태')
@@ -678,6 +768,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setModels(null);
             }
             setModelStatusErrorMessage(getModelStatusFailureMessage(error));
+            setModelStatusRetryRound(round => round + 1);
             return null;
         } finally {
             if (showChecking && mountedRef.current) {
@@ -685,6 +776,45 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
         }
     }, []);
+
+    const handleConnectSummaryModels = async () => {
+        if (!apiBase || isConnectingSummary) return;
+        const finishUpdateActivity = beginSettingsUpdateActivity();
+        setIsConnectingSummary(true);
+        setSummaryConnectionError('');
+        try {
+            const response = await fetchWithTimeout(`${apiBase}/api/models/ollama/connect`, { method: 'POST' });
+            if (!response.ok) {
+                if (response.status === 404) {
+                    setSummaryConnectionError('연결 프로그램을 업데이트한 뒤 다시 확인해 주세요.');
+                    return;
+                }
+                throw new Error('summary connection failed');
+            }
+            await loadModelsStatus(apiBase, { surfaceErrors: false });
+        } catch {
+            if (mountedRef.current) setSummaryConnectionError('요약 프로그램에 연결하지 못했습니다. 다시 시도해 주세요.');
+        } finally {
+            if (mountedRef.current) setIsConnectingSummary(false);
+            finishUpdateActivity();
+        }
+    };
+
+    useEffect(() => {
+        if (!apiBase || !engineAnswered) return;
+        let refreshing = false;
+        const refreshOnReturn = () => {
+            if (document.visibilityState === 'hidden' || refreshing) return;
+            refreshing = true;
+            void loadModelsStatus(apiBase, { surfaceErrors: false }).finally(() => { refreshing = false; });
+        };
+        window.addEventListener('focus', refreshOnReturn);
+        document.addEventListener('visibilitychange', refreshOnReturn);
+        return () => {
+            window.removeEventListener('focus', refreshOnReturn);
+            document.removeEventListener('visibilitychange', refreshOnReturn);
+        };
+    }, [apiBase, engineAnswered, loadModelsStatus]);
 
     const handleRefreshModelsStatus = useCallback(async () => {
         setErrorMessage('');
@@ -817,6 +947,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     const updateOllamaRuntimeDownloadStatus = useCallback((status: OllamaRuntimeDownloadStatus) => {
         setOllamaRuntimeDownload(status);
+        if (status.status === 'completed' && status.update_required === false) {
+            setOllamaPulls(previous => Object.fromEntries(Object.entries(previous)
+                .filter(([, pull]) => pull.error_code !== 'runtime_update_required')));
+        }
     }, []);
 
     const isCurrentOllamaRuntimeRequest = useCallback((requestId: number) => (
@@ -840,7 +974,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     setErrorMessage('');
                 } else if (status.status === 'failed') {
                     setMessage('');
-                    setErrorMessage(status.message || '요약 프로그램을 받지 못했습니다.');
+                    setErrorMessage(status.update_required ? '' : status.message || '요약 프로그램을 받지 못했습니다.');
                 } else if (status.status === 'cancelled') {
                     setMessage('');
                     setErrorMessage('');
@@ -865,7 +999,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         });
     }, [isCurrentOllamaRuntimeRequest, pollOllamaRuntimeDownloadStatus]);
 
-    const handleDownloadOllamaRuntime = useCallback(async () => {
+    const handleDownloadOllamaRuntime = useCallback(async (update = false) => {
         const finishUpdateActivity = beginSettingsUpdateActivity();
         setErrorMessage('');
         setMessage('');
@@ -879,7 +1013,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setApiBase(base);
             const desktopActionHeaders = await getDesktopActionHeaders();
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
-            const response = await fetchWithTimeout(`${base}/api/models/ollama/runtime/download`, {
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/runtime/download${update ? '?update=true' : ''}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', ...desktopActionHeaders },
             });
@@ -899,7 +1033,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage('');
                 setErrorMessage('');
             } else if (status.status === 'failed') {
-                setErrorMessage(status.message || '요약 프로그램을 받지 못했습니다.');
+                setErrorMessage(status.update_required ? '' : status.message || '요약 프로그램을 받지 못했습니다.');
             }
         } catch (error) {
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
@@ -966,7 +1100,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     setMessage('');
                 } else if (status.status === 'failed') {
                     setMessage('');
-                    setErrorMessage(status.message || '모델을 받지 못했습니다.');
+                    setErrorMessage(status.error_code === 'runtime_update_required' ? '' : status.message || '모델을 받지 못했습니다.');
                 } else if (status.status === 'cancelled') {
                     setMessage('');
                     setErrorMessage('');
@@ -979,17 +1113,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     const handleDownloadOllamaModel = useCallback(async (
         modelName?: string,
-        options: { inlineCustomNotice?: boolean } = {},
     ) => {
         const targetModel = normalizeSummaryModelName(modelName || summaryModelInput);
-        const useInlineCustomNotice = Boolean(options.inlineCustomNotice);
-        const setDownloadErrorMessage = (nextMessage: string) => {
-            if (useInlineCustomNotice) {
-                setCustomSummaryModelNotice(nextMessage);
-                return;
-            }
-            setErrorMessage(nextMessage);
-        };
+        const setDownloadErrorMessage = setErrorMessage;
         if (!targetModel) {
             setDownloadErrorMessage('받을 모델명을 입력해 주세요.');
             return;
@@ -998,7 +1124,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         const finishUpdateActivity = beginSettingsUpdateActivity();
         setErrorMessage('');
         setMessage('');
-        if (useInlineCustomNotice) setCustomSummaryModelNotice('');
         setOllamaInstallPrompted(false);
         setOllamaInstallNoticeMessage('');
         const requestId = (pullRequestIdsRef.current[targetModel] || 0) + 1;
@@ -1021,7 +1146,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             updateOllamaPullStatus(status);
             if (!status.active && status.status === 'failed' && isOllamaMissingPullStatus(status)) {
                 setMessage('');
-                setOllamaInstallNoticeMessage('요약 프로그램을 먼저 받은 뒤 회의 요약 모델을 받을 수 있습니다.');
+                setOllamaInstallNoticeMessage('요약 프로그램을 먼저 받은 뒤 요약 모델을 받을 수 있습니다.');
                 setOllamaInstallPrompted(true);
                 setErrorMessage('');
                 return;
@@ -1038,7 +1163,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage('');
             } else {
                 setMessage('');
-                setDownloadErrorMessage(status.message || `${targetModel} 모델을 받지 못했습니다.`);
+                setDownloadErrorMessage(status.error_code === 'runtime_update_required' ? '' : status.message || `${targetModel} 모델을 받지 못했습니다.`);
             }
         } catch (error) {
             if (!isCurrentPullRequest(targetModel, requestId)) return;
@@ -1056,7 +1181,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         pullRequestIdsRef.current[targetModel] = requestId;
         setErrorMessage('');
         setMessage('');
-        setCustomSummaryModelNotice('');
         try {
             const base = apiBase || await getApiBase();
             setApiBase(base);
@@ -1085,12 +1209,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         const targetModel = normalizeSummaryModelName(modelName);
         if (!targetModel) return;
         const replacement = normalizeSummaryModelName(replacementModel);
-        const confirmMessage = deleteFiles
-            ? `${targetModel} 모델을 이 PC의 Ollama 저장소에서 삭제할까요?${replacement ? ` 요약 모델은 ${replacement}로 바뀝니다.` : ''} 다른 앱에서 같은 모델을 쓰고 있으면 다시 받아야 합니다.`
-            : `${targetModel} 모델을 앱의 추가한 모델 목록에서 제거할까요? PC에 받은 파일은 건드리지 않습니다.`;
-        if (!window.confirm(confirmMessage)) {
-            return;
-        }
 
         setErrorMessage('');
         setMessage('');
@@ -1110,13 +1228,28 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             if (!response.ok) {
                 throw new Error(await readApiErrorMessage(response, '요약 모델을 삭제하지 못했습니다. 사용 중인지 확인한 뒤 다시 시도해 주세요.'));
             }
-            const payload = await response.json() as { message?: string };
-            const settingsResponse = await fetchWithTimeout(`${base}/api/settings`);
-            if (settingsResponse.ok) {
-                const nextSettings = await settingsResponse.json() as SettingsPayload;
-                setSettings(nextSettings);
-                applySettingsToForm(nextSettings);
+            const payload = await response.json() as { message?: string; replacement_model?: string };
+            let nextSettings: SettingsPayload | null = null;
+            try {
+                const settingsResponse = await fetchWithTimeout(`${base}/api/settings`);
+                if (settingsResponse.ok) nextSettings = await settingsResponse.json() as SettingsPayload;
+            } catch {
+                // DELETE already succeeded; a failed optional refresh must not leave
+                // the removed model on screen or report the deletion as failed.
             }
+            if (!mountedRef.current) return;
+            // A delete owns only this model's membership. Old GET responses must not
+            // replace a newer choice, registration, or another completed deletion.
+            const remainingTarget = nextSettings?.summary?.user_models?.find(option => normalizeSummaryModelName(option.model) === targetModel);
+            setSettings(current => {
+                if (!current) return current;
+                const userModels = (current.summary?.user_models || []).filter(option => normalizeSummaryModelName(option.model) !== targetModel);
+                if (remainingTarget) userModels.push(remainingTarget);
+                const useReplacement = Boolean(payload.replacement_model) && normalizeSummaryModelName(current.summary?.model) === targetModel;
+                return { ...current, summary: { ...current.summary, user_models: userModels,
+                    ...(useReplacement ? { provider: 'ollama', model: payload.replacement_model } : {}) } };
+            });
+            if (payload.replacement_model) setSummaryModelInput(current => normalizeSummaryModelName(current) === targetModel ? normalizeSummaryModelName(payload.replacement_model) : current);
             await loadModelsStatus(base, { surfaceErrors: false });
             setMessage(payload.message || (deleteFiles ? `${targetModel} 모델을 삭제했습니다.` : `${targetModel} 모델을 목록에서 제거했습니다.`));
         } catch (error) {
@@ -1124,17 +1257,69 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         } finally {
             finishUpdateActivity();
             setDeletingOllamaModels(previous => ({ ...previous, [targetModel]: false }));
+            window.requestAnimationFrame(() => {
+                // A confirmed removal can unmount the focused row. Keep focus in
+                // Settings without taking it from another control used meanwhile.
+                if (mountedRef.current && document.activeElement === document.body && dialogRef.current?.isConnected) {
+                    (summaryModelSearchRef.current ?? closeButtonRef.current)?.focus({ preventScroll: true });
+                }
+            });
         }
-    }, [apiBase, applySettingsToForm, loadModelsStatus]);
+    }, [apiBase, loadModelsStatus]);
+
+    const openModelDeleteConfirmation = (modelName: string, deleteFiles: boolean) => {
+        const model = normalizeSummaryModelName(modelName);
+        if (!model || modelDeleteConfirmationRef.current) return;
+        const confirmation = { model, deleteFiles };
+        modelDeleteConfirmationRef.current = confirmation;
+        setOpenSummaryModelMenu('');
+        setMessage('');
+        setModelDeleteConfirmation(confirmation);
+    };
+
+    const finishModelDeleteConfirmation = useCallback((confirmed: boolean) => {
+        const confirmation = modelDeleteConfirmationRef.current;
+        if (!confirmation) return;
+        // Consume the request synchronously. Only this explicit confirmation path
+        // may call DELETE; cancellation and unmount never create a request.
+        modelDeleteConfirmationRef.current = null;
+        setModelDeleteConfirmation(null);
+        setModelDeleteReturnModel(confirmation.model);
+        if (confirmed) void handleDeleteOllamaModel(confirmation.model, confirmation.deleteFiles);
+    }, [handleDeleteOllamaModel]);
+
+    useEffect(() => {
+        if (modelDeleteConfirmation) modelDeleteCancelRef.current?.focus({ preventScroll: true });
+    }, [modelDeleteConfirmation]);
+
+    useEffect(() => {
+        if (modelDeleteConfirmation || !modelDeleteReturnModel) return;
+        const frame = window.requestAnimationFrame(() => {
+            const active = document.activeElement;
+            if (active === document.body || active === dialogRef.current || active === closeButtonRef.current) {
+                const row = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>('[data-model-name]') ?? [])
+                    .find(element => element.dataset.modelName === modelDeleteReturnModel);
+                const target = row?.querySelector<HTMLElement>('button[aria-haspopup="menu"]:not(:disabled)')
+                    ?? row ?? summaryModelSearchRef.current ?? closeButtonRef.current;
+                target?.focus({ preventScroll: true });
+            }
+            setModelDeleteReturnModel('');
+        });
+        return () => window.cancelAnimationFrame(frame);
+    }, [modelDeleteConfirmation, modelDeleteReturnModel]);
 
     // A restart can start a new load while an earlier one is still waiting; only the newest may update the form.
     const settingsLoadSeqRef = useRef(0);
-    const loadSettings = useCallback(async (): Promise<boolean> => {
+    // Failed automatic retries so far; each one waits longer before the next.
+    const [settingsRetryRound, setSettingsRetryRound] = useState(0);
+    // The warning popup the user closed; rows keep their one-line failure state and retries continue.
+    const [dismissedWarning, setDismissedWarning] = useState('');
+    // A quiet load is an automatic retry: the rows keep their failure state instead of flipping back to 불러오는 중.
+    const loadSettings = useCallback(async ({ quiet = false }: { quiet?: boolean } = {}): Promise<boolean> => {
         const loadSeq = settingsLoadSeqRef.current + 1;
         settingsLoadSeqRef.current = loadSeq;
         const superseded = () => loadSeq !== settingsLoadSeqRef.current;
-        setIsLoading(true);
-        setErrorMessage('');
+        if (!quiet) setIsLoading(true);
         setMessage('');
         setOllamaInstallPrompted(false);
         setOllamaInstallNoticeMessage('');
@@ -1151,23 +1336,25 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const nextSettings = await settingsResponse.json() as SettingsPayload;
             if (superseded()) return false;
             setSettings(nextSettings);
+            setSettingsRetryRound(0);
+            setErrorMessage(previous => previous.includes('설정을 불러오') ? '' : previous);
             applySettingsToForm(nextSettings);
             lastSavedGeneralKeyRef.current = generalSettingsKey({
                 diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? false,
                 sttDevice: nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu',
-                preprocessingEnabled: nextSettings.preprocessing?.enabled ?? true,
                 preserveExtractedAudio: nextSettings.privacy?.preserve_extracted_audio ?? true,
                 autoSaveHwpxCopy: nextSettings.privacy?.auto_save_hwpx_copy ?? false,
                 autoSaveAudioCopy: nextSettings.privacy?.auto_save_audio_copy ?? false,
             });
             const nextModels = await loadModelsStatus(base);
             return Boolean(nextModels);
-        } catch (error) {
+        } catch {
             if (superseded()) return false;
             setSettings(null);
             setModels(null);
             setModelStatusErrorMessage('');
-            setErrorMessage(getSettingsFailureMessage(error));
+            setErrorMessage(getSettingsFailureMessage());
+            setSettingsRetryRound(round => round + 1);
             return false;
         } finally {
             if (!superseded()) setIsLoading(false);
@@ -1180,15 +1367,27 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [loadSettings]);
 
     useEffect(() => {
-        if (settings || isLoading || isRestartingBackend || !errorMessage.includes('잠시 후 자동으로 다시 확인합니다')) return;
+        if (settings || isLoading || isRestartingBackend || settingsRetryRound === 0 || !errorMessage.includes('잠시 후 자동으로 다시 확인합니다')) return;
+        const delay = Math.min(SETTINGS_RETRY_MAX_MS, SETTINGS_RETRY_BASE_MS * 2 ** (settingsRetryRound - 1));
+        const retry = () => { void loadSettings({ quiet: true }); };
+        // A hidden window waits for the user to come back instead of polling a stopped engine.
+        const retryWhenVisible = () => {
+            if (document.visibilityState === 'hidden') return;
+            document.removeEventListener('visibilitychange', retryWhenVisible);
+            retry();
+        };
         const timeoutId = window.setTimeout(() => {
-            void loadSettings();
-        }, 5000);
-        return () => window.clearTimeout(timeoutId);
-    }, [errorMessage, isLoading, isRestartingBackend, loadSettings, settings]);
+            if (document.visibilityState === 'hidden') document.addEventListener('visibilitychange', retryWhenVisible);
+            else retry();
+        }, delay);
+        return () => {
+            window.clearTimeout(timeoutId);
+            document.removeEventListener('visibilitychange', retryWhenVisible);
+        };
+    }, [errorMessage, isLoading, isRestartingBackend, loadSettings, settings, settingsRetryRound]);
 
     useEffect(() => {
-        if (activeTab !== 'models' || !apiBase || analysisModels.length === 0) return;
+        if (!apiBase || analysisModels.length === 0) return;
         analysisModels.forEach(model => {
             if (!model.downloadable || model.installed || modelDownloads[model.key]?.active) return;
             void (async () => {
@@ -1210,7 +1409,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
         });
     }, [
-        activeTab,
         analysisModels,
         apiBase,
         isCurrentModelDownloadRequest,
@@ -1220,7 +1418,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     ]);
 
     useEffect(() => {
-        if (activeTab !== 'models' || !apiBase) return;
+        if (!apiBase || !engineAnswered) return;
         void (async () => {
             const response = await fetchWithTimeout(`${apiBase}/api/models/ollama/runtime-status`);
             if (!response.ok) return;
@@ -1236,19 +1434,19 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             // Status refresh is best-effort; the normal model status refresh still runs.
         });
     }, [
-        activeTab,
         apiBase,
         beginOllamaRuntimePolling,
+        engineAnswered,
         ollamaRuntimeDownload?.active,
         updateOllamaRuntimeDownloadStatus,
     ]);
 
     useEffect(() => {
-        if (activeTab !== 'models' || !apiBase) return;
+        // Before the engine answers, a failed check would still mark the model as restored and never be retried.
+        if (!apiBase || !engineAnswered) return;
         const candidateModels = Array.from(new Set([
             normalizeSummaryModelName(settings?.summary?.model),
             ...summaryModelOptions.map(option => normalizeSummaryModelName(option.model)),
-            normalizeSummaryModelName(customSummaryModelInput),
         ].filter(Boolean)));
         candidateModels.forEach(modelName => {
             if (!isOllamaSummaryModel(modelName) || ollamaPulls[modelName]?.active || restoredOllamaPullsRef.current[modelName]) return;
@@ -1272,9 +1470,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             });
         });
     }, [
-        activeTab,
         apiBase,
-        customSummaryModelInput,
+        engineAnswered,
         isCurrentPullRequest,
         ollamaPulls,
         pollOllamaPullStatus,
@@ -1285,11 +1482,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
     useEffect(() => {
         if (isRestartingBackend || !modelStatusErrorMessage || !apiBase || !isModelStatusCheckFailure(modelStatusErrorMessage)) return;
+        const delay = Math.min(SETTINGS_RETRY_MAX_MS, SETTINGS_RETRY_BASE_MS * 2 ** Math.max(0, modelStatusRetryRound - 1));
         const timeoutId = window.setTimeout(() => {
             void loadModelsStatus(apiBase, { surfaceErrors: false });
-        }, 5000);
+        }, delay);
         return () => window.clearTimeout(timeoutId);
-    }, [apiBase, isRestartingBackend, loadModelsStatus, modelStatusErrorMessage]);
+    }, [apiBase, isRestartingBackend, loadModelsStatus, modelStatusErrorMessage, modelStatusRetryRound]);
 
     useEffect(() => {
         if (isRestartingBackend || !restartFocusPendingRef.current) return;
@@ -1326,6 +1524,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const item = summaryModelMenuFocusEdgeRef.current === 'last' ? items.at(-1) : items[0];
             (item ?? menu).focus();
         });
+        const closeMenu = () => { setOpenSummaryModelMenu(''); summaryModelMenuTriggerRef.current?.focus({ preventScroll: true }); };
+        window.addEventListener('scroll', closeMenu, true);
+        window.addEventListener('resize', closeMenu);
         const handlePointerDown = (event: MouseEvent) => {
             const target = event.target as Element | null;
             if (!target?.closest('[data-summary-model-menu-root]')) {
@@ -1336,11 +1537,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         return () => {
             window.cancelAnimationFrame(focusFrame);
             window.removeEventListener('mousedown', handlePointerDown);
+            window.removeEventListener('scroll', closeMenu, true);
+            window.removeEventListener('resize', closeMenu);
         };
     }, [openSummaryModelMenu]);
 
     const handleSummaryModelMenuToggle = (event: React.MouseEvent<HTMLButtonElement>, menuKey: string) => {
         summaryModelMenuTriggerRef.current = event.currentTarget;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        setMenuPosition({ left: Math.max(8, Math.min(bounds.right - 208, window.innerWidth - 216)), top: bounds.bottom + 92 > window.innerHeight - 8 ? Math.max(8, bounds.top - 92) : bounds.bottom + 4 });
         summaryModelMenuFocusEdgeRef.current = 'first';
         setOpenSummaryModelMenu(previous => previous === menuKey ? '' : menuKey);
     };
@@ -1349,22 +1554,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return;
         event.preventDefault();
         summaryModelMenuTriggerRef.current = event.currentTarget;
+        const bounds = event.currentTarget.getBoundingClientRect();
+        setMenuPosition({ left: Math.max(8, Math.min(bounds.right - 208, window.innerWidth - 216)), top: bounds.bottom + 92 > window.innerHeight - 8 ? Math.max(8, bounds.top - 92) : bounds.bottom + 4 });
         summaryModelMenuFocusEdgeRef.current = event.key === 'ArrowUp' ? 'last' : 'first';
         setOpenSummaryModelMenu(menuKey);
-    };
-
-    const runSummaryModelMenuAction = async (action: () => Promise<void>) => {
-        const trigger = summaryModelMenuTriggerRef.current;
-        trigger?.focus();
-        setOpenSummaryModelMenu('');
-        await action();
-        window.requestAnimationFrame(() => {
-            // Removal may unmount the trigger. Do not steal focus if the user
-            // moved elsewhere while the request was running.
-            if (!trigger?.isConnected && document.activeElement === document.body && dialogRef.current?.isConnected) {
-                (summaryModelSelectRef.current ?? closeButtonRef.current)?.focus();
-            }
-        });
     };
 
     const handleSummaryModelMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
@@ -1423,8 +1616,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
 
             if (event.key !== 'Escape') return;
+            if (modelDeleteConfirmationRef.current) {
+                event.preventDefault();
+                finishModelDeleteConfirmation(false);
+                return;
+            }
             if (supportContactVisible) {
-                setSupportContactVisible(false);
+                closeSupportContact();
                 return;
             }
             if (openSummaryModelMenu) {
@@ -1432,7 +1630,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 summaryModelMenuTriggerRef.current?.focus();
                 return;
             }
-            if (cleanupBusy) return;
+            if (searchView) {
+                customSearchRequestRef.current += 1;
+                setCustomSummarySearching(false);
+                setSearchView(false);
+                return;
+            }
             onClose();
         };
         const previousOverflow = document.body.style.overflow;
@@ -1443,7 +1646,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             document.body.style.overflow = previousOverflow;
             window.removeEventListener('keydown', handleKeyDown);
         };
-    }, [cleanupBusy, onClose, openSummaryModelMenu, supportContactVisible]);
+    }, [closeSupportContact, finishModelDeleteConfirmation, onClose, openSummaryModelMenu, searchView, supportContactVisible]);
 
     const saveGeneralSettings = useCallback(async () => {
         if (!settings) {
@@ -1454,7 +1657,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         const requestValues = {
             diarizationDuringAnalysis,
             sttDevice,
-            preprocessingEnabled,
             preserveExtractedAudio,
             autoSaveHwpxCopy,
             autoSaveAudioCopy: preserveExtractedAudio ? autoSaveAudioCopy : false,
@@ -1481,9 +1683,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                         selected_model: 'faster-whisper-large-v3',
                         device: sttDevice,
                     },
-                    preprocessing: {
-                        enabled: preprocessingEnabled,
-                    },
                     privacy: {
                         preserve_extracted_audio: requestValues.preserveExtractedAudio,
                         auto_save_hwpx_copy: requestValues.autoSaveHwpxCopy,
@@ -1497,11 +1696,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
 
             const nextSettings = await response.json() as SettingsPayload;
-            setSettings(nextSettings);
+            setSettings(current => current ? { ...nextSettings, summary: current.summary } : nextSettings);
             window.dispatchEvent(new Event('analysis:settings-updated'));
             await loadModelsStatus(base, { surfaceErrors: false });
             if (currentGeneralKeyRef.current === requestKey) {
-                applySettingsToForm(nextSettings);
+                applyGeneralSettingsToForm(nextSettings);
             }
             lastSavedGeneralKeyRef.current = requestKey;
             setSaveState('saved');
@@ -1514,19 +1713,19 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
     }, [
         apiBase,
-        applySettingsToForm,
+        applyGeneralSettingsToForm,
         autoSaveAudioCopy,
         autoSaveHwpxCopy,
         diarizationDuringAnalysis,
         generalSettingsKey,
         loadModelsStatus,
         preserveExtractedAudio,
-        preprocessingEnabled,
         settings,
         sttDevice,
     ]);
 
     const handleSaveSummaryModel = useCallback(async (modelOverride?: string) => {
+        const focusOrigin = document.activeElement;
         if (!settings) {
             setErrorMessage('설정을 아직 불러오지 못했습니다. 잠시 후 다시 저장해 주세요.');
             return;
@@ -1542,7 +1741,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         try {
             const summaryModel = normalizeSummaryModelName(modelOverride ?? summaryModelInput);
             if (!summaryModel) {
-                throw new Error('회의 요약 모델명을 입력하거나 권장 모델을 선택해 주세요.');
+                throw new Error('요약 모델명을 입력하거나 권장 모델을 선택해 주세요.');
             }
             const base = apiBase || await getApiBase();
             const response = await fetchWithTimeout(`${base}/api/settings`, {
@@ -1561,9 +1760,18 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             }
 
             const nextSettings = await response.json() as SettingsPayload;
-            setSettings(nextSettings);
-            applySettingsToForm(nextSettings);
+            // Selecting a model owns the choice, not a catalog registration that completed meanwhile.
+            setSettings(current => current ? { ...current, summary: { ...current.summary,
+                provider: nextSettings.summary?.provider, model: nextSettings.summary?.model } } : current);
+            setSummaryModelInput(normalizeSummaryModelName(nextSettings.summary?.model));
             await loadModelsStatus(base, { surfaceErrors: false });
+            if (!mountedRef.current) return;
+            const active = document.activeElement;
+            if (!dialogRef.current?.querySelector('.settings-search-results')
+                && (active === document.body || active === focusOrigin || active === dialogRef.current)) {
+                selectionFocusOriginRef.current = focusOrigin;
+                setSelectionFocusModel(normalizeSummaryModelName(nextSettings.summary?.model));
+            }
             setSaveState('saved');
         } catch (error) {
             setSummaryModelInput(normalizeSummaryModelName(settings.summary?.model));
@@ -1573,13 +1781,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             finishUpdateActivity();
             setIsSaving(false);
         }
-    }, [apiBase, applySettingsToForm, loadModelsStatus, settings, summaryModelInput]);
+    }, [apiBase, loadModelsStatus, settings, summaryModelInput]);
 
     useEffect(() => {
         const nextKey = generalSettingsKey({
             diarizationDuringAnalysis,
             sttDevice,
-            preprocessingEnabled,
             preserveExtractedAudio,
             autoSaveHwpxCopy,
             autoSaveAudioCopy: preserveExtractedAudio ? autoSaveAudioCopy : false,
@@ -1600,7 +1807,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         isRestartingBackend,
         isSaving,
         preserveExtractedAudio,
-        preprocessingEnabled,
         saveGeneralSettings,
         settings,
         sttDevice,
@@ -1674,31 +1880,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         }
     };
 
-    const tabs: Array<{ key: SettingsTab; label: string }> = [
-        { key: 'general', label: '일반' },
-        { key: 'models', label: '모델' },
-    ];
-    const handleTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>, tabIndex: number) => {
-        if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight' && event.key !== 'Home' && event.key !== 'End') return;
-        event.preventDefault();
-        const nextIndex = event.key === 'Home'
-            ? 0
-            : event.key === 'End'
-                ? tabs.length - 1
-                : event.key === 'ArrowLeft'
-                    ? (tabIndex - 1 + tabs.length) % tabs.length
-                    : (tabIndex + 1) % tabs.length;
-        const nextTab = tabs[nextIndex];
-        setActiveTab(nextTab.key);
-        window.requestAnimationFrame(() => document.getElementById(`settings-${nextTab.key}-tab`)?.focus());
-    };
     // Not gated on isLoading: when the engine does not answer, each load waits up to 20s before the 5s retry,
     // and 재시작 is exactly what the user needs then.
     const canRestartBackend = isTauriRuntime() && !analysisActive && !isSaving && !isRestartingBackend;
     const gpuUsable = Boolean(models?.stt_device_status?.gpu_usable);
-    const gpuDetected = Boolean(models?.stt_device_status?.gpu_detected);
     const gpuReason = models?.stt_device_status?.gpu_reason || 'CPU를 기본으로 사용합니다.';
-    const selectedSummaryModel = normalizeSummaryModelName(summaryModelInput);
     const installedSummaryModels = new Set(
         (summaryModelStatus?.installed_models?.length
             ? summaryModelStatus.installed_models
@@ -1713,10 +1899,11 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const ollamaConnection = models?.ollama_connection || null;
     const ollamaRuntimeAvailable = Boolean(ollamaRuntimeStatus?.available);
     const ollamaRuntimeActive = Boolean(ollamaRuntimeStatus?.active);
+    const ollamaRuntimeNeedsUpdate = Boolean(ollamaRuntimeStatus?.update_required
+        || Object.values(ollamaPulls).some(pull => pull.status === 'failed' && pull.error_code === 'runtime_update_required'));
     const ollamaRuntimeStopping = ollamaRuntimeStatus?.status === 'cancelling';
     const ollamaRuntimeProgressText = getOllamaRuntimeProgressText(ollamaRuntimeStatus);
     const ollamaRuntimeProgressPercent = getOllamaRuntimeProgressPercent(ollamaRuntimeStatus);
-    const ollamaRuntimeStatusMessage = getOllamaRuntimeStatusMessage(ollamaRuntimeStatus);
     const ollamaExecutableAvailable = Boolean(
         ollamaConnection?.executable_available
         ?? summaryModelStatus?.ollama_available
@@ -1728,77 +1915,78 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     );
     const ollamaCanAutoStart = Boolean(ollamaConnection?.can_auto_start || ollamaRuntimeAvailable);
     const ollamaSystemStopped = ollamaConnection?.status === 'system_stopped';
-    const ollamaManagedStopped = ollamaConnection?.status === 'managed_stopped';
     const ollamaRuntimePreparing = ollamaConnection?.status === 'managed_starting' || models?.summary_reason === 'runtime_preparing';
     // Without a status payload nothing is known yet: never conclude a model or the summary program is missing.
-    const summaryModelInventoryUnknown = !models || ollamaRuntimePreparing || summaryModelStatus?.inventory_checked === false;
+    const summaryModelInventoryUnknown = !inventoryConfirmed || ollamaRuntimePreparing;
     const ollamaMissing = Boolean(models) && (ollamaConnection?.status === 'missing' || (!ollamaExecutableAvailable && !ollamaRuntimeAvailable));
-    const ollamaModelActionsReady = Boolean(ollamaServerReady || ollamaCanAutoStart);
-    const showOllamaRuntimeAction = Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
-    const ollamaConnectionNotice = getOllamaConnectionNotice(ollamaConnection, models?.summary_reason);
+    const ollamaModelActionsReady = !ollamaRuntimeActive && (!ollamaRuntimeNeedsUpdate || !ollamaUsingManagedRuntime) && Boolean(ollamaServerReady || ollamaCanAutoStart);
+    const showOllamaRuntimeAction = !ollamaRuntimeNeedsUpdate && Boolean(ollamaRuntimeActive || (!ollamaUsingManagedRuntime && ollamaMissing));
     const configuredSummaryModel = normalizeSummaryModelName(settings?.summary?.model);
-    const selectedSummaryInstalled = Boolean(selectedSummaryModel && installedSummaryModels.has(selectedSummaryModel));
     const isSummaryOptionInstalled = (modelName?: string) => Boolean(modelName && installedSummaryModels.has(modelName));
-    const selectedSummaryCanPull = summaryModelOptions.some(option => normalizeSummaryModelName(option.model) === selectedSummaryModel && isOllamaSummaryModel(option.model) && ollamaModelActionsReady);
-    const customSummaryModel = normalizeSummaryModelName(customSummaryModelInput);
-    const customSummaryInstalled = Boolean(customSummaryModel && installedSummaryModels.has(customSummaryModel));
-    const customSummaryPull = customSummaryModel ? ollamaPulls[customSummaryModel] : undefined;
-    const customSummaryPullActive = Boolean(customSummaryPull?.active);
-    const customSummaryReadyToPull = Boolean(customSummaryModel && customSummaryCheckedModel === customSummaryModel && !customSummaryInstalled && !customSummaryPullActive);
-    const customSummaryModelInOptions = Boolean(customSummaryModel && summaryModelOptions.some(option => normalizeSummaryModelName(option.model) === customSummaryModel));
-    const gpuStatusText = gpuUsable
-        ? '이 PC는 GPU 가속을 사용할 수 있습니다.'
-        : gpuDetected
-            ? `GPU는 감지됐지만 CUDA 런타임이 필요합니다. ${gpuReason}`
-            : gpuReason;
-    const recommendedSummaryModel = models?.summary_model_recommendation?.model || summaryModelOptions[0]?.model || '';
-    const summaryModelHint = summaryModelInventoryUnknown
-        ? '모델 상태를 아직 확인하지 못했습니다.'
-        : selectedSummaryModel && !selectedSummaryInstalled
-        ? (selectedSummaryCanPull ? '아래 목록에서 받을 수 있습니다.' : '설치 안내가 필요합니다.')
-        : (recommendedSummaryModel ? '권장 항목으로 시작할 수 있습니다.' : '');
+    const gpuStatusText = gpuUsable ? '음성 인식에 GPU 가속을 사용할 수 있습니다.' : gpuReason;
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
-    const modelPreparationGuide = ollamaManagedStopped
-        ? '1. 음성 인식 모델을 준비합니다. 2. 받을 모델의 받기를 누르면 요약 프로그램을 자동으로 시작합니다. 3. 회의 요약 모델 준비가 끝날 때까지 기다립니다.'
-        : ollamaModelActionsReady
-            ? '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.'
-        : ollamaSystemStopped
-            ? '1. 음성 인식 모델을 준비합니다. 2. Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인합니다. 3. 회의 요약 모델을 받습니다.'
-        : '1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램을 받습니다. 3. 회의 요약 모델을 받습니다.';
-    const summaryModelOllamaHelp = !models
-        ? (isLoading ? '' : '모델 상태를 확인하지 못했습니다.')
-        : ollamaRuntimePreparing
-        ? '요약 프로그램이 준비 중이라 회의 요약 모델 상태를 아직 확인하지 못했습니다. 잠시 후 다시 확인해 주세요.'
-        : summaryModelInventoryUnknown
-            ? '회의 요약 모델 보유 여부를 아직 확인하지 못했습니다. 준비 상태를 다시 확인해 주세요.'
-        : modelStatusCanAutoRetry
-        ? '준비 상태 확인이 지연되고 있습니다. 아래에는 마지막으로 확인한 상태를 표시합니다.'
-        : selectedSummaryInstalled
-            ? '회의 요약 모델을 바로 사용할 수 있습니다.'
-            : installedSummaryModels.size > 0
-                ? '이 PC에 다른 회의 요약 모델이 있습니다. 아래 목록에서 사용할 모델을 선택해 주세요.'
-                : ollamaManagedStopped
-                    ? '요약 프로그램은 이 PC에 있지만 현재 중지되어 있어 회의 요약 모델 보유 여부를 아직 확인하지 못했습니다. 모델 받기를 누르면 프로그램을 자동으로 시작해 확인합니다.'
-                    : ollamaSystemStopped
-                        ? 'Windows 시작 메뉴에서 Ollama를 실행한 뒤 다시 확인해 주세요.'
-                        : ollamaModelActionsReady
-                            ? '요약 프로그램은 준비됐지만 회의 요약 모델이 없습니다. 아래에서 모델을 받아 주세요.'
-                            : (ollamaRuntimeStatusMessage || '회의 요약을 사용하려면 요약 프로그램을 먼저 준비해 주세요.');
+    const summaryModelOllamaHelp = ollamaRuntimePreparing ? '요약 프로그램을 준비하고 있습니다.'
+        : inventoryConfirmed ? '' : summaryConnectionError || (!models ? ''
+            : ollamaSystemStopped ? 'Windows 시작 메뉴에서 Ollama를 실행해 주세요.'
+                : ollamaRuntimeStatus?.status === 'failed' ? '요약 프로그램을 받지 못했습니다. 다시 받아 주세요.'
+                    : ollamaMissing ? '회의 요약을 사용하려면 요약 프로그램을 받아 주세요.'
+                    : ollamaCanAutoStart && !ollamaServerReady ? '요약 프로그램이 꺼져 있습니다.'
+                        : summaryModelInventoryUnknown && !ollamaMissing ? '받은 모델 목록을 확인하지 못했습니다.' : '');
+    const showSummaryConnectionNotice = Boolean(models && summaryModelInventoryUnknown && !ollamaMissing && !ollamaRuntimeActive);
+    const showSummaryConnectAction = showSummaryConnectionNotice && !ollamaRuntimePreparing;
+    const summaryConnectActionLabel = !summaryConnectionError && ollamaCanAutoStart && !ollamaServerReady && !ollamaSystemStopped
+        ? '요약 프로그램 실행' : '연결 다시 확인';
+    useEffect(() => {
+        // Preparation is already in progress: read its status without starting or downloading anything.
+        if (!apiBase || !models || !ollamaRuntimePreparing || isRestartingBackend || isModelStatusCheckFailure(modelStatusErrorMessage)) return;
+        const timeout = window.setTimeout(() => {
+            void loadModelsStatus(apiBase, { surfaceErrors: false });
+        }, 5000);
+        return () => window.clearTimeout(timeout);
+    }, [apiBase, isRestartingBackend, loadModelsStatus, modelStatusErrorMessage, models, ollamaRuntimePreparing]);
     const ollamaInstallNotice = ollamaInstallPrompted
         ? (ollamaInstallNoticeMessage || OLLAMA_INSTALL_OPENED_NOTICE)
         : '';
     const ollamaInstallNoticeTone: 'info' | 'warning' = ollamaInstallNotice.includes('열지 못했습니다') ? 'warning' : 'info';
     const errorHeading = errorMessage.includes('Ollama') ? '요약 프로그램 설치 필요' : '설정 확인 실패';
-    const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice);
-    const showSettingsRecheck = !isTauriRuntime() && !settings && errorMessage.includes('설정을 불러오');
+    const connectionRecoveryActive = !isTauriRuntime() && initialSection === 'troubleshooting';
+    const settingsReadError = !settings && errorMessage.includes('설정을 불러오') ? errorMessage : '';
+    // Connection failures are warnings: a popup explains them once, and each row shows a one-line state.
+    const showGlobalErrorMessage = Boolean(errorMessage && !ollamaInstallNotice && !settingsReadError);
+    const modelStatusWarning = modelStatusCanAutoRetry && !isLoading
+        ? `${modelStatusErrorMessage} 자동으로 다시 확인합니다. ${getEngineRecoveryStep()}` : '';
+    // The troubleshooting page already explains these failures inline.
+    const warningText = connectionRecoveryActive ? '' : settingsReadError || modelStatusWarning;
+    const showWarningPopup = Boolean(warningText && warningText !== dismissedWarning && !ollamaInstallNotice);
+    useEffect(() => {
+        // A warning that cleared and comes back later is new to the user.
+        if (!warningText) setDismissedWarning('');
+    }, [warningText]);
+    const missingAnalysisModels = models?.models.filter(model => model.required && !model.installed
+        && !(model.key === 'diarization' && settings?.diarization?.generate_during_analysis === false)) || [];
+    const hasDownloadableAnalysisModel = missingAnalysisModels.some(model => model.downloadable);
+    const canSkipMissingDiarization = missingAnalysisModels.length > 0 && missingAnalysisModels.every(model => model.key === 'diarization')
+        && settings?.diarization?.generate_during_analysis === true;
+    const remainingPreparationIssue = hasDownloadableAnalysisModel
+        ? { title: '분석 모델을 준비해 주세요', description: '필요한 모델을 받으면 분석할 수 있습니다.', actionLabel: '모델 설정 열기', onAction: openModelSettings }
+        : canSkipMissingDiarization
+            ? { title: '참석자 구분 설정을 변경해 주세요', description: '이어서 실행을 끄면 대화록부터 만들 수 있습니다.', actionLabel: '참석자 구분 설정', onAction: () => focusAnalysisSetting('diarization') }
+            : requiresModelRepair ? undefined
+                : models?.selected_stt_device === 'cuda' && models.stt_device_status?.gpu_usable === false
+                    ? { title: '분석 장치를 변경해 주세요', description: '이 PC에서는 CPU로 분석할 수 있습니다.', actionLabel: '분석 장치 설정', onAction: () => focusAnalysisSetting('device') }
+                    : models && !models.ready
+                        ? { title: '분석 준비를 확인해 주세요', description: '연결은 확인됐지만 분석에 필요한 준비가 남아 있습니다.', actionLabel: '모델 설정 열기', onAction: openModelSettings }
+                        : undefined;
     // Engine-backed switches show no guessed default before the engine answers, and cannot be changed then.
     // Settings arrive before the slower model status, so only the settings payload gates them.
     // A restart reloads them, so changes made meanwhile would be overwritten.
     const generalSettingsReady = Boolean(settings) && !isRestartingBackend;
-    const renderEngineSetting = (control: React.ReactNode) => (generalSettingsReady ? control : (
-        <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">
-            {isLoading || isRestartingBackend ? '불러오는 중' : '불러오지 못함'}
-        </span>
+    // Only the first read shows 불러오는 중; after a failure, retries keep the failure line so rows do not flicker.
+    const engineSettingsPending = isRestartingBackend || (isLoading && !settingsReadError);
+    const renderEngineSetting = (control: React.ReactNode) => (generalSettingsReady ? control : engineSettingsPending ? (
+        <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">불러오는 중</span>
+    ) : (
+        <span className="shrink-0 whitespace-nowrap text-xs text-[var(--status-error-fg)]">불러오지 못함</span>
     ));
     const renderDismissButton = (label: string, onClick: () => void) => (
         <button
@@ -1810,25 +1998,97 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             <X size={14} aria-hidden="true" />
         </button>
     );
+    const returnFromSearch = () => {
+        customSearchRequestRef.current += 1;
+        setCustomSummarySearching(false);
+        setSearchView(false);
+    };
+    const searchSummaryModels = async () => {
+        const query = customSummaryModelInput.trim();
+        if (!query) return;
+        const requestId = ++customSearchRequestRef.current;
+        setSearchView(true);
+        setCustomSummarySearching(true);
+        setSearchResults([]);
+        setSearchPage(0);
+        setSearchError('');
+        setSearchHasMore(false);
+        setOpenSummaryModelMenu('');
+        try {
+            const base = apiBase || await getApiBase();
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/search?q=${encodeURIComponent(query)}`);
+            if (response.status === 404) throw new Error('모델 검색을 사용하려면 LMO 회의록 연결 프로그램을 업데이트해 주세요.');
+            if (!response.ok) throw new Error(await readApiErrorMessage(response, '모델 검색을 불러오지 못했습니다. 인터넷 연결을 확인하고 다시 검색해 주세요.'));
+            const result = await response.json() as { models: SummaryModelOption[]; has_more?: boolean };
+            if (!Array.isArray(result.models)) throw new Error('검색 결과를 읽지 못했습니다. 다시 검색해 주세요.');
+            if (!mountedRef.current || customSearchRequestRef.current !== requestId) return;
+            setSearchResults(result.models);
+            setSearchHasMore(Boolean(result.has_more));
+        } catch (error) {
+            if (mountedRef.current && customSearchRequestRef.current === requestId) setSearchError(error instanceof Error ? error.message : '모델 검색에 실패했습니다. 다시 검색해 주세요.');
+        } finally {
+            if (mountedRef.current && customSearchRequestRef.current === requestId) setCustomSummarySearching(false);
+        }
+    };
+    const addSummaryModel = async (model: string) => {
+        if (addingModel) return;
+        setAddingModel(model);
+        setSearchError('');
+        try {
+            const base = apiBase || await getApiBase();
+            const response = await fetchWithTimeout(`${base}/api/models/ollama/model`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ model }),
+            });
+            if (response.status === 404) throw new Error('모델을 추가하려면 LMO 회의록 연결 프로그램을 업데이트해 주세요.');
+            if (!response.ok) throw new Error(await readApiErrorMessage(response, '목록에 추가하지 못했습니다. 다시 시도해 주세요.'));
+            const result = await response.json() as { summary: SettingsPayload['summary'] };
+            if (!result.summary) throw new Error('추가 결과를 확인하지 못했습니다. 다시 시도해 주세요.');
+            if (!mountedRef.current) return;
+            // Registration owns this entry only, so a delayed response cannot restore
+            // another model deleted while verification was still running.
+            const registered = result.summary.user_models?.find(option => normalizeSummaryModelName(option.model) === normalizeSummaryModelName(model));
+            if (!registered) throw new Error('추가한 모델을 확인하지 못했습니다. 다시 시도해 주세요.');
+            lastAddedModelRef.current = model;
+            setSettings(current => current ? { ...current, summary: { ...current.summary,
+                user_models: [...(current.summary?.user_models || []).filter(option => normalizeSummaryModelName(option.model) !== normalizeSummaryModelName(model)), registered] } } : current);
+        } catch (error) {
+            if (mountedRef.current) setSearchError(error instanceof Error ? error.message : '모델 추가에 실패했습니다.');
+        } finally {
+            if (mountedRef.current) setAddingModel('');
+        }
+    };
+    const modelSearch = <OllamaModelSearch value={customSummaryModelInput} inputRef={summaryModelSearchRef}
+        searching={customSummarySearching} onSearch={() => void searchSummaryModels()}
+        onChange={value => { customSearchRequestRef.current += 1; setCustomSummaryModelInput(value); setCustomSummarySearching(false); }} />;
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[var(--bg-overlay)] p-4">
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="settings-dialog-title"
+                aria-describedby={modelDeleteConfirmation ? 'settings-model-delete-description' : undefined}
                 className="settings-dialog relative flex w-full max-w-4xl flex-col overflow-hidden border border-border bg-background"
                 ref={dialogRef}
                 tabIndex={-1}
             >
-                <div className="flex items-center justify-between border-b border-border px-5 py-4">
-                    <div>
+                <div className="settings-dialog-header flex items-center justify-between border-b border-border px-4 py-3">
+                    <div className="flex items-center gap-3">
                         <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">설정</h2>
+                        <span className="settings-save-state min-w-10" role="status" aria-live="polite">
+                            {saveState === 'saving' ? '저장 중' : ''}
+                        </span>
                     </div>
                     <div className="relative flex items-center gap-2">
                         <div className="relative">
                             <button
                                 type="button"
-                                onClick={() => setSupportContactVisible(previous => !previous)}
+                                onClick={event => {
+                                    if (supportContactVisible) closeSupportContact();
+                                    else {
+                                        supportReturnFocusRef.current = event.currentTarget;
+                                        setSupportContactVisible(true);
+                                    }
+                                }}
                                 className="btn btn-outline h-8 px-3 text-xs"
                                 aria-label="문의 연락처 보기"
                                 aria-expanded={supportContactVisible}
@@ -1847,14 +2107,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <p className="text-muted-foreground">문의사항은 아래 이메일로 연락주세요.</p>
                                             <div className="mt-2 flex items-center gap-2 font-semibold text-foreground">
                                                 <Mail size={15} className="shrink-0 text-muted-foreground" aria-hidden="true" />
-                                                <span className="truncate">{getSupportContactEmail()}</span>
+                                                <a className="truncate underline" href={`mailto:${getSupportContactEmail()}`}>{getSupportContactEmail()}</a>
                                             </div>
                                         </div>
                                         <button
                                             type="button"
                                             className="icon-button btn-ghost h-5 w-5 shrink-0"
                                             aria-label="문의 연락처 닫기"
-                                            onClick={() => setSupportContactVisible(false)}
+                                            ref={supportCloseRef}
+                                            onClick={closeSupportContact}
                                         >
                                             <X size={12} aria-hidden="true" />
                                         </button>
@@ -1864,44 +2125,38 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                         </div>
                         <button
                             type="button"
-                            onClick={onClose}
-                            disabled={cleanupBusy}
-                            className="icon-button btn-ghost h-9 w-9"
+                            onClick={() => {
+                                if (modelDeleteConfirmationRef.current) finishModelDeleteConfirmation(false);
+                                onClose();
+                            }}
+                            className="icon-button btn-outline h-8 w-8"
                             aria-label="설정 닫기"
                             title="닫기"
                             ref={closeButtonRef}
                         >
-                            <X size={18} />
+                            <X size={16} aria-hidden="true" />
                         </button>
                     </div>
                 </div>
 
-                <div className="tab-list px-5" role="tablist" aria-label="설정">
-                    {tabs.map((tab, tabIndex) => (
-                        <button
-                            key={tab.key}
-                            type="button"
-                            id={`settings-${tab.key}-tab`}
-                            role="tab"
-                            aria-selected={activeTab === tab.key}
-                            aria-controls={`settings-${tab.key}-panel`}
-                            tabIndex={activeTab === tab.key ? 0 : -1}
-                            disabled={cleanupBusy}
-                            onClick={() => {
-                                setActiveTab(tab.key);
-                                // The 일반 tab always leads to the 일반 page, also from 회의록 정리.
-                                if (tab.key === 'general') setGeneralView('settings');
+                {showWarningPopup && (
+                    <div className="settings-toast-slot">
+                        <AppToast
+                            message={warningText}
+                            tone="warning"
+                            actionLabel="다시 확인"
+                            onAction={() => {
+                                if (settingsReadError) void loadSettings();
+                                else void handleRefreshModelsStatus();
                             }}
-                            onKeyDown={event => handleTabKeyDown(event, tabIndex)}
-                            className={`tab-button py-3 ${activeTab === tab.key ? 'tab-button-active' : ''}`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
+                            closeLabel="연결 경고 닫기"
+                            onClose={() => setDismissedWarning(warningText)}
+                        />
+                    </div>
+                )}
 
                 {message && (
-                    <div className="absolute right-5 top-[8.5rem] z-20 w-[calc(100%-2.5rem)] max-w-md">
+                    <div className="absolute right-5 top-20 z-20 w-[calc(100%-2.5rem)] max-w-md">
                         <StatusBanner
                             tone="neutral"
                             action={renderDismissButton('설정 안내 닫기', () => setMessage(''))}
@@ -1912,406 +2167,310 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 )}
 
                 <div className="settings-content custom-scrollbar">
+                    {modelDeleteConfirmation ? <section className="settings-page" aria-labelledby="settings-model-delete-title">
+                        <h3 id="settings-model-delete-title" className="text-sm font-semibold text-foreground">
+                            {modelDeleteConfirmation.deleteFiles ? 'PC에서 모델 삭제' : '모델 목록에서 제거'}
+                        </h3>
+                        <div id="settings-model-delete-description" className="space-y-3 text-sm text-foreground">
+                            <p className="break-all font-semibold">{modelDeleteConfirmation.model}</p>
+                            <p>{modelDeleteConfirmation.deleteFiles
+                                ? '이 PC에 받은 모델 파일을 삭제합니다. 다른 앱에서도 같은 모델을 사용한다면 다시 받아야 합니다.'
+                                : '이 앱의 추가한 모델 목록에서만 제거합니다. PC에 받은 모델 파일은 유지합니다.'}</p>
+                        </div>
+                        <div className="flex justify-end gap-2">
+                            <Button ref={modelDeleteCancelRef} variant="outline" className="h-8 px-3 text-xs"
+                                aria-describedby="settings-model-delete-description" onClick={() => finishModelDeleteConfirmation(false)}>취소</Button>
+                            <Button variant="outline" className="h-8 px-3 text-xs"
+                                style={{ color: 'var(--status-error-fg)', borderColor: 'var(--status-error-fg)' }}
+                                aria-label={`${modelDeleteConfirmation.model} ${modelDeleteConfirmation.deleteFiles ? 'PC에서 삭제 확인' : '목록에서 제거 확인'}`}
+                                onClick={() => finishModelDeleteConfirmation(true)}>
+                                <Trash2 size={14} aria-hidden="true" />{modelDeleteConfirmation.deleteFiles ? 'PC에서 삭제' : '목록에서 제거'}
+                            </Button>
+                        </div>
+                    </section> : searchView ? <section className="settings-page settings-search-results" aria-label="요약 모델 검색 결과">
+                        <div className="flex items-center gap-3">
+                            <button type="button" className="btn btn-ghost h-8 px-2 text-xs" aria-label="설정으로 돌아가기" onClick={returnFromSearch}><ArrowLeft size={16} aria-hidden="true" />설정으로</button>
+                            <h3 className="text-sm font-semibold">요약 모델 검색</h3>
+                            <SettingsHint label="검색 결과" text="Ollama 공식 라이브러리의 로컬 요약 모델을 검색합니다. 목록에 추가한 뒤 설정에서 받기를 눌러야 다운로드됩니다." />
+                        </div>
+                        {modelSearch}
+                        {searchError && <StatusBanner tone="error">{searchError}</StatusBanner>}
+                        <div className="settings-catalog-list" aria-busy={customSummarySearching}>
+                            {customSummarySearching ? <p role="status" className="settings-model-note"><Loader2 size={16} className="animate-spin" />검색 중</p>
+                                : searchResults.length ? searchResults.slice(searchPage * 4, searchPage * 4 + 4).map(result => {
+                                    const name = result.model || '';
+                                    const added = summaryModelOptions.some(item => normalizeSummaryModelName(item.model) === normalizeSummaryModelName(name));
+                                    return <div key={name} className="settings-catalog-row">
+                                        <div className="min-w-0">
+                                            <div className="settings-catalog-title"><h4 className="truncate text-sm font-medium" title={name}>{name}</h4></div>
+                                            {result.description && <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">{result.description}</p>}
+                                        </div>
+                                        {added ? <Button variant="outline" className="h-8 w-28 shrink-0 px-3 text-xs" aria-label={`${name} 목록에서 보기`} disabled={Boolean(addingModel)} onClick={() => {
+                                            lastAddedModelRef.current = normalizeSummaryModelName(name);
+                                            returnFromSearch();
+                                        }}>목록에서 보기</Button> : <Button variant="outline" className="h-8 w-28 shrink-0 px-3 text-xs" aria-label={`${name} 목록에 추가`} disabled={Boolean(addingModel)} onClick={() => void addSummaryModel(name)}>{addingModel === name ? '추가 중' : '목록에 추가'}</Button>}
+                                    </div>;
+                                }) : !searchError && <p role="status" className="settings-model-note">검색 결과가 없습니다. 다른 모델명으로 검색해 주세요.</p>}
+                        </div>
+                        {searchResults.length > 4 && <div className="settings-model-pagination">
+                            <button type="button" className="icon-button h-6 w-6" aria-label="이전 검색 결과" disabled={searchPage === 0} onClick={() => setSearchPage(page => page - 1)}><ChevronLeft size={14} /></button>
+                            <span>{searchPage + 1}/{Math.ceil(searchResults.length / 4)}</span>
+                            <button type="button" className="icon-button h-6 w-6" aria-label="다음 검색 결과" disabled={(searchPage + 1) * 4 >= searchResults.length} onClick={() => setSearchPage(page => page + 1)}><ChevronRight size={14} /></button>
+                        </div>}
+                        {searchHasMore && <p className="text-xs text-muted-foreground">더 정확한 모델명으로 검색하면 다른 결과도 찾을 수 있습니다.</p>}
+                    </section> : <>
+
                     {showGlobalErrorMessage && (
                         <div className="settings-page sticky top-0 z-10 mb-4">
                             <StatusBanner
                                 tone="error"
                                 heading={errorHeading}
-                                action={(
-                                    <div className="flex items-center gap-2">
-                                        {/* The web app has no 재시작; its way forward from a failed load is checking again. */}
-                                        {showSettingsRecheck && (
-                                            <Button
-                                                variant="outline"
-                                                className="h-8 shrink-0 px-3 text-xs"
-                                                onClick={() => void loadSettings()}
-                                                disabled={isLoading}
-                                            >
-                                                <RefreshCw size={14} className={isLoading ? 'animate-spin' : ''} aria-hidden="true" />
-                                                {isLoading ? '확인 중' : '다시 확인'}
-                                            </Button>
-                                        )}
-                                        {renderDismissButton('설정 오류 알림 닫기', () => setErrorMessage(''))}
-                                    </div>
-                                )}
+                                action={renderDismissButton('설정 오류 알림 닫기', () => setErrorMessage(''))}
                             >
                                 {errorMessage}
                             </StatusBanner>
                         </div>
                     )}
-                    {activeTab === 'general' && generalView === 'cleanup' && (
-                        <div id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab">
-                            <MeetingCleanupPanel
-                                onBack={() => {
-                                    returnFocusToCleanupRef.current = true;
-                                    setGeneralView('settings');
-                                }}
-                                onMeetingsDeleted={onMeetingsDeleted}
-                                onBusyChange={setCleanupBusy}
-                            />
-                        </div>
-                    )}
-                    {activeTab === 'general' && generalView === 'settings' && (
-                        <section id="settings-general-panel" role="tabpanel" aria-labelledby="settings-general-tab" className="settings-page">
-                            <div className="settings-page-heading">
-                                <div>
-                                    <h3>일반 설정</h3>
-                                    <p>분석 방식과 파일 보관 기준을 정합니다.</p>
-                                </div>
-                                <span className="settings-save-state" role="status" aria-live="polite">
-                                    {saveState === 'saving' ? '저장 중' : saveState === 'saved' ? '저장됨' : ''}
-                                </span>
-                            </div>
+                    <section id="settings-general-panel" aria-label="설정 항목" className="settings-page">
+                        {connectionRecoveryActive && <div className="settings-page-heading">
+                            <h3>연결 문제 해결</h3>
+                        </div>}
 
-                            <div className="settings-group">
-                                <h4>파일</h4>
-                                <div className="settings-list">
-                                    <label className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">다운로드 형식</span>
-                                            <span className="settings-row-description">회의록을 저장할 때 기본으로 사용할 형식입니다.</span>
-                                        </span>
+                        {!isTauriRuntime() && initialSection === 'troubleshooting' && <div className="settings-group" id="settings-troubleshooting" ref={connectionHelpRef} tabIndex={-1} data-settings-highlighted={highlightedSetting === 'settings-troubleshooting'}>
+                            <LocalEngineConnectionHelp
+                                onReturnToWriter={onClose}
+                                onRequestSupport={() => {
+                                    supportReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+                                    setSupportContactVisible(true);
+                                }}
+                                preparationReady={models?.ready === true}
+                                remainingIssue={remainingPreparationIssue}
+                                requiresReinstall={requiresModelRepair && !hasDownloadableAnalysisModel && !canSkipMissingDiarization}
+                                loadError={settingsReadError || (modelStatusCanAutoRetry ? modelStatusErrorMessage : '')}
+                                onRetrySettings={() => { void loadSettings(); }}
+                                checkingSettings={isLoading}
+                            />
+                        </div>}
+                        <section className="settings-group" aria-labelledby="settings-analysis-title">
+                            <h4 id="settings-analysis-title">분석</h4>
+                            <div className="settings-list settings-analysis-list">
+                                <div className="settings-paired-row">
+                                <label id="settings-analysis-device" className="settings-row" data-settings-highlighted={highlightedSetting === 'settings-analysis-device'}>
+                                    <span className="settings-row-copy">
+                                        <span className="settings-row-title settings-title-with-hint">분석 장치<SettingsHint label="분석 장치" text={gpuStatusText} /></span>
+                                    </span>
+                                    {renderEngineSetting(
                                         <select
-                                            value={downloadFormat}
-                                            onChange={event => handleDownloadFormatChange(event.target.value as DownloadFormat)}
+                                            ref={deviceSelectRef}
+                                            value={sttDevice}
+                                            onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
                                             className="select-field settings-row-select"
                                         >
-                                            <option value="hwpx">HWPX</option>
-                                            <option value="docx">DOCX</option>
-                                            <option value="txt">TXT</option>
-                                            <option value="md">MD</option>
+                                            <option value="cpu">CPU 기본 사용</option>
+                                            <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
                                         </select>
-                                    </label>
-                                    <label className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">회의 요약 HWPX 자동 저장</span>
-                                            <span className="settings-row-description">요약이 만들어지면 다운로드 폴더에도 저장합니다.</span>
-                                        </span>
-                                        {renderEngineSetting(
-                                            <input
-                                                type="checkbox"
-                                                className="settings-switch"
-                                                checked={autoSaveHwpxCopy}
-                                                onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
-                                            />
-                                        )}
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div className="settings-group">
-                                <h4>분석</h4>
-                                <div className="settings-list">
-                                    <label id="settings-analysis-device" className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">분석 장치</span>
-                                            <span className="settings-row-description">{gpuStatusText}</span>
-                                        </span>
-                                        {renderEngineSetting(
-                                            <select
-                                                ref={deviceSelectRef}
-                                                value={sttDevice}
-                                                onChange={event => setSttDevice(event.target.value as typeof sttDevice)}
-                                                className="select-field settings-row-select"
-                                            >
-                                                <option value="cpu">CPU 기본 사용</option>
-                                                <option value="cuda" disabled={!gpuUsable}>GPU 가속 사용</option>
-                                            </select>
-                                        )}
-                                    </label>
-                                    <label className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">음성 정리</span>
-                                            <span className="settings-row-description">분석하기 좋은 형태로 정리합니다.</span>
-                                        </span>
-                                        {renderEngineSetting(
-                                            <input
-                                                type="checkbox"
-                                                className="settings-switch"
-                                                checked={preprocessingEnabled}
-                                                onChange={event => setPreprocessingEnabled(event.target.checked)}
-                                            />
-                                        )}
-                                    </label>
-                                    <label
-                                        id="settings-analysis-diarization"
-                                        className="settings-row"
-                                        title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
-                                    >
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">참석자 구분까지 이어서 실행</span>
-                                            <span className="settings-row-description">끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행할 수 있습니다.</span>
-                                        </span>
-                                        {renderEngineSetting(
-                                            <input
-                                                type="checkbox"
-                                                ref={diarizationToggleRef}
-                                                className="settings-switch"
-                                                checked={diarizationDuringAnalysis}
-                                                onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
-                                            />
-                                        )}
-                                    </label>
-                                </div>
-                            </div>
-
-                            <div className="settings-group">
-                                <h4>보관</h4>
-                                <div className="settings-list">
-                                    <label className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">음성 재생 파일 보관</span>
-                                            <span className="settings-row-description">다시 듣기와 나중에 참석자 구분에 사용합니다.</span>
-                                        </span>
-                                        {renderEngineSetting(
-                                            <input
-                                                type="checkbox"
-                                                className="settings-switch"
-                                                checked={preserveExtractedAudio}
-                                                onChange={event => setPreserveExtractedAudio(event.target.checked)}
-                                            />
-                                        )}
-                                    </label>
-                                    <label className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">음성 파일 자동 저장</span>
-                                            <span className="settings-row-description">보관한 음성을 다운로드 폴더에도 저장합니다.</span>
-                                        </span>
-                                        {renderEngineSetting(
-                                            <input
-                                                type="checkbox"
-                                                className="settings-switch"
-                                                checked={preserveExtractedAudio && autoSaveAudioCopy}
-                                                onChange={event => setAutoSaveAudioCopy(event.target.checked)}
-                                                disabled={!preserveExtractedAudio}
-                                            />
-                                        )}
-                                    </label>
-                                    <div className="settings-row">
-                                        <span className="settings-row-copy">
-                                            <span className="settings-row-title">회의록 정리</span>
-                                            <span className="settings-row-description">여러 회의록을 한 번에 지우거나, 이 PC에만 남은 분석 파일을 정리합니다.</span>
-                                        </span>
-                                        <button
-                                            ref={cleanupButtonRef}
-                                            type="button"
-                                            className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                            onClick={() => setGeneralView('cleanup')}
-                                        >
-                                            정리하기
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {isTauriRuntime() && (
-                                <div className="settings-group" id="settings-troubleshooting">
-                                    <h4>문제 해결</h4>
-                                    <div className="settings-list">
-                                        <div className="settings-row">
-                                            <span className="settings-row-copy">
-                                                <span className="settings-row-title">분석 기능 재시작</span>
-                                                <span id="settings-restart-description" className="settings-row-description">
-                                                    모델 상태가 계속 갱신되지 않을 때만 사용합니다.
-                                                    {analysisActive ? ' 진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : ''}
-                                                </span>
+                                    )}
+                                </label>
+                                <div className="settings-inline-models settings-analysis-model-cell" id="settings-analysis-models" tabIndex={-1} data-settings-highlighted={highlightedSetting === 'settings-analysis-models'}>
+                                    <div className="settings-analysis-model-status">
+                                        <div className="settings-row-title">음성 인식 모델</div>
+                                        {(engineSettingsPending && !models) || isCheckingModels ? (
+                                            <span role="status" className="settings-analysis-readiness text-muted-foreground">
+                                                <Loader2 size={14} className="animate-spin" aria-hidden="true" />확인 중
                                             </span>
-                                            <Button
-                                                ref={restartButtonRef}
-                                                variant="outline"
-                                                className="shrink-0"
-                                                aria-describedby="settings-restart-description"
-                                                onClick={() => void handleRestartBackend()}
-                                                disabled={!canRestartBackend}
-                                                title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 기능을 다시 시작합니다.'}
-                                            >
-                                                <RefreshCw size={16} className={isRestartingBackend ? 'animate-spin' : ''} />
-                                                {isRestartingBackend ? '재시작 중' : '재시작'}
-                                            </Button>
-                                        </div>
+                                        ) : modelStatusWarning || (!models && settingsReadError) ? (
+                                            <span className="settings-analysis-readiness text-[var(--status-error-fg)]">
+                                                {/* The popup explains the failure; the row keeps one line and its own retry. */}
+                                                <span>확인하지 못함</span>
+                                                {modelStatusWarning && (
+                                                    <Button
+                                                        variant="outline"
+                                                        className="h-7 shrink-0 px-2 text-xs"
+                                                        onClick={() => void handleRefreshModelsStatus()}
+                                                        disabled={isCheckingModels}
+                                                    >
+                                                        다시 확인
+                                                    </Button>
+                                                )}
+                                            </span>
+                                        ) : analysisModels.length === 1 && analysisModels[0].installed ? (
+                                            <span role="status" aria-label={`${getUserModelLabel(analysisModels[0])} 있음`} className="settings-analysis-readiness text-[var(--status-success-fg)]">
+                                                <Check size={14} aria-hidden="true" />준비됨
+                                            </span>
+                                        ) : null}
                                     </div>
-                                </div>
-                            )}
-                        </section>
-                    )}
+                                    {modelStatusErrorMessage && !modelStatusCanAutoRetry && !isLoading && (
+                                        <StatusBanner
+                                            tone="info"
+                                            className="mt-3 py-2 text-xs shadow-none"
+                                            action={(
+                                                <Button
+                                                    variant="outline"
+                                                    className="h-8 shrink-0 px-3 text-xs"
+                                                    onClick={() => void handleRefreshModelsStatus()}
+                                                    disabled={isCheckingModels}
+                                                >
+                                                    다시 확인
+                                                </Button>
+                                            )}
+                                        >
+                                            {modelStatusErrorMessage}
+                                            {' '}
+                                            필요한 설정을 조정한 뒤 다시 확인해 주세요.
+                                        </StatusBanner>
+                                    )}
 
-                    {activeTab === 'models' && (
-                        <section id="settings-models-panel" role="tabpanel" aria-labelledby="settings-models-tab" className="settings-page">
-                            <div className="settings-page-heading">
-                                <div>
-                                    <h3>모델 관리</h3>
-                                    <p>음성 인식과 회의 요약에 필요한 모델을 준비합니다.</p>
-                                </div>
-                            </div>
-
-                            <div className="settings-model-guide">
-                                <span className="font-semibold text-foreground">처음 준비:</span>{' '}
-                                {modelPreparationGuide}
-                            </div>
-
-                            <div className="settings-panel">
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div className="flex flex-col gap-1">
-                                        <div className="text-base font-semibold text-foreground">음성 인식 모델</div>
-                                        <div className="text-xs text-muted-foreground">
-                                            {isCheckingModels
-                                                ? '환경 확인 중'
-                                                : '음성 인식 모델 상태를 확인합니다.'}
-                                        </div>
-                                    </div>
-                                    <Button
-                                        variant="outline"
-                                        className="h-8 shrink-0 px-3 text-xs"
-                                        onClick={() => void handleRefreshModelsStatus()}
-                                        disabled={isCheckingModels}
-                                        aria-label="모델 준비 상태 다시 확인"
-                                    >
-                                        <RefreshCw size={14} className={isCheckingModels ? 'animate-spin text-primary' : ''} aria-hidden="true" />
-                                        {isCheckingModels ? '확인 중' : '준비 상태 확인'}
-                                    </Button>
-                                </div>
-                                {modelStatusErrorMessage && !isLoading && (
-                                    <StatusBanner
-                                        tone={modelStatusCanAutoRetry ? 'warning' : 'info'}
-                                        className="mt-3 py-2 text-xs shadow-none"
-                                        action={(
-                                            <Button
-                                                variant="outline"
-                                                className="h-8 shrink-0 px-3 text-xs"
-                                                onClick={() => void handleRefreshModelsStatus()}
-                                                disabled={isCheckingModels}
-                                            >
-                                                다시 확인
-                                            </Button>
-                                        )}
-                                    >
-                                        {modelStatusErrorMessage}
-                                        {' '}
-                                        {modelStatusCanAutoRetry
-                                            ? `자동으로 다시 확인합니다. ${getEngineRecoveryStep()}`
-                                            : '필요한 설정을 조정한 뒤 다시 확인해 주세요.'}
-                                    </StatusBanner>
-                                )}
-
-                                {isLoading && !models ? (
-                                    <div className="settings-model-note mt-3">
-                                        <RefreshCw size={16} className="animate-spin text-primary" aria-hidden="true" />
-                                        모델 상태를 불러오는 중입니다.
-                                    </div>
-                                ) : analysisModels.length > 0 ? (
-                                    <div className="settings-model-list mt-2">
-                                        {analysisModels.map(model => {
-                                            const modelUrl = model.install_url || model.license_url || '';
-                                            const modelName = model.repo_id || model.label;
-                                            const modelDownloadStatus = modelDownloads[model.key];
-                                            const modelDownloadActive = Boolean(modelDownloadStatus?.active);
-                                            const modelDownloadStopping = modelDownloadStatus?.status === 'cancelling';
-                                            const progressText = getModelDownloadProgressText(modelDownloadStatus);
-                                            const progressPercent = getModelDownloadProgressPercent(modelDownloadStatus);
-                                            const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
-                                            return (
-                                                <div key={model.key} className="settings-model-row">
-                                                    <div className="flex items-center justify-between gap-3">
-                                                        <div className="min-w-0">
-                                                            <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>
-                                                            {!model.installed && (
-                                                                <span className="mt-1 block text-xs text-muted-foreground">
-                                                                    {getModelDownloadStatusMessage(modelDownloadStatus) || (model.downloadable
-                                                                        ? '앱에서 바로 받을 수 있습니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.'
-                                                                        : manualNote)}
-                                                                </span>
-                                                            )}
-                                                        </div>
-                                                        {model.installed ? (
-                                                            <span
-                                                                role="status"
-                                                                className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-fg)]"
-                                                                aria-label={`${getUserModelLabel(model)} 있음`}
-                                                                title="모델 있음"
-                                                            >
-                                                                <Check size={16} aria-hidden="true" />
-                                                            </span>
-                                                        ) : model.downloadable ? (
-                                                            <Button
-                                                                variant="outline"
-                                                                className="h-8 shrink-0 px-3 text-xs"
-                                                                aria-label={`${getUserModelLabel(model)} ${modelDownloadActive ? '중지' : '받기'}`}
-                                                                onClick={() => {
-                                                                    if (modelDownloadActive) {
-                                                                        void handleStopModelDownload(model.key);
-                                                                        return;
-                                                                    }
-                                                                    void handleDownloadModel(model);
-                                                                }}
-                                                                disabled={modelDownloadStopping}
-                                                            >
-                                                                {modelDownloadActive
-                                                                    ? (
-                                                                        <>
-                                                                            {modelDownloadStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                                                                            {modelDownloadStopping ? '중지 중' : '중지'}
-                                                                        </>
-                                                                    )
-                                                                    : '받기'}
-                                                            </Button>
-                                                        ) : modelUrl ? (
-                                                            <button
-                                                                type="button"
-                                                                className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                                                aria-label={`${getUserModelLabel(model)} 준비 안내 열기`}
-                                                                title={`${modelName} 준비 안내`}
-                                                                onClick={() => {
-                                                                    void openExternalUrl(modelUrl).catch(() => {
-                                                                        setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.');
-                                                                    });
-                                                                }}
-                                                            >
-                                                                안내
-                                                            </button>
-                                                        ) : null}
-                                                    </div>
-                                                    {modelDownloadActive && (
-                                                        <div className="mt-3 space-y-1.5">
-                                                            <ProgressBar
-                                                                value={progressPercent}
-                                                                size="sm"
-                                                                label={`${getUserModelLabel(model)} 받기 진행률`}
-                                                            />
-                                                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                                                {progressText && (
-                                                                    <>
-                                                                        <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
-                                                                        <span>{progressText}</span>
-                                                                    </>
+                                    {isLoading && !models ? null : analysisModels.length === 1 && analysisModels[0].installed ? null : analysisModels.length > 0 ? (
+                                        <div className="settings-model-list mt-2">
+                                            {analysisModels.map(model => {
+                                                const modelUrl = model.install_url || model.license_url || '';
+                                                const modelName = model.repo_id || model.label;
+                                                const modelDownloadStatus = modelDownloads[model.key];
+                                                const modelDownloadActive = Boolean(modelDownloadStatus?.active);
+                                                const modelDownloadStopping = modelDownloadStatus?.status === 'cancelling';
+                                                const progressText = getModelDownloadProgressText(modelDownloadStatus);
+                                                const progressPercent = getModelDownloadProgressPercent(modelDownloadStatus);
+                                                const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
+                                                return (
+                                                    <div key={model.key} className="settings-model-row">
+                                                        <div className="flex items-center justify-between gap-3">
+                                                            <div className="min-w-0">
+                                                                {analysisModels.length > 1 && <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>}
+                                                                {!model.installed && (
+                                                                    <span className="mt-1 block text-xs text-muted-foreground">
+                                                                        {getModelDownloadStatusMessage(modelDownloadStatus) || (model.downloadable
+                                                                            ? '앱에서 바로 받을 수 있습니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.'
+                                                                            : manualNote)}
+                                                                    </span>
                                                                 )}
                                                             </div>
+                                                            {model.installed ? (
+                                                                <span
+                                                                    role="status"
+                                                                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-fg)]"
+                                                                    aria-label={`${getUserModelLabel(model)} 있음`}
+                                                                    title="모델 있음"
+                                                                >
+                                                                    <Check size={16} aria-hidden="true" />
+                                                                </span>
+                                                            ) : model.downloadable ? (
+                                                                <Button
+                                                                    variant="outline"
+                                                                    className="h-8 shrink-0 px-3 text-xs"
+                                                                    aria-label={`${getUserModelLabel(model)} ${modelDownloadActive ? '중지' : '받기'}`}
+                                                                    onClick={() => {
+                                                                        if (modelDownloadActive) {
+                                                                            void handleStopModelDownload(model.key);
+                                                                            return;
+                                                                        }
+                                                                        void handleDownloadModel(model);
+                                                                    }}
+                                                                    disabled={modelDownloadStopping}
+                                                                >
+                                                                    {modelDownloadActive
+                                                                        ? (
+                                                                            <>
+                                                                                {modelDownloadStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
+                                                                                {modelDownloadStopping ? '중지 중' : '중지'}
+                                                                            </>
+                                                                        )
+                                                                        : '받기'}
+                                                                </Button>
+                                                            ) : modelUrl ? (
+                                                                <button
+                                                                    type="button"
+                                                                    className="btn btn-outline h-8 shrink-0 px-3 text-xs"
+                                                                    aria-label={`${getUserModelLabel(model)} 준비 안내 열기`}
+                                                                    title={`${modelName} 준비 안내`}
+                                                                    onClick={() => {
+                                                                        void openExternalUrl(modelUrl).catch(() => {
+                                                                            setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                                                                        });
+                                                                    }}
+                                                                >
+                                                                    안내
+                                                                </button>
+                                                            ) : null}
                                                         </div>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
-                                    </div>
-                                ) : (
-                                    <div className="settings-model-note mt-3">
-                                        {modelStatusErrorMessage || errorMessage
-                                            ? '음성 인식 모델 상태 확인이 지연되고 있습니다. 모델을 다시 받을 필요는 없으며, 잠시 후 다시 확인해 주세요.'
-                                            : '음성 인식 모델 상태를 아직 확인하지 못했습니다.'}
-                                    </div>
-                                )}
-                            </div>
+                                                        {modelDownloadActive && (
+                                                            <div className="mt-3 space-y-1.5">
+                                                                <ProgressBar
+                                                                    value={progressPercent}
+                                                                    size="sm"
+                                                                    label={`${getUserModelLabel(model)} 받기 진행률`}
+                                                                />
+                                                                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+                                                                    {progressText && (
+                                                                        <>
+                                                                            <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
+                                                                            <span>{progressText}</span>
+                                                                        </>
+                                                                    )}
+                                                                </div>
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    ) : modelStatusWarning || settingsReadError ? null : (
+                                        <div className="settings-model-note mt-3">
+                                            {modelStatusErrorMessage || errorMessage
+                                                ? '음성 인식 모델 상태 확인이 지연되고 있습니다. 모델을 다시 받을 필요는 없으며, 잠시 후 다시 확인해 주세요.'
+                                                : '음성 인식 모델 상태를 아직 확인하지 못했습니다.'}
+                                        </div>
+                                    )}
+                                </div>
 
-                            <div className="settings-panel">
-                                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                                    <div className="flex flex-col gap-1">
-                                        <div className="text-base font-semibold text-foreground">회의 요약 모델</div>
-                                        <p className="text-xs text-muted-foreground">
+                                </div>
+                                <div className="settings-paired-row">
+                                <div className="settings-row">
+                                    <span className="settings-row-copy">
+                                        <span className="settings-row-title settings-title-with-hint">음량 자동 보정<SettingsHint label="음량 자동 보정" text="음성 인식 전에 작은 소리의 음량을 보정합니다. 앱 내부 설정에 따라 적용하며 기존 설정은 유지합니다." /></span>
+                                    </span>
+                                    <span className={`text-xs ${!settings && !engineSettingsPending ? 'text-[var(--status-error-fg)]' : 'text-muted-foreground'}`} role="status" aria-label="음량 자동 보정 상태">
+                                        {!settings ? (engineSettingsPending ? '확인 중' : '불러오지 못함') : settings.preprocessing?.enabled !== false && settings.preprocessing?.normalize_audio ? '자동' : '꺼짐'}
+                                    </span>
+                                </div>
+                                <label
+                                    id="settings-analysis-diarization"
+                                    data-settings-highlighted={highlightedSetting === 'settings-analysis-diarization'}
+                                    className="settings-row"
+                                    title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
+                                >
+                                    <span className="settings-row-copy">
+                                        <span className="settings-row-title settings-title-with-hint">참석자 구분까지 이어서 실행<SettingsHint label="참석자 구분까지 이어서 실행" text="끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행할 수 있습니다." /></span>
+                                    </span>
+                                    {renderEngineSetting(
+                                        <input aria-label="참석자 구분까지 이어서 실행"
+                                            type="checkbox"
+                                            ref={diarizationToggleRef}
+                                            className="settings-switch"
+                                            checked={diarizationDuringAnalysis}
+                                            onChange={event => setDiarizationDuringAnalysis(event.target.checked)}
+                                        />
+                                    )}
+                                </label>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section className="settings-group" id="settings-summary-models" aria-labelledby="settings-summary-title">
+                            <div className="settings-model-heading">
+                                <h4 id="settings-summary-title">요약 모델</h4>
+                            </div>
+                            <div className="settings-panel settings-summary-panel">
+                                <div id="settings-model-search">{modelSearch}</div>
+                                {!showSummaryConnectionNotice && (summaryModelOllamaHelp || showOllamaRuntimeAction) && <div className="settings-summary-recovery">
+                                    <div className="min-w-0">
+                                        {summaryModelOllamaHelp && <p className="text-xs text-muted-foreground">
                                             {summaryModelOllamaHelp}
-                                        </p>
+                                        </p>}
                                     </div>
                                     {showOllamaRuntimeAction && (
-                                        <div className="flex shrink-0 items-center gap-2">
+                                        <div className="flex shrink-0 flex-wrap items-center gap-2">
                                             <Button
-                                                variant="outline"
+                                                variant={ollamaRuntimeActive ? 'outline' : 'primary'}
                                                 className="h-8 px-3 text-xs"
                                                 aria-label={`요약 프로그램 ${ollamaRuntimeActive ? '중지' : '받기'}`}
                                                 onClick={() => {
@@ -2332,52 +2491,36 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     )
                                                     : '요약 프로그램 받기'}
                                             </Button>
-                                            {!ollamaRuntimeActive && ollamaMissing && (
-                                                <button
-                                                    type="button"
-                                                    className="btn btn-outline h-8 px-2 text-xs"
-                                                    aria-label="요약 프로그램 설치 페이지 열기"
-                                                    onClick={() => {
-                                                        setErrorMessage('');
-                                                        setMessage('');
-                                                        setOllamaInstallPrompted(false);
-                                                        setOllamaInstallNoticeMessage('');
-                                                        void openExternalUrl(OLLAMA_INSTALL_URL)
-                                                            .then(() => {
-                                                                if (!mountedRef.current) return;
-                                                                setOllamaInstallPrompted(true);
-                                                                setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
-                                                            })
-                                                            .catch(() => {
-                                                                setOllamaInstallPrompted(true);
-                                                                setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
-                                                            });
-                                                    }}
-                                                >
-                                                    설치 페이지
-                                                </button>
-                                            )}
                                         </div>
                                     )}
-                                </div>
-                                {ollamaConnectionNotice && (
-                                    <StatusBanner
-                                        tone={ollamaConnectionNotice.tone}
-                                        heading={ollamaConnectionNotice.heading}
-                                        className="mt-3 py-2 text-xs shadow-none"
-                                        action={(ollamaSystemStopped || ollamaManagedStopped) && (
-                                            <Button
-                                                variant="outline"
-                                                className="h-8 shrink-0 px-3 text-xs"
-                                                onClick={() => void handleRefreshModelsStatus()}
-                                                disabled={isCheckingModels}
-                                            >
-                                                {isCheckingModels ? '확인 중' : '다시 확인'}
-                                            </Button>
-                                        )}
-                                    >
-                                        {ollamaConnectionNotice.message}
-                                    </StatusBanner>
+                                </div>}
+                                {!ollamaRuntimeActive && ollamaMissing && (
+                                    <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                        <span>앱에서 받기(권장) 또는 직접 설치 중 하나만 선택하세요. 기존 Ollama가 있으면 그대로 사용합니다.</span>
+                                        <button
+                                            type="button"
+                                            className="btn btn-ghost h-8 px-2 text-xs underline"
+                                            aria-label="요약 프로그램 설치 페이지 열기"
+                                            onClick={() => {
+                                                setErrorMessage('');
+                                                setMessage('');
+                                                setOllamaInstallPrompted(false);
+                                                setOllamaInstallNoticeMessage('');
+                                                void openExternalUrl(OLLAMA_INSTALL_URL)
+                                                    .then(() => {
+                                                        if (!mountedRef.current) return;
+                                                        setOllamaInstallPrompted(true);
+                                                        setOllamaInstallNoticeMessage(OLLAMA_INSTALL_OPENED_NOTICE);
+                                                    })
+                                                    .catch(() => {
+                                                        setOllamaInstallPrompted(true);
+                                                        setOllamaInstallNoticeMessage(getOllamaInstallFailedNotice());
+                                                    });
+                                            }}
+                                        >
+                                            직접 설치(Ollama)
+                                        </button>
+                                    </div>
                                 )}
                                 {ollamaInstallNotice && (
                                     <StatusBanner
@@ -2391,7 +2534,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         {ollamaInstallNotice}
                                     </StatusBanner>
                                 )}
-                                {ollamaRuntimeActive && (
+                                {ollamaRuntimeActive && !ollamaRuntimeNeedsUpdate && (
                                     <div className="mt-3 space-y-1.5">
                                         <ProgressBar
                                             value={ollamaRuntimeProgressPercent}
@@ -2409,398 +2552,211 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     </div>
                                 )}
 
-                                {!models && isLoading && (
+                                {!models && engineSettingsPending && (
                                     <div className="settings-model-note mt-3">
                                         <RefreshCw size={16} className="animate-spin text-primary" aria-hidden="true" />
                                         모델 상태를 불러오는 중입니다.
                                     </div>
                                 )}
-                                {models && summaryModelOptions.length > 0 && (
-                                    <label className="mt-4 block">
-                                        <span className="text-xs font-semibold text-muted-foreground">모델 선택</span>
-                                        <div className="mt-2">
-                                            <select
-                                                ref={summaryModelSelectRef}
-                                                value={summaryModelInput}
-                                                onChange={event => {
-                                                    // Choosing applies at once, like 사용 in the list below.
-                                                    const nextModel = normalizeSummaryModelName(event.target.value);
-                                                    setSummaryModelInput(nextModel);
-                                                    if (nextModel && nextModel !== configuredSummaryModel) void handleSaveSummaryModel(nextModel);
-                                                }}
-                                                disabled={isSaving || summaryModelInventoryUnknown}
-                                                className="select-field"
-                                            >
-                                                {summaryModelOptions.map(option => {
-                                                    const optionModel = normalizeSummaryModelName(option.model);
-                                                    // A model not on this PC cannot be applied here; 받기 in the list fetches it.
-                                                    const optionUnavailable = !isSummaryOptionInstalled(optionModel) && optionModel !== selectedSummaryModel;
-                                                    return (
-                                                        <option key={option.model} value={option.model} disabled={optionUnavailable}>
-                                                            {[
-                                                                option.model,
-                                                                getSummaryModelTraitLabel(option.model),
-                                                                optionUnavailable ? '받기 필요' : '',
-                                                            ].filter(Boolean).join(' · ')}{option.model === recommendedSummaryModel ? ' (권장)' : ''}
-                                                        </option>
-                                                    );
-                                                })}
-                                            </select>
-                                        </div>
-                                        <span className="mt-2 block truncate text-xs text-muted-foreground">{summaryModelHint}</span>
-                                        {models?.summary_model_recommendation?.message && (
-                                            <span className="mt-1 block text-xs leading-relaxed text-muted-foreground">
-                                                {models.summary_model_recommendation.message}
-                                            </span>
-                                        )}
-                                    </label>
+                                {!models && !engineSettingsPending && (settingsReadError || modelStatusWarning) && (
+                                    <div className="settings-model-note mt-3 text-[var(--status-error-fg)]">
+                                        모델 상태를 불러오지 못했습니다.
+                                    </div>
                                 )}
-                                {models && summaryModelOptions.length > 0 && (
-                                    <div className="settings-model-list mt-3">
-                                        {summaryModelOptions.map((option, index) => {
+                                <div id="settings-additional-models">
+                                    {models && summaryModelOptions.length > 0 && <div className="settings-model-list settings-summary-model-list" data-model-capacity={summaryModelOptions.length > 2 ? 4 : 2} role="radiogroup" aria-label="요약 모델 선택">
+                                        {visibleSummaryModels.map((option, index) => {
                                             const optionModel = normalizeSummaryModelName(option.model);
-                                            const pullStatus = optionModel ? ollamaPulls[optionModel] : undefined;
+                                            const pullStatus = ollamaPulls[optionModel];
                                             const pullActive = Boolean(pullStatus?.active);
                                             const pullStopping = pullStatus?.status === 'cancelling';
-                                            const pullProgressText = getOllamaPullProgressText(pullStatus);
-                                            const pullProgressPercent = getOllamaPullProgressPercent(pullStatus);
-                                            const optionCanPull = isOllamaSummaryModel(optionModel) && ollamaModelActionsReady;
-                                            const optionInstalled = isSummaryOptionInstalled(optionModel);
-                                            const optionName = option.model || option.label || '모델';
-                                            const optionSelected = Boolean(optionModel && optionModel === configuredSummaryModel);
-                                            const optionRecommended = Boolean(optionModel && optionModel === recommendedSummaryModel);
-                                            const optionDeleting = Boolean(optionModel && deletingOllamaModels[optionModel]);
-                                            const optionRemovable = option.source === 'user' && !optionSelected;
-                                            const optionFileDeletable = Boolean(optionInstalled && optionCanPull);
-                                            const replacementModel = optionSelected
-                                                ? (
-                                                    summaryModelOptions
-                                                        .map(item => normalizeSummaryModelName(item.model))
-                                                        .find(model => model && model !== optionModel && installedSummaryModels.has(model)) || ''
-                                                )
-                                                : '';
-                                            const menuKey = optionModel || option.url || option.command || `summary-model-${index}`;
-                                            const menuCanRefresh = Boolean(optionModel && optionCanPull && optionInstalled);
-                                            const hasMenuActions = Boolean(menuCanRefresh || optionRemovable || optionFileDeletable);
-                                            const optionTraitLabel = getSummaryModelTraitLabel(optionModel);
-                                            const optionMeta = optionTraitLabel
-                                                || (option.label && option.label !== optionName && option.source !== 'user'
-                                                    ? option.label
-                                                    : '');
-                                            return (
-                                                <div key={menuKey} className="settings-model-row">
-                                                    <div className="flex items-start justify-between gap-3">
-                                                        <div className="min-w-0">
-                                                            <div className="flex flex-wrap items-center gap-2">
-                                                                {option.url ? (
-                                                                    <a
-                                                                        href={option.url}
-                                                                        target="_blank"
-                                                                        rel="noreferrer"
-                                                                        aria-label={`${optionName} 모델 페이지`}
-                                                                        className="block break-all text-sm font-semibold text-primary hover:underline"
-                                                                        onClick={event => {
-                                                                            event.preventDefault();
-                                                                            void openExternalUrl(option.url || '').catch(() => {
-                                                                                setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.');
-                                                                            });
-                                                                        }}
-                                                                    >
-                                                                        {optionName}
-                                                                    </a>
-                                                                ) : (
-                                                                    <span className="block break-all text-sm font-semibold text-foreground">{optionName}</span>
-                                                                )}
-                                                            </div>
-                                                            {(optionRecommended || optionMeta) && (
-                                                                <span className="mt-0.5 flex flex-wrap items-center gap-x-1.5 text-xs font-medium text-muted-foreground">
-                                                                    {optionRecommended && <span className="text-foreground">권장</span>}
-                                                                    {optionRecommended && optionMeta && <span aria-hidden="true">·</span>}
-                                                                    {optionMeta && <span>{optionMeta}</span>}
-                                                                </span>
-                                                            )}
+                                            const installed = isSummaryOptionInstalled(optionModel);
+                                            const selected = optionModel === configuredSummaryModel;
+                                            const deleting = Boolean(deletingOllamaModels[optionModel]);
+                                            const canPull = isOllamaSummaryModel(optionModel) && ollamaModelActionsReady;
+                                            const canRemove = option.source === 'user' && !selected;
+                                            const canDeleteFiles = installed && canPull && !summaryModelInventoryUnknown;
+                                            const deleteDisabled = ollamaRuntimeActive || selected || pullActive || deleting || isSaving || (!canRemove && !canDeleteFiles);
+                                            const deleteReason = selected ? '사용 중인 모델입니다. 다른 모델을 선택한 뒤 삭제할 수 있습니다.'
+                                                : pullActive ? '받기를 중지한 뒤 삭제할 수 있습니다.' : deleteDisabled ? '현재 삭제할 수 없는 모델입니다.' : '삭제 옵션';
+                                            const menuId = `summary-model-menu-${index}`;
+                                            return <div key={optionModel} className="settings-model-row" tabIndex={-1} data-model-name={optionModel} data-model-selected={selected}>
+                                                <div className="settings-model-controls">
+                                                    <div className="settings-model-label"><span className="settings-model-name" title={optionModel}>{optionModel}</span></div>
+                                                    <div className="settings-model-actions">
+                                                        {pullActive ? <button type="button" className="settings-model-icon" aria-label={`${optionModel} 중지`} title="받기 중지" disabled={pullStopping}
+                                                            onClick={() => void handleStopOllamaModelDownload(optionModel)}>{pullStopping ? <Loader2 size={16} className="animate-spin" /> : <Square size={16} />}</button>
+                                                            : (summaryModelInventoryUnknown || installed) ? <label className="settings-model-choice" title={summaryModelInventoryUnknown ? (selected ? '선택한 요약 모델 · 준비 확인 필요' : '준비 상태를 확인한 뒤 선택할 수 있습니다.') : selected ? '현재 사용 중인 요약 모델' : '요약 모델로 선택'}>
+                                                                    <input type="radio" name="settings-summary-model" aria-label={`${optionModel} 요약 모델로 선택`} checked={selected}
+                                                                        aria-description={summaryModelInventoryUnknown ? '저장된 선택을 표시합니다. 준비 상태는 아직 확인하지 못했습니다.' : undefined}
+                                                                        disabled={ollamaRuntimeActive || summaryModelInventoryUnknown || isSaving || deleting} onChange={() => { if (!selected) void handleSaveSummaryModel(optionModel); }} />
+                                                                    <Check size={16} strokeWidth={selected ? 2.5 : 2} aria-hidden="true" />
+                                                                </label>
+                                                                    : <button type="button" className="settings-model-icon" aria-label={`${optionModel} 받기`} title="받기" disabled={!canPull || deleting}
+                                                                        onClick={() => void handleDownloadOllamaModel(optionModel)}><Download size={16} aria-hidden="true" /></button>}
+                                                        <div data-summary-model-menu-root>
+                                                            <button type="button" className="settings-model-icon settings-model-delete" aria-label={`${optionModel} 삭제 옵션`} aria-haspopup="menu"
+                                                                aria-expanded={openSummaryModelMenu === optionModel} aria-controls={menuId} disabled={deleteDisabled} title={deleteReason}
+                                                                onClick={event => handleSummaryModelMenuToggle(event, optionModel)} onKeyDown={event => handleSummaryModelMenuTriggerKeyDown(event, optionModel)}><Trash2 size={16} aria-hidden="true" /></button>
+                                                            {openSummaryModelMenu === optionModel && <div id={menuId} role="menu" aria-label={`${optionModel} 삭제 옵션`} tabIndex={-1}
+                                                                onKeyDown={handleSummaryModelMenuKeyDown} className="menu-panel settings-model-delete-menu" style={menuPosition}>
+                                                                <button type="button" role="menuitem" tabIndex={-1} className="menu-item" aria-label={`${optionModel} 목록에서 제거`} disabled={!canRemove || deleting}
+                                                                    onClick={() => openModelDeleteConfirmation(optionModel, false)}>목록에서 제거<span className="text-xs text-muted-foreground">PC 파일 유지</span></button>
+                                                                <button type="button" role="menuitem" tabIndex={-1} className="menu-item menu-item-danger" aria-label={`${optionModel} PC에서 삭제`} disabled={!canDeleteFiles || deleting}
+                                                                    onClick={() => openModelDeleteConfirmation(optionModel, true)}><Trash2 size={14} aria-hidden="true" />PC에서 삭제</button>
+                                                            </div>}
                                                         </div>
-                                                        {optionSelected && optionInstalled ? (
-                                                            <div className="relative flex shrink-0 items-center justify-end gap-2" data-summary-model-menu-root>
-                                                                {pullActive && (
-                                                                    <Button
-                                                                        variant="outline"
-                                                                        className="h-8 shrink-0 px-3 text-xs"
-                                                                        aria-label={`${optionName} 모델 중지`}
-                                                                        onClick={() => void handleStopOllamaModelDownload(optionModel)}
-                                                                        disabled={pullStopping}
-                                                                    >
-                                                                        {pullStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                                                                        {pullStopping ? '중지 중' : '중지'}
-                                                                    </Button>
-                                                                )}
-                                                                {!pullActive && (
-                                                                    <span
-                                                                        role="status"
-                                                                        className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-fg)]"
-                                                                        aria-label={`${optionName} 모델 준비됨`}
-                                                                        title="준비됨"
-                                                                    >
-                                                                        <Check size={16} aria-hidden="true" />
-                                                                    </span>
-                                                                )}
-                                                            </div>
-                                                        ) : optionInstalled ? (
-                                                            <div className="relative flex shrink-0 items-center justify-end gap-2" data-summary-model-menu-root>
-                                                                <Button
-                                                                    className="h-8 shrink-0 px-3 text-xs"
-                                                                    aria-label={`${optionName} 모델 ${pullActive ? '중지' : '사용'}`}
-                                                                    onClick={() => {
-                                                                        if (pullActive) {
-                                                                            void handleStopOllamaModelDownload(optionModel);
-                                                                            return;
-                                                                        }
-                                                                        setSummaryModelInput(optionModel);
-                                                                        void handleSaveSummaryModel(optionModel);
-                                                                    }}
-                                                                    disabled={pullActive ? (optionDeleting || pullStopping) : (optionDeleting || isSaving)}
-                                                                >
-                                                                    {pullActive
-                                                                        ? (
-                                                                            <>
-                                                                                {pullStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                                                                                {pullStopping ? '중지 중' : '중지'}
-                                                                            </>
-                                                                        )
-                                                                        : '사용'}
-                                                                </Button>
-                                                                {hasMenuActions && (
-                                                                    <>
-                                                                        <button
-                                                                            type="button"
-                                                                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                                                            aria-label={`${optionName} 모델 작업`}
-                                                                            aria-haspopup="menu"
-                                                                            aria-expanded={openSummaryModelMenu === menuKey}
-                                                                            aria-controls={`summary-model-menu-${index}`}
-                                                                            onClick={event => handleSummaryModelMenuToggle(event, menuKey)}
-                                                                            onKeyDown={event => handleSummaryModelMenuTriggerKeyDown(event, menuKey)}
-                                                                        >
-                                                                            <MoreVertical size={14} />
-                                                                        </button>
-                                                                        {openSummaryModelMenu === menuKey && (
-                                                                            <div id={`summary-model-menu-${index}`} role="menu" aria-label={`${optionName} 모델 작업`} tabIndex={-1} onKeyDown={handleSummaryModelMenuKeyDown} className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
-                                                                                {menuCanRefresh && (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        role="menuitem"
-                                                                                        tabIndex={-1}
-                                                                                        className="menu-item px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                                        onClick={() => {
-                                                                                            void runSummaryModelMenuAction(() => handleDownloadOllamaModel(optionModel));
-                                                                                        }}
-                                                                                        disabled={pullActive || optionDeleting}
-                                                                                    >
-                                                                                        <RefreshCw size={13} />
-                                                                                        {pullActive ? '확인 중' : '업데이트'}
-                                                                                    </button>
-                                                                                )}
-                                                                                {(optionRemovable || optionFileDeletable) && (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        role="menuitem"
-                                                                                        className="menu-item menu-item-danger px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                                        aria-label={`${optionName} ${optionFileDeletable ? 'PC에서 삭제' : '등록 해제'}`}
-                                                                                        tabIndex={-1}
-                                                                                        onClick={() => {
-                                                                                            void runSummaryModelMenuAction(() => handleDeleteOllamaModel(optionModel, optionFileDeletable, replacementModel));
-                                                                                        }}
-                                                                                        disabled={optionDeleting || pullActive}
-                                                                                    >
-                                                                                        <Trash2 size={13} />
-                                                                                        {optionDeleting ? '처리 중' : optionFileDeletable ? '삭제' : '등록 해제'}
-                                                                                    </button>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                        ) : optionModel && optionCanPull && (
-                                                            <div className="relative flex shrink-0 items-center justify-end gap-2" data-summary-model-menu-root>
-                                                                <Button
-                                                                    variant="outline"
-                                                                    className="h-8 shrink-0 px-3 text-xs"
-                                                                    aria-label={`${optionName} 모델 ${pullActive ? '중지' : '받기'}`}
-                                                                    onClick={() => {
-                                                                        if (pullActive) {
-                                                                            void handleStopOllamaModelDownload(optionModel);
-                                                                            return;
-                                                                        }
-                                                                        void handleDownloadOllamaModel(optionModel);
-                                                                    }}
-                                                                    disabled={pullStopping}
-                                                                >
-                                                                    {pullActive
-                                                                        ? (
-                                                                            <>
-                                                                                {pullStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                                                                                {pullStopping ? '중지 중' : '중지'}
-                                                                            </>
-                                                                        )
-                                                                        : '받기'}
-                                                                </Button>
-                                                                {hasMenuActions && (
-                                                                    <>
-                                                                        <button
-                                                                            type="button"
-                                                                            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted/60 hover:text-foreground"
-                                                                            aria-label={`${optionName} 모델 작업`}
-                                                                            aria-haspopup="menu"
-                                                                            aria-expanded={openSummaryModelMenu === menuKey}
-                                                                            aria-controls={`summary-model-menu-${index}`}
-                                                                            onClick={event => handleSummaryModelMenuToggle(event, menuKey)}
-                                                                            onKeyDown={event => handleSummaryModelMenuTriggerKeyDown(event, menuKey)}
-                                                                        >
-                                                                            <MoreVertical size={14} />
-                                                                        </button>
-                                                                        {openSummaryModelMenu === menuKey && (
-                                                                            <div id={`summary-model-menu-${index}`} role="menu" aria-label={`${optionName} 모델 작업`} tabIndex={-1} onKeyDown={handleSummaryModelMenuKeyDown} className="menu-panel absolute right-0 top-9 z-20 w-28 text-xs">
-                                                                                {optionRemovable && (
-                                                                                    <button
-                                                                                        type="button"
-                                                                                        role="menuitem"
-                                                                                        className="menu-item menu-item-danger px-2 py-1.5 disabled:cursor-not-allowed disabled:opacity-50"
-                                                                                        aria-label={`${optionName} 등록 해제`}
-                                                                                        tabIndex={-1}
-                                                                                        onClick={() => {
-                                                                                            void runSummaryModelMenuAction(() => handleDeleteOllamaModel(optionModel, false));
-                                                                                        }}
-                                                                                        disabled={optionDeleting || pullActive}
-                                                                                    >
-                                                                                        <Trash2 size={13} />
-                                                                                        {optionDeleting ? '처리 중' : '등록 해제'}
-                                                                                    </button>
-                                                                                )}
-                                                                            </div>
-                                                                        )}
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                        )}
                                                     </div>
-                                                    {pullActive ? (
-                                                        <div className="mt-3 space-y-1.5">
-                                                            <ProgressBar
-                                                                value={pullProgressPercent}
-                                                                size="sm"
-                                                                tone="info"
-                                                                label={`${optionName} 모델 받기 진행률`}
-                                                            />
-                                                            <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
-                                                                {pullProgressText && (
-                                                                    <>
-                                                                        <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
-                                                                        <span>{pullProgressText}</span>
-                                                                    </>
-                                                                )}
-                                                            </div>
-                                                        </div>
-                                                    ) : null}
                                                 </div>
-                                            );
+                                                <div className="settings-model-progress" aria-live="polite">
+                                                    {pullActive ? <><ProgressBar value={getOllamaPullProgressPercent(pullStatus)} size="sm" tone="info" label={`${optionModel} 모델 받기 진행률`} /><span>{getOllamaPullProgressText(pullStatus)}</span></>
+                                                        : pullStatus?.error_code !== 'runtime_update_required' && (pullStatus?.status === 'failed' || pullStatus?.status === 'cancelled') ? <span>{pullStatus?.message || (pullStatus?.status === 'cancelled' ? '받기를 중지했습니다.' : '받지 못했습니다. 다시 받아 주세요.')}</span> : null}
+                                                </div>
+                                            </div>;
                                         })}
-                                    </div>
-                                )}
-                                <div className="mt-4 border-t border-border pt-4">
-                                    <label htmlFor="custom-summary-model" className="text-xs font-semibold text-muted-foreground">고급: 직접 입력</label>
-                                    <div className="mt-2 grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center">
-                                        <input
-                                            id="custom-summary-model"
-                                            value={customSummaryModelInput}
-                                            onChange={event => {
-                                                setCustomSummaryModelInput(event.target.value);
-                                                setCustomSummaryCheckedModel('');
-                                                setCustomSummaryModelNotice('');
-                                            }}
-                                            placeholder="예: llama3.2:3b"
-                                            className="input-field"
-                                        />
-                                        <Button
-                                            variant={customSummaryInstalled ? 'primary' : 'outline'}
-                                            className="h-9 w-16 shrink-0 px-2"
-                                            disabled={
-                                                !customSummaryModel
-                                                || !models
-                                                || (customSummaryPull?.status === 'cancelling')
-                                                || (customSummaryInstalled && isSaving)
-                                                || (customSummaryReadyToPull && !ollamaModelActionsReady)
-                                            }
-                                            aria-label={`${customSummaryModel ? `직접 입력 ${customSummaryModel}` : '직접 입력 요약'} 모델 ${customSummaryPullActive ? '중지' : customSummaryInstalled ? '사용' : customSummaryCheckedModel === customSummaryModel ? '받기' : '검색'}`}
-                                            onClick={() => {
-                                                if (!customSummaryModel) return;
-                                                if (customSummaryPullActive) {
-                                                    void handleStopOllamaModelDownload(customSummaryModel);
-                                                } else if (customSummaryInstalled) {
-                                                    setCustomSummaryModelNotice('');
-                                                    setSummaryModelInput(customSummaryModel);
-                                                    void handleSaveSummaryModel(customSummaryModel);
-                                                } else if (customSummaryCheckedModel === customSummaryModel) {
-                                                    if (!ollamaModelActionsReady) {
-                                                        setCustomSummaryModelNotice('요약 프로그램을 먼저 준비해 주세요.');
-                                                        return;
-                                                    }
-                                                    setCustomSummaryModelNotice('');
-                                                    void handleDownloadOllamaModel(customSummaryModel, { inlineCustomNotice: true });
-                                                } else {
-                                                    setCustomSummaryCheckedModel(customSummaryModel);
-                                                    void openExternalUrl(getOllamaModelSearchUrl(customSummaryModel)).catch(() => {
-                                                        setCustomSummaryModelNotice('검색 페이지를 열지 못했습니다. 모델명을 다시 확인해 주세요.');
-                                                    });
-                                                    setCustomSummaryModelNotice('검색 결과에서 모델명을 확인한 뒤 받기를 눌러 주세요.');
-                                                    void (async () => {
-                                                        const base = apiBase || await getApiBase();
-                                                        setApiBase(base);
-                                                        await loadModelsStatus(base, { surfaceErrors: false });
-                                                    })().catch(error => {
-                                                        setCustomSummaryModelNotice(error instanceof Error
-                                                            ? '모델 상태를 확인하지 못했습니다. 모델명을 다시 확인해 주세요.'
-                                                            : '모델 상태를 확인하지 못했습니다. 모델명을 다시 확인해 주세요.');
-                                                    });
-                                                }
-                                            }}
-                                        >
-                                            {!customSummaryModel
-                                                ? '추가'
-                                                : customSummaryPullActive
-                                                    ? customSummaryPull?.status === 'cancelling' ? '중지 중' : '중지'
-                                                    : customSummaryInstalled
-                                                        ? '사용'
-                                                        : customSummaryCheckedModel === customSummaryModel
-                                                            ? '받기'
-                                                            : '검색'}
-                                        </Button>
-                                    </div>
-                                    {customSummaryPullActive && !customSummaryModelInOptions ? (
-                                        <div className="mt-3 space-y-1.5">
-                                            <ProgressBar
-                                                value={getOllamaPullProgressPercent(customSummaryPull)}
-                                                size="sm"
-                                                tone="info"
-                                                label={`${customSummaryModel} 모델 받기 진행률`}
-                                            />
-                                            <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                                                {getOllamaPullProgressText(customSummaryPull) && (
-                                                    <>
-                                                        <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
-                                                        <span>{getOllamaPullProgressText(customSummaryPull)}</span>
-                                                    </>
-                                                )}
+                                    </div>}
+                                    <div className="settings-model-footer">
+                                        {ollamaRuntimeNeedsUpdate ? <div className="w-full">
+                                            <div className="settings-summary-recovery">
+                                                <p role="status" className="text-xs text-muted-foreground">
+                                                    {ollamaRuntimeActive ? ollamaRuntimeStatus?.message || '요약 프로그램을 업데이트하고 있습니다.'
+                                                        : ollamaRuntimeStatus?.status === 'failed' ? ollamaRuntimeStatus.message
+                                                            : ollamaUsingManagedRuntime ? '이 모델을 받으려면 요약 프로그램을 업데이트해 주세요.'
+                                                                : 'Ollama를 업데이트한 뒤 모델 받기를 다시 눌러 주세요.'}
+                                                </p>
+                                                <Button variant="outline" className="h-8 shrink-0 px-3 text-xs"
+                                                    aria-label={ollamaRuntimeActive ? '요약 프로그램 업데이트 중지' : '요약 프로그램 업데이트'}
+                                                    title={!ollamaUsingManagedRuntime ? 'Ollama 공식 업데이트 설치 화면을 엽니다.' : undefined}
+                                                    disabled={ollamaRuntimeStopping || ollamaRuntimeStatus?.status === 'installing'}
+                                                    onClick={() => {
+                                                        if (ollamaRuntimeActive) void handleStopOllamaRuntimeDownload();
+                                                        else if (ollamaUsingManagedRuntime) void handleDownloadOllamaRuntime(true);
+                                                        else void openExternalUrl(OLLAMA_INSTALL_URL).catch(() => setErrorMessage('Ollama 업데이트 화면을 열지 못했습니다. 공식 사이트에서 설치 파일을 받아 주세요.'));
+                                                    }}>
+                                                    {ollamaRuntimeActive ? <><Loader2 size={13} className="animate-spin" aria-hidden="true" />{ollamaRuntimeStatus?.status === 'installing' ? '적용 중' : ollamaRuntimeStopping ? '중지 중' : '중지'}</> : <><RefreshCw size={13} aria-hidden="true" />요약 프로그램 업데이트</>}
+                                                </Button>
                                             </div>
-                                        </div>
-                                    ) : customSummaryModelNotice ? (
-                                        <span className="mt-2 block text-xs text-muted-foreground">{customSummaryModelNotice}</span>
-                                    ) : null}
+                                            {ollamaRuntimeActive && <ProgressBar value={ollamaRuntimeProgressPercent} size="sm" label="요약 프로그램 업데이트 진행률" />}
+                                        </div> : showSummaryConnectionNotice && <div className="settings-summary-recovery">
+                                            <p role="status" className="text-xs text-muted-foreground">{summaryModelOllamaHelp}</p>
+                                            {showSummaryConnectAction && <Button variant="outline" className="h-8 shrink-0 px-3 text-xs"
+                                                aria-label={summaryConnectActionLabel} disabled={isConnectingSummary}
+                                                onClick={() => void handleConnectSummaryModels()}>
+                                                {isConnectingSummary && <Loader2 size={13} className="animate-spin" aria-hidden="true" />}
+                                                {isConnectingSummary ? '연결 중' : summaryConnectActionLabel}
+                                            </Button>}
+                                        </div>}
+                                    {modelPageCount > 1 && <div className="settings-model-pagination">
+                                        {modelPageCount > 1 && <><button type="button" className="icon-button h-6 w-6" aria-label="이전 모델" disabled={visibleModelPage === 0} onClick={() => { setOpenSummaryModelMenu(''); setModelPage(visibleModelPage - 1); }}><ChevronLeft size={14} /></button>
+                                            <span>{visibleModelPage + 1}/{modelPageCount}</span><button type="button" className="icon-button h-6 w-6" aria-label="다음 모델" disabled={visibleModelPage + 1 >= modelPageCount} onClick={() => { setOpenSummaryModelMenu(''); setModelPage(visibleModelPage + 1); }}><ChevronRight size={14} /></button></>}
+                                    </div>}
+                                    </div>
+                                </div>
+
+                            </div>
+                        </section>
+                        <section className="settings-group settings-storage" aria-labelledby="settings-storage-title">
+                            <h4 id="settings-storage-title">저장</h4>
+                            <div className="settings-list">
+                                <div className="settings-paired-row">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title settings-title-with-hint">다운로드 형식<SettingsHint label="다운로드 형식" text="회의록을 저장할 때 기본으로 사용할 형식입니다." /></span>
+                                        </span>
+                                        <select aria-label="다운로드 형식"
+                                            value={downloadFormat}
+                                            onChange={event => handleDownloadFormatChange(event.target.value as DownloadFormat)}
+                                            className="select-field settings-row-select"
+                                        >
+                                            <option value="hwpx">HWPX</option>
+                                            <option value="docx">DOCX</option>
+                                            <option value="txt">TXT</option>
+                                            <option value="md">MD</option>
+                                        </select>
+                                    </label>
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title settings-title-with-hint">회의 요약 HWPX 자동 저장<SettingsHint label="회의 요약 HWPX 자동 저장" text="요약이 만들어지면 다운로드 폴더에도 저장합니다." /></span>
+                                        </span>
+                                        {renderEngineSetting(
+                                            <input aria-label="회의 요약 HWPX 자동 저장"
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={autoSaveHwpxCopy}
+                                                onChange={event => setAutoSaveHwpxCopy(event.target.checked)}
+                                            />
+                                        )}
+                                    </label>
+                                </div>
+                                <div className="settings-paired-row">
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title settings-title-with-hint">음성 재생 파일 보관<SettingsHint label="음성 재생 파일 보관" text="다시 듣기와 나중에 참석자 구분에 사용합니다." /></span>
+                                        </span>
+                                        {renderEngineSetting(
+                                            <input aria-label="음성 재생 파일 보관"
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={preserveExtractedAudio}
+                                                onChange={event => setPreserveExtractedAudio(event.target.checked)}
+                                            />
+                                        )}
+                                    </label>
+                                    <label className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title settings-title-with-hint">음성 파일 자동 저장<SettingsHint label="음성 파일 자동 저장" text={preserveExtractedAudio ? '보관한 음성을 다운로드 폴더에도 저장합니다.' : '음성 재생 파일 보관을 켜면 사용할 수 있습니다.'} /></span>
+                                        </span>
+                                        {renderEngineSetting(
+                                            <input aria-label="음성 파일 자동 저장"
+                                                type="checkbox"
+                                                className="settings-switch"
+                                                checked={preserveExtractedAudio && autoSaveAudioCopy}
+                                                onChange={event => setAutoSaveAudioCopy(event.target.checked)}
+                                                disabled={!preserveExtractedAudio}
+                                            />
+                                        )}
+                                    </label>
                                 </div>
                             </div>
                         </section>
-                    )}
+                        {isTauriRuntime() && (initialSection === 'troubleshooting' || isRestartingBackend || requiresModelRepair
+                            || Boolean(modelStatusErrorMessage || settingsReadError) || (!isLoading && !settings)) && (
+                            <div className="settings-group" id="settings-troubleshooting" data-settings-highlighted={highlightedSetting === 'settings-troubleshooting'}>
+                                <h4>문제 해결</h4>
+                                <div className="settings-list">
+                                    {requiresModelRepair && <div className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">필수 모델 파일 복구</span>
+                                            <span className="settings-row-description">앱 설치 파일로 다시 설치해 주세요. 재시작만으로는 없는 파일이 설치되지 않습니다.</span>
+                                        </span>
+                                    </div>}
+                                    <div className="settings-row">
+                                        <span className="settings-row-copy">
+                                            <span className="settings-row-title">분석 기능 재시작</span>
+                                            <span id="settings-restart-description" className="settings-row-description">
+                                                모델 상태가 계속 갱신되지 않을 때만 사용합니다.
+                                                {analysisActive ? ' 진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : ''}
+                                            </span>
+                                        </span>
+                                        <Button
+                                            ref={restartButtonRef}
+                                            variant="outline"
+                                            className="shrink-0"
+                                            aria-describedby="settings-restart-description"
+                                            onClick={() => void handleRestartBackend()}
+                                            disabled={!canRestartBackend}
+                                            title={analysisActive ? '진행 중인 분석이 끝난 뒤 다시 시작할 수 있습니다.' : '분석 기능을 다시 시작합니다.'}
+                                        >
+                                            <RefreshCw size={16} className={isRestartingBackend ? 'animate-spin' : ''} />
+                                            {isRestartingBackend ? '재시작 중' : '재시작'}
+                                        </Button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </section>
 
+                    </>}
                 </div>
             </div>
         </div>

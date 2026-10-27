@@ -46,6 +46,78 @@ def _pcm_wav_fixture() -> bytes:
 
 
 class AnalyzeApiTest(unittest.TestCase):
+    def test_summary_catalog_search_returns_results_without_starting_runtime(self) -> None:
+        result = {"models": [{"model": "llama3.2:3b", "size": "2.0GB"}], "has_more": False}
+        with (
+            patch.object(main, "search_summary_models", return_value=result) as search,
+            patch.object(main, "ensure_ollama_server_running") as start,
+            patch.object(main, "_start_ollama_pull") as pull,
+        ):
+            response = self.client.get("/api/models/ollama/search", params={"q": "llama3.2"})
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertEqual(response.json(), result)
+        search.assert_called_once_with("llama3.2")
+        start.assert_not_called()
+        pull.assert_not_called()
+
+    def test_summary_catalog_failures_are_safe_and_actionable(self) -> None:
+        for endpoint, error, expected in (
+            ("search", main.CatalogSelectionError("bad input"), 400),
+            ("search", main.CatalogUnavailableError("private upstream detail"), 503),
+            ("register", main.CatalogSelectionError("remote alias"), 400),
+            ("register", main.CatalogUnavailableError("private upstream detail"), 503),
+        ):
+            target = "search_summary_models" if endpoint == "search" else "verify_summary_catalog_model"
+            with (
+                self.subTest(endpoint=endpoint, status=expected),
+                patch.object(main, target, side_effect=error),
+                patch.object(main, "save_config") as save,
+            ):
+                response = (self.client.get("/api/models/ollama/search", params={"q": "llama"})
+                            if endpoint == "search" else self.client.post("/api/models/ollama/model", json={"model": "llama3.2:3b"}))
+            self.assertEqual(response.status_code, expected, response.text)
+            self.assertNotIn("private upstream detail", response.text)
+            save.assert_not_called()
+
+    def test_register_summary_catalog_model_only_updates_list_and_preserves_settings(self) -> None:
+        config = main.normalize_app_config({"summary": {"provider": "ollama", "model": "gemma4:e2b"},
+                                            "stt": {"device": "cpu"}, "paths": {}})
+        original = copy.deepcopy(config)
+        with (
+            patch.object(main, "verify_summary_catalog_model") as verify,
+            patch.object(main, "load_config", return_value=config),
+            patch.object(main, "save_config") as save,
+            patch.object(main, "ensure_ollama_server_running") as start,
+            patch.object(main, "_start_ollama_pull") as pull,
+        ):
+            response = self.client.post("/api/models/ollama/model", json={"model": "llama3.2:3b"})
+        self.assertEqual(response.status_code, 200, response.text)
+        verify.assert_called_once_with("llama3.2:3b")
+        self.assertEqual(response.json()["summary"]["model"], original["summary"]["model"])
+        self.assertIn("llama3.2:3b", {item["model"] for item in response.json()["summary"]["user_models"]})
+        self.assertEqual(config["stt"], original["stt"])
+        self.assertEqual(config["privacy"], original["privacy"])
+        self.assertEqual(config["paths"], original["paths"])
+        save.assert_called_once()
+        start.assert_not_called()
+        pull.assert_not_called()
+
+    def test_register_summary_catalog_model_is_idempotent_and_rejects_cloud(self) -> None:
+        config = main.normalize_app_config({"summary": {"provider": "ollama", "model": "gemma4:e2b"}, "paths": {}})
+        with (
+            patch.object(main, "verify_summary_catalog_model"),
+            patch.object(main, "load_config", return_value=config),
+            patch.object(main, "save_config"),
+        ):
+            self.client.post("/api/models/ollama/model", json={"model": "llama3.2:3b"})
+            self.client.post("/api/models/ollama/model", json={"model": "llama3.2:3b"})
+        self.assertEqual(sum(item["model"] == "llama3.2:3b" for item in config["summary"]["user_models"]), 1)
+        with patch.object(main, "verify_summary_catalog_model") as verify, patch.object(main, "save_config") as save:
+            response = self.client.post("/api/models/ollama/model", json={"model": "gpt-oss:120b-cloud"})
+        self.assertEqual(response.status_code, 400)
+        verify.assert_not_called()
+        save.assert_not_called()
+
     def test_summary_and_sync_preserve_display_precision_and_source_count(self) -> None:
         display = [
             {"start": 77.76, "end": 81.38, "speaker": "A", "text": "첫 문단", "source_segment_count": 3,
@@ -1538,6 +1610,47 @@ class AnalyzeApiTest(unittest.TestCase):
         probe_server.assert_called_once_with(timeout_seconds=2)
         ensure_server.assert_not_called()
         urlopen_mock.assert_not_called()
+
+    def test_connect_ollama_models_only_starts_existing_runtime(self) -> None:
+        with (
+            patch.object(main, "ensure_ollama_server_running", return_value=True) as ensure,
+            patch.object(main, "_start_ollama_pull") as pull,
+            patch.object(main, "_start_ollama_runtime_download") as download,
+        ):
+            response = self.client.post("/api/models/ollama/connect")
+        self.assertEqual(response.status_code, 200, response.text)
+        self.assertTrue(response.json()["ready"])
+        ensure.assert_called_once_with(timeout_seconds=15)
+        pull.assert_not_called()
+        download.assert_not_called()
+
+    def test_connect_ollama_models_reports_unavailable_without_download(self) -> None:
+        for result in (False, RuntimeError("private runtime path")):
+            with (
+                self.subTest(result=result),
+                patch.object(main, "ensure_ollama_server_running", **(
+                    {"side_effect": result} if isinstance(result, Exception) else {"return_value": result}
+                )),
+                patch.object(main, "_start_ollama_pull") as pull,
+                patch.object(main, "_start_ollama_runtime_download") as download,
+            ):
+                response = self.client.post("/api/models/ollama/connect")
+                self.assertEqual(response.status_code, 503, response.text)
+                self.assertNotIn("private runtime path", response.text)
+                pull.assert_not_called()
+                download.assert_not_called()
+
+    def test_connect_ollama_models_requires_desktop_action_token(self) -> None:
+        with (
+            patch.object(main, "DESKTOP_ACTION_TOKEN", "connect-test-token"),
+            patch.object(main, "ensure_ollama_server_running", return_value=True) as ensure,
+        ):
+            response = self.client.post("/api/models/ollama/connect")
+            self.assertEqual(response.status_code, 403, response.text)
+            ensure.assert_not_called()
+            response = self.client.post("/api/models/ollama/connect", headers={main.DESKTOP_ACTION_TOKEN_HEADER: "connect-test-token"})
+            self.assertEqual(response.status_code, 200, response.text)
+            ensure.assert_called_once()
 
     def test_models_status_uses_passive_ollama_checks(self) -> None:
         config = main.normalize_app_config({})
@@ -5363,7 +5476,10 @@ class AnalyzeApiTest(unittest.TestCase):
         )
 
         transcribe_module._clear_faster_whisper_model_cache()
-        with patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper, "torch": fake_torch}):
+        with (
+            patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper, "torch": fake_torch}),
+            patch("pipeline.transcribe._windows_cuda_runtime_is_usable", return_value=True),
+        ):
             cpu_segments = transcribe_audio_fallback_whisper("dummy.wav", "dummy-model", device="cpu")
             cuda_segments = transcribe_audio_fallback_whisper("dummy.wav", "dummy-model", device="cuda")
         transcribe_module._clear_faster_whisper_model_cache()

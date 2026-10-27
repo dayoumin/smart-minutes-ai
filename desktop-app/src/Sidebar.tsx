@@ -905,11 +905,11 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
             }}
             className="barorok-navigation flex max-h-none shrink-0 flex-col border-r">
             {mode === 'rail' ? <div className="sidebar-rail">
+                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}>메뉴{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
                 <button type="button" className="sidebar-brand sidebar-rail-button" aria-label={`${BRAND_NAME} 첫 화면`} title={`${BRAND_NAME} 첫 화면`} onClick={onOpenStart}>
                     <span className="app-brand-mark" aria-hidden="true"><AudioLines size={15} /></span>
                     <strong>{BRAND_NAME}</strong>
                 </button>
-                <button type="button" className="sidebar-rail-button sidebar-rail-expand" aria-label="메뉴" aria-expanded={false} aria-describedby={resumeDrafts.length > 0 ? 'sidebar-rail-resume-note' : undefined} onClick={onExpand}>메뉴{resumeDrafts.length > 0 && <><span className="sidebar-rail-dot" aria-hidden="true" /><span id="sidebar-rail-resume-note" className="sr-only">이어서 할 분석 있음</span></>}</button>
                 <UpdateEntry compact />
                 {onOpenSettings && <button type="button" data-settings-focus-fallback className="sidebar-rail-button sidebar-rail-settings" aria-label="설정" title="설정" onClick={onOpenSettings}><Settings size={18} aria-hidden="true" /></button>}
             </div> : <>

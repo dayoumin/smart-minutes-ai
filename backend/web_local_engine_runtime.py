@@ -531,3 +531,24 @@ def approve_browser_connection(origin: str) -> bool:
     """Installation authorizes the configured web app; no additional native prompt."""
     validate_production_web_origin(origin)
     return True
+
+
+def confirm_browser_approval_recovery(origin: str) -> bool:
+    """Only a local Windows decision may reset unreadable browser grants."""
+    validate_production_web_origin(origin)
+    if os.name != "nt":
+        return False
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    # YES/NO + warning + default NO. Closing the window never grants consent.
+    result = user32.MessageBoxW(
+        None,
+        "저장된 브라우저 연결 정보를 읽을 수 없어 웹과 연결할 수 없습니다.\n\n"
+        "복구하면 기존 브라우저 연결 등록을 모두 해제하고 다음 웹사이트에서 다시 연결합니다.\n"
+        f"{origin}\n\n"
+        "손상된 연결 정보 파일은 별도로 보관합니다. 회의록·설정·모델은 그대로 유지합니다.\n\n"
+        "연결 정보를 복구하시겠습니까?\n"
+        "아니요를 선택하면 연결이 차단된 상태를 유지합니다. 연결 프로그램을 다시 실행해 복구할 수 있습니다.",
+        f"{BRAND_NAME} 연결 정보 복구",
+        0x00000004 | 0x00000030 | 0x00000100,
+    )
+    return result == 6  # IDYES

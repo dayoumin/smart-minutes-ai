@@ -3,10 +3,10 @@
     "schemaVersion": 1,
     "type": "portable-update",
     "origin": "https://barorok.ecomarin.workers.dev",
-    "commit": "282d5d20c686b742c3ed12f29588efa494d7b687",
-    "generatedAt": "2026-10-27T10:25:42.4151399+09:00",
-    "downloadPath": "/downloads/lmo_audio_update_282d5d20c686b742c3ed12f29588efa494d7b687.zip",
-    "bytes": 432014366,
-    "sha256": "54c07bad14f5f98d959b2c5b4cf5901cfa891cffb5ec84a5f46bbcad0255c35e"
+    "commit": "9b5f6574edbc52baec9acbc9ab51531665e4733d",
+    "generatedAt": "2026-10-27T15:29:44.1527604+09:00",
+    "downloadPath": "/downloads/lmo_audio_update_9b5f6574edbc52baec9acbc9ab51531665e4733d.zip",
+    "bytes": 432012847,
+    "sha256": "5f2fbd158e2153171cb6a6d4f4a93a5b46fcbbf2edf8c0c433ef4716f2585365"
   }
 }

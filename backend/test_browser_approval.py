@@ -1,10 +1,11 @@
 import json
 from pathlib import Path
+import stat
 import tempfile
 import threading
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from fastapi.testclient import TestClient
 from local_engine_browser_approval import BrowserApprovalCoordinator
@@ -130,6 +131,106 @@ class BrowserApprovalTest(unittest.TestCase):
         with self.assertRaises(ValueError):
             new.configure(self.path, ORIGIN, lambda _origin: True)
         self.assertFalse(new.available)
+
+    def test_damaged_records_remain_blocked_until_local_recovery_is_accepted(self):
+        for data in (b"{broken", b"\xff", b"x" * 65537, b"[" * 1100 + b"]" * 1100,
+                     b'{"format": 2, "grants": {}}',
+                     json.dumps({"format": 1, "grants": {"a" * 64: "https://evil.example"}}).encode()):
+            with self.subTest(data=data[:40]):
+                self.path.write_bytes(data)
+                for _restart in range(2):
+                    new = BrowserApprovalCoordinator(LocalEngineSessionStore())
+                    consent = Mock(return_value=False)
+                    with self.assertRaises(ValueError):
+                        new.configure(self.path, ORIGIN, self.prompt, recovery_prompt=consent)
+                    consent.assert_called_once_with(ORIGIN)
+                    self.assertFalse(new.available)
+                    self.assertEqual(self.path.read_bytes(), data)
+                    self.assertEqual(list(self.path.parent.glob("*.damaged-*")), [])
+
+    def test_recovery_preserves_each_invalid_record_without_loading_any_grants(self):
+        for data in (b"{broken", b"\xff", b"x" * 65537, b"[" * 1100 + b"]" * 1100,
+                     json.dumps({"format": 1, "grants": {"a" * 64: "https://evil.example"}}).encode()):
+            with self.subTest(data=data[:40]):
+                self.path.write_bytes(data)
+                new = BrowserApprovalCoordinator(LocalEngineSessionStore())
+                before = set(self.path.parent.glob("*.damaged-*"))
+                new.configure(self.path, ORIGIN, self.prompt, recovery_prompt=lambda _origin: True)
+                backups = set(self.path.parent.glob("*.damaged-*")) - before
+                self.assertEqual(len(backups), 1)
+                self.assertEqual(backups.pop().read_bytes(), data)
+                self.assertFalse(self.path.exists())
+                self.assertTrue(new.available)
+                with self.assertRaises(PairingRejectedError):
+                    new.restore(self.browser_token, ORIGIN)
+
+    def test_recovery_reregisters_restarts_and_revokes_without_touching_user_files(self):
+        original = self.approve()
+        damaged = b'{"format": 1, "grants":'
+        self.path.write_bytes(damaged)
+        siblings = {self.path.parent / name: name.encode() for name in ("config.json", "meeting.json", "model.bin")}
+        for path, data in siblings.items():
+            path.write_bytes(data)
+        new_sessions = LocalEngineSessionStore()
+        new = BrowserApprovalCoordinator(new_sessions)
+        new.configure(self.path, ORIGIN, self.prompt, recovery_prompt=lambda _origin: True)
+        with self.assertRaises(PairingRejectedError):
+            new.restore(original["browser_token"], ORIGIN)
+        with self.assertRaises(PairingRejectedError):
+            new.start("https://evil.example", self.browser_token)
+        self.coordinator = new
+        fresh = self.approve()
+        restarted_sessions = LocalEngineSessionStore()
+        restarted = BrowserApprovalCoordinator(restarted_sessions)
+        unexpected_prompt = Mock(side_effect=AssertionError("Healthy records must not prompt"))
+        restarted.configure(self.path, ORIGIN, self.prompt, recovery_prompt=unexpected_prompt)
+        restored = restarted.restore(fresh["browser_token"], ORIGIN)
+        self.assertIsNotNone(restarted_sessions.validate(restored["session_token"], origin=ORIGIN))
+        self.assertTrue(restarted.revoke(fresh["browser_token"], ORIGIN))
+        self.assertIsNone(restarted_sessions.validate(restored["session_token"], origin=ORIGIN))
+        unexpected_prompt.assert_not_called()
+        self.assertEqual(next(self.path.parent.glob("*.damaged-*")).read_bytes(), damaged)
+        for path, data in siblings.items():
+            self.assertEqual(path.read_bytes(), data)
+
+    def test_failed_backup_keeps_original_and_connection_blocked(self):
+        damaged = b"{broken"
+        self.path.write_bytes(damaged)
+        new = BrowserApprovalCoordinator(LocalEngineSessionStore())
+        with patch.object(Path, "rename", side_effect=PermissionError("locked")), self.assertRaises(PermissionError):
+            new.configure(self.path, ORIGIN, self.prompt, recovery_prompt=lambda _origin: True)
+        self.assertFalse(new.available)
+        self.assertEqual(self.path.read_bytes(), damaged)
+        self.assertEqual(list(self.path.parent.glob("*.damaged-*")), [])
+
+    def test_changed_file_during_recovery_is_preserved_and_not_loaded(self):
+        self.path.write_bytes(b"{broken")
+        replacement = json.dumps({"format": 1, "grants": {}}).encode()
+        def consent(_origin):
+            self.path.write_bytes(replacement)
+            return True
+        new = BrowserApprovalCoordinator(LocalEngineSessionStore())
+        with self.assertRaisesRegex(ValueError, "changed during recovery"):
+            new.configure(self.path, ORIGIN, self.prompt, recovery_prompt=consent)
+        self.assertFalse(new.available)
+        self.assertEqual(self.path.read_bytes(), replacement)
+        self.assertEqual(list(self.path.parent.glob("*.damaged-*")), [])
+
+    def test_recovery_does_not_move_links_directories_or_invalid_configured_origins(self):
+        consent = Mock(return_value=True)
+        for info in (Mock(st_mode=stat.S_IFLNK),
+                     Mock(st_mode=stat.S_IFREG, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)):
+            new = BrowserApprovalCoordinator(LocalEngineSessionStore())
+            with patch.object(Path, "lstat", return_value=info), self.assertRaises(ValueError):
+                new.configure(self.path, ORIGIN, self.prompt, recovery_prompt=consent)
+            self.assertFalse(new.available)
+        self.path.mkdir()
+        for path, origin in ((self.path, ORIGIN), (self.path, "*")):
+            with self.assertRaises(ValueError):
+                BrowserApprovalCoordinator(LocalEngineSessionStore()).configure(
+                    path, origin, self.prompt, recovery_prompt=consent,
+                )
+        consent.assert_not_called()
 
     def test_multiple_pending_approvals_cannot_overflow_saved_browser_limit(self):
         self.coordinator._grants = {f"{index:064x}": ORIGIN for index in range(15)}

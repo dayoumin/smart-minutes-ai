@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import stat
 import threading
 import time
 from typing import Callable
@@ -18,6 +19,10 @@ from local_engine_security import (
 )
 
 MAX_REMEMBERED_BROWSERS = 16
+
+
+class BrowserApprovalDataError(ValueError):
+    """Saved grants are invalid; recovery still requires local user consent."""
 
 
 class BrowserApprovalCoordinator:
@@ -37,26 +42,63 @@ class BrowserApprovalCoordinator:
     def available(self) -> bool:
         return self._path is not None and self._prompt is not None
 
-    def configure(self, path: Path, origin: str, prompt: Callable[[str], bool]) -> None:
+    @staticmethod
+    def _file_identity(path: Path) -> tuple[int, int, int, int] | None:
+        try:
+            info = path.lstat()
+        except FileNotFoundError:
+            return None
+        if (not stat.S_ISREG(info.st_mode)
+                or getattr(info, "st_file_attributes", 0) & stat.FILE_ATTRIBUTE_REPARSE_POINT):
+            raise ValueError("Browser approval file must be a regular file, not a link")
+        return info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns
+
+    @staticmethod
+    def _load_grants(path: Path, origin: str, identity: tuple[int, int, int, int] | None) -> dict[str, str]:
+        if identity is None:
+            return {}
+        if identity[2] > 65536:
+            raise BrowserApprovalDataError("Browser approval file is too large")
+        with path.open("rb") as stream:
+            content = stream.read(65537)
+        if len(content) > 65536:
+            raise BrowserApprovalDataError("Browser approval file is too large")
+        try:
+            payload = json.loads(content.decode("utf-8"))
+        except (ValueError, RecursionError) as exc:
+            raise BrowserApprovalDataError("Invalid browser approval JSON") from exc
+        if not isinstance(payload, dict) or payload.get("format") != 1:
+            raise BrowserApprovalDataError("Invalid browser approval format")
+        raw = payload.get("grants")
+        if not isinstance(raw, dict) or len(raw) > MAX_REMEMBERED_BROWSERS:
+            raise BrowserApprovalDataError("Invalid browser approval grants")
+        for digest, grant_origin in raw.items():
+            if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
+                raise BrowserApprovalDataError("Invalid browser approval digest")
+            if grant_origin != origin:
+                raise BrowserApprovalDataError("Browser approval origin changed")
+        return raw
+
+    def configure(
+        self, path: Path, origin: str, prompt: Callable[[str], bool], *,
+        recovery_prompt: Callable[[str], bool] | None = None,
+    ) -> None:
         origin = parse_exact_origins(origin, include_development_defaults=False)[0]
-        grants: dict[str, str] = {}
-        if path.is_symlink():
-            raise ValueError("Browser approval file must not be a link")
-        if path.exists():
-            if path.stat().st_size > 65536:
-                raise ValueError("Browser approval file is too large")
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            if not isinstance(payload, dict) or payload.get("format") != 1:
-                raise ValueError("Invalid browser approval format")
-            raw = payload.get("grants")
-            if not isinstance(raw, dict) or len(raw) > MAX_REMEMBERED_BROWSERS:
-                raise ValueError("Invalid browser approval grants")
-            for digest, grant_origin in raw.items():
-                if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
-                    raise ValueError("Invalid browser approval digest")
-                if grant_origin != origin:
-                    raise ValueError("Browser approval origin changed")
-                grants[digest] = grant_origin
+        identity = self._file_identity(path)
+        try:
+            grants = self._load_grants(path, origin, identity)
+        except BrowserApprovalDataError:
+            if recovery_prompt is None or not recovery_prompt(origin):
+                raise
+            # A native dialog may stay open while the file is replaced. Never
+            # move a different file or accept grants written during that time.
+            if self._file_identity(path) != identity:
+                raise ValueError("Browser approval file changed during recovery")
+            backup = path.with_name(f"{path.name}.damaged-{secrets.token_hex(16)}")
+            path.rename(backup)
+            # Renaming preserves the entire original (including oversized data).
+            # New grants are persisted only through the normal pairing flow.
+            grants = {}
         with self._lock:
             self._path, self._origin, self._prompt, self._grants = path, origin, prompt, grants
 

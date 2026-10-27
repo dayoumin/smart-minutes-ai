@@ -144,10 +144,12 @@
   4. `PLAYWRIGHT_BROWSERS_PATH`를 집 체크아웃 내부 `.cache\ms-playwright`로 설정하고 브라우저가 있는지 확인한다. `test:meeting-cleanup-flow`를 먼저 실행해 DELETE 15초 무응답의 기록 대기열 저장/PC 파일 중단·설정 잠금 해제를 확인한다. 최초 `page.goto`가 멈추면 Vite 직접 응답·프로젝트 제목·브라우저 진입부터 확인한다.
   5. 화면 검사는 동시에 돌리지 않는다: `LOCAL_ENGINE_UI_SCENARIO=input-stage`와 `automatic` 각각 `test:local-engine-connection-ui`, `test:new-record-home-flow`, `test:analysis-stop-flow -- preparation`, `test:resume-draft-flow -- writer-layout resume-draft`. 환경변수는 각 시나리오 뒤 해제하고, 자동으로 시작된 이 체크아웃의 서버만 정리한다. 화면/API 모의 검사는 실제 설치 엔진·HTTPS·Tauri 검증으로 확대하지 않는다.
   - 필요할 때만 작업 범위 환경변수 사용: `COREPACK_HOME=<체크아웃>\.cache\corepack`, `TEMP`/`TMP=<체크아웃>\.tmp\review-20261020\temp`(먼저 생성). 이 PC에서 사용한 의존성 저장소 옵션은 `--store-dir D:\Projects\LMO_audio\.cache\pnpm-store`. 로그는 이 PC의 `.tmp\review-20261020`에만 있으며 Git에는 올리지 않았다.
-- [ ] 브라우저 승인 파일 손상 시 안전한 연결 복구 (2026-10-20 전체 agent 점검 P2)
-  - `browser-approvals.json`이 잘못된 JSON/형식이면 승인을 거절하는 현재 보안 동작은 유지한다. 현재는 로그만 남고 승인 coordinator가 비활성화되어, 파일을 보존하는 재시작·재설치만으로는 다시 연결되지 않는다.
-  - 다음 작업: 손상 상태를 명확히 알리고 사용자가 선택하는 안전한 재등록 절차를 제공한다. 손상 파일·기존 회의록·모델을 보존하며 임의 승인이나 자동 초기화로 우회하지 않는다.
-  - 종료 조건: 잘못된 JSON/초과 크기/잘못된 Origin을 계속 거절하면서, 정상적인 사용자 복구 후 새 연결·재시작 복원·명시적 해제가 가능함을 격리 테스트와 설치 후보에서 확인한다. 이번 점검에서는 구현을 미뤘다.
+- [ ] 브라우저 승인 파일 손상 시 안전한 연결 복구 — 소스 수정 완료·설치 후보 QA 대기 (2026-10-27)
+  - 유효성 재확인: 현재 소스에서도 잘못된 JSON·초과 크기·다른 Origin의 `browser-approvals.json`은 두 번의 재시작 뒤에도 연결이 차단됐다. 격리 임시 파일로 재현했으며 실제 설치본의 승인·설정·기록은 변경하지 않았다.
+  - 소스 수정: 연결 프로그램 시작 때 손상 안내와 기본값 `아니요`인 Windows 복구 확인창을 표시한다. 명시적 `예`에서만 원본을 같은 폴더의 `browser-approvals.json.damaged-<임의 식별자>`로 보관하고 기존 브라우저 등록을 비운다. 이후 설정된 웹사이트의 기존 연결 절차로 재등록한다. 거절·보관 실패·확인 중 파일 변경·링크/폴더는 우회하지 않으며 서버 시작을 중단하고 실행 잠금을 해제해 바로가기로 재시도할 수 있게 한다. 정상 파일의 자동 연결에는 확인창을 추가하지 않았다.
+  - 자동 검증: `backend/.venv-desktop/Scripts/python.exe -B -X utf8 -m unittest backend.test_browser_approval backend.test_web_local_engine_runtime backend.test_local_engine_security`로 연결·저장·보안 경계70검사 통과. 손상 파일 원본과 회의록·설정·모델 fixture 보존, 재등록·재시작 복원·해제, 거절/잠금/파일 교체, Windows 확인창의 명시적 동의·기본 거절과 정상 연결 회귀를 확인했다. 독립 agent가 지적한 거절 후 백그라운드 실행 잠금 때문에 재시도가 막히던 P2를 수정하고 `거절→바로가기 재실행→복구` 회귀를 추가했다. 네이티브 창 호출과 실행 잠금은 모의 검사이며 실제 설치 EXE의 동작 증거로 세지 않는다.
+  - 같은 날 추가 검토·시뮬레이션: 사용자 동선 관점의 독립 agent 검토에서 추가 지적이 없었다. 임시 파일과 실제 Windows 이름 있는 잠금을 사용한12항목 시뮬레이션에서 거절 후 잠금 재획득·원본 보관·재등록·재시작 복원·해제 유지·다른 사이트 거절·자료 보존을 확인했다. 동의 선택만 모의 처리했으며 근거는 `.tmp/browser-approval-recovery-20261027/scenario-f9db5f4ff529/result.json`이다. 실제 Windows 창은 표시됐으나 화면 조작 도구의 `foreground window did not report a process id` 오류와 창 종료로 클릭 흐름을 완료하지 못했다. 실제 창 클릭·설치 바로가기·HTTPS 연결은 아직 완료로 세지 않는다. 현재 창은 `예/아니요` 방식이므로 X/Esc 취소를 전제하지 않는다.
+  - 종료 조건: [릴리스 체크리스트의 승인 정보 복구 QA](docs/release-checklist.md)에서 새 설치 후보의 Windows 실제 확인창·취소 후 바로가기 재시도/복구·HTTPS 재연결·재시작/해제·자료 보존을 확인한다. 소스 수정·자동 검사와 실제 설치 검증을 구분하며 빌드·공개는 별도 릴리스 절차를 따른다.
 - [ ] 2026-10-20 설치 후 웹 연결 안 됨: 브라우저 쪽 원인 안내 반영 후속
   - 원인과 수정은 `docs/web-local-engine-followup-plan.md`의 「설치 후 연결 안 됨」 절과 커밋 99ae0f17·61858a52(미배포)를 따른다. 원인은 Chrome '기기에 있는 앱' 거부·자동 차단과 Page Assist의 127.0.0.1 Origin 변경이었다.
   - 병합 완료(2026-10-20, 로컬 main, 미푸시): 설치 파일(공간 기준값·'음성 분석')·브랜드 상수('LMO 회의록')·시뮬레이션 자체 Vite 브랜치를 합쳤다(`186b842d`, `d76d1cdd`). 연결 안내 문구도 브랜드 상수를 쓴다.

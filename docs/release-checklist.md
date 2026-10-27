@@ -10,6 +10,24 @@
 
 6-1절은 웹·설치형 엔진·데스크톱의 공통 데이터 안전 기준이다. 7절의 빌드·패키지 명령은 Tauri portable용이며 웹 배포나 설치형 엔진 제작 명령으로 대신 사용하지 않는다. 아래 날짜별 결과의 버전·환경·미확인 범위를 확인한 뒤 현재 후보를 판정한다.
 
+## 데스크톱 최신 화면 재빌드·재공개 — 2026-10-27
+
+사용자 요청으로 하단 최근 회의록 제거가 포함된 데스크톱을 다시 빌드하고 두 ZIP과 공개 정보를 갱신했다. 아래는 `.tmp/desktop-refresh-20261027`의 새 증거이며, 뒤의 282 빌드 공개 기록을 대체하는 최신 데스크톱 결과다. 웹 화면과 설치형 엔진은 이번에 다시 빌드하지 않았다.
+
+| 대상 | 결과·증거 |
+| --- | --- |
+| 전체 데스크톱 빌드 | 루트 `corepack pnpm build -NoClearWebViewCache`로 sidecar·Tauri·portable 완료. 실제 배포 폴더 `releases/lmo_audio`, clean source `9b5f6574edbc52baec9acbc9ab51531665e4733d`, `dirty=false`, 생성 시각 `2026-10-27T15:29:44.1527604+09:00`. 깨끗한 중간 설치본의 실제 시작 검사와 배포 폴더 읽기 전용 무결성 검사 통과. 기존 WebView 캐시를 지우지 않았다. |
+| 신규 설치 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_install_9b5f6574edbc52baec9acbc9ab51531665e4733d.zip), **463,054,544 bytes**, SHA-256 `9404d4b33647af3e637380216c0f80f8fd6d21df3ea158f755bb70538cf99b6c`. `corepack pnpm package:handoff` 결과 4,931항목 CRC·4,916 프로그램 파일 SHA·기본 설정·개인 자료 제외·모델 포함/제외 확인. 화자 구분 모델은 포함하고 Whisper·Ollama 실행 파일·요약 모델은 별도 준비한다. |
+| 업데이트 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_update_9b5f6574edbc52baec9acbc9ab51531665e4733d.zip), **432,012,847 bytes**, SHA-256 `5f2fbd158e2153171cb6a6d4f4a93a5b46fcbbf2edf8c0c433ef4716f2585365`. `corepack pnpm package:update` 결과 4,920항목 CRC·4,915 payload 파일 SHA 확인. 기존 설정·모델·기록·temp·로그·DB를 배포 payload에 넣지 않았다. |
+| 신규 설치 첫 실행 | 별도 추출 폴더·빈 WebView 프로필의 실제 9b EXE에서 기본 설정·빈 기록·모델 준비 안내·하단 최근 목록 제거·웹 전용 데스크톱 받기 버튼 없음·정상 종료/포트 해제 통과. `runtime/fresh-local.json`은 **로컬 공개 전 ZIP** 실행이며 `actualPublicZIPUsed:false`다. 공개 ZIP 전체 SHA가 이 로컬 ZIP과 같다는 별도 증거와 구분한다. 모델 받기·첫 분석·다른 PC 검증으로 세지 않는다. |
+| R2·공개 파일 | 정확히 새 두 키만 업로드, 원격 전체 읽기·크기·SHA·메타데이터 일치. 공개 URL에서도 두 ZIP 전체 다운로드·HEAD·부분 다운로드·잘못된 범위416 통과. `transfer/upload-verification.json`, `public-verification.json`. 이전 R2 객체는 유지했다. |
+| 공개 정보 반영 | metadata source `0139ed5d0b34e19bb3220b7d29b97c4aaad79b0a`, Worker `abbea4dc-1145-4860-8d47-b6d7ac7d96a3`. 문서화된 `corepack pnpm --dir deploy/cloudflare run deploy` 경로로 데스크톱 두 feed만 갱신했다. 설치 엔진 `0.1.13-beta-20261027`의 정보·웹 자산 10개 SHA 불변. 이전 Worker `fbfd43a9-53a4-4253-a815-b34c460974b7`을 복원 기준으로 보존한다. |
+| 구형 앱의 실제 업데이트 안내 | 기존 시험용 282 EXE가 실제 공개 9b feed를 읽어 새 업데이트 안내를 표시하고 수동 안내 열기/닫기를 통과했다. 기존 기록 3개 전체 JSON·음성·TXT 설정 유지, 관측 구간 ZIP 자동 요청 없음. `runtime/offer.json`. |
+| 실제 업데이트·재시작·자료 보존 | **완료.** 전용 시험 설치본에 실제 공개 ZIP updater를 적용해 검증 생략 없이 종료 코드0 확인. 적용 직후 기준79파일 전부 SHA 동일. 실제 30초 음성 분석79.322초·대화록15구간·새 저장 통과. 기존3개 전체 JSON·음성·TXT 설정과 새1개를 포함한4개 기록은 정상 종료·재실행 후에도 그대로이며 모두 재생됐다. 최신 실제 EXE에서 하단 최근 목록 없음 확인. 최종79기준 중78파일 SHA 동일, `backend/temp/analysis_eta_metrics.json`만 새 분석의 유효한 처리시간 표본으로 갱신됐다. 원본 보호48파일은 최종 재대조도 불변. `runtime/{applied,after,restart,data-after-apply,data-final}.json`, `original-data-after.json`, `final-report.json`. 시험용17864/9445 포트 해제 확인. |
+| 임시 업로드 권한 회수 | 임시 Worker `barorok-desktop-upload-20261027-1dd26147` 삭제, 실제 endpoint404, 로컬 임시 인증 파일·세션·캐시 제거 완료. `transfer/cleanup-final.json`. 첫 전송의 네트워크 실패 로그와 자기 세션 정리 증거도 보존했다. |
+
+시험 도구의 첫 적용 준비에서 `SystemRoot` 누락으로 중단됐으며 제품 updater 실행 전이었다. 실패 추출본·로그를 보존하고 자식 환경의 Windows 모듈 경로만 보완한 뒤 `Get-FileHash` 탐색 성공을 한 번 확인했다. 제품 소스·전역 환경·검증 범위를 바꾸지 않았다. 실제 NSIS·Windows 재부팅·첫 모델 받기·다른 PC 검증은 아래 수동 확인의 대기 범위를 유지한다. 이번 로컬 annotated 배포 태그는 metadata source를 가리키는 `prod-2026-10-27.3`이며 Git 원격 push는 하지 않았다. 포터블은 clean 빌드 commit으로 식별하고 설치 엔진 버전 태그는 그대로 유지한다.
+
 ## 실제 공개·설치 프로그램 수동 확인 — 2026-10-27
 
 후속 사용자 요청으로 R2 세 파일 업로드·웹 배포와 공개 후 실물 검증을 승인받았다. 이전 「준비」와 「로컬 통합」 절의 미업로드·미배포 표기는 그 시점의 이력이다. 이번 작업은 `.tmp/publication-run-20261027`에서 진행하며, 이전 증거를 덮어쓰지 않는다. 현재 완료 여부·실제 Worker 버전·다운로드 SHA와 자료 보존 결과는 이 절에 후속 기록한다. Git 원격 push는 이 배포 승인과 구분한다.
@@ -26,7 +44,7 @@
 | 실제 분석·재열기·설정 | 데스크톱·최종 운영 HTTPS/실제 엔진에서 각각 새 30초 음성의 실제 분석·저장·15개 대화록 구간·음성 재생 통과. 각각 정상 종료·재실행 뒤 기존 2개와 새 1개 기록의 전체 JSON·음성·TXT 설정이 유지됐다. 실제 공개 feed 조회·업데이트 안내 열기/닫기에서 ZIP/EXE 자동 요청 없음, 소유 EXE/sidecar/engine/CDP 정상 종료와 포트 해제 확인. `runtime/native-after.json`, `web-after.json`, `native-restart.json`, `web-restart.json`. 이 표본을 장문 성능·요약 품질·Windows 재부팅 시험으로 세지 않는다. |
 | 최종 자료 보존 | 적용 직후 시험본 110파일 모두 SHA 동일, 원본 시험 자료 110파일 불변. 새 분석·재시작까지 마친 최종에는 시험본 108파일 동일·각 환경의 `temp/analysis_eta_metrics.json` 2개만 정상 파생 갱신, 원본 110파일은 그대로다. 기존 기록·설정·모델이 보존됐다. `runtime/data-update-comparison.json`, `data-final-comparison.json`. 독립 에이전트가 다운로드·runtime·파일 대조 증거를 읽고 완료/미확인 범위 일치를 확인했다. |
 
-공개 바이너리는 clean `282d5d20` 데스크톱·엔진 0.1.13을 유지한다. 이후 웹 전용 다운로드 진입점과 하단 목록 제거 소스는 새 웹 빌드에 반영했으며, 하단 목록 제거는 기존 공개 데스크톱 ZIP에 들어 있지 않고 다음 데스크톱 빌드에 반영된다. 로컬 annotated 태그는 `prod-2026-10-27.1`, `prod-2026-10-27.2`, `v0.1.13-beta-20261027`이며 원격 push는 하지 않았다. 실제 NSIS·다른 PC·첫 모델 다운로드는 아래 수동 확인과 기존 미완료 QA 표를 따른다.
+이 절의 첫 공개 당시 바이너리는 clean `282d5d20` 데스크톱·엔진 0.1.13이었다. 이후 웹 전용 다운로드 진입점과 하단 목록 제거는 먼저 웹에 반영했고, 현재 데스크톱도 위 「데스크톱 최신 화면 재빌드·재공개」의 9b ZIP으로 갱신했다. 이 첫 공개의 로컬 annotated 태그는 `prod-2026-10-27.1`, `prod-2026-10-27.2`, `v0.1.13-beta-20261027`이며 원격 push는 하지 않았다. 실제 NSIS·다른 PC·첫 모델 다운로드는 아래 수동 확인과 기존 미완료 QA 표를 따른다.
 
 이번 Python→Windows PowerShell 검증 환경에서 `Get-FileHash` 탐색 실패와 .NET fallback 선택을 매 파일 반복하는 비용을 재현했다. 실제 검증은 종료 코드 0이며 검증 생략으로 통과시킨 것이 아니다. 반복 탐색 캐시 최적화와 동일 환경 시간 비교는 TODO의 P2에 기록했다. 캡처 서버 5179·모의 검사 서버 5181도 이 세션의 정확한 소유 PID만 종료했으며 운영 사이트는 유지한다. 마지막 확인2026-10-27.
 

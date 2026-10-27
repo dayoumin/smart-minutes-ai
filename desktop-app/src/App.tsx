@@ -439,12 +439,6 @@ export const App: React.FC = () => {
                         }}
                         idleCompanion={activeTab === 'minutes' && (
                             <RecentMeetingsPanel
-                                onOpenMeeting={(id) => {
-                                    if (!canLeaveCurrentMeeting()) return;
-                                    setMeetingDetailOpenRequest(null);
-                                    setSelectedMeetingId(id);
-                                    setActiveTab('history');
-                                }}
                                 onResumeDraft={handleSelectResumeDraft}
                                 newMeetingBlocked={analysisStartBlocked}
                             />

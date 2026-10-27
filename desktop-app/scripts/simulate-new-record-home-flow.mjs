@@ -167,8 +167,8 @@ const runEmptyHomeScene = async browser => {
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.ocean-backdrop, .start-workspace, [data-shell-variant]').count(), 0);
     assert.equal(await page.getByRole('button', { name: `${BRAND_NAME} 첫 화면` }).getAttribute('aria-current'), 'page');
-    // The empty list is a stable part of the work area, independent of file selection.
-    await page.getByRole('region', { name: '최근 회의록' }).getByRole('heading', { name: '최근 회의록', exact: true }).waitFor();
+    // Saved records are listed only in the sidebar, even when the work area is empty.
+    assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0);
     assert.equal(await page.locator('.recent-meeting-row, .writer-recovery').count(), 0);
 
     for (const viewport of [{ width: 1440, height: 900 }, { width: 1024, height: 768 }]) {
@@ -307,14 +307,13 @@ const runIHomeLayoutScene = async browser => {
     try {
       await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
       await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor();
-      const recent = page.getByRole('region', { name: '최근 회의록' });
-      await recent.getByRole('heading', { name: '최근 회의록', exact: true }).waitFor();
+      assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0);
       const longName = `주간업무협의-${'조사진행상황과다음일정'.repeat(12)}.wav`;
       for (const hasRecords of [false, true]) {
         if (hasRecords) {
           await putMeeting(page, meetingAt('i-recent-first', '첫 번째 최근 회의', Date.now() - DAY_MS));
           await putMeeting(page, meetingAt('i-recent-second', '두 번째 최근 회의', Date.now() - 2 * DAY_MS));
-          await page.waitForFunction(() => document.querySelectorAll('.recent-meeting-row').length === 2);
+          assert.equal((await readMeetingIds(page)).length, 2, 'records remain stored when the narrow sidebar is closed');
         }
         for (const hasFile of [false, true]) {
           if (hasFile) {
@@ -325,8 +324,7 @@ const runIHomeLayoutScene = async browser => {
           }
           await page.locator('.writer-action-row[data-state="ready"]').getByText('이 PC와 연결됨', { exact: true }).waitFor();
           await settleHomePaint(page);
-          assert.equal(await recent.getByRole('heading', { name: '최근 회의록', exact: true }).count(), 1);
-          assert.equal(await recent.locator('.recent-meeting-row').count(), hasRecords ? 2 : 0, 'file selection does not change whether records exist');
+          assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0, 'file selection never introduces a duplicate saved-record list');
           const layout = await page.evaluate(() => {
             const rect = selector => {
               const r = document.querySelector(selector).getBoundingClientRect();
@@ -334,7 +332,7 @@ const runIHomeLayoutScene = async browser => {
             };
             return {
               info: rect('.writer-info-column'), content: rect('.writer-upload-layout'), upload: rect('.writer-upload-section'), guide: rect('.writer-privacy'),
-              action: rect('.writer-action-row'), cta: rect('.writer-start-button'), status: rect('.writer-status-title'), recent: rect('.recent-meetings'),
+              action: rect('.writer-action-row'), cta: rect('.writer-start-button'), status: rect('.writer-status-title'),
             };
           });
           assert.ok(Math.abs(layout.info.width - 248) <= 1, 'metadata reserves 224px for inputs and 24px padding');
@@ -348,7 +346,6 @@ const runIHomeLayoutScene = async browser => {
           assert.ok(layout.cta.top >= layout.status.bottom + 12 && layout.cta.right <= layout.action.right + 1,
             `status has its own row above the right-aligned start action: ${JSON.stringify(layout)}`);
           assert.ok(layout.cta.top >= 0 && layout.cta.bottom <= viewport.height, 'analysis start is reachable inside the desktop viewport');
-          assert.ok(layout.recent.top >= Math.max(layout.action.bottom, layout.guide.bottom) - 1, 'recent records follow the upload and guidance work');
           const guidance = page.getByRole('region', { name: '처리·보관 안내', exact: true });
           await guidance.getByRole('heading', { name: '이 PC에서 분석·요약합니다', exact: true }).waitFor();
           assert.equal(await guidance.getByRole('img').isVisible(), true, 'the PC boundary illustration makes local processing visible');
@@ -445,7 +442,7 @@ const runEmptyHomeCapture = async browser => {
   }
 };
 
-const runRecentListScene = async browser => {
+const runSidebarListScene = async browser => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
   await installBaseRoutes(page);
@@ -468,19 +465,17 @@ const runRecentListScene = async browser => {
     meetings[3].updatedAt = new Date().toISOString();
     for (const meeting of meetings) await putMeeting(page, meeting);
 
-    const recent = page.getByRole('region', { name: '최근 회의록' });
-    await recent.waitFor({ timeout: 10000 });
-    assert.equal(await recent.evaluate(el => Boolean(el.closest('.writer-work-column'))), true, 'recent records stay in the file work column');
-    await page.waitForFunction(() => document.querySelectorAll('.recent-meeting-row').length === 5);
-    const groups = await recent.locator('.recent-meetings-group-label').allTextContents();
-    assert.deepEqual(groups, ['오늘', '최근 7일', '이전']);
-    const titles = await recent.locator('.recent-meeting-title').allTextContents();
-    assert.deepEqual(titles, ['오늘 오후 운영 회의', '오늘 아침 회의', '최근 기획 회의', '지난달 회의 1', '지난달 회의 2']);
+    const navigation = page.locator('.barorok-navigation');
+    await page.waitForFunction(() => document.querySelectorAll('.barorok-navigation .sidebar-record-row').length === 6);
+    assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0, 'saved meetings appear only in the sidebar');
+    const titles = await navigation.locator('.sidebar-record-row button[title] .ui-item-text').allTextContents();
+    assert.deepEqual(titles, meetings.map(meeting => meeting.title));
     await assertNoHorizontalOverflow(page);
 
-    await recent.getByRole('button', { name: /최근 기획 회의/ }).click();
+    await navigation.getByRole('button', { name: '최근 기획 회의', exact: true }).click();
     await page.locator('.meeting-detail-shell').getByRole('heading', { name: '최근 기획 회의' }).waitFor({ timeout: 10000 });
-    console.log('ok - recent meetings list groups the latest five and opens a meeting');
+    assert.equal((await readMeetingIds(page)).length, meetings.length, 'removing the duplicate list never deletes stored records');
+    console.log('ok - saved meetings stay in the sidebar and open from there without a duplicate home list');
   } finally {
     await context.close();
   }
@@ -525,14 +520,8 @@ const runRecoveryScene = async browser => {
     const recovery = page.locator('.writer-recovery');
     await recovery.getByText('이어서 할 분석', { exact: true }).waitFor({ timeout: 10000 });
     await recovery.getByRole('heading', { name: '이어갈 회의' }).waitFor();
-    const recentAfterRecovery = page.getByRole('region', { name: '최근 회의록' });
-    await recentAfterRecovery.waitFor({ timeout: 10000 });
-    const order = await page.evaluate(() => {
-      const card = document.querySelector('.writer-recovery')?.getBoundingClientRect();
-      const list = document.querySelector('.recent-meetings')?.getBoundingClientRect();
-      return { cardBottom: card?.bottom ?? 0, listTop: list?.top ?? 0 };
-    });
-    assert.ok(order.cardBottom <= order.listTop, 'the recovery card sits above the recent list, which stays reachable');
+    await page.locator('.barorok-navigation').getByRole('button', { name: '복구보다 오래된 최근 회의', exact: true }).waitFor();
+    assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0, 'recovery does not reintroduce the duplicate record list');
     await recovery.getByRole('button', { name: '이어서 분석', exact: true }).click();
     await page.getByRole('heading', { name: /이어하기|분석 상태/, level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.writer-recovery, .recent-meetings').count(), 0, 'companion hides while choosing the resume file');
@@ -572,13 +561,14 @@ const runPendingCancellationLockScene = async browser => {
     assert.equal(await page.locator('.sidebar-create-button').first().isDisabled(), true);
 
     await putMeeting(page, meetingAt('home-pending-recent', '정리 대기 중 최근 회의', Date.now() - 60 * 1000));
-    const recentRow = page.getByRole('region', { name: '최근 회의록' }).getByRole('button', { name: /정리 대기 중 최근 회의/ });
-    await recentRow.waitFor({ timeout: 10000 });
-    assert.equal(await recentRow.isEnabled(), true);
-    await recentRow.click();
+    const sidebarRow = page.locator('.barorok-navigation').getByRole('button', { name: '정리 대기 중 최근 회의', exact: true });
+    await sidebarRow.waitFor({ timeout: 10000 });
+    assert.equal(await sidebarRow.isEnabled(), true);
+    assert.equal(await page.getByRole('region', { name: '최근 회의록' }).count(), 0);
+    await sidebarRow.click();
     await page.locator('.meeting-detail-shell').getByRole('heading', { name: '정리 대기 중 최근 회의' }).waitFor({ timeout: 10000 });
     assert.equal(analyzeRequestCount, 0);
-    console.log('ok - pending cancellation locks analysis but keeps recent meetings open');
+    console.log('ok - pending cancellation locks analysis but keeps sidebar meetings open');
   } finally {
     await context.close();
   }
@@ -865,9 +855,15 @@ const run = async () => {
       await runIHomeLayoutScene(browser);
       return;
     }
+    if (process.env.NEW_RECORD_HOME_SCENARIO === 'sidebar-recovery') {
+      await runSidebarListScene(browser);
+      await runRecoveryScene(browser);
+      await runPendingCancellationLockScene(browser);
+      return;
+    }
     await runEmptyHomeScene(browser);
     await runIHomeLayoutScene(browser);
-    await runRecentListScene(browser);
+    await runSidebarListScene(browser);
     await runRecoveryScene(browser);
     await runPendingCancellationLockScene(browser);
     await runAnalysisEntryPointScene(browser);

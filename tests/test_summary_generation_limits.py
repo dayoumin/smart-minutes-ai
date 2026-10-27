@@ -9,11 +9,12 @@ from unittest.mock import Mock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
-from pipeline import summarize
+from pipeline import summarize, summary_evidence
 
 
-def evidence_notes(source, *, kind="discussion", text=None, concerns=(), opposing=(), conditions=()):
+def evidence_notes(source, *, kind="discussion", text=None, concerns=(), problems=(), goals=(), opposing=(), conditions=()):
     return {"notes": [{"kind": kind, "topic": "검토 논점", "text": text or source, "evidence_ids": ["s1"],
+                       "problems": list(problems), "goals": list(goals),
                        "opposing": list(opposing), "conditions": list(conditions)}],
             "needs_check": list(concerns)}
 
@@ -322,6 +323,8 @@ class SummaryGenerationLimitsTest(unittest.TestCase):
             index = sources.index(source)
             kind = "decision" if index == 7 else "action" if index == 8 else "discussion"
             return json.dumps(evidence_notes(source, kind=kind, text=f"finding_{index:02}",
+                problems=[{"text": f"problem_{index:02}", "evidence_ids": ["s1"]}],
+                goals=[{"text": f"goal_{index:02}", "evidence_ids": ["s1"]}],
                 opposing=[{"text": f"opposition_{index:02}", "evidence_ids": ["s1"]}],
                 conditions=[{"text": f"condition_{index:02}", "evidence_ids": ["s1"]}]))
         with patch.object(summarize, "MAX_DIRECT_SUMMARY_CHARS", 1), \
@@ -335,18 +338,75 @@ class SummaryGenerationLimitsTest(unittest.TestCase):
         topics = " ".join(result["topics"])
         self.assertEqual(re.findall(r"finding_\d{2}", topics), [f"finding_{i:02}" for i in range(9)])
         for index in range(9):
+            self.assertIn(f"문제: problem_{index:02}", topics)
+            self.assertIn(f"목표: goal_{index:02}", topics)
             self.assertIn(f"opposition_{index:02}", topics)
             self.assertIn(f"condition_{index:02}", topics)
         self.assertEqual(len(result["decisions"]), 1)
         self.assertIn("finding_07", result["decisions"][0])
+        self.assertIn("problem_07", result["decisions"][0])
+        self.assertIn("goal_07", result["decisions"][0])
         self.assertIn("condition_07", result["decisions"][0])
         self.assertEqual(len(result["actions"]), 1)
         self.assertIn("finding_08", result["actions"][0])
+        self.assertIn("problem_08", result["actions"][0])
+        self.assertIn("goal_08", result["actions"][0])
         self.assertIn("opposition_08", result["actions"][0])
+
+    def test_long_summary_requests_note_limit_and_preserves_all_boundary_notes(self):
+        payload = evidence_notes("actual source")
+        payload["notes"] = [
+            {**payload["notes"][0], "text": f"boundary_note_{index:02}"}
+            for index in range(summary_evidence.MAX_NOTES_PER_UNIT)
+        ]
+        events = []
+
+        def generate(_model, prompt):
+            return json.dumps(grouping_plan(prompt) if "Notes:\n" in prompt else payload)
+
+        with patch.object(summarize, "MAX_DIRECT_SUMMARY_CHARS", 1), \
+                patch.object(summarize, "_split_text_for_summary", return_value=["actual source"]), \
+                patch.object(summarize, "generate_ollama_text", side_effect=generate), \
+                patch.object(summarize, "generation_response_schema", wraps=summarize.generation_response_schema) as schema_context:
+            result = summarize.summarize_meeting([{"text": "source"}], "model", diagnostic_callback=events.append)
+        self.assertNotIn("generation_error", result)
+        requested_schema = schema_context.call_args_list[0].args[0]
+        self.assertEqual(requested_schema["properties"]["notes"]["maxItems"], summary_evidence.MAX_NOTES_PER_UNIT)
+        self.assertEqual(summary_evidence.MAX_NOTES_PER_UNIT, 12)
+        request = next(event for event in events if event["event"] == "request")
+        self.assertIn(f"노트 최대 {summary_evidence.MAX_NOTES_PER_UNIT}개", request["prompt"])
+        self.assertEqual(re.findall(r"boundary_note_\d{2}", " ".join(result["topics"])),
+                         [note["text"] for note in payload["notes"]])
+        coverage = next(event for event in events if event["event"] == "evidence_coverage")
+        self.assertEqual(len(coverage["notes"]), summary_evidence.MAX_NOTES_PER_UNIT)
+
+    def test_oversized_notes_retry_once_without_truncation(self):
+        oversized = evidence_notes("actual source", text="REJECTED OVERSIZED CLAIM")
+        oversized["notes"] *= summary_evidence.MAX_NOTES_PER_UNIT + 1
+        good = evidence_notes("actual source", text="accepted grounded note")
+        for recover in (False, True):
+            events = []
+            with self.subTest(recover=recover), patch.object(summarize, "MAX_DIRECT_SUMMARY_CHARS", 1), \
+                    patch.object(summarize, "_split_text_for_summary", return_value=["actual source"]), \
+                    patch.object(summarize, "generate_ollama_text", side_effect=[
+                        json.dumps(oversized), json.dumps(good if recover else oversized),
+                    ]) as generate, \
+                    patch.object(summarize, "generation_response_schema", wraps=summarize.generation_response_schema) as schema_context:
+                result = summarize.summarize_meeting([{"text": "PRIVATE TRANSCRIPT"}], "model", diagnostic_callback=events.append)
+            self.assertEqual(generate.call_count, 2)
+            for call in schema_context.call_args_list:
+                self.assertEqual(call.args[0]["properties"]["notes"]["maxItems"], summary_evidence.MAX_NOTES_PER_UNIT)
+            rejected = [event for event in events if event["event"] == "rejected"]
+            self.assertEqual([event["reason"] for event in rejected], ["note_count"] * (1 if recover else 2))
+            self.assertNotIn("REJECTED OVERSIZED CLAIM", str(result))
+            if recover:
+                self.assertIn("accepted grounded note", " ".join(result["topics"]))
+            else:
+                self.assert_invalid(result)
 
     def test_invalid_evidence_ids_retry_once_without_adopting_unanchored_notes(self):
         good = evidence_notes("actual source", text="grounded assertion")
-        for field in ("main", "opposing", "conditions"):
+        for field in ("main", "problems", "goals", "opposing", "conditions"):
             for refs in (None, [], ["s1", "s1"], ["unknown"]):
                 bad = evidence_notes("actual source", text="unsupported assertion")
                 anchored = bad["notes"][0]
@@ -370,10 +430,31 @@ class SummaryGenerationLimitsTest(unittest.TestCase):
                     else:
                         self.assert_invalid(result)
 
+    def test_category_arrays_are_required_bounded_and_can_be_explicitly_empty(self):
+        for field in ("problems", "goals"):
+            for value in (None, "not a list", [{"text": "claim", "evidence_ids": ["s1"]}] * 13):
+                bad = evidence_notes("actual source")
+                bad["notes"][0][field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(summary_evidence.InvalidNotes):
+                    summary_evidence.validate_notes(bad, "actual source", "u1")
+            missing = evidence_notes("actual source")
+            del missing["notes"][0][field]
+            with self.subTest(field=field, missing=True), self.assertRaises(summary_evidence.InvalidNotes):
+                summary_evidence.validate_notes(missing, "actual source", "u1")
+        valid = summary_evidence.validate_notes(evidence_notes("actual source"), "actual source", "u1")
+        self.assertEqual(valid["notes"][0]["problems"], [])
+        self.assertEqual(valid["notes"][0]["goals"], [])
+        fields = summary_evidence.NOTES_SCHEMA["properties"]["notes"]["items"]
+        self.assertTrue({"problems", "goals", "conditions"}.issubset(fields["required"]))
+        for field in ("problems", "goals", "opposing", "conditions"):
+            self.assertEqual(fields["properties"][field]["maxItems"], summary_evidence.MAX_NOTES_PER_UNIT)
+
     def test_evidence_quotes_are_copied_exactly_from_selected_source_spans(self):
         spans = ["화자00: 자료가 없다.", "화자01: 다만 재검토는 가능하다.", "화자02: 자료가 오면 검토한다."]
         source = "\n".join(spans)
         payload = evidence_notes(source, text="자료 부족과 조건부 재검토",
+            problems=[{"text": "검토 자료가 부족하다", "evidence_ids": ["s1"]}],
+            goals=[{"text": "자료가 도착하면 검토하려 한다", "evidence_ids": ["s3"]}],
             opposing=[{"text": "재검토 가능 의견", "evidence_ids": ["s2"]}],
             conditions=[{"text": "자료 도착 조건", "evidence_ids": ["s3"]}])
         payload["notes"][0]["evidence_ids"] = ["s1", "s3"]
@@ -388,6 +469,10 @@ class SummaryGenerationLimitsTest(unittest.TestCase):
         self.assertEqual(note["evidence"], [{"id": "s1", "quote": spans[0]}, {"id": "s3", "quote": spans[2]}])
         self.assertEqual(note["opposing"][0]["evidence"], [{"id": "s2", "quote": spans[1]}])
         self.assertEqual(note["conditions"][0]["evidence"], [{"id": "s3", "quote": spans[2]}])
+        self.assertEqual(note["problems"][0]["evidence"], [{"id": "s1", "quote": spans[0]}])
+        self.assertEqual(note["goals"][0]["evidence"], [{"id": "s3", "quote": spans[2]}])
+        self.assertIn("문제: 검토 자료가 부족하다", " ".join(result["topics"]))
+        self.assertIn("목표: 자료가 도착하면 검토하려 한다", " ".join(result["topics"]))
         self.assertNotIn("evidence", result)
         self.assertIn("자료 도착 조건", " ".join(result["topics"]))
 

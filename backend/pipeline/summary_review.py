@@ -80,8 +80,8 @@ def build_probes(events, stages, note_ids=(), *, schedule_mode="legacy"):
         selected_here = [note for note in notes if not selected or note["id"] in selected]
         for note in selected_here:
             found.add(note["id"])
-            for role in ("text", "opposing", "conditions"):
-                values = [note] if role == "text" else note[role]
+            for role in ("text", "problems", "goals", "opposing", "conditions"):
+                values = [note] if role == "text" else note.get(role, [])
                 for index, value in enumerate(values):
                     evidence = value["evidence"]
                     if (not evidence or any(item.get("id") not in by_id or by_id[item["id"]] != item.get("quote")

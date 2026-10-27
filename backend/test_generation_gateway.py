@@ -168,8 +168,37 @@ class GenerationGatewayTest(unittest.TestCase):
                 self.assertEqual(generation_gateway._generate_with_http(model, "prompt"), "final JSON")
                 payload = json.loads(request.call_args.args[0].data)
                 self.assertIs(payload["think"], False)
+                self.assertEqual(payload["options"], {"num_ctx": 8192})
                 self.assertEqual(payload["format"], schema)
                 self.assertEqual(payload["model"], model)
+
+    def test_structured_context_budget_is_scoped_to_verified_qwen(self) -> None:
+        schema = {"type": "object"}
+        payloads = []
+        def send(request, timeout):
+            payloads.append(json.loads(request.data))
+            return BytesIO(b'{"response":"final"}')
+        with patch.object(generation_gateway, "_ensure_runtime"), \
+                patch.object(generation_gateway.urllib.request, "urlopen", side_effect=send):
+            with self.assertRaisesRegex(RuntimeError, "scope exit"):
+                with generation_gateway.generation_response_schema(schema):
+                    generation_gateway._generate_with_http("qwen3.5:4b", "prompt")
+                    generation_gateway._generate_with_http("gemma4:e2b", "prompt")
+                    raise RuntimeError("scope exit")
+            generation_gateway._generate_with_http("qwen3.5:4b", "prompt")
+        self.assertEqual(payloads[0]["options"], {"num_ctx": 8192})
+        self.assertNotIn("options", payloads[1])
+        self.assertNotIn("options", payloads[2])
+        self.assertEqual(payloads[2]["format"], "json")
+
+    def test_truncated_structured_response_is_rejected(self) -> None:
+        with patch.object(generation_gateway, "_ensure_runtime"), \
+                patch.object(generation_gateway.urllib.request, "urlopen",
+                    return_value=BytesIO(b'{"response":"{\\"notes\\":[]}","done_reason":"length"}')), \
+                generation_gateway.generation_response_schema({"type": "object"}):
+            with self.assertRaises(generation_gateway.GenerationFailure) as raised:
+                generation_gateway._generate_with_http("qwen3.5:4b", "prompt")
+        self.assertEqual(raised.exception.code, "invalid_model_response")
 
     def test_other_models_keep_default_thinking_behavior(self) -> None:
         for model in ("gemma4:e2b", "gpt-oss:20b", "qwen3.5:9b", "custom/qwen3.5:4b", "my-qwen"):

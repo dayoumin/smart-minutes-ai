@@ -1,0 +1,1919 @@
+{
+  "date": "2026-10-21",
+  "origin": "newly_written_synthetic_only",
+  "qwen_controls": {"model":"qwen3.5:4b","digest":"96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7","ollama":"0.40.5","num_ctx":16384,"temperature":0,"seed":42,"num_predict":2048,"think":false},
+  "control_exception": "Previous thinking run used think:true and4096 output tokens. Luna controls differ by provider; timings compare extraction only. Guarded replay paths identify the exact postprocessor hashes at replay time.",
+  "fixture": "tests/fixtures/summary-sentence-states-20261021.json",
+  "previous_runs": [
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "A",
+      "calls": 1,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 6.109,
+      "experiment": "selection-strategy-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 4.268,
+      "prompt_tokens_sum": 1229,
+      "completion_tokens_sum": 271,
+      "max_prompt_plus_completion": 1500,
+      "done_reasons": {
+        "length": 0,
+        "stop": 1
+      },
+      "core_retained": 4,
+      "core_total": 5,
+      "constraints_retained": 9,
+      "constraints_total": 10,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 4,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "B",
+      "calls": 3,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 2.266,
+      "experiment": "selection-strategy-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.019,
+      "prompt_tokens_sum": 1766,
+      "completion_tokens_sum": 280,
+      "max_prompt_plus_completion": 868,
+      "done_reasons": {
+        "length": 0,
+        "stop": 3
+      },
+      "core_retained": 5,
+      "core_total": 5,
+      "constraints_retained": 9,
+      "constraints_total": 10,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 11,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "C",
+      "calls": 9,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 3.032,
+      "experiment": "selection-strategy-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.056,
+      "prompt_tokens_sum": 4398,
+      "completion_tokens_sum": 219,
+      "max_prompt_plus_completion": 676,
+      "done_reasons": {
+        "length": 0,
+        "stop": 9
+      },
+      "core_retained": 3,
+      "core_total": 5,
+      "constraints_retained": 8,
+      "constraints_total": 10,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 13,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "luna",
+      "case": "heldout",
+      "variant": "E",
+      "calls": 1,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 2.125,
+      "experiment": "selection-classification-20261021",
+      "usage_tokens_sum": 956,
+      "core_retained": 4,
+      "core_total": 4,
+      "constraints_retained": 5,
+      "constraints_total": 5,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 1,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "luna",
+      "case": "long",
+      "variant": "E",
+      "calls": 16,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 43.312,
+      "experiment": "selection-classification-20261021",
+      "usage_tokens_sum": 19298,
+      "core_retained": 16,
+      "core_total": 16,
+      "constraints_retained": 80,
+      "constraints_total": 80,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 9,
+      "overlap_label_disagreements": {
+        "p3s2": [
+          "goal_condition",
+          "condition"
+        ],
+        "p22s1": [
+          "goal_condition",
+          "goal"
+        ],
+        "p24s2": [
+          "condition",
+          "goal_condition"
+        ],
+        "p28s1": [
+          "goal",
+          "condition"
+        ],
+        "p13s5": [
+          "goal",
+          "condition"
+        ],
+        "p15s6": [
+          "goal",
+          "other"
+        ]
+      }
+    },
+    {
+      "provider": "qwen",
+      "case": "heldout",
+      "variant": "E",
+      "calls": 1,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 0.672,
+      "experiment": "selection-classification-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.005,
+      "prompt_tokens_sum": 578,
+      "completion_tokens_sum": 72,
+      "max_prompt_plus_completion": 650,
+      "done_reasons": {
+        "length": 0,
+        "stop": 1
+      },
+      "core_retained": 3,
+      "core_total": 4,
+      "constraints_retained": 2,
+      "constraints_total": 5,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 1,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "long",
+      "variant": "D",
+      "calls": 16,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 14.734,
+      "experiment": "selection-classification-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.099,
+      "prompt_tokens_sum": 10855,
+      "completion_tokens_sum": 2313,
+      "max_prompt_plus_completion": 887,
+      "done_reasons": {
+        "length": 0,
+        "stop": 16
+      },
+      "core_retained": 15,
+      "core_total": 16,
+      "constraints_retained": 75,
+      "constraints_total": 80,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 26,
+      "overlap_label_disagreements": {
+        "p22s1": [
+          "goal_condition",
+          "goal"
+        ],
+        "p26s1": [
+          "condition",
+          "goal"
+        ],
+        "p5s3": [
+          "goal",
+          "condition"
+        ],
+        "p9s4": [
+          "condition",
+          "other"
+        ],
+        "p11s4": [
+          "other",
+          "condition"
+        ]
+      }
+    },
+    {
+      "provider": "qwen",
+      "case": "long",
+      "variant": "E",
+      "calls": 16,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 14.219,
+      "experiment": "selection-classification-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.099,
+      "prompt_tokens_sum": 12487,
+      "completion_tokens_sum": 2268,
+      "max_prompt_plus_completion": 990,
+      "done_reasons": {
+        "length": 0,
+        "stop": 16
+      },
+      "core_retained": 16,
+      "core_total": 16,
+      "constraints_retained": 70,
+      "constraints_total": 80,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 21,
+      "overlap_label_disagreements": {
+        "p26s1": [
+          "condition",
+          "goal_condition"
+        ],
+        "p11s4": [
+          "other",
+          "condition"
+        ]
+      }
+    },
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "D",
+      "calls": 3,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 2.922,
+      "experiment": "selection-classification-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.018,
+      "prompt_tokens_sum": 1820,
+      "completion_tokens_sum": 420,
+      "max_prompt_plus_completion": 907,
+      "done_reasons": {
+        "length": 0,
+        "stop": 3
+      },
+      "core_retained": 5,
+      "core_total": 5,
+      "constraints_retained": 10,
+      "constraints_total": 10,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 3,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "E",
+      "calls": 3,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 2.578,
+      "experiment": "selection-classification-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.019,
+      "prompt_tokens_sum": 2126,
+      "completion_tokens_sum": 403,
+      "max_prompt_plus_completion": 1010,
+      "done_reasons": {
+        "length": 0,
+        "stop": 3
+      },
+      "core_retained": 5,
+      "core_total": 5,
+      "constraints_retained": 10,
+      "constraints_total": 10,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 3,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "E",
+      "calls": 1,
+      "status": "failed",
+      "elapsed_seconds": 22.453,
+      "experiment": "selection-thinking-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.005,
+      "prompt_tokens_sum": 785,
+      "completion_tokens_sum": 4096,
+      "max_prompt_plus_completion": 4881,
+      "done_reasons": {
+        "length": 1,
+        "stop": 0
+      },
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "heldout",
+      "variant": "F",
+      "calls": 10,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 1.812,
+      "experiment": "selection-target-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.064,
+      "prompt_tokens_sum": 4682,
+      "completion_tokens_sum": 104,
+      "max_prompt_plus_completion": 490,
+      "done_reasons": {
+        "length": 0,
+        "stop": 10
+      },
+      "core_retained": 3,
+      "core_total": 4,
+      "constraints_retained": 2,
+      "constraints_total": 5,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 2,
+      "overlap_label_disagreements": {}
+    },
+    {
+      "provider": "qwen",
+      "case": "screen",
+      "variant": "F",
+      "calls": 35,
+      "status": "generated_unreviewed",
+      "elapsed_seconds": 6,
+      "experiment": "selection-target-20261021",
+      "model_digest": "96f38c742e0a10e194b237d2ffb8b55925ebfeed9d27df72688f565e773569e7",
+      "load_seconds_sum": 0.216,
+      "prompt_tokens_sum": 17253,
+      "completion_tokens_sum": 345,
+      "max_prompt_plus_completion": 545,
+      "done_reasons": {
+        "length": 0,
+        "stop": 35
+      },
+      "core_retained": 5,
+      "core_total": 5,
+      "constraints_retained": 9,
+      "constraints_total": 10,
+      "quotes_exact": true,
+      "raw_gold_role_issues": 1,
+      "overlap_label_disagreements": {}
+    }
+  ],
+  "state_improvement_runs": [
+    {
+      "variant": "G",
+      "case": "heldout",
+      "calls": 1,
+      "seconds": 5.234,
+      "frozen_sha256": "7abc6b4441bcfbc308d1da8bf0ac221b48e1cc517913ebf12accd322f0237348",
+      "original_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 4,
+        "constraints_total": 5,
+        "missing_roles": {
+          "core": [],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s4"
+              ],
+              "name": "p3s4"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p3s4",
+            "expected": [
+              "unconfirmed"
+            ],
+            "actual": [
+              "background"
+            ]
+          }
+        ],
+        "state_correct": 9,
+        "state_total": 10,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "G",
+      "case": "long",
+      "calls": 16,
+      "seconds": 13.063,
+      "frozen_sha256": "7abc6b4441bcfbc308d1da8bf0ac221b48e1cc517913ebf12accd322f0237348",
+      "original_evaluation": {
+        "core_retained": 15,
+        "core_total": 16,
+        "constraints_retained": 61,
+        "constraints_total": 80,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "problems",
+              "any": [
+                "p29s2"
+              ],
+              "name": "topic8-problem"
+            }
+          ],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s2"
+              ],
+              "name": "topic1-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p3s3"
+              ],
+              "name": "topic1-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p2s2"
+              ],
+              "name": "topic1-first-failure"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p7s2"
+              ],
+              "name": "topic2-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p7s3"
+              ],
+              "name": "topic2-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p6s2"
+              ],
+              "name": "topic2-first-failure"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p11s2"
+              ],
+              "name": "topic3-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p14s3"
+              ],
+              "name": "topic4-no-edit"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p15s2"
+              ],
+              "name": "topic4-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p14s2"
+              ],
+              "name": "topic4-first-failure"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p19s2"
+              ],
+              "name": "topic5-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p18s2"
+              ],
+              "name": "topic5-first-failure"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p23s2"
+              ],
+              "name": "topic6-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p23s3"
+              ],
+              "name": "topic6-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p26s3"
+              ],
+              "name": "topic7-no-edit"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p27s3"
+              ],
+              "name": "topic7-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p26s2"
+              ],
+              "name": "topic7-first-failure"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p28s2"
+              ],
+              "name": "topic7-recurrence"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p31s2"
+              ],
+              "name": "topic8-approval-first"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [
+          "p14s2",
+          "p26s2",
+          "p28s2",
+          "p7s3"
+        ],
+        "missing_observed_problem_ids": [
+          "p29s2"
+        ],
+        "state_errors": [
+          {
+            "id": "p5s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "background",
+              "proposal"
+            ]
+          },
+          {
+            "id": "p16s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p17s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "hypothetical"
+            ]
+          },
+          {
+            "id": "p21s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "background"
+            ]
+          },
+          {
+            "id": "p28s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "observed_problem"
+            ]
+          },
+          {
+            "id": "p29s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "hypothetical"
+            ]
+          },
+          {
+            "id": "p32s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          }
+        ],
+        "state_correct": 17,
+        "state_total": 24,
+        "conflict_ids": [
+          "p3s2",
+          "p5s3",
+          "p7s3",
+          "p13s5",
+          "p15s6",
+          "p17s6"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "G",
+      "case": "screen",
+      "calls": 3,
+      "seconds": 2.672,
+      "frozen_sha256": "7abc6b4441bcfbc308d1da8bf0ac221b48e1cc517913ebf12accd322f0237348",
+      "original_evaluation": {
+        "core_retained": 5,
+        "core_total": 5,
+        "constraints_retained": 8,
+        "constraints_total": 10,
+        "missing_roles": {
+          "core": [],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s2"
+              ],
+              "name": "topic1-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p2s2"
+              ],
+              "name": "topic1-first-failure"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p5s3",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          }
+        ],
+        "state_correct": 12,
+        "state_total": 13,
+        "conflict_ids": [
+          "p3s2",
+          "p6s2"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "G",
+      "case": "stress",
+      "calls": 1,
+      "seconds": 0.812,
+      "frozen_sha256": "7abc6b4441bcfbc308d1da8bf0ac221b48e1cc517913ebf12accd322f0237348",
+      "original_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 6,
+        "constraints_total": 6,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [],
+        "state_correct": 12,
+        "state_total": 12,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": true
+      }
+    },
+    {
+      "variant": "H",
+      "case": "heldout",
+      "calls": 2,
+      "seconds": 3.953,
+      "frozen_sha256": "7ab6527110b2f9fe02419c3692bcfa87cf8220b307a75d92121f13c019336f9c",
+      "original_evaluation": {
+        "core_retained": 3,
+        "core_total": 4,
+        "constraints_retained": 4,
+        "constraints_total": 5,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "goals",
+              "any": [
+                "p3s3"
+              ],
+              "name": "installation-discussion-proposal"
+            }
+          ],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s4"
+              ],
+              "name": "p3s4"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [
+          "p3s1"
+        ],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p3s1",
+            "expected": [
+              "observed_normal"
+            ],
+            "actual": [
+              "observed_problem"
+            ]
+          },
+          {
+            "id": "p3s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p3s4",
+            "expected": [
+              "unconfirmed"
+            ],
+            "actual": [
+              "background"
+            ]
+          }
+        ],
+        "state_correct": 7,
+        "state_total": 10,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "H",
+      "case": "stress",
+      "calls": 2,
+      "seconds": 1.875,
+      "frozen_sha256": "7ab6527110b2f9fe02419c3692bcfa87cf8220b307a75d92121f13c019336f9c",
+      "original_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 6,
+        "constraints_total": 6,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [],
+        "state_correct": 12,
+        "state_total": 12,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": true
+      }
+    },
+    {
+      "variant": "I",
+      "case": "heldout",
+      "calls": 2,
+      "seconds": 1.531,
+      "frozen_sha256": "99d5028a55d516e2a15c8d5fd9c4b3f0f8d17959bdf13573a4fd9579457a692a",
+      "original_evaluation": {
+        "core_retained": 3,
+        "core_total": 4,
+        "constraints_retained": 5,
+        "constraints_total": 5,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "goals",
+              "any": [
+                "p3s3"
+              ],
+              "name": "installation-discussion-proposal"
+            }
+          ],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p3s2",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "observed_normal"
+            ]
+          },
+          {
+            "id": "p3s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "background"
+            ]
+          }
+        ],
+        "state_correct": 8,
+        "state_total": 10,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 2,
+        "core_total": 4,
+        "constraints_retained": 5,
+        "constraints_total": 5,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "goals",
+              "any": [
+                "p3s2"
+              ],
+              "name": "reconnect-goal"
+            },
+            {
+              "role": "goals",
+              "any": [
+                "p3s3"
+              ],
+              "name": "installation-discussion-proposal"
+            }
+          ],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p3s2",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "observed_normal"
+            ]
+          },
+          {
+            "id": "p3s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "background"
+            ]
+          }
+        ],
+        "state_correct": 8,
+        "state_total": 10,
+        "conflict_ids": [
+          "p3s2"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "I",
+      "case": "long",
+      "calls": 32,
+      "seconds": 27.047,
+      "frozen_sha256": "99d5028a55d516e2a15c8d5fd9c4b3f0f8d17959bdf13573a4fd9579457a692a",
+      "original_evaluation": {
+        "core_retained": 15,
+        "core_total": 16,
+        "constraints_retained": 73,
+        "constraints_total": 80,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "problems",
+              "any": [
+                "p29s2"
+              ],
+              "name": "topic8-problem"
+            }
+          ],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s2"
+              ],
+              "name": "topic1-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p5s4"
+              ],
+              "name": "topic2-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p7s3"
+              ],
+              "name": "topic2-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p9s4"
+              ],
+              "name": "topic3-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p17s4"
+              ],
+              "name": "topic5-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p24s2"
+              ],
+              "name": "topic6-recurrence"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p32s2"
+              ],
+              "name": "topic8-recurrence"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [
+          "p29s2"
+        ],
+        "state_errors": [
+          {
+            "id": "p17s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "hypothetical"
+            ]
+          },
+          {
+            "id": "p24s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint",
+              "hypothetical"
+            ]
+          },
+          {
+            "id": "p29s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "background"
+            ]
+          },
+          {
+            "id": "p29s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p32s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint",
+              "hypothetical"
+            ]
+          }
+        ],
+        "state_correct": 19,
+        "state_total": 24,
+        "conflict_ids": [
+          "p3s2",
+          "p7s3",
+          "p9s4",
+          "p11s4",
+          "p13s5",
+          "p17s6",
+          "p24s2",
+          "p26s1",
+          "p29s2",
+          "p32s2"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 15,
+        "core_total": 16,
+        "constraints_retained": 73,
+        "constraints_total": 80,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "problems",
+              "any": [
+                "p29s2"
+              ],
+              "name": "topic8-problem"
+            }
+          ],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s2"
+              ],
+              "name": "topic1-approval-first"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p5s4"
+              ],
+              "name": "topic2-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p7s3"
+              ],
+              "name": "topic2-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p9s4"
+              ],
+              "name": "topic3-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p17s4"
+              ],
+              "name": "topic5-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p24s2"
+              ],
+              "name": "topic6-recurrence"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p32s2"
+              ],
+              "name": "topic8-recurrence"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [
+          "p29s2"
+        ],
+        "state_errors": [
+          {
+            "id": "p17s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "hypothetical"
+            ]
+          },
+          {
+            "id": "p24s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint",
+              "hypothetical"
+            ]
+          },
+          {
+            "id": "p29s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "background"
+            ]
+          },
+          {
+            "id": "p29s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p32s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint",
+              "hypothetical"
+            ]
+          }
+        ],
+        "state_correct": 19,
+        "state_total": 24,
+        "conflict_ids": [
+          "p3s2",
+          "p7s3",
+          "p8s3",
+          "p9s4",
+          "p11s4",
+          "p13s5",
+          "p17s5",
+          "p17s6",
+          "p24s2",
+          "p25s5",
+          "p26s1",
+          "p29s2",
+          "p29s5",
+          "p32s2"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "I",
+      "case": "screen",
+      "calls": 6,
+      "seconds": 5.328,
+      "frozen_sha256": "99d5028a55d516e2a15c8d5fd9c4b3f0f8d17959bdf13573a4fd9579457a692a",
+      "original_evaluation": {
+        "core_retained": 5,
+        "core_total": 5,
+        "constraints_retained": 9,
+        "constraints_total": 10,
+        "missing_roles": {
+          "core": [],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s2"
+              ],
+              "name": "topic1-approval-first"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p7s1",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          }
+        ],
+        "state_correct": 12,
+        "state_total": 13,
+        "conflict_ids": [
+          "p3s2"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 5,
+        "core_total": 5,
+        "constraints_retained": 9,
+        "constraints_total": 10,
+        "missing_roles": {
+          "core": [],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p3s2"
+              ],
+              "name": "topic1-approval-first"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p7s1",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          }
+        ],
+        "state_correct": 12,
+        "state_total": 13,
+        "conflict_ids": [
+          "p3s2"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "I",
+      "case": "stress",
+      "calls": 2,
+      "seconds": 1.61,
+      "frozen_sha256": "99d5028a55d516e2a15c8d5fd9c4b3f0f8d17959bdf13573a4fd9579457a692a",
+      "original_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 6,
+        "constraints_total": 6,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [],
+        "state_correct": 12,
+        "state_total": 12,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": true
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 6,
+        "constraints_total": 6,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [],
+        "state_correct": 12,
+        "state_total": 12,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": true
+      }
+    },
+    {
+      "variant": "J",
+      "case": "heldout",
+      "calls": 2,
+      "seconds": 1.64,
+      "frozen_sha256": "30e4bc5f5762450bd1dc620ea5c456d37bc0fc83cc847b7c008b3c052ce31ee1",
+      "original_evaluation": {
+        "core_retained": 3,
+        "core_total": 4,
+        "constraints_retained": 5,
+        "constraints_total": 5,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "goals",
+              "any": [
+                "p3s3"
+              ],
+              "name": "installation-discussion-proposal"
+            }
+          ],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p3s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "background"
+            ]
+          }
+        ],
+        "state_correct": 9,
+        "state_total": 10,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 3,
+        "core_total": 4,
+        "constraints_retained": 5,
+        "constraints_total": 5,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "goals",
+              "any": [
+                "p3s3"
+              ],
+              "name": "installation-discussion-proposal"
+            }
+          ],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p3s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "background"
+            ]
+          }
+        ],
+        "state_correct": 9,
+        "state_total": 10,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "J",
+      "case": "long",
+      "calls": 32,
+      "seconds": 26.485,
+      "frozen_sha256": "30e4bc5f5762450bd1dc620ea5c456d37bc0fc83cc847b7c008b3c052ce31ee1",
+      "original_evaluation": {
+        "core_retained": 14,
+        "core_total": 16,
+        "constraints_retained": 74,
+        "constraints_total": 80,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "problems",
+              "any": [
+                "p17s2"
+              ],
+              "name": "topic5-problem"
+            },
+            {
+              "role": "problems",
+              "any": [
+                "p29s2"
+              ],
+              "name": "topic8-problem"
+            }
+          ],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p5s4"
+              ],
+              "name": "topic2-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p7s3"
+              ],
+              "name": "topic2-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p8s2"
+              ],
+              "name": "topic2-recurrence"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p9s4"
+              ],
+              "name": "topic3-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p17s4"
+              ],
+              "name": "topic5-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p25s4"
+              ],
+              "name": "topic7-synthetic"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [
+          "p17s2",
+          "p29s2"
+        ],
+        "state_errors": [
+          {
+            "id": "p4s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          },
+          {
+            "id": "p8s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "observed_normal"
+            ]
+          },
+          {
+            "id": "p12s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p16s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p17s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p20s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p24s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          },
+          {
+            "id": "p28s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p29s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p29s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p32s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          }
+        ],
+        "state_correct": 13,
+        "state_total": 24,
+        "conflict_ids": [
+          "p7s3",
+          "p8s2",
+          "p11s4",
+          "p20s3",
+          "p30s1"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 14,
+        "core_total": 16,
+        "constraints_retained": 74,
+        "constraints_total": 80,
+        "missing_roles": {
+          "core": [
+            {
+              "role": "problems",
+              "any": [
+                "p17s2"
+              ],
+              "name": "topic5-problem"
+            },
+            {
+              "role": "problems",
+              "any": [
+                "p29s2"
+              ],
+              "name": "topic8-problem"
+            }
+          ],
+          "constraints": [
+            {
+              "role": "conditions",
+              "any": [
+                "p5s4"
+              ],
+              "name": "topic2-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p7s3"
+              ],
+              "name": "topic2-not-generalized"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p8s2"
+              ],
+              "name": "topic2-recurrence"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p9s4"
+              ],
+              "name": "topic3-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p17s4"
+              ],
+              "name": "topic5-synthetic"
+            },
+            {
+              "role": "conditions",
+              "any": [
+                "p25s4"
+              ],
+              "name": "topic7-synthetic"
+            }
+          ]
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [
+          "p17s2",
+          "p29s2"
+        ],
+        "state_errors": [
+          {
+            "id": "p4s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          },
+          {
+            "id": "p8s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "observed_normal"
+            ]
+          },
+          {
+            "id": "p12s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p16s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p17s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p20s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p24s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          },
+          {
+            "id": "p28s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p29s2",
+            "expected": [
+              "observed_problem"
+            ],
+            "actual": [
+              "unconfirmed"
+            ]
+          },
+          {
+            "id": "p29s3",
+            "expected": [
+              "proposal"
+            ],
+            "actual": [
+              "proposal_constraint"
+            ]
+          },
+          {
+            "id": "p32s2",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          }
+        ],
+        "state_correct": 13,
+        "state_total": 24,
+        "conflict_ids": [
+          "p7s3",
+          "p8s2",
+          "p11s4",
+          "p20s3",
+          "p25s5",
+          "p30s1"
+        ],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "J",
+      "case": "screen",
+      "calls": 6,
+      "seconds": 4.937,
+      "frozen_sha256": "30e4bc5f5762450bd1dc620ea5c456d37bc0fc83cc847b7c008b3c052ce31ee1",
+      "original_evaluation": {
+        "core_retained": 5,
+        "core_total": 5,
+        "constraints_retained": 10,
+        "constraints_total": 10,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p5s3",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          }
+        ],
+        "state_correct": 12,
+        "state_total": 13,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 5,
+        "core_total": 5,
+        "constraints_retained": 10,
+        "constraints_total": 10,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [
+          {
+            "id": "p5s3",
+            "expected": [
+              "hypothetical"
+            ],
+            "actual": [
+              "constraint"
+            ]
+          }
+        ],
+        "state_correct": 12,
+        "state_total": 13,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": false
+      }
+    },
+    {
+      "variant": "J",
+      "case": "stress",
+      "calls": 2,
+      "seconds": 1.703,
+      "frozen_sha256": "30e4bc5f5762450bd1dc620ea5c456d37bc0fc83cc847b7c008b3c052ce31ee1",
+      "original_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 6,
+        "constraints_total": 6,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [],
+        "state_correct": 12,
+        "state_total": 12,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": true
+      },
+      "guarded_replay_evaluation": {
+        "core_retained": 4,
+        "core_total": 4,
+        "constraints_retained": 6,
+        "constraints_total": 6,
+        "missing_roles": {
+          "core": [],
+          "constraints": []
+        },
+        "wrong_observed_problem_ids": [],
+        "missing_observed_problem_ids": [],
+        "state_errors": [],
+        "state_correct": 12,
+        "state_total": 12,
+        "conflict_ids": [],
+        "all_source_quotes_preserved": true,
+        "semantic_gate_passed": true
+      }
+    }
+  ],
+  "interpretation": [
+    "No candidate passed full semantic review. Stress success is limited to12 sentences.",
+    "Prior E remains the experiment baseline. I/J reduce false problem claims but withhold real problems and have modality/role omissions.",
+    "State accuracy covers only pre-annotated IDs; independent review found additional normal-state errors outside these IDs.",
+    "Guarded replays make no new model calls; original model output and original evaluations remain preserved.",
+    "The27 rows are13 previous and14 new runs. Failed thinking completion is retained in previous runs."
+  ]
+}

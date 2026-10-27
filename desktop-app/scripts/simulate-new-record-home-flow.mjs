@@ -94,6 +94,17 @@ const installBaseRoutes = async page => {
   }));
 };
 
+const dismissFirstVisitNotice = async page => {
+  await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+  const notice = page.getByRole('dialog', { name: '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', exact: true });
+  if (await notice.isVisible()) {
+    // Production web builds show the real first-visit notice; close it through
+    // its user action rather than bypassing storage or forcing clicks underneath.
+    await notice.getByRole('button', { name: '시작하기', exact: true }).click();
+    await notice.waitFor({ state: 'detached', timeout: 10000 });
+  }
+};
+
 const assertNoHorizontalOverflow = async page => {
   const overflow = await page.evaluate(() => ({
     document: document.documentElement.scrollWidth - document.documentElement.clientWidth,
@@ -448,7 +459,7 @@ const runSidebarListScene = async browser => {
   await installBaseRoutes(page);
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+    await dismissFirstVisitNotice(page);
     // Anchor to local midnight so the grouping does not depend on when the test runs.
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
@@ -516,6 +527,7 @@ const runRecoveryScene = async browser => {
   }));
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await dismissFirstVisitNotice(page);
     await putMeeting(page, meetingAt('home-recovery-recent', '복구보다 오래된 최근 회의', Date.now() - DAY_MS));
     const recovery = page.locator('.writer-recovery');
     await recovery.getByText('이어서 할 분석', { exact: true }).waitFor({ timeout: 10000 });
@@ -551,6 +563,7 @@ const runPendingCancellationLockScene = async browser => {
 
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await dismissFirstVisitNotice(page);
     const writerStartButton = page.getByRole('button', { name: '분석 시작', exact: true });
     await writerStartButton.waitFor({ timeout: 10000 });
     // The status row says why; the reason's text stays only as the recovery card's hidden description.

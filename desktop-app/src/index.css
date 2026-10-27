@@ -2572,6 +2572,31 @@
     @apply mt-3 flex justify-end gap-2;
   }
 
+  .desktop-install-dialog {
+    margin: auto;
+    width: calc(100% - 2rem);
+    max-width: 36rem;
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    word-break: keep-all;
+  }
+
+  .desktop-install-dialog::backdrop {
+    background: var(--bg-overlay);
+  }
+
+  .desktop-install-content {
+    @apply mt-4 space-y-5;
+  }
+
+  .desktop-install-notes {
+    @apply space-y-2 border-t border-border pt-4;
+  }
+
+  .desktop-install-download-state {
+    @apply mt-4 min-h-12;
+  }
+
   .local-processing-backdrop {
     @apply fixed inset-0 z-[80] flex items-center justify-center p-4;
     background: var(--bg-overlay);

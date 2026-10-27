@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { DESKTOP_RELEASE_ORIGIN, fetchDesktopRelease, isNewerDesktopRelease, parseDesktopRelease, parseDesktopReleaseIdentity } from '../src/desktopRelease.ts';
+import { DESKTOP_RELEASE_ORIGIN, fetchDesktopRelease, fetchDesktopInstallRelease, isNewerDesktopRelease, parseDesktopRelease, parseDesktopInstallRelease, parseDesktopReleaseIdentity } from '../src/desktopRelease.ts';
+import { parseDesktopInstallRelease as parseWorkerDesktopInstallRelease } from '../../deploy/cloudflare/src/desktopInstallRelease.ts';
 
 const current = { commit: 'a'.repeat(40), generatedAt: '2026-10-25T09:12:34.1234567+09:00' };
 const metadata = {
@@ -65,4 +66,52 @@ test('desktop metadata requests are anonymous, cancellable and fail quietly when
     controller.abort();
     assert.equal(await pending, null);
     assert.equal(await fetchDesktopRelease(controller.signal), null);
+});
+
+const installMetadata = { ...metadata, type: 'portable-install', downloadPath: `/downloads/lmo_audio_install_${metadata.commit}.zip` };
+
+test('new-install and update ZIPs stay separate and the frontend matches the public Worker contract', () => {
+    assert.equal(parseDesktopInstallRelease(metadata), null);
+    assert.equal(parseDesktopRelease(installMetadata), null);
+    assert.deepEqual(parseDesktopInstallRelease(installMetadata), parseWorkerDesktopInstallRelease(installMetadata));
+    assert.equal(parseDesktopInstallRelease(installMetadata)?.downloadUrl, DESKTOP_RELEASE_ORIGIN + installMetadata.downloadPath);
+    for (const change of [
+        { schemaVersion: 2 }, { type: 'portable-update' }, { origin: 'https://other.example' },
+        { downloadPath: `/downloads/lmo_audio_update_${metadata.commit}.zip` },
+        { downloadPath: `/downloads/lmo_audio_install_${'a'.repeat(40)}.zip` },
+        { downloadPath: installMetadata.downloadPath + '?token=secret' }, { bytes: 0 }, { bytes: 1.5 },
+        { sha256: 'invalid' }, { commit: 'short' }, { generatedAt: '2026-02-30T00:00:00Z' },
+    ]) {
+        const payload = { ...installMetadata, ...change };
+        assert.equal(parseDesktopInstallRelease(payload), null);
+        assert.deepEqual(parseDesktopInstallRelease(payload), parseWorkerDesktopInstallRelease(payload));
+    }
+});
+
+test('install lookup requests only anonymous metadata and separates unpublished from failure', async t => {
+    const mock = t.mock.method(globalThis, 'fetch', async (url, init) => {
+        assert.equal(String(url), `${DESKTOP_RELEASE_ORIGIN}/downloads/desktop-install-beta.json`);
+        assert.equal(init.credentials, 'omit');
+        assert.equal(init.redirect, 'error');
+        assert.equal(init.referrerPolicy, 'no-referrer');
+        assert.equal(init.cache, 'no-store');
+        assert.equal(init.headers, undefined);
+        return Response.json(installMetadata);
+    });
+    assert.deepEqual(await fetchDesktopInstallRelease(), { status: 'available', release: parseDesktopInstallRelease(installMetadata) });
+    mock.mock.mockImplementation(async () => new Response('not published', { status: 404 }));
+    assert.deepEqual(await fetchDesktopInstallRelease(), { status: 'unpublished' });
+    for (const body of [Response.json(metadata), new Response('unavailable', { status: 503 }), new Response('<html>')]) {
+        mock.mock.mockImplementation(async () => body);
+        assert.deepEqual(await fetchDesktopInstallRelease(), { status: 'error' });
+    }
+    mock.mock.mockImplementation(async (_url, { signal }) => {
+        signal.throwIfAborted();
+        return new Promise((_resolve, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+    });
+    const controller = new AbortController();
+    const pending = fetchDesktopInstallRelease(controller.signal);
+    controller.abort();
+    assert.deepEqual(await pending, { status: 'error' });
+    assert.deepEqual(await fetchDesktopInstallRelease(controller.signal), { status: 'error' });
 });

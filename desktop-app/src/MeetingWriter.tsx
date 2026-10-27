@@ -30,6 +30,7 @@ import {
     upsertAnalysisResumeDraft,
 } from './analysisResumeDrafts';
 import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone } from './components/common';
+import { DesktopInstallDownload } from './DesktopInstallDownload';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
@@ -2845,6 +2846,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             )}
             <div className="writer-header">
                 <h2 className="page-title" tabIndex={-1}>{writerHeading}</h2>
+                {!desktopApp && <DesktopInstallDownload />}
             </div>
 
             <div className="writer-panel">

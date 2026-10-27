@@ -57,6 +57,50 @@ export const parseDesktopRelease = (value: unknown): DesktopRelease | null => {
     };
 };
 
+/** A new installation is a different artifact from an existing installation's update. */
+export const parseDesktopInstallRelease = (value: unknown): DesktopRelease | null => {
+    const identity = parseDesktopReleaseIdentity(value);
+    if (!identity) return null;
+    const payload = value as Record<string, unknown>;
+    if (payload.schemaVersion !== 1 || payload.type !== 'portable-install'
+        || payload.origin !== DESKTOP_RELEASE_ORIGIN
+        || payload.downloadPath !== `/downloads/lmo_audio_install_${identity.commit}.zip`
+        || !Number.isSafeInteger(payload.bytes) || Number(payload.bytes) <= 0
+        || typeof payload.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(payload.sha256)) return null;
+    return {
+        ...identity, downloadUrl: `${DESKTOP_RELEASE_ORIGIN}${payload.downloadPath}`,
+        bytes: Number(payload.bytes), sha256: payload.sha256,
+    };
+};
+
+export type DesktopInstallLookup =
+    | { status: 'available'; release: DesktopRelease }
+    | { status: 'unpublished' | 'error' };
+
+/** Read public metadata only; the archive is requested by the user's separate download click. */
+export const fetchDesktopInstallRelease = async (signal?: AbortSignal): Promise<DesktopInstallLookup> => {
+    const controller = new AbortController();
+    const abort = () => controller.abort();
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) controller.abort();
+    const timeout = setTimeout(abort, 5000);
+    try {
+        const response = await fetch(`${DESKTOP_RELEASE_ORIGIN}/downloads/desktop-install-beta.json`, {
+            signal: controller.signal, cache: 'no-store', credentials: 'omit', redirect: 'error',
+            referrerPolicy: 'no-referrer',
+        });
+        if (response.status === 404) return { status: 'unpublished' };
+        if (!response.ok) return { status: 'error' };
+        const release = parseDesktopInstallRelease(await response.json());
+        return release ? { status: 'available', release } : { status: 'error' };
+    } catch {
+        return { status: 'error' };
+    } finally {
+        clearTimeout(timeout);
+        signal?.removeEventListener('abort', abort);
+    }
+};
+
 /** Only public release metadata leaves the app. Local credentials and meeting data are never sent. */
 export const fetchDesktopRelease = async (signal?: AbortSignal): Promise<DesktopRelease | null> => {
     const controller = new AbortController();

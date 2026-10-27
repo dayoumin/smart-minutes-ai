@@ -1,39 +1,47 @@
 import release from '../release.json' with { type: 'json' };
 import desktopPublication from '../desktop-release.json' with { type: 'json' };
+import desktopInstallPublication from '../desktop-install-release.json' with { type: 'json' };
 import { parseDesktopRelease } from '../../../desktop-app/src/desktopRelease.ts';
+import { parseDesktopInstallRelease } from './desktopInstallRelease.ts';
 
 const notPrepared = () => new Response('Download is being prepared', {
     status: 503, headers: { 'Cache-Control': 'no-store' },
 });
 
 // An unpublished descriptor stays honest: no desktop download is offered until a verified ZIP exists.
-export async function serveDesktopDownload(request: Request, env: Env, publication: unknown): Promise<Response> {
+export async function serveDesktopDownload(request: Request, env: Env, publication: unknown, kind: 'update' | 'install' = 'update'): Promise<Response> {
     const response = request.method !== 'GET' && request.method !== 'HEAD'
         ? new Response('Method not allowed', { status: 405, headers: { Allow: 'GET, HEAD' } })
-        : await createDesktopDownloadResponse(request, env, publication);
-    if (new URL(request.url).pathname === '/downloads/desktop-beta.json') {
+        : await createDesktopDownloadResponse(request, env, publication, kind);
+    if (new URL(request.url).pathname === '/downloads/desktop-beta.json'
+        || new URL(request.url).pathname === '/downloads/desktop-install-beta.json') {
         // This public, credential-free feed is also read by the packaged Tauri WebView.
         response.headers.set('Access-Control-Allow-Origin', '*');
     }
     return response;
 }
 
-async function createDesktopDownloadResponse(request: Request, env: Env, publication: unknown): Promise<Response> {
+export function serveDesktopInstallDownload(request: Request, env: Env, publication: unknown): Promise<Response> {
+    return serveDesktopDownload(request, env, publication, 'install');
+}
+
+async function createDesktopDownloadResponse(request: Request, env: Env, publication: unknown, kind: 'update' | 'install'): Promise<Response> {
     const payload = publication && typeof publication === 'object'
         ? (publication as Record<string, unknown>).release : null;
-    const desktop = parseDesktopRelease(payload);
+    const desktop = kind === 'install' ? parseDesktopInstallRelease(payload) : parseDesktopRelease(payload);
+    const feedPath = kind === 'install' ? '/downloads/desktop-install-beta.json' : '/downloads/desktop-beta.json';
     const pathname = new URL(request.url).pathname;
     if (!desktop) return payload === null
-        ? new Response('Desktop update not published', { status: 404, headers: { 'Cache-Control': 'no-store' } })
+        ? new Response(`Desktop ${kind} not published`, { status: 404, headers: { 'Cache-Control': 'no-store' } })
         : notPrepared();
     const downloadPath = new URL(desktop.downloadUrl).pathname;
-    if (pathname !== '/downloads/desktop-beta.json' && pathname !== downloadPath) {
+    if (pathname !== feedPath && pathname !== downloadPath) {
         return new Response('Not found', { status: 404 });
     }
     try {
         const object = await env.RELEASES.head(downloadPath.slice('/downloads/'.length));
         if (!object || object.size !== desktop.bytes || object.customMetadata?.sha256 !== desktop.sha256) return notPrepared();
-        if (pathname === '/downloads/desktop-beta.json') {
+        if (pathname === feedPath) {
             return new Response(request.method === 'HEAD' ? null : JSON.stringify(payload), {
                 headers: {
                     'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
@@ -112,6 +120,9 @@ export default {
     async fetch(request, env): Promise<Response> {
         const pathname = new URL(request.url).pathname;
         if (!pathname.startsWith('/downloads/')) return env.ASSETS.fetch(request);
+        if (pathname === '/downloads/desktop-install-beta.json' || pathname.startsWith('/downloads/lmo_audio_install_')) {
+            return serveDesktopInstallDownload(request, env, desktopInstallPublication);
+        }
         if (pathname === '/downloads/desktop-beta.json' || pathname.startsWith('/downloads/lmo_audio_update_')) {
             return serveDesktopDownload(request, env, desktopPublication);
         }

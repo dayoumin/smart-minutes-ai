@@ -21,7 +21,7 @@ await test('all frontend HTTP transports stay within explicit engine and public-
     ['localEngineClient.ts', 1], // The native fetch adapter.
     ['localEngineClientCore.ts', 1], // The injected common transport.
     ['localEngineRelease.ts', 1], // Public same-origin release metadata; no engine/session credentials.
-    ['desktopRelease.ts', 1], // Public desktop release metadata; fixed origin, no credentials.
+    ['desktopRelease.ts', 2], // Public update/install metadata; fixed origin, no credentials.
   ]);
   const found = new Map();
   const files = [...sourceFiles(src), new URL('../public/local-audio-worker.js', import.meta.url)];
@@ -42,7 +42,7 @@ await test('all frontend HTTP transports stay within explicit engine and public-
             assert.equal(url.head.text, '');
             assert.equal(url.templateSpans.length, 1);
             assert.equal(url.templateSpans[0].expression.getText(tree), 'DESKTOP_RELEASE_ORIGIN');
-            assert.equal(url.templateSpans[0].literal.text, '/downloads/desktop-beta.json');
+            assert.ok(['/downloads/desktop-beta.json', '/downloads/desktop-install-beta.json'].includes(url.templateSpans[0].literal.text));
           }
           assert.ok(ts.isObjectLiteralExpression(options));
           for (const prop of options.properties) {

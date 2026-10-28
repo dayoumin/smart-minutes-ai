@@ -3,10 +3,10 @@
     "schemaVersion": 1,
     "type": "portable-install",
     "origin": "https://barorok.ecomarin.workers.dev",
-    "commit": "9b5f6574edbc52baec9acbc9ab51531665e4733d",
-    "generatedAt": "2026-10-27T15:29:44.1527604+09:00",
-    "downloadPath": "/downloads/lmo_audio_install_9b5f6574edbc52baec9acbc9ab51531665e4733d.zip",
-    "bytes": 463054544,
-    "sha256": "9404d4b33647af3e637380216c0f80f8fd6d21df3ea158f755bb70538cf99b6c"
+    "commit": "21f76bb3f6677d4292f63ab03d92a99513f67763",
+    "generatedAt": "2026-10-28T12:52:22.1199775+09:00",
+    "downloadPath": "/downloads/lmo_audio_install_21f76bb3f6677d4292f63ab03d92a99513f67763.zip",
+    "bytes": 463106588,
+    "sha256": "5c7cf853e6e6e72a8bbbda3e80999c323d6adc4a415967b2e8bd757d4a3ec634"
   }
 }

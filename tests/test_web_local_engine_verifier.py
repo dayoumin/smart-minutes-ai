@@ -10,13 +10,182 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 import verify_web_local_engine_poc as verifier  # noqa: E402
 import verify_installer_target_preflight_source as source_verifier  # noqa: E402
+from local_engine_browser_approval import BrowserApprovalCoordinator  # noqa: E402
+from local_engine_security import LocalEngineSessionStore, PairingRateLimitError, PairingRejectedError  # noqa: E402
+
+
+class AutomaticBrowserVerifierTest(unittest.TestCase):
+    origin = "https://minutes.example"
+
+    def setUp(self) -> None:
+        self.directory = tempfile.TemporaryDirectory()
+        self.addCleanup(self.directory.cleanup)
+        self.data = Path(self.directory.name)
+        self.path = self.data / "config" / "browser-approvals.json"
+        self.sessions = LocalEngineSessionStore(ttl_seconds=60)
+        self.approvals = BrowserApprovalCoordinator(self.sessions)
+        self.approvals.configure(self.path, self.origin, lambda _origin: True)
+
+    def request(self, path, *, origin, method="GET", payload=None, token=None, **_kwargs):
+        if origin != self.origin:
+            return 403, {}
+        payload = payload or {}
+        if path == "/api/probe":
+            return 200, {"pairing_available": True, "pairing_mode": "browser-connection"}
+        if path == "/api/health":
+            return (200, {"ok": True}) if self.sessions.validate(token or "", origin=origin) else (401, {})
+        try:
+            if path == "/api/pair/start" and payload.get("mode") == "browser-connection":
+                return 200, self.approvals.start(origin, payload.get("browser_token", ""))
+            if path == "/api/pair/complete" and payload.get("mode") == "browser-connection":
+                result = self.approvals.complete(payload.get("pairing_id", ""), origin)
+                return (200, result) if result else (202, {"pending": True})
+            if path == "/api/pair/restore":
+                return 200, self.approvals.restore(payload.get("browser_token", ""), origin)
+            if path == "/api/pair/forget":
+                self.approvals.revoke(payload.get("browser_token", ""), origin)
+                return 200, {"revoked": True}
+        except PairingRateLimitError:
+            return 429, {}
+        except PairingRejectedError:
+            return (403 if path in ("/api/pair/start", "/api/pair/complete") else 401), {}
+        raise AssertionError(f"Unexpected verifier request: {method} {path}")
+
+    def connect(self):
+        with patch.object(verifier, "request_json", side_effect=self.request):
+            return verifier.exercise_browser_connection(self.origin, self.data)
+
+    def test_automatic_connection_restart_restore_and_revoke_use_real_coordinator(self) -> None:
+        browser_token, tokens = self.connect()
+        self.assertGreaterEqual(len(tokens), 1)
+        self.assertLessEqual(len(tokens), 5)
+        self.assertNotIn(browser_token, self.path.read_text())
+        self.sessions = LocalEngineSessionStore(ttl_seconds=60)
+        self.approvals = BrowserApprovalCoordinator(self.sessions)
+        self.approvals.configure(self.path, self.origin, lambda _origin: self.fail("Unexpected new approval"))
+        with patch.object(verifier, "request_json", side_effect=self.request):
+            verifier.exercise_browser_restoration(self.origin, self.data, browser_token, tokens)
+        self.assertEqual(json.loads(self.path.read_text())["grants"], {})
+
+    def test_automatic_verifier_rejects_foreign_origin_access(self) -> None:
+        def insecure(path, **kwargs):
+            if kwargs["origin"] != self.origin:
+                return 200, {}
+            return self.request(path, **kwargs)
+        with patch.object(verifier, "request_json", side_effect=insecure), self.assertRaisesRegex(RuntimeError, "origin"):
+            verifier.exercise_browser_connection(self.origin, self.data)
+
+    def test_automatic_verifier_rejects_reusable_connection_requests(self) -> None:
+        consumed = {}
+        def replayable(path, **kwargs):
+            status, body = self.request(path, **kwargs)
+            if path == "/api/pair/complete" and kwargs["origin"] == self.origin:
+                pairing_id = kwargs["payload"]["pairing_id"]
+                if status == 200:
+                    consumed[pairing_id] = body
+                elif status == 403 and pairing_id in consumed:
+                    return 200, consumed[pairing_id]
+            return status, body
+        with patch.object(verifier, "request_json", side_effect=replayable), self.assertRaisesRegex(RuntimeError, "reused"):
+            verifier.exercise_browser_connection(self.origin, self.data)
+
+    def test_automatic_verifier_rejects_raw_persisted_credentials(self) -> None:
+        def leaking(path, **kwargs):
+            status, body = self.request(path, **kwargs)
+            if status == 200 and path == "/api/pair/complete":
+                (self.data / "engine.log").write_text(body["session_token"])
+            return status, body
+        with patch.object(verifier, "request_json", side_effect=leaking), self.assertRaisesRegex(RuntimeError, "secret"):
+            verifier.exercise_browser_connection(self.origin, self.data)
+
+    def test_automatic_verifier_rejects_expired_session_metadata(self) -> None:
+        def expired(path, **kwargs):
+            status, body = self.request(path, **kwargs)
+            if status == 200 and path == "/api/pair/complete":
+                body = {**body, "expires_at": 0}
+            return status, body
+        with patch.object(verifier, "request_json", side_effect=expired), self.assertRaisesRegex(RuntimeError, "expiry"):
+            verifier.exercise_browser_connection(self.origin, self.data)
+
+    def test_automatic_verifier_rejects_unbounded_concurrent_starts(self) -> None:
+        def unlimited(path, **kwargs):
+            if path == "/api/pair/start" and kwargs["origin"] == self.origin:
+                return 200, {"mode": "browser-connection", "pairing_id": "unbounded", "expires_in_seconds": 120}
+            return self.request(path, **kwargs)
+        with patch.object(verifier, "request_json", side_effect=unlimited), self.assertRaisesRegex(RuntimeError, "request limit"):
+            verifier.exercise_browser_connection(self.origin, self.data)
+
+    def test_restoration_rejects_revocation_that_keeps_a_live_session(self) -> None:
+        browser_token, tokens = self.connect()
+        self.sessions = LocalEngineSessionStore(ttl_seconds=60)
+        self.approvals = BrowserApprovalCoordinator(self.sessions)
+        self.approvals.configure(self.path, self.origin, lambda _origin: True)
+        def ineffective_forget(path, **kwargs):
+            if path == "/api/pair/forget" and kwargs["origin"] == self.origin:
+                return 200, {"revoked": True}
+            return self.request(path, **kwargs)
+        with patch.object(verifier, "request_json", side_effect=ineffective_forget), self.assertRaisesRegex(RuntimeError, "invalidated"):
+            verifier.exercise_browser_restoration(self.origin, self.data, browser_token, tokens)
+
+    def test_restoration_rejects_revocation_of_only_the_last_session(self) -> None:
+        browser_token, tokens = self.connect()
+        self.sessions = LocalEngineSessionStore(ttl_seconds=60)
+        self.approvals = BrowserApprovalCoordinator(self.sessions)
+        self.approvals.configure(self.path, self.origin, lambda _origin: True)
+        restored = []
+        def partial_forget(path, **kwargs):
+            if path == "/api/pair/forget" and kwargs["origin"] == self.origin:
+                self.sessions.revoke(restored[-1])
+                return 200, {"revoked": True}
+            status, body = self.request(path, **kwargs)
+            if status == 200 and path == "/api/pair/restore":
+                restored.append(body["session_token"])
+            return status, body
+        with patch.object(verifier, "request_json", side_effect=partial_forget), self.assertRaisesRegex(RuntimeError, "invalidated"):
+            verifier.exercise_browser_restoration(self.origin, self.data, browser_token, tokens)
+        self.assertEqual(len(restored), 2)
+
+    def test_completion_poll_has_a_deadline(self) -> None:
+        with patch.object(verifier, "request_json", return_value=(202, {"pending": True})), self.assertRaisesRegex(RuntimeError, "timed out"):
+            verifier.wait_for_browser_credential(self.origin, "test-request", timeout=0.01)
+
+    def test_optional_expiry_checks_current_mode_without_a_long_sleep(self) -> None:
+        def request(path, **kwargs):
+            self.assertEqual(kwargs["payload"]["mode"], "browser-connection")
+            if path == "/api/pair/start":
+                return 200, {"mode": "browser-connection", "pairing_id": "expiring", "expires_in_seconds": 1}
+            return 403, {}
+        with patch.object(verifier, "request_json", side_effect=request), patch.object(verifier.time, "sleep") as sleep:
+            verifier.exercise_expired_browser_challenge(self.origin, self.data)
+        self.assertTrue(sleep.called)
+        self.assertTrue(all(call.args[0] <= 5 for call in sleep.call_args_list))
 
 
 class WebLocalEngineVerifierTest(unittest.TestCase):
+    def test_live_engine_port_is_refused_before_starting_or_stopping_any_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            artifact = Path(temp_dir) / "artifact"
+            executable = artifact / "engine" / verifier.ENGINE_EXE_NAME
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"fixture")
+            arguments = MagicMock(artifact=artifact, manifest_only=False)
+            with (
+                patch.object(verifier, "parse_arguments", return_value=arguments),
+                patch.object(verifier, "verify_manifest", return_value=({}, {})),
+                patch.object(verifier, "listener_rows", return_value=["existing listener"]),
+                patch.object(verifier, "start_process") as start,
+                patch.object(verifier, "stop_engine") as stop,
+                self.assertRaisesRegex(RuntimeError, "already occupied"),
+            ):
+                verifier.run()
+            start.assert_not_called()
+            stop.assert_not_called()
+
     def test_directory_rename_retries_a_transient_windows_access_denial(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             source = Path(temp_dir) / "source"

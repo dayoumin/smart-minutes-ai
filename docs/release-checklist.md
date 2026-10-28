@@ -10,6 +10,24 @@
 
 6-1절은 웹·설치형 엔진·데스크톱의 공통 데이터 안전 기준이다. 7절의 빌드·패키지 명령은 Tauri portable용이며 웹 배포나 설치형 엔진 제작 명령으로 대신 사용하지 않는다. 아래 날짜별 결과의 버전·환경·미확인 범위를 확인한 뒤 현재 후보를 판정한다.
 
+## 데스크톱 두 패키지 공개 다운로드 갱신 — 2026-10-28
+
+후속 사용자 요청으로 검증된21f76bb3의 두 ZIP을 그대로 공개했다. 첫 푸시는 이번3커밋 외 선행11개를 포함한14개 범위가 불명확해 자동 승인 검토에서 거절됐으며, 사용자에게14개 전체·이번 공개 후속 커밋·배포 태그의 명시적 승인을 받은 뒤 진행했다. 실제 pre-push 훅 통과 후 `main`을4dd24980까지 보냈고, 아래 데스크톱 공개 정보2파일만 바꾼 `44621e52124b2e2ac8dc88b3648cbe8be79d3936`도 푸시했다. 웹 화면·설치형 엔진을 새로 빌드하거나 사용자 PC에 업데이트를 적용하지 않았다.
+
+| 현재 공개 대상 | 파일·검증 |
+| --- | --- |
+| 신규 설치 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_install_21f76bb3f6677d4292f63ab03d92a99513f67763.zip),463,106,588bytes. SHA256 `5c7cf853e6e6e72a8bbbda3e80999c323d6adc4a415967b2e8bd757d4a3ec634`. 기본 설정·화자 구분 모델 포함, Whisper·Ollama 실행 파일·요약 모델 별도 준비. |
+| 업데이트 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_update_21f76bb3f6677d4292f63ab03d92a99513f67763.zip),432,065,205bytes. SHA256 `bbca257b7c40f3f863ae89058393fa144596c506bd7ca53da2fe465d6b0c825b`. 기존 설정·기록·모델·runtime를 교체하는 파일은 제외했다. |
+| 공개 정보 | `/downloads/desktop-install-beta.json`·`/downloads/desktop-beta.json`이 각각 portable-install/update와빌드21f76bb3, `2026-10-28T12:52:22.1199775+09:00`, 각 파일 경로·bytes·SHA를 반환한다. 업로드 시각이나 Worker 커밋으로 빌드 값을 바꾸지 않았다. |
+| R2·실제 공개 다운로드 | 정확한 새2키만 전송하고 원격 전체895,171,793bytes·SHA·MIME/첨부 메타데이터를 대조했다. 실제 공개 HTTPS에서도 두 ZIP 전체를 별도로 다시 내려받아 같은 크기/SHA를 확인했다. HEAD·206 Range/원본 앞64bytes·잘못된 범위416·PUT405·미등록404 통과. 기존 데스크톱 파일 URL의404 정책은 그대로이며 이전 R2 객체는 삭제하지 않았다. |
+| Worker·웹/엔진 보존 | 문서화된 `corepack pnpm --dir deploy/cloudflare run deploy --config ...` 경로로 Worker `9499459a-3139-4c1b-b2f3-760af0b3c6b6` 배포. 배포 전 실제 공개10파일을 저장·해시 고정했고 Wrangler도 `No updated asset files to upload`를 확인했다. 공개 후10자산 SHA와엔진0.1.13 정보가 모두 동일하다. 복원 기준은기존 `abbea4dc-1145-4860-8d47-b6d7ac7d96a3`와보관한기존2JSON/자산이다. |
+| 전송 도구·자격 정보 정리 | 4시간·두ZIP키·크기·SHA만허용한임시Worker `barorok-desktop-upload-20261028-709230c0`를전송후삭제하고endpoint404를확인했다. 로컬bearer·서명설정·세션·생성bundle도제거했으며완료객체는유지했다. 조각전송의ECONNRESET1회는동일조각의허용된재시도로복구했고전체해시를통과했다. |
+| Git·배포 태그 | 공개 소스44621e52에annotated `prod-2026-10-28.1`을남겨푸시했다. 실제hook검사의타입·Node18·백엔드35와신규태그의hook회귀21도통과했다. GitHub Actions조회에서는이번push로시작된자동실행이없으며기존manual/dynamic성공이력과구분한다. |
+
+전송 소스는 이전 검토본의 지정한 7파일만 복사하고 작업 경로·날짜·정확한 2객체 승인 목록을 고정했다. 자격 정보나 이전 세션은 복사하지 않았다. 합성 전송 13검사, 다운로드 HTTP 계약, 데스크톱 공개 정보 5검사, Worker 타입, dry-run과 독립 배포 전 검토를 통과했다. 공개 Worker 코드·설정·공유 파서는 이전 공개 소스 0139ed5d 이후 차이가 없고 새 공개 커밋은 두 descriptor 값만 바꿨다. 이미 공개된 10파일의 동일 바이트를 사용했다.
+
+근거는 `.tmp/desktop-public-20261028/final-report.json`, `public-verification.json`, `deployment-source.json`, `uploader-cleanup.json`, `transfer/upload-verification.json`과 각 단계 로그다. 로컬 21f 패키지 실물 검증·54파일 보존과 이전 34db 실제 적용·분석·재시작 기록은 아래 해당 절을 따른다. 이번 공개 ZIP의 실제 updater 적용·새 GUI 실행·다른 PC·NSIS·첫 모델 검사를 새로 통과한 것으로 세지 않으며 기존 QA 대기를 유지한다. 최종 독립 agent 검토에서도 공개 파일·태그·웹/엔진 보존·업로더 정리의 증거가 일치했고 새 P1/P2는 없었다.
+
 ## 최신 병합본 빌드·로컬 실제 업데이트·자료 보존 — 2026-10-28
 
 사용자 요청으로 자동 연결 검증 도구·업데이트 해시 탐색 개선·검증 문서를 `a418a3c8`, `ef2e0820`, `34dbf4df`로 커밋하고, 병합본 `b80a8ddd`를 포함한 clean `34dbf4df9325308474ad842d668ef464040dacae`에서 전체 빌드했다. 아래는 로컬 패키지와 기존 전용 QA 설치본의 결과다. 공개 다운로드는 기존9b를 유지하며 push·업로드·웹/설치형 엔진 배포는 수행하지 않았다.

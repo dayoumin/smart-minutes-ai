@@ -25,7 +25,7 @@
 
 증거 소유 경로는 `.tmp/merged-desktop-20261028`의 `final-report.json`, `artifacts.json`과 위 보고서다. 첫 빌드는 조용한 구간을 정체로 판단해 너무 일찍 중단했으나 종료 후 로그에서는 분석 진행이 확인됐다. 프로젝트 전용 `PYINSTALLER_CONFIG_DIR`로 같은 전체 빌드를 다시 실행해 통과했다. 패키징 중 TorchCodec hook의 DLL/자식 종료 경고는 남았으며, 이번 STT·내보내기 성공을 화자 구분 추론 검증으로 확대하지 않는다. 앱 검증 드라이버도 최초에는 `applied.json` 생성 전에 호출돼 앱 실행 전 중단됐고, 자료 대조 완료 뒤 재실행한 성공 증거를 사용한다. 실제 사용자 설치본/NSIS·Windows 재부팅·다른 PC·첫 모델 받기·요약/화자 구분 추론은 기존 QA 대기를 유지한다.
 
-동시 작업 구분: 전체 빌드는11:07종료했고, 다른 세션이11:09:41에 다섯 portable 배포 스크립트와 새 회귀 검사를 수정했다. 업데이트 패키지 생성은 그 전에 시작했으며 신규 설치 ZIP 생성은 그 뒤에 실행했다. 실제 앱/엔진 payload는34db의 clean manifest와 전체 SHA로 확인했다. 신규 설치 ZIP 생성 도구에는 당시 미커밋 `create_handoff_package.ps1` 변경이 사용됐으므로, 이 결과를 다섯 스크립트 전체가 커밋된 소스의 재빌드 검증으로 세지 않는다. 해당 후속은 아래 기존 행에 유지한다.
+동시 작업 구분: 전체 빌드는11:07종료했고, 다른 세션이11:09:41에 다섯 portable 배포 스크립트와 새 회귀 검사를 수정했다. 업데이트 패키지 생성은 그 전에 시작했으며 신규 설치 ZIP 생성은 그 뒤에 실행했다. 실제 앱/엔진 payload는34db의 clean manifest와 전체 SHA로 확인했다. 신규 설치 ZIP 생성 도구에는 당시 미커밋 `create_handoff_package.ps1` 변경이 사용됐으므로, 이 결과를 다섯 스크립트 전체가 커밋된 소스의 재빌드 검증으로 세지 않는다. 당시 남긴 후속은 아래21f76bb3의 커밋 후 재사용 실물 검증으로 완료했다.
 
 ## 업데이트 검증의 반복 해시 기능 탐색 개선 — 2026-10-28
 
@@ -37,7 +37,7 @@
 | 실제 스크립트 진입점 | 임시 fixture의 updater 적용·별도 verifier를 실행해 정상 동작 및 같은 크기의 대상/패키지 내용 변조와 패키지 크기 불일치를 거부했다. 원본 사용자 파일·config·모델 등 기존 보존 회귀도 유지하며 관련 단일 모듈18/18 통과. 실행 Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14, `-B -X utf8 -m unittest tests.test_update_package_scripts`다. |
 | 명령 미탐지 비교 | 전용 Windows PowerShell 자식에서 Utility 모듈을 제거하고 자동 로딩을 꺼 실제 `Get-FileHash` 미탐지를 확인했다. 양쪽 같은128파일×64KiB×3회 순회(384회 해시 호출·24MiB 입력), 구/신 순서를 교대한3쌍 비교의 중앙값21.94초→0.52초. 준비 탐색은384회→1회, 모든 반환 SHA는 기준과 일치했다. 실제 OS 읽기 횟수를 별도 측정하거나 공개4,915파일/약3.4GB 전체를 실행한 결과는 아니다. |
 | 정상 명령·독립 검토 | 명령을 사용할 수 있는 자식에서도384회 해시 결과 일치와 탐색1회를 확인했다. 독립 agent가 실패 처리·실행 범위 초기화·별도 verifier 프로세스·파일 해시값을 저장하지 않는 점·검증 루프/패키지 호환성을 검토했고 새 확정 P1/P2 없음. |
-| 실물 후속 | **updater/verifier 완료, 다섯 추가 배포 스크립트의 clean 전체 실행은 대기. 마지막 확인2026-10-28, 담당: 다음 릴리스 개발/QA.** 위34db실제 로컬 ZIP의 updater/verifier는 검증 생략 없이exit0·376.516초·기록/설정/모델·재시작 보존을 확인했다. Windows PowerShell 모듈 경로를 명시해 명령 탐색이 가능한 환경이며, 과거 명령 미탐지 조건 전체의 동일 시간 비교나 일반 PC 속도 보장은 아니다. 동시 수정된 다섯 스크립트는 커밋 후 해당 경로의 패키지 생성·portable 검증·시간·자료 보존으로 닫는다. 기존 공개 ZIP·운영 메타데이터·사용자 설치본은 변경하지 않았다. |
+| 실물 후속 | **완료, 마지막 확인2026-10-28.** updater/verifier는 위34db 실제 적용376.516초·자료/재시작 보존을 확인했다. 추가 다섯 스크립트도 커밋 후 clean21f76bb3에서 재컴파일 없이 모두 실물 실행·패키지 재생성·CRC/SHA·54파일 보존을 통과했다. 명령 미탐지의 실제 portable 전체 검증80.948초·탐색1회도 확인했다. 단계별 시간·범위는 아래 「커밋 후 실물 검증·패키지 재생성」을 따른다. 과거 전체 업데이트600초 한도나 모든 PC 속도를 보장하지 않으며 공개 ZIP·운영 메타데이터는 변경하지 않았다. |
 
 비교 스크립트·수정 전 원본·`benchmark.json`과 `tests.log`는 `.tmp/update-hash-speed-20261028`에 보존했다. updater/verifier의 변경 커밋·로컬 패키지·전용 QA 설치본 실물 후속은 위 기록을 따른다. 다섯 추가 스크립트의 후속과 구분하며 push·공개 배포는 수행하지 않았다. 반복 해시 계산 자체나 안전 검사를 생략하는 최적화는 이 변경에 포함하지 않는다.
 
@@ -71,7 +71,34 @@
 
 수정 전에는 신규3검사의15조건 모두 반복 탐색 횟수로 실패했고, 수정 후에는15조건이 통과했다. 실제 저장소에 적용한 뒤에도 새 해시 선택3검사, 기존 portable 보존/손상/배포 완료8검사, 기존 업데이트 생성/적용/자료 보존4검사로 집중15/15 통과했다. 없는 파일의 지연 탐색·실행 범위 초기화·같은 크기의 내용 변경·파일 잠금과 해제·명령 실행 실패·해시 대소문자·LiteralPath를 포함한다. 수정된 스크립트가 격리 사본과 정확히 같음과 PowerShell 문법·diff 검사도 확인했다. 최종 독립 agent 검토에서 새 확정 P1/P2 없음. 기존 빌드33832와 뒤이은 업데이트 패키지 생성38992의 종료 및 관련 실행0개를 확인한 뒤 원본을 반영했다. 이 작업에서 기존 빌드의 성공 여부를 별도 판정하거나 원래 프로세스를 중단하지 않았다. 전후 원본·계측/시험 도구·JSON·로그는 `.tmp/portable-hash-speed-20261028`에 보존한다. Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14와 `-B -X utf8`를 사용했다. 실제 설치본·기존 ZIP·공개 메타데이터는 이 작업에서 변경하지 않는다.
 
-실물 후속은 위 표의 기존 「실물 후속」 행과 `todo.md`의 「업데이트 검증의 해시 기능 탐색 비용 줄이기」에서 이어간다. 통제된 시험 결과만으로 기존600초 검증 한도 문제의 해소나 실제 전체 빌드 시간 개선을 판정하지 않는다. 이번 요청은 추가 커밋·push·배포를 포함하지 않는다.
+이 단계에서 남긴 실물 후속은 아래 「커밋 후 실물 검증·패키지 재생성」과 기존 `todo.md` 항목에서 완료했다. 통제된 시험 결과만으로 기존600초 검증 한도 문제의 해소나 실제 전체 빌드 시간 개선을 판정하지 않는다. 이번 요청은 추가 커밋·push·배포를 포함하지 않는다.
+
+### 커밋 후 실물 검증·패키지 재생성 — 2026-10-28
+
+후속 사용자 승인으로 코드/회귀 검사를 `dbdf0942`, 앞선 검토·측정 문서를 `21f76bb3`로 커밋했다. clean 소스 `21f76bb3f6677d4292f63ab03d92a99513f67763`에서 `corepack pnpm build -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache`를 실행했다. 앱·sidecar는 재컴파일하지 않았고 WebView 캐시도 지우지 않았다. 이전 `34dbf4df` 이후 앱/백엔드 소스 차이가 없고 재사용할 바이너리4,888파일이 기존 빌드 목록과 일치함을 먼저 확인했다. 아래 결과는 로컬 portable 폴더와 두 새 ZIP의 검증이며 공개 ZIP·운영 웹·설치형 엔진은 갱신하지 않았다.
+
+| 실제 실행 경로 | 결과·전체 프로세스 시간 |
+| --- | --- |
+| `release_portable.ps1` + 두 `verify_portable.ps1` | `corepack pnpm build`의 두 skip 옵션으로650.999초·exit0. 재포장/새 manifest 작성·중간 실제 frozen 엔진 health/settings/models/내보내기 smoke·설치 폴더 읽기 전용 무결성 전부 PASS. commit=`21f76bb3...`, dirty=false, 프로그램 목록4,917개. |
+| 실제 설치 폴더의 명령 미탐지 대체 경로 |80.948초·exit0. Windows PowerShell에서 Utility 함수 `Get-FileHash`만 제거하고 자동 로딩을 꺼 미탐지를 확인한 뒤 실제 `verify_portable.ps1 -ExistingInstallation` 전체를 실행했다. SHA/자료 검사는 생략하지 않았고 계측한 탐색은정확히1회다. |
+| `diagnose_portable.ps1` | `corepack pnpm diagnose:portable`,4.569초·exit0. 주요 파일·모델 표식 PASS, 기존 개인 설정은 `user settings differ from build default`로 정상 인정했다. |
+| `create_update_package.ps1` | `corepack pnpm package:update`,202.405초·exit0. 업데이트 폴더 생성·원본/복사본 SHA 대조 포함이며 ZIP 압축·독립 ZIP 검사 시간은 포함하지 않는다. |
+| `create_handoff_package.ps1` | `corepack pnpm package:handoff`,253.408초·exit0. 기본 설정·정한 모델·staging 검증·신규 설치 ZIP 생성/자체 검수 포함이며 이후 독립 ZIP 대조는 별도다. |
+
+위 시간은 각 PowerShell/Corepack 프로세스의 시작·준비·실행·종료 전체이며, 앞선 함수32회 부분 측정의 전후 비교와 다른 실물 단회 관측이다. 일반 실행에는 이전 실물 QA와 같은 Windows 기본 `PSModulePath`를 명시했고, 별도 미탐지 검사는 통제된 별도 자식이다. 과거 Python→PowerShell의 전체 업데이트600초 한도나 모든 PC 속도를 보장하는 값으로 확대하지 않는다. 업데이트 ZIP의 최초 압축 단독 시간은 초기 검사 도구 중단으로 저장되지 않아 미계측으로 남겼고 파일 시각으로 대체하지 않았다. 보완 후 재검사는 이미 CRC/SHA가 확인된 동일 업데이트 후보를 SHA로 확인해 재사용한17.373초이며 전체 ZIP 생성 시간과 구분한다.
+
+| 산출물 | 크기·검증 |
+| --- | --- |
+| 업데이트 패키지 ZIP `releases/updates/lmo_audio_update_21f76bb3f6677d4292f63ab03d92a99513f67763.zip` |432,065,205bytes. SHA256 `bbca257b7c40f3f863ae89058393fa144596c506bd7ca53da2fe465d6b0c825b`.4,921항목 CRC·4,916 payload 파일 크기/SHA·빌드 목록과 교차 대조 통과. updater/verifier/자료 안전 도우미는 커밋된 원본과 일치하고 설정·모델·runtime·기록은 제외했다. |
+| 신규 설치 패키지 ZIP `releases/handoff/lmo_audio_no_ollama_no_whisper_21f76bb.zip` |463,106,588bytes. SHA256 `5c7cf853e6e6e72a8bbbda3e80999c323d6adc4a415967b2e8bd757d4a3ec634`.4,932항목 CRC·4,917 프로그램 파일 크기/SHA·HEAD 기본 설정·화자 구분 모델 원본 SHA 통과. Whisper·Ollama 실행 파일·요약 모델과 개인 자료는 제외했다. |
+
+독립 ZIP 대조는 압축 파일의 모든 파일 내용을 읽어 CRC와 SHA를 확인하고 빌드/패키지 목록과 비교했다. 이전34db빌드와 안내문 `START_HERE.txt` 외 불변 프로그램4,916파일이 일치하며 앱·sidecar 실행 파일도 작업 전 SHA와 같다. 신규 설치 ZIP의 `models/README.txt`를 검사 도구 허용 목록에서 빠뜨린1건은 제품 결함과 구분했다. 커밋된 생성 템플릿과 안내문 바이트까지 확인하도록 검사 도구만 보완하고 두 ZIP을 재검사했다. 검증을 마친 업데이트 후보만 최종 ZIP 경로로 옮겼고 이전 패키지는 보존했다.
+
+보존 대상은 실제 설치 폴더의 설정·기록·사용자 파일·모델·runtime와 원래 WebView 저장소의54파일(3,126,559,085bytes)이며 전후 SHA가 모두 동일하고 추가/누락0이다. 검증 소유 앱·sidecar0개,17864 listener0을 확인했다. 이번에는 ZIP의 실제 updater 적용·새 GUI 분석·새 ZIP 첫 실행을 반복하지 않았다. 이전34db의 실제 적용/분석/재시작 증거와 현재 비트 동일성·배포 스크립트 검증을 구분하며, 다른 PC·첫 모델·NSIS·요약/화자 구분 추론의 기존 QA 대기는 유지한다.
+
+근거는 `.tmp/portable-hash-release-20261028/final-report.json`, `artifacts.json`, `reuse-before.json`, `protected-before.json`, `preservation-after.json`, `cleanup.json`과 각 단계 JSON/log다. Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14(`-B -X utf8`)다. 패키지 기준 커밋은21f76bb3이며 이후 검증 결과 문서만 별도 커밋한다. 이 문서 커밋은 프로그램·패키지 내용 변경이나 재컴파일을 뜻하지 않는다. push·공개 업로드·웹/설치형 엔진 배포는 하지 않았다.
+
+최종 독립 agent가 산출물 출처·실행 파일 재사용·시간 범위·ZIP 대조·자료 보존·정리 증거와 이번 미실행 범위의 표현을 읽기 전용으로 확인했고 새 확정 P1/P2는 없었다.
 
 ## 설치형 엔진 검증 도구의 자동 연결 계약 갱신 — 2026-10-28
 

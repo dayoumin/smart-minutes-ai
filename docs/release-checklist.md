@@ -10,6 +10,23 @@
 
 6-1절은 웹·설치형 엔진·데스크톱의 공통 데이터 안전 기준이다. 7절의 빌드·패키지 명령은 Tauri portable용이며 웹 배포나 설치형 엔진 제작 명령으로 대신 사용하지 않는다. 아래 날짜별 결과의 버전·환경·미확인 범위를 확인한 뒤 현재 후보를 판정한다.
 
+## 최신 병합본 빌드·로컬 실제 업데이트·자료 보존 — 2026-10-28
+
+사용자 요청으로 자동 연결 검증 도구·업데이트 해시 탐색 개선·검증 문서를 `a418a3c8`, `ef2e0820`, `34dbf4df`로 커밋하고, 병합본 `b80a8ddd`를 포함한 clean `34dbf4df9325308474ad842d668ef464040dacae`에서 전체 빌드했다. 아래는 로컬 패키지와 기존 전용 QA 설치본의 결과다. 공개 다운로드는 기존9b를 유지하며 push·업로드·웹/설치형 엔진 배포는 수행하지 않았다.
+
+| 확인 대상 | 결과·증거 |
+| --- | --- |
+| 전체 빌드 | 루트 `corepack pnpm build -NoClearWebViewCache` 종료0. sidecar·Tauri·배포 폴더를 재구성하고 clean manifest·전체 SHA·엔진 시작/상태·모델 준비·내보내기 smoke 통과. `-NoClearWebViewCache`로 기존 사용자 프로필을 유지했다. 실행 Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14, 사전 타입 검사·`test:runtime-boundary` 통과. |
+| 업데이트 패키지 ZIP | `corepack pnpm package:update` 후 `releases/updates/lmo_audio_update_34dbf4df9325308474ad842d668ef464040dacae.zip`, **432,065,207 bytes**, SHA-256 `145aee3b2aed1afd3f72327f6c56d29d6ee2aa4b30094ec3626083d565e91ad7`. 4,921항목 CRC 추출·4,916 payload 파일 크기/SHA 통과. 변경된 updater/verifier 포함, 기존 설정·기록·모델·runtime 제외. |
+| 신규 설치 패키지 ZIP | `corepack pnpm package:handoff`, `releases/handoff/lmo_audio_no_ollama_no_whisper_34dbf4d.zip`, **463,106,590 bytes**, SHA-256 `0536341ab957f75ec26b8a17fda01a31ea12cfa2565ebc9beabde1f0d93b409e`. 4,932항목 CRC 추출·4,917 프로그램 파일 크기/SHA·HEAD 기본 설정·사용자 자료 제외·화자 구분 모델 포함 확인. Whisper·Ollama 실행 파일·요약 모델은 별도 준비한다. 이번 신규 설치 ZIP의 실제 첫 실행은 미실행이다. |
+| 실제 업데이트 | 기존 전용9b설치본·기존 QA 프로필에 **로컬 ZIP의 실제 updater**로34db적용. 검증 생략 없이 updater/verifier 종료0, 실제 updater **376.516초**(ZIP 추출·별도 보호 자료 대조 제외). 적용 직후 설정·기록 파일·음성·모델·runtime 등 기준89파일 전체 SHA 동일. `runtime/{applied,data-after-apply}.json`, `runtime/actual-updater.log`. |
+| 실제 EXE·재시작 | 경로·backend17864·WebView9445 소유권과 실행 commit 확인. 기존4기록 전체 JSON·설정·TXT선호 유지. CPU로 새30초음성 분석122.854초·15구간·자동 저장 성공. 기존4개+새1개 모두 재생, 정상 종료·재시작 뒤5개 전체 JSON·설정·재생 유지. `runtime/{before,after,restart}.json`. 모의 응답·요청 가로채기는 사용하지 않았다. |
+| 최종 자료·종료 | 기준89파일 중88파일 SHA 동일, `backend/temp/analysis_eta_metrics.json`만 새 분석의 유효 처리시간 표본으로 변경. 별도 원본 보호56파일(실제 사용자 WebView 기록 포함)은 크기/SHA 모두 불변. 시험 앱·엔진·전용 WebView 프로세스0개,17864/9445해제·다른 세션 프로세스 종료 없음. `runtime/data-final.json`, `original-data-after.json`, `cleanup.json`. |
+
+증거 소유 경로는 `.tmp/merged-desktop-20261028`의 `final-report.json`, `artifacts.json`과 위 보고서다. 첫 빌드는 조용한 구간을 정체로 판단해 너무 일찍 중단했으나 종료 후 로그에서는 분석 진행이 확인됐다. 프로젝트 전용 `PYINSTALLER_CONFIG_DIR`로 같은 전체 빌드를 다시 실행해 통과했다. 패키징 중 TorchCodec hook의 DLL/자식 종료 경고는 남았으며, 이번 STT·내보내기 성공을 화자 구분 추론 검증으로 확대하지 않는다. 앱 검증 드라이버도 최초에는 `applied.json` 생성 전에 호출돼 앱 실행 전 중단됐고, 자료 대조 완료 뒤 재실행한 성공 증거를 사용한다. 실제 사용자 설치본/NSIS·Windows 재부팅·다른 PC·첫 모델 받기·요약/화자 구분 추론은 기존 QA 대기를 유지한다.
+
+동시 작업 구분: 전체 빌드는11:07종료했고, 다른 세션이11:09:41에 다섯 portable 배포 스크립트와 새 회귀 검사를 수정했다. 업데이트 패키지 생성은 그 전에 시작했으며 신규 설치 ZIP 생성은 그 뒤에 실행했다. 실제 앱/엔진 payload는34db의 clean manifest와 전체 SHA로 확인했다. 신규 설치 ZIP 생성 도구에는 당시 미커밋 `create_handoff_package.ps1` 변경이 사용됐으므로, 이 결과를 다섯 스크립트 전체가 커밋된 소스의 재빌드 검증으로 세지 않는다. 해당 후속은 아래 기존 행에 유지한다.
+
 ## 업데이트 검증의 반복 해시 기능 탐색 개선 — 2026-10-28
 
 `verify_update.ps1`·`update_lmo_audio.ps1`에서 파일마다 `Get-Command Get-FileHash`를 호출하던 준비 작업을 실행당 한 번으로 줄였다. 저장하는 것은 명령 사용 가능 여부/CommandInfo뿐이며 파일 경로·해시값·검사 결과는 저장하지 않는다. 파일이 바뀌거나 잠기면 각 호출이 다시 읽고 기존 방식으로 판정한다. 명령이 없거나 호출이 실패할 때의 .NET SHA256 대체 경로를 유지한다. 패키지/대상/manifest의 파일 목록·크기·SHA 검사, 변경 전 패키지 검증과 사용자 자료 보존 로직, 검증 실행 횟수·의존 파일은 변경하지 않았다.
@@ -20,9 +37,9 @@
 | 실제 스크립트 진입점 | 임시 fixture의 updater 적용·별도 verifier를 실행해 정상 동작 및 같은 크기의 대상/패키지 내용 변조와 패키지 크기 불일치를 거부했다. 원본 사용자 파일·config·모델 등 기존 보존 회귀도 유지하며 관련 단일 모듈18/18 통과. 실행 Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14, `-B -X utf8 -m unittest tests.test_update_package_scripts`다. |
 | 명령 미탐지 비교 | 전용 Windows PowerShell 자식에서 Utility 모듈을 제거하고 자동 로딩을 꺼 실제 `Get-FileHash` 미탐지를 확인했다. 양쪽 같은128파일×64KiB×3회 순회(384회 해시 호출·24MiB 입력), 구/신 순서를 교대한3쌍 비교의 중앙값21.94초→0.52초. 준비 탐색은384회→1회, 모든 반환 SHA는 기준과 일치했다. 실제 OS 읽기 횟수를 별도 측정하거나 공개4,915파일/약3.4GB 전체를 실행한 결과는 아니다. |
 | 정상 명령·독립 검토 | 명령을 사용할 수 있는 자식에서도384회 해시 결과 일치와 탐색1회를 확인했다. 독립 agent가 실패 처리·실행 범위 초기화·별도 verifier 프로세스·파일 해시값을 저장하지 않는 점·검증 루프/패키지 호환성을 검토했고 새 확정 P1/P2 없음. |
-| 실물 후속 | **대기, 마지막 확인2026-10-28.** 다음 clean 패키지에 바뀐 두 스크립트를 포함한 뒤 실제 업데이트 전체 시간·updater/verifier exit0·기록/설정/모델 보존을 확인한다. 이 증거로 닫으며, 통제된 함수 비교만으로 과거600초 드라이버 한도의 해소나 일반 PC 전체 업데이트 속도를 보장하지 않는다. 기존 공개 ZIP·운영 메타데이터·사용자 설치본은 변경하지 않았다. |
+| 실물 후속 | **updater/verifier 완료, 다섯 추가 배포 스크립트의 clean 전체 실행은 대기. 마지막 확인2026-10-28, 담당: 다음 릴리스 개발/QA.** 위34db실제 로컬 ZIP의 updater/verifier는 검증 생략 없이exit0·376.516초·기록/설정/모델·재시작 보존을 확인했다. Windows PowerShell 모듈 경로를 명시해 명령 탐색이 가능한 환경이며, 과거 명령 미탐지 조건 전체의 동일 시간 비교나 일반 PC 속도 보장은 아니다. 동시 수정된 다섯 스크립트는 커밋 후 해당 경로의 패키지 생성·portable 검증·시간·자료 보존으로 닫는다. 기존 공개 ZIP·운영 메타데이터·사용자 설치본은 변경하지 않았다. |
 
-비교 스크립트·수정 전 원본·`benchmark.json`과 `tests.log`는 `.tmp/update-hash-speed-20261028`에 보존했다. 공개 패키지 생성·실제 설치본 업데이트·커밋·push·운영 배포는 수행하지 않았다. 반복 해시 계산 자체나 안전 검사를 생략하는 최적화는 이 변경에 포함하지 않는다.
+비교 스크립트·수정 전 원본·`benchmark.json`과 `tests.log`는 `.tmp/update-hash-speed-20261028`에 보존했다. updater/verifier의 변경 커밋·로컬 패키지·전용 QA 설치본 실물 후속은 위 기록을 따른다. 다섯 추가 스크립트의 후속과 구분하며 push·공개 배포는 수행하지 않았다. 반복 해시 계산 자체나 안전 검사를 생략하는 최적화는 이 변경에 포함하지 않는다.
 
 ## 설치형 엔진 검증 도구의 자동 연결 계약 갱신 — 2026-10-28
 

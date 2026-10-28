@@ -8,6 +8,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:FileHashCommandResolved = $false
+$script:FileHashCommand = $null
 . (Join-Path $PSScriptRoot 'portable_data_safety.ps1')
 
 $RepoRoot = Resolve-Path (Join-Path $PSScriptRoot "..")
@@ -65,8 +67,13 @@ function Assert-SafeChildPath([string]$Root, [string]$Child) {
 }
 
 function Get-FileHashValue([string]$Path) {
-    if (Get-Command Get-FileHash -ErrorAction SilentlyContinue) {
-        return (Get-FileHash -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
+    # Cache tool availability only. Every call still reads the file anew.
+    if (-not $script:FileHashCommandResolved) {
+        $script:FileHashCommand = Get-Command Get-FileHash -ErrorAction SilentlyContinue
+        $script:FileHashCommandResolved = $true
+    }
+    if ($null -ne $script:FileHashCommand) {
+        return (& $script:FileHashCommand -Algorithm SHA256 -LiteralPath $Path).Hash.ToLowerInvariant()
     }
 
     $sha = [System.Security.Cryptography.SHA256]::Create()

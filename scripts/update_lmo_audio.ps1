@@ -6,6 +6,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+$script:FileHashCommandResolved = $false
+$script:FileHashCommand = $null
 
 # -File evaluates parameter defaults before PSScriptRoot is available.
 if ([string]::IsNullOrWhiteSpace($PackageDir)) {
@@ -63,24 +65,28 @@ function Get-FileHashValue([string]$Path) {
     if (-not (Test-Path -LiteralPath $Path)) {
         return $null
     }
-    try {
-        $hashCommand = Get-Command Get-FileHash -ErrorAction Stop
-        return (& $hashCommand -LiteralPath $Path -Algorithm SHA256).Hash
+    # Cache tool availability only. Every call still reads the file anew.
+    if (-not $script:FileHashCommandResolved) {
+        try { $script:FileHashCommand = Get-Command Get-FileHash -ErrorAction Stop }
+        catch { $script:FileHashCommand = $null }
+        $script:FileHashCommandResolved = $true
     }
-    catch {
-        $stream = [System.IO.File]::OpenRead($Path)
+    if ($null -ne $script:FileHashCommand) {
+        try { return (& $script:FileHashCommand -LiteralPath $Path -Algorithm SHA256).Hash }
+        catch { } # Preserve the per-file .NET fallback if invocation fails.
+    }
+    $stream = [System.IO.File]::OpenRead($Path)
+    try {
+        $sha = [System.Security.Cryptography.SHA256]::Create()
         try {
-            $sha = [System.Security.Cryptography.SHA256]::Create()
-            try {
-                return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToUpperInvariant()
-            }
-            finally {
-                $sha.Dispose()
-            }
+            return ([BitConverter]::ToString($sha.ComputeHash($stream)) -replace "-", "").ToUpperInvariant()
         }
         finally {
-            $stream.Dispose()
+            $sha.Dispose()
         }
+    }
+    finally {
+        $stream.Dispose()
     }
 }
 

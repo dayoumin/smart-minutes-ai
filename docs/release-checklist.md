@@ -158,6 +158,32 @@ backend\.venv-desktop\Scripts\python.exe -B -X utf8 scripts\verify_web_local_eng
 
 시험 도구의 첫 적용 준비에서 `SystemRoot` 누락으로 중단됐으며 제품 updater 실행 전이었다. 실패 추출본·로그를 보존하고 자식 환경의 Windows 모듈 경로만 보완한 뒤 `Get-FileHash` 탐색 성공을 한 번 확인했다. 제품 소스·전역 환경·검증 범위를 바꾸지 않았다. 실제 NSIS·Windows 재부팅·첫 모델 받기·다른 PC 검증은 아래 수동 확인의 대기 범위를 유지한다. 이번 로컬 annotated 배포 태그는 metadata source를 가리키는 `prod-2026-10-27.3`이며 Git 원격 push는 하지 않았다. 포터블은 clean 빌드 commit으로 식별하고 설치 엔진 버전 태그는 그대로 유지한다.
 
+## 설치 화면 전 Python 기동 오류 조사 — 2026-10-28
+
+**상태: 사용자 보고 확인, 원인 미확정·실제 설치 합격 보류. 최종 확인 2026-10-28.** 다른 PC에서 기존 설치 없이 처음 설치할 때 `Failed to start embedded python interpreter!`가 먼저 뜨고 이어 `실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다`가 나타났다는 제보다. 사용자는 설치 화면이 나오기 전이라고 설명했다. 두 번째 문구만으로 이전 설치가 있거나 실제 분석이 실행 중이라고 판단하지 않는다. 첫 실패 프로세스가 설치 점검 도구인지 설치 과정에서 배치된 엔진인지, 실패 정리/재시도 과정인지 아직 확인하지 못했다. 이는 SmartScreen 보안 경고 대응 문구로 해결됐다고 처리하지 않는다. 발생 PC의 Windows 버전·실제 다운로드 파일 경로·오류 전문은 추가 확인 중이다.
+
+공개 정보와 크기 431,955,440 bytes·전체 SHA-256 `70b3f244b4b4bca2f12c4bd53a520e75da2e361d31daf1f6cbd133ed78e4763c`가 같은 로컬 0.1.13 EXE에서 NSIS zlib 블록을 읽어 점검 도구만 추출했다. 도구는 9,370,029 bytes·SHA-256 `e5bbc1d271ea655466723641c1d05156332248dc4c02498b645861177e20645f`이며 `base_library.zip` 155항목과 encodings 항목을 확인했다. 프로젝트 `backend\.venv-desktop\Scripts\python.exe` 3.12.14 / PyInstaller 6.20.0으로 정적 추출·임시 환경의 `--help` 검사만 실행했다. 일반 경로, 한글·공백 임시 경로, 191자 임시 경로에서 모두 exit0·stderr 없음이다. NSIS 전체는 실행하지 않았고 현재 계정 설치본·등록 정보·사용자 자료는 바꾸지 않았다. 증거 `.tmp/installer-start-error-20261028/{static-report.json,path-report.json}`. 이 결과를 사용자 PC의 파일 무결성·백신 원인·전체 설치 정상으로 확대하지 않는다.
+
+동일 로컬 엔진의 `--help`도 엔진 폴더와 별도 임시 작업 폴더에서 각각 exit0이었다(`engine-help-report.json`). 다른 PC의 초기화 오류를 재현하지 못했으므로 종료 절차나 설치 파일은 수정하지 않았다. 실행 로그 `%LOCALAPPDATA%\Barorok\LocalEngine\logs\engine.log`는 Python 초기화와 자료 폴더 준비 이후 설정된다. 부트로더의 Python 시작 실패는 이 로그에 남지 않을 수 있다. NSIS 점검 JSON/INI는 `$PLUGINSDIR`에만 쓰며 설치 종료 후 보존을 보장하지 않는다. 현재 설치 파일에 이 단계의 지속적인 실패 기록이 부족하다는 관측성 한계도 후속에 포함한다. `.tmp/installer-start-error-20261028/diagnose-installer-start.ps1`은 다른 PC의 Windows 버전·다운로드 SHA·핵심 프로그램 파일 존재/해시를 확인하는 읽기 전용 임시 도구이며 설치·엔진 실행이나 설정/자료 변경을 하지 않는다. 현재 PC의 Windows PowerShell 5.1에서 진단 보고서 생성만 확인했다.
+
+닫기 조건: 발생 환경의 파일 SHA와 오류 전문/발생 프로세스를 확보하고 원인을 확인한다. Python 시작 전 설치 실패도 남길 수 있는 기록 경로를 보완한다. 수정이 필요하면 해당 시작 경로를 재검증하고 별도 계정/VM에서 실제 NSIS 첫 설치·기존 설치 업데이트·기록/설정/모델 보존을 확인한다. 상태 소유는 `todo.md`의 기존 「설치형 엔진 설치 프로그램 실측」 행이며 기존 수동 QA 범위는 아래 절을 유지한다.
+
+### 임시 단일 파일 설치 진단 — 2026-10-29
+
+**진단 파일 준비 완료·다른 PC의 실제 실패 로그 대기. 원인은 계속 미확정이다.** 사용자 요청에 따라 `-DiagnosticLogs`를 지정한 임시 빌드만 실제 Windows 다운로드 폴더의 `LMO-install-diagnostic.log`에 기록한다. 일반 빌드는 로그 기능을 포함하지 않는다. 실행 시도별 PID·시각·버전·Windows 빌드/환경, 설치 전 점검·파일 배치·프로그램 시작·종료/복구 순서, 실행 파일 존재/크기, 각 오류 번호/코드/종료 코드, 최종 결과와 첫 오류를 한 파일에 이어 쓴다. Python 경고창의 원문 전체나 Python 시작 전 내부 traceback 수집을 보장하지 않으며, 회의록·설정·모델 파일 내용을 읽거나 전송하지 않는다.
+
+| 항목 | 확인 결과 |
+| --- | --- |
+| 진단 설치 파일 | `releases\web-local-engine-installer-diagnostic\Barorok-Local-Engine-Setup-0.1.13-beta-20261027-diagnostic.exe`, 431,958,922 bytes, SHA-256 `851961af95ee497cf71651e5769f23f7480d8005f0104ffd7e9fa04ffb485f7f` |
+| 기존 파일 재사용 | 기존 0.1.13 엔진 payload를 다시 빌드하지 않았다. 기존 설치 EXE의 전체 SHA를 확인한 뒤 그 안의 동일 점검 도구(`e5bbc1d2…e20645f`)도 재사용했다. 생성 EXE의 NSIS 블록을 스트림으로 읽어 manifest 4,892경로가 요구하는 파일 내용(1,118,813,888 bytes)·점검 도구·manifest 포함을 대조했다. 실제 설치 대상 경로 배치까지 실행한 검사는 아니다. |
+| 집중 검사 | `tests.test_installer_diagnostic_log` 5개(로그 누적/다중 오류·상태 보존, 비활성, 기록 실패, 화면 전 Abort, 실제 MUI+가짜 payload의 두 모드 컴파일), `tests.test_installer_diagnostic_helper` 3개, `tests.test_web_local_engine_packaging` 8개 통과. `backend\.venv-desktop\Scripts\python.exe` 3.12.14의 `-B -X utf8 -m unittest ...`를 사용했다. 일반 모드의 NSIS 전처리 명령 1,390줄은 HEAD와 완전히 동일하다. |
+| 실행 환경·독립 검토 | NSIS 3.11(`C:\Users\User\AppData\Local\tauri\NSIS\makensis.exe`)은 샌드박스 밖에서 컴파일했다. `TEMP`/`TMP`는 `.tmp\installer-diagnostic-20261029\temp`로 한정했다. 독립 검토가 제시한 초기 `.onInit Abort`의 최종 결과 누락을 격리 실행에서 재현하고 보완했다. MUI 취소 확장점 연결을 포함한 재검토에서 남은 확정 P1/P2 없음. |
+| 미확인·보존 | 실제 진단 설치 EXE는 이 PC에 설치/실행하지 않았다. 다른 PC의 Python 기동 실패 재현·실제 다운로드 폴더 로그·설치 성공·기록/설정/모델 보존은 아직 미확인이다. 기존 일반 0.1.13 EXE의 전체 SHA는 `70b3f244…78e4763c`로 불변이며 원격 공개 파일도 변경하지 않았다. |
+
+실행 명령은 저장소 루트의 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_web_local_engine_installer_poc.ps1 -Python backend\.venv-desktop\Scripts\python.exe -Makensis C:\Users\User\AppData\Local\tauri\NSIS\makensis.exe -DiagnosticLogs`다. 첫 빌드의 문자열 splat 인수 오류와 MUI 취소 콜백 중복은 수정했으며 최종 실제 빌드 exit0이다. 기존 미사용 label 3개 경고는 유지한다. 증거 `.tmp/installer-diagnostic-20261029/{build-ready.log,normal-equivalence.json,package-verification.json}` 및 산출물의 `installer-poc-manifest.json`·`진단 안내.txt`. 이 진단 후보의 소스 인계와 실제 설치·공개 배포는 구분하며 원인 확인과 공개 배포는 아직 완료하지 않았다.
+
+다른 PC에서는 진단 EXE를 실행하고 경고창들을 닫은 뒤 다운로드 폴더의 로그 하나를 확보한다. 처음 실패와 후속 종료/복구 실패를 구분해 원인을 확인하고 수정한다. 원인 수정·확인 뒤 이 임시 진단 모드와 추가 다운로드 폴더 기록을 제거하고 일반 설치 방식으로 되돌린다. 사용자의 기존 진단 로그를 자동 삭제하지 않는다.
+
 ## 실제 공개·설치 프로그램 수동 확인 — 2026-10-27
 
 후속 사용자 요청으로 R2 세 파일 업로드·웹 배포와 공개 후 실물 검증을 승인받았다. 이전 「준비」와 「로컬 통합」 절의 미업로드·미배포 표기는 그 시점의 이력이다. 이번 작업은 `.tmp/publication-run-20261027`에서 진행하며, 이전 증거를 덮어쓰지 않는다. 현재 완료 여부·실제 Worker 버전·다운로드 SHA와 자료 보존 결과는 이 절에 후속 기록한다. Git 원격 push는 이 배포 승인과 구분한다.
@@ -288,6 +314,7 @@ CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261
 
 | QA 추적 항목 | 상태·마지막 확인 | 필요한 증거·종료 기준 |
 | --- | --- | --- |
+| 모델 받기 중지·이어받기와 설정 변경 | 소스·좁은 검사 완료, 새 실행 파일 QA 대기. 최종 확인2026-10-29. 기존21f76bb 시험 복사본에서 실제 Ollama 2B/4B 소량 받기·재시도·UI 중지, 수정된 소스 HF 경로에서 실제 전송·빠른 소유 자식 종료·부분 파일 보존을 확인했다. 화면 정렬·음량 스위치·저장 순서는 모의 API 검사다. | 새 clean 데스크톱과 설치 엔진에서 다운로드 worker 포함, 네트워크 실패 시 PyInstaller 팝업 없음, UI 중지 뒤 전송 정지·이어받기·설정/모델 보존을 확인한다. 앱 재시작 뒤 상태 표시 복원과 전체 모델 준비/실제 요약은 별도 확인한다. 원래 사용자 자료로 시험하지 않는다. 증거 `.tmp/model-download-live-20261029/evidence`, `.tmp/model-download-checks`; 후속 `todo.md`의 모델 작업 상태 계약 항목. |
 | 브라우저 승인 정보 손상 복구 | 소스 수정·격리 자동 검사 완료, 설치 후보 QA 대기. 최종 확인2026-10-27. 잘못된 JSON·크기 초과·다른 Origin에서 재시작해도 연결 불가인 기존 문제를 재현했다. Windows 복구 확인 기본값은 `아니요`이며, `예`에서만 손상 파일을 같은 config 폴더의 `browser-approvals.json.damaged-<임의 식별자>`로 보관하고 등록을 비운다. 연결/Windows runtime/보안 경계70검사로 거절·보관 실패·파일 교체·링크/폴더 차단과 원본·자료 보존, 재등록·재시작·해제, 거절 후 실행 잠금 해제·바로가기 재시도를 확인했다. 추가 사용자 동선 agent 검토에서 지적이 없었고 임시 파일12항목 시뮬레이션은 실제 Windows 잠금 재획득과 핵심 연결 코드로 통과했다(동의 선택만 모의, `.tmp/browser-approval-recovery-20261027/scenario-f9db5f4ff529/result.json`). 실제 Windows 창은 표시됐으나 화면 도구의 `foreground window did not report a process id` 오류와 창 종료로 직접 클릭 흐름은 완료로 판정하지 않았다. | 새 설치 후보의 EXE/버전·OS·HTTPS Origin을 기록하고 격리된 QA 자료 폴더에서 실제 Windows 확인창의 기본 거절·아니요·예, 거절 후 바로가기 재실행에서 다시 복구 확인, 손상 파일 전체 보관과 기존 설정·회의록·모델 해시 보존, 허용 사이트 재연결·재시작 복원·명시적 해제, 다른 Origin 거절을 확인한다. 현재 `예/아니요` 창의 X/Esc 취소를 전제하지 말고 실제 닫기 가능 여부를 기록한다. 정상 파일에는 추가 확인창이 없어야 한다. 잠긴 파일 보관 실패는 차단·원본 보존·안내 후 잠금 해제/재시도로 복구되어야 한다. 실제 사용자 원본에 손상을 주입하지 않는다. |
 | 새 업데이트 안내의 실제 배포·기존 설치본 적용 | 공개 다운로드·프로그램 적용·앱/엔진 재시작·기록/설정/모델 보존 통과, 최종 확인2026-10-27. 세 파일의 원격·공개 전체 SHA, 실제 웹 버튼의 신규 설치 ZIP 다운로드, 46fab033→282d5d20 실제 ZIP updater와 공개 EXE에서 검증한 0.1.12→0.1.13 payload 교체, 각 기존 2개/새 1개 기록의 JSON·음성·TXT와 새 실제 분석을 확인했다. 적용 직후 110파일 동일, 최종 파생 ETA 캐시 2개만 정상 변경·원본110불변. 실제 최종 verifier는 600초 드라이버 한도 후에도 중단하지 않고 소유 인수/동일 PID·실제 종료 코드0을 확인했다. 상세 수치·로그는 위 실제 공개 절이 소유한다. | 별도 계정/VM의 실제 NSIS 적용·등록/시작 메뉴·Windows 재부팅·복원/롤백·첫 모델 받기와 다른 PC는 대기다. 업데이트 안내를 열기만 할 때 파일 요청 없음과 현재 공개 빌드 동등 비교는 실제 확인했다. 진행 중 분석/요약·다른 창의 모델 받기 차단, 구형 엔진의 미확인 확인·과거 빌드 미안내는 기존 모의 증거와 향후 실제 대상별 증거를 구분해 닫는다. 현재 실제 공개본과 같은 commit이므로 새 버전 알림이 없는 것이 정상이며 다음 빌드의 실제 새 알림까지 증명한 것은 아니다. |
 | 공개 웹 첫 재시작 검사에서 음성 요소 대기30초 초과1회 | 미분류·추적, 2026-10-26. `public-browser.log`와 당시 엔진 access log 보존. 이후 실제 공개 웹 재시작/재생은 통과했지만 최초 실패 원인이 해결됐다고 단정하지 않는다. 제품 결함 여부 미확정이며 데이터 손실은 관측하지 않았다. | 같은 버전·QA 프로필/캐시 상태·시스템 부하·실제 권한을 기록하고 cold start의 HEAD/GET 실패 시각과 Console/Network를 함께 수집한다. 실패 원인을 확인하고 필요 시 수정·독립 재검토한 뒤 같은 조건의 재시작/기록 전환·추가 재확인 없는 재생 성공 증거로 닫는다. 재현돼 계획 작업이 되면 기존 runtime QA/TODO 항목으로 승격한다. |
@@ -679,6 +706,7 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 | 브라우저 회의 목록(IndexedDB) | 사용자 | 배포가 건드리지 않는다. 사이트 주소(프로토콜·도메인·포트)마다 따로 저장된다 | 운영 주소 `https://barorok.ecomarin.workers.dev` |
 | 엔진 프로그램 `%LOCALAPPDATA%\Programs\Barorok\LocalEngine` | 패키지 | 설치 프로그램이 준비 폴더에 풀어 교체한다. 새 엔진이 시작되지 않으면 되돌린다 | 정리는 설치 프로그램이 만든 파일 목록 안에서만 한다. 허용하는 웹 주소는 빌드 때 `defaults\engine-settings.json`에 고정된다 |
 | 엔진 자료 `%LOCALAPPDATA%\Barorok\LocalEngine`(설정·모델·DB·결과·임시·로그·런타임) | 사용자 | 설치·업데이트·제거 모두 보존한다 | |
+| 실제 다운로드 폴더의 `LMO-install-diagnostic.log` | 사용자(임시 진단 기록) | `-DiagnosticLogs` 빌드만 누적 기록한다. 일반 설치·업데이트·제거는 건드리지 않는다 | Python 시작 전부터 기록. 원인 확인 뒤 진단 모드 제거, 기존 로그는 보존 |
 
 ### 체크 항목
 

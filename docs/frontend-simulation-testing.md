@@ -1,5 +1,53 @@
 # Frontend Simulation Testing
 
+## 설정 내용 맞춤 높이·상태별 기준선 — 2026-10-29
+
+`corepack pnpm --dir desktop-app storybook:build` 후 `storybook:check`의19개 집중 검사를 통과했다. 좌표는 웹폰트 로딩 후 측정한다. 모의 API 증거는 `.tmp/settings-fit-20261029/report.json`과 같은 폴더의 화면이다.
+
+- 1360×900/860×720의 일반 설정은 높이613px로 내용에 맞고 마지막 저장 그룹 아래 약20px 안쪽 여백으로 끝난다. 기존1360×900의760px 고정 높이에서147px 줄었다.
+- 받기→중지→이어받기에서 설정 머리글·닫기·분석/모델/저장 제목·검색·행의 조작 영역을1px 이내로 유지한다. STT 버튼은 같은 최소 폭을 쓰며 글자가 긴 요약 모델 이어받기는 오른쪽 조작 기준선을 유지한다. 실제 요청 시간·다운로드 속도 측정은 아니다.
+- 860×540은 높이508px 안에서 본문만 스크롤하고 머리글은 고정된다. 모델 마지막 페이지도 두 행 높이를 유지한다. 짧은 삭제 확인은 내용에 맞게 줄어들고 취소 뒤 돌아오며 파일 삭제는 수행하지 않았다.
+- 준비 상태 장치/음성 인식 제목의 중심선, 머리글/그룹 제목의 시작선, 음량 알림이 장치 선택칸·다음 제목을 가리지 않는지, 기존 아이콘·문의·Docs 격리를 함께 확인했다. 실제 API 요청 유출0. 이후 종합 독립 검토에서는 키보드 받기 시작의 초점 유실과 이어받기 전환의 버튼/아이콘 이동 두 P2를 찾아 모의 화면에서 재현했다. 기존 검사는 오른쪽 끝과 클릭만 확인해 놓친 것이므로 위치/초점 전체를 입증하지 않는다. 재현·종료 기준은 `todo.md`와 `docs/settings-ui-review-request.txt`가 소유하며 집에서 수정한다.
+
+이 검사는 실제 제품 소스를 쓴 Storybook 브라우저 검사이며 설치된 Windows 실행 파일·모델 전체 받기·저장 복구의 실물 검증을 대신하지 않는다.
+
+기존 `SETTINGS_MODEL_SCENARIO=controls`의 `corepack pnpm --dir desktop-app test:settings-model-management`도 별도로 통과했다. 음량 저장·안내 미반복·저장 대기 중 닫기/재열기와 숨겨진 보정 설정 보호를 유지했다. `COREPACK_HOME`·`PLAYWRIGHT_BROWSERS_PATH`는 아래 프로젝트 경로를 사용했고 `SETTINGS_SCREENSHOT_DIR`은 `.tmp/settings-fit-20261029/controls`로 지정했다. 이 검사가 소유한 Vite는 임시 포트62688에서 실행한 뒤 정리했다. 기존6011 Storybook은 유지한다. 타입·변경 파일 lint·레이아웃 검사와 독립 검토도 통과했다.
+
+## Storybook UI 카탈로그 — 2026-10-29
+
+아이콘 축약 후속: 새 모델 받기·문의는32px 아이콘으로 표시하고 툴팁과 접근 가능한 이름을 유지한다. `storybook:check`를15개로 확장해1360/860px에서 아이콘에 보이는 글자 없음·hover→설명 안 이동·키보드 초점·Escape·문의 열기/닫기와 초점 복귀·아이콘 클릭 후 받기/중지→글자 있는 이어받기를 확인했다. 비어 있는 footer 높이0도 확인했다. 타입·변경 파일 lint·layout 검사·Storybook 생성·독립 검토를 통과했다. 증거는 `.tmp/settings-icons-20261029/report.json`과 같은 폴더의 `ready-icons-*`, `download-tooltip-*` 화면이다. 실제 API 전송은0이며 Windows 실행 파일 검증이나 공개 배포가 아니다.
+
+제품별 설정은 `desktop-app/.storybook`, 상태 예제는 `desktop-app/stories`에 둔다. Biohub는 구성 참고만 했으며 의존성·테마·소스를 공유하거나 그 프로젝트를 수정하지 않는다. Storybook10.6.2의 React/Vite 구성에 제품 CSS와 Pretendard를 직접 연결했다.
+
+- 실행: 저장소 루트에서 `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`을 프로세스에 지정하고 `corepack pnpm --dir desktop-app storybook`. 기본 주소는 `http://127.0.0.1:6011`이며 시작 전 포트 소유자를 확인한다. 다른 프로젝트 서버의 포트를 빼앗지 않는다.
+- 카탈로그 생성: `corepack pnpm --dir desktop-app storybook:build`. 이 명령은 Storybook만 생성하며 포터블/웹 앱 릴리스 빌드가 아니다. 생성한 `desktop-app/storybook-static`은 커밋·배포하지 않는다.
+- 좁은 검사: 생성 후 `corepack pnpm --dir desktop-app storybook:check`. 프로젝트 Playwright 캐시(`PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`)를 사용하며 기본 경로도 같다. 검사는 자기 정적 서버를 빈 임시 포트에 열고 브라우저와 함께 정리한다. 결과·화면은 `.tmp/storybook-check` 또는 `QA_OUTPUT_DIR`에 쓴다.
+- 검사 범위: 실제 Settings의 준비/없음/진행0.3%/중지·이어받기/실패/실행 도구 없음/확인 중,1360/860px에서 이어받기→중지·음량 끄기→안내 닫기와 초점 복귀·높이 유지, 대표 공통 부품, 브라우저 예외·실제 API 요청 유출 여부. `play` 예제는 준비 시 중복 안내 없음과 음량 조작을 제공한다. 접근성 addon도 제공하지만 이 좁은 검사가 모든 자동 접근성 항목을 실행했다는 뜻은 아니다.
+- 격리: preview의 fetch 경계가 실제 API·외부 요청을 차단하고, Settings 예제에만 메모리 상태를 제공한다. 미등록 API도 실제 엔진으로 넘어가지 않고501이다. 브라우저 검사도 외부/API 전송 시 차단 후 실패한다. 모의 상태는 실제 모델 받기·이어받기·속도·저장·설치 검증을 대신하지 않는다.
+- 중지/실패 예제는 처음에 활성 작업을 반환한 뒤 제품의 다음 상태 조회(약2초)에서 중지/실패로 바뀐다. 현재 제품은 새로 연 설정에서 비활성 작업을 복원하지 않으므로 이 한계를 예제에서 숨기거나 제품 코드를 우회하지 않는다. 설정 재열기·앱 재시작 뒤 중지 복원은 기존 별도 후속이다.
+
+공통 부품만 보아서는 전체 배치의 빈 공간이나 역할 구별을 판단할 수 없다. `Settings/실제 설정 화면`을 함께 확인하고, 여백 비대칭·제목 가림·선택/받기/삭제의 구별은 `todo.md`의 기존 디자인 후속에서 추적한다.
+
+2026-10-29 검증: `corepack pnpm --dir desktop-app typecheck`, 변경 파일 eslint, `storybook:build`, `storybook:check`의13개 집중 검사와 diff 점검을 통과했다. 증거는 `.tmp/storybook-20261029/checks/report.json`과 같은 폴더의 상태별 화면이다. 실제 API 전송0,1360/860px 조작·초점·높이 유지, 외부 설치 링크 미이동, Docs의 준비/중지 예제 iframe 격리를 확인했다. 독립 agent가 지적한 외부 링크 차단·Docs 격리·목록 미확인 fixture의3개 P2를 보완한 뒤 남은 확정 P1/P2가 없음을 확인했다. 검증 후 저장소 루트에서 위 `storybook` 명령으로6011 미리보기를 열었고 `/index.json`의 `Settings/실제 설정 화면`으로 대상을 확인했다.
+
+## 설정 받기·이어받기·음량 스위치 — 2026-10-29
+
+`SETTINGS_MODEL_SCENARIO=downloads` 또는 `controls`로 `corepack pnpm --dir desktop-app test:settings-model-management`의 좁은 검사를 선택한다. Windows에서는 `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`, `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`를 사용한다. 서버는 비어 있는 임시 포트를 골라 실행한다.
+
+모의 API 검사로 중지 뒤 이어받기·진행률 보존, 받은 내용이 없는 새 시작, 준비/모델의 단계 분리, 짧은 오류, 1360/860px의 제목·중지 버튼 정렬과 작은 STT 진행 영역을 확인했다. 음량 끄기는 성공 저장 후 일회성 알림으로 표시하며 높이를 바꾸지 않고 자동으로 닫힌다. 다른 설정 저장·창 재열기에는 알림을 반복하지 않는다. 켜기/끄기 저장·재열기, 이전 끄기 저장 중 다시 켜고 닫기, 비활성 전처리의 숨은 필터를 함께 켜지 않는 보호도 확인했다. 타입·변경 파일 lint를 함께 확인한다. 첫 캡처는 `.tmp/model-download-checks/{screenshots,controls}`, 여백·구분선·알림 후속은 `.tmp/settings-compact-20261029`에 둔다. 좁은 모의 진행률은 0.3%로 표시하며 실제 네트워크 전송은 없다. 기본 검사 완료 뒤 Vite가 남으면 해당 검사에서 기록한 포트·절대 실행 경로를 확인해 그 소유 서버만 정리한다.
+
+후속 여백·알림 위치 검사는 `.tmp/settings-anchor-20261029`에 캡처한다. 1360/860px에서 가장자리 여유, 제목/버튼 정렬, 스위치와 알림 사이8px 및 창 안 배치, 크기 변경 시 닫힘, 자동 닫힘·X 닫기 후 초점 복귀·다른 저장/재열기 시 미반복을 확인한다. 모의 진행률0.3%이며 실제 전송은 없다.
+
+실제 Tauri 실행 파일의 이전 동작 및 실제 Hugging Face/Ollama 소량 전송은 `.tmp/model-download-live-20261029/evidence`에 별도로 기록했다. 모의 화면 검사를 새 frozen 실행 파일 검증으로 대신하지 않는다. 배포 전 남은 검사는 release-checklist의 같은 QA 항목을 따른다.
+
+## 설치 다운로드 안내 간소화 — 2026-10-28
+
+엔진 버전이 없는 최초 설치 안내는 보안 경고 대응과 설치 후 웹 연결만 남겼다. 버전·자동 설치 여부의 반복 설명과 작업 저장 확인란을 제거했다. 기존 엔진의 복구 재설치·업데이트는 저장/종료 순서와 상태 미확인 시 수동 확인을 유지한다. 알려진 작업 중 상태·명시적 받기 클릭·취소/인증 변경에 따른 이전 요청 무효화도 유지하며, 최초 설치 판정이 바뀌는 경우도 이전 요청을 무효화한다. 데스크톱 앱 받기의 반복 설명과 설정의 설치 안내 중복 문장도 줄였다.
+
+`corepack pnpm --dir desktop-app typecheck`, 변경 소스/fixture/시뮬레이션의 `corepack pnpm --dir desktop-app exec eslint ...`, `corepack pnpm --dir desktop-app test:update-activity` 3개와 `git diff --check` 통과. `scripts/simulate-update-guide.mjs`의 웹·모의 Tauri 기존 회귀와 최초 설치의 확인란 없는 명시적 다운로드/미인증 로컬 요청 0/미저장 입력·탭 보존, 기존 엔진의 상태 미확인 복구·작업 중 차단을 통과했다. 독립 검토에서 복구 재설치까지 면제되던 P2를 수정하고 재검토에서 남은 P1/P2 없음.
+
+샌드박스에서는 개발 서버 연결 실패와 브라우저 첫 진입 시간 초과로 시나리오에 진입하지 못했다. 권한을 넓힌 동일 Windows Node `v22.22.2`의 `.tmp/install-copy-20261028/run-qa.mjs`에서 이 세션이 소유한 Vite(5197)와 검사 프로세스를 함께 실행해 통과했다. 서버 명령은 `node node_modules/vite/bin/vite.js --host 127.0.0.1 --port 5197 --strictPort --configLoader runner`(작업 폴더 `desktop-app`), 검사는 `node scripts/simulate-update-guide.mjs`다. `APP_URL=http://127.0.0.1:5197/`, `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`를 사용했고 HTTP200·검사 페이지 제목을 확인했다. 검사 후 소유 서버·브라우저를 종료했다. 최초 설치의 860×720 캡처에서 가로 넘침 없음과 짧은 안내를 직접 확인했다. 증거 `.tmp/install-copy-20261028/`. 실제 설치 EXE·Python 기동·운영 화면 검증을 의미하지 않으며 이 변경은 아직 커밋·배포하지 않았다.
+
 ## 원격 병합 후 통합 검증 — 2026-10-28
 
 로컬 `7945251f`와 원격 `b70a75bb`를 병합했다. 하단 중복 회의록 목록 제거와 최신 공개 QA 기록을 보존하고, 원격의 문제해결 UI·설정·승인 정보 복구를 통합했다. 화면 검사는 숨겨질 수 있는 시작 버튼 대신 예약된 동작 영역을 측정하며, 제거된 목록과 예전 모델 탭 참조를 현재 화면에 맞췄다.

@@ -2,14 +2,17 @@ param(
     [string]$Python = "backend\.venv-desktop\Scripts\python.exe",
     [string]$Makensis = "makensis.exe",
     [string]$ArtifactDir = "releases\web-local-engine-poc",
-    [string]$OutputDir = "releases\web-local-engine-installer-poc"
+    [string]$OutputDir = "releases\web-local-engine-installer-poc",
+    [switch]$DiagnosticLogs
 )
 
 $ErrorActionPreference = "Stop"
 
 $RepoRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $ExpectedArtifactDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "releases\web-local-engine-poc"))
-$ExpectedOutputDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot "releases\web-local-engine-installer-poc"))
+$OutputFolder = if ($DiagnosticLogs) { "releases\web-local-engine-installer-diagnostic" } else { "releases\web-local-engine-installer-poc" }
+if ($DiagnosticLogs -and -not $PSBoundParameters.ContainsKey("OutputDir")) { $OutputDir = $OutputFolder }
+$ExpectedOutputDir = [System.IO.Path]::GetFullPath((Join-Path $RepoRoot $OutputFolder))
 $ResolvedArtifactDir = if ([System.IO.Path]::IsPathRooted($ArtifactDir)) {
     [System.IO.Path]::GetFullPath($ArtifactDir)
 }
@@ -113,17 +116,31 @@ if (Test-Path -LiteralPath $ResolvedOutputDir) {
 New-Item -ItemType Directory -Path $ResolvedOutputDir -Force | Out-Null
 
 $HelperPath = Join-Path $ResolvedOutputDir "build-input\barorok-installer-preflight.exe"
-& (Join-Path $PSScriptRoot "build_web_local_engine_installer_helper.ps1") `
-    -Python $Python `
-    -OutputPath $HelperPath
+if ($DiagnosticLogs) {
+    $ReferenceDir = Join-Path $RepoRoot "releases\web-local-engine-installer-poc"
+    & $PythonCommand (Join-Path $PSScriptRoot "extract_installer_diagnostic_helper.py") `
+        --installer (Join-Path $ReferenceDir "Barorok-Local-Engine-Setup-$EngineVersion.exe") `
+        --descriptor (Join-Path $ReferenceDir "installer-poc-manifest.json") `
+        --engine-version $EngineVersion `
+        --output $HelperPath
+}
+else {
+    & (Join-Path $PSScriptRoot "build_web_local_engine_installer_helper.ps1") `
+        -Python $Python `
+        -OutputPath $HelperPath
+}
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $HelperPath -PathType Leaf)) {
     throw "Installer preflight helper build failed."
 }
 
-$InstallerPath = Join-Path $ResolvedOutputDir "Barorok-Local-Engine-Setup-$EngineVersion.exe"
+$Suffix = if ($DiagnosticLogs) { "-diagnostic" } else { "" }
+$InstallerPath = Join-Path $ResolvedOutputDir "Barorok-Local-Engine-Setup-$EngineVersion$Suffix.exe"
+$DiagnosticArguments = @()
+if ($DiagnosticLogs) { $DiagnosticArguments += "/DINSTALLER_DIAGNOSTICS" }
 & $ResolvedMakensis `
     "/V3" `
     "/INPUTCHARSET" "UTF8" `
+    "/OUTPUTCHARSET" "UTF8" `
     "/DARTIFACT_DIR=$ResolvedArtifactDir" `
     "/DHELPER_PATH=$HelperPath" `
     "/DOUTPUT_FILE=$InstallerPath" `
@@ -131,6 +148,7 @@ $InstallerPath = Join-Path $ResolvedOutputDir "Barorok-Local-Engine-Setup-$Engin
     "/DENGINE_VERSION=$EngineVersion" `
     "/DICON_PATH=$IconPath" `
     "/DBRAND_NAME=$BrandName" `
+    @DiagnosticArguments `
     $NsiPath
 if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $InstallerPath -PathType Leaf)) {
     throw "NSIS installer build failed."
@@ -169,6 +187,16 @@ $InstallerManifest = [ordered]@{
     }
     signed = $false
     distributionReady = $false
+}
+if ($DiagnosticLogs) {
+    $InstallerManifest["diagnosticLogs"] = [ordered]@{
+        temporary = $true
+        path = "Downloads\LMO-install-diagnostic.log"
+        append = $true
+        enginePayloadRebuilt = $false
+        helperRebuilt = $false
+        helperSha256 = Get-FileHashValue $HelperPath
+    }
 }
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 [System.IO.File]::WriteAllText(

@@ -56,6 +56,9 @@ ShowUninstDetails show
 !insertmacro MUI_PAGE_FINISH
 !insertmacro MUI_UNPAGE_CONFIRM
 !insertmacro MUI_UNPAGE_INSTFILES
+!ifdef INSTALLER_DIAGNOSTICS
+!define MUI_CUSTOMFUNCTION_ABORT InstallerDiagnosticCancelled
+!endif
 !insertmacro MUI_LANGUAGE "Korean"
 
 Var StageDir
@@ -78,6 +81,8 @@ Var InstalledHelper
 Var CleanupTarget
 Var CleanupExit
 Var CleanupManifest
+
+!include "diagnostic-log.nsh"
 
 !macro RemoveLegacyStartMenuEntries
   Delete "$SMPROGRAMS\${LEGACY_START_MENU_DIR}\로컬 엔진 시작.lnk"
@@ -103,24 +108,31 @@ Function AcquireInstallerMutex
   StrCpy $InstallerMutex $0
   System::Call 'kernel32::GetLastError() i.r1'
   ${If} $InstallerMutex == 0
+    !insertmacro InstallerDiagnosticError "INSTALL_LOCK_FAILED" "설치 잠금 생성 실패"
     SetErrorLevel 30
     MessageBox MB_OK|MB_ICONSTOP "설치 잠금을 만들지 못했습니다. 잠시 후 다시 시도해 주세요."
-    Abort
+    !insertmacro InstallerDiagnosticAbort
   ${EndIf}
   ${If} $1 == 183
+    !insertmacro InstallerDiagnosticError "INSTALL_ALREADY_RUNNING" "다른 설치 또는 제거가 진행 중"
     SetErrorLevel 20
     MessageBox MB_OK|MB_ICONSTOP "다른 설치 또는 제거가 진행 중입니다. 완료된 뒤 다시 실행해 주세요."
-    Abort
+    !insertmacro InstallerDiagnosticAbort
   ${EndIf}
 FunctionEnd
 
 Function .onGUIEnd
+!ifdef INSTALLER_DIAGNOSTICS
+  GetErrorLevel $InstallerDiagnosticExitCode
+  !insertmacro InstallerDiagnostic "installer.gui.end exit=$InstallerDiagnosticExitCode errors=$InstallerDiagnosticErrorCount first-error=$InstallerDiagnosticFirstError"
+!endif
   ${If} $InstallerMutex != 0
     System::Call 'kernel32::CloseHandle(p $InstallerMutex)'
   ${EndIf}
 FunctionEnd
 
 Function RunInstallerPreflight
+  !insertmacro InstallerDiagnostic "preflight.begin generation=$RequestGeneration"
   Delete "$PreflightResult"
   Delete "$PreflightDecision"
   ClearErrors
@@ -138,21 +150,26 @@ Function RunInstallerPreflight
   ; Optional keys are absent on most runs; do not leave their error flag behind.
   ClearErrors
 done:
+  !insertmacro InstallerDiagnostic "preflight.end exit=$PreflightExit action=$PreflightAction"
 FunctionEnd
 
 Function StopInstalledEngine
+  !insertmacro InstallerDiagnostic "engine.stop.begin exe=$EngineExe"
   IfFileExists "$EngineExe" 0 done
   ExecWait '"$EngineExe" --stop' $0
+  !insertmacro InstallerDiagnostic "engine.stop.end exit=$0"
   ${If} $0 != 0
   ${AndIf} $0 != 3
+    !insertmacro InstallerDiagnosticError "ENGINE_STOP_FAILED" "종료 명령 실행 실패 exit=$0 exe=$EngineExe"
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요."
-    Abort
+    MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+    !insertmacro InstallerDiagnosticAbort
   ${EndIf}
   ${If} $0 == 0
     Call WaitForEngineStopped
   ${EndIf}
 done:
+  !insertmacro InstallerDiagnostic "engine.stop.return"
 FunctionEnd
 
 Function WaitForEngineStopped
@@ -163,40 +180,49 @@ wait_retry:
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --probe-stopped-engine' $1
   IfErrors 0 +2
   StrCpy $1 "launch_failed"
+  !insertmacro InstallerDiagnostic "engine.stop.probe attempt=$0 exit=$1"
   ${If} $1 == 0
     Return
   ${EndIf}
   ${If} $0 >= 20
+    !insertmacro InstallerDiagnosticError "ENGINE_STOP_TIMEOUT" "종료 확인 실패 probe-exit=$1 attempts=$0"
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "음성 분석 프로그램 종료가 완료되지 않았습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요."
-    Abort
+    MessageBox MB_OK|MB_ICONSTOP "음성 분석 프로그램 종료가 완료되지 않았습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+    !insertmacro InstallerDiagnosticAbort
   ${EndIf}
   Sleep 250
   Goto wait_retry
 FunctionEnd
 
 Function CleanupOwnedTree
+  !insertmacro InstallerDiagnostic "cleanup.begin target=$CleanupTarget"
   ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --cleanup-owned-tree "$CleanupTarget" --manifest "$CleanupManifest"' $CleanupExit
   IfErrors 0 +2
   StrCpy $CleanupExit "launch_failed"
+  !insertmacro InstallerDiagnostic "cleanup.end exit=$CleanupExit"
 FunctionEnd
 
 Function ValidateOwnedTree
+  !insertmacro InstallerDiagnostic "validate.begin target=$CleanupTarget"
   ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --validate-owned-tree "$CleanupTarget" --manifest "$CleanupManifest"' $CleanupExit
   IfErrors 0 +2
   StrCpy $CleanupExit "launch_failed"
+  !insertmacro InstallerDiagnostic "validate.end exit=$CleanupExit"
 FunctionEnd
 
 Function ValidateCompleteStage
+  !insertmacro InstallerDiagnostic "stage.validate.begin target=$CleanupTarget"
   ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --validate-owned-tree "$CleanupTarget" --manifest "$CleanupManifest" --require-complete-tree --require-transaction-marker' $CleanupExit
   IfErrors 0 +2
   StrCpy $CleanupExit "launch_failed"
+  !insertmacro InstallerDiagnostic "stage.validate.end exit=$CleanupExit"
 FunctionEnd
 
 Function RecoverInterruptedTransaction
+  !insertmacro InstallerDiagnostic "recovery.begin"
   IfFileExists "$INSTDIR\${UNINSTALL_MARKER}" 0 recovery_check_stage
   ClearErrors
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --cleanup-uninstall-tombstone "$INSTDIR"' $CleanupExit
@@ -295,24 +321,32 @@ recovery_pending_without_rollback:
   Goto recovery_done
 
 recovery_unsafe_stage:
+  !insertmacro InstallerDiagnosticError "RECOVERY_UNSAFE_STAGE" "임시 설치 폴더 소유권/검증 실패 exit=$CleanupExit"
   MessageBox MB_OK|MB_ICONSTOP "이전 임시 설치 폴더의 소유권을 확인할 수 없어 설치를 중단했습니다."
   Goto recovery_abort
 recovery_unsafe_current:
+  !insertmacro InstallerDiagnosticError "RECOVERY_UNSAFE_CURRENT" "현재 프로그램 폴더 소유권/검증 실패 exit=$CleanupExit"
   MessageBox MB_OK|MB_ICONSTOP "설치 위치에 이 설치 프로그램이 만들지 않은 파일이 있어 덮어쓰지 않았습니다."
   Goto recovery_abort
 recovery_unsafe_rollback:
+  !insertmacro InstallerDiagnosticError "RECOVERY_UNSAFE_ROLLBACK" "복원 폴더 소유권/검증 실패 exit=$CleanupExit"
   MessageBox MB_OK|MB_ICONSTOP "이전 복구 폴더의 소유권을 확인할 수 없어 설치를 중단했습니다."
   Goto recovery_abort
 recovery_failed:
+  !insertmacro InstallerDiagnosticError "RECOVERY_FAILED" "설치 전 복구 실패 exit=$CleanupExit"
   MessageBox MB_OK|MB_ICONSTOP "이전 설치의 복구 상태를 안전하게 확인하지 못했습니다. 설치 파일을 변경하지 않고 중단했습니다."
 recovery_abort:
   SetErrorLevel 30
-  Abort
+  !insertmacro InstallerDiagnosticAbort
 recovery_done:
+  !insertmacro InstallerDiagnostic "recovery.end"
 FunctionEnd
 
 Function .onInit
   SetShellVarContext current
+!ifdef INSTALLER_DIAGNOSTICS
+  Call InitInstallerDiagnostic
+!endif
   Call AcquireInstallerMutex
   StrCpy $INSTDIR "$LOCALAPPDATA\Programs\Barorok\LocalEngine"
   StrCpy $StageDir "$LOCALAPPDATA\Programs\Barorok\.LocalEngine-stage"
@@ -323,11 +357,26 @@ Function .onInit
   StrCpy $PreflightAttempts 0
   StrCpy $PreviousMoved 0
   StrCpy $StageActivated 0
+  !insertmacro InstallerDiagnostic "init.paths install=$INSTDIR stage=$StageDir rollback=$RollbackDir"
+!ifdef INSTALLER_DIAGNOSTICS
+  ${If} ${FileExists} "$EngineExe"
+    !insertmacro InstallerDiagnostic "init.existing-engine-file=true"
+  ${Else}
+    !insertmacro InstallerDiagnostic "init.existing-engine-file=false (이 실행의 설치 시작 전)"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\${TRANSACTION_MARKER}"
+    !insertmacro InstallerDiagnostic "init.pending-transaction=true"
+  ${Else}
+    !insertmacro InstallerDiagnostic "init.pending-transaction=false"
+  ${EndIf}
+!endif
 
   InitPluginsDir
   SetOutPath "$PLUGINSDIR"
   File /oname=barorok-installer-preflight.exe "${HELPER_PATH}"
   File /oname=poc-manifest.json "${ARTIFACT_DIR}\poc-manifest.json"
+  !insertmacro InstallerDiagnostic "init.helper.extracted dir=$PLUGINSDIR"
+  !insertmacro InstallerDiagnosticFile "$PLUGINSDIR\barorok-installer-preflight.exe"
   StrCpy $PreflightResult "$PLUGINSDIR\preflight-result.json"
   StrCpy $PreflightDecision "$PLUGINSDIR\preflight-decision.ini"
   Call RecoverInterruptedTransaction
@@ -335,9 +384,10 @@ Function .onInit
 preflight_retry:
   IntOp $PreflightAttempts $PreflightAttempts + 1
   ${If} $PreflightAttempts > 10
+    !insertmacro InstallerDiagnosticError "PREFLIGHT_STOP_RETRY_LIMIT" "설치 전 종료/재점검 반복 한도 초과"
     SetErrorLevel 30
     MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 종료하지 못했습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요."
-    Abort
+    !insertmacro InstallerDiagnosticAbort
   ${EndIf}
   Call RunInstallerPreflight
   ${If} $PreflightExit == 0
@@ -364,8 +414,9 @@ preflight_retry:
       MessageBox MB_YESNO|MB_ICONEXCLAMATION "설치 전 점검 중 일부를 마치지 못했습니다. 설치는 계속할 수 있고, 저장 공간은 모델을 받거나 회의를 분석할 때 다시 확인합니다.$\r$\n$\r$\n설치를 계속할까요?" IDYES preflight_ready
     ${EndIf}
     SetErrorLevel 10
-    Abort
+    !insertmacro InstallerDiagnosticAbort
   ${ElseIf} $PreflightExit == 20
+    !insertmacro InstallerDiagnosticError "PREFLIGHT_BLOCKED" "설치 전 점검 차단 exit=$PreflightExit action=$PreflightAction"
     SetErrorLevel 20
     ${If} $PreflightAction == "close_conflicting_app_and_retry"
       MessageBox MB_OK|MB_ICONSTOP "다른 프로그램이 음성 분석 프로그램의 연결(포트 17863)을 쓰고 있습니다. ${BRAND_NAME} 데스크톱 앱 등 열린 프로그램을 닫거나 컴퓨터를 다시 시작한 뒤 다시 실행해 주세요."
@@ -381,31 +432,37 @@ preflight_retry:
     ${Else}
       MessageBox MB_OK|MB_ICONSTOP "설치 폴더에 안전하게 쓰고 정리할 수 없습니다. 폴더 권한을 확인한 뒤 다시 실행해 주세요."
     ${EndIf}
-    Abort
+    !insertmacro InstallerDiagnosticAbort
   ${ElseIf} $PreflightExit == 30
+    !insertmacro InstallerDiagnosticError "PREFLIGHT_RETRY" "설치 전 환경 확인 실패 exit=$PreflightExit action=$PreflightAction"
     SetErrorLevel 30
     MessageBox MB_OK|MB_ICONSTOP "설치 환경을 확인하지 못했습니다. 잠시 후 다시 시도하고, 계속되면 관리자에게 문의해 주세요."
-    Abort
+    !insertmacro InstallerDiagnosticAbort
   ${ElseIf} $PreflightExit == "launch_failed"
+    !insertmacro InstallerDiagnosticError "PREFLIGHT_LAUNCH_FAILED" "설치 점검 프로그램 실행 실패"
     SetErrorLevel 30
-    MessageBox MB_OK|MB_ICONSTOP "설치 점검 도구를 실행하지 못했습니다. 백신 프로그램이 설치 파일을 차단했는지 확인한 뒤 다시 실행해 주세요."
-    Abort
+    MessageBox MB_OK|MB_ICONSTOP "설치 점검 도구를 실행하지 못했습니다. 백신 프로그램이 설치 파일을 차단했는지 확인한 뒤 다시 실행해 주세요.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+    !insertmacro InstallerDiagnosticAbort
   ${Else}
+    !insertmacro InstallerDiagnosticError "PREFLIGHT_RESULT_INVALID" "설치 점검 결과 확인 실패 exit=$PreflightExit action=$PreflightAction"
     SetErrorLevel 2
-    MessageBox MB_OK|MB_ICONSTOP "설치 전 점검 결과를 확인하지 못했습니다. 설치 파일을 다시 받아 실행해 주세요."
-    Abort
+    MessageBox MB_OK|MB_ICONSTOP "설치 전 점검 결과를 확인하지 못했습니다. 설치 파일을 다시 받아 실행해 주세요.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+    !insertmacro InstallerDiagnosticAbort
   ${EndIf}
 
 running_engine_missing:
+  !insertmacro InstallerDiagnosticError "ENGINE_FILE_MISSING" "종료 대상 프로그램 파일을 찾을 수 없음"
   SetErrorLevel 30
   MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램의 설치 파일을 찾지 못했습니다. 프로그램을 정상 종료한 뒤 다시 실행해 주세요."
-  Abort
+  !insertmacro InstallerDiagnosticAbort
 
 preflight_ready:
+  !insertmacro InstallerDiagnostic "preflight.ready"
 FunctionEnd
 
 Section "Install"
   SetShellVarContext current
+  !insertmacro InstallerDiagnostic "install.begin"
   Call StopInstalledEngine
 
 detect_previous:
@@ -477,7 +534,12 @@ create_stage:
   IfErrors swap_failed
   StrCpy $StageActivated 1
 
+  !insertmacro InstallerDiagnostic "engine.start.begin exe=$EngineExe previous-install=$HadPreviousInstall"
+  !insertmacro InstallerDiagnosticFile "$EngineExe"
+  !insertmacro InstallerDiagnosticFile "$INSTDIR\engine\_internal\python312.dll"
+  !insertmacro InstallerDiagnosticFile "$INSTDIR\engine\_internal\base_library.zip"
   Exec '"$EngineExe"'
+  !insertmacro InstallerDiagnostic "engine.start.requested"
   StrCpy $ReadinessAttempts 0
 readiness_retry:
   IntOp $ReadinessAttempts $ReadinessAttempts + 1
@@ -485,6 +547,7 @@ readiness_retry:
   ExecWait '"$PLUGINSDIR\barorok-installer-preflight.exe" --probe-running-engine --manifest "$PLUGINSDIR\poc-manifest.json"' $0
   IfErrors 0 +2
   StrCpy $0 "launch_failed"
+  !insertmacro InstallerDiagnostic "engine.start.probe attempt=$ReadinessAttempts exit=$0"
   ${If} $0 == 0
     Goto readiness_ready
   ${EndIf}
@@ -495,6 +558,7 @@ readiness_retry:
   Goto readiness_retry
 
 readiness_ready:
+  !insertmacro InstallerDiagnostic "engine.start.ready"
   ClearErrors
   Delete "$INSTDIR\${TRANSACTION_MARKER}"
   IfErrors readiness_failed
@@ -533,7 +597,16 @@ shortcuts:
   Goto install_done
 
 readiness_failed:
+  !insertmacro InstallerDiagnosticError "ENGINE_START_NOT_READY" "배치한 프로그램 시작 확인 실패 attempts=$ReadinessAttempts last-probe-exit=$0"
+  !insertmacro InstallerDiagnostic "engine.start.failed rollback.begin activated=$StageActivated previous-moved=$PreviousMoved"
   ExecWait '"$EngineExe" --stop' $0
+  !insertmacro InstallerDiagnostic "rollback.engine.stop exit=$0"
+!ifdef INSTALLER_DIAGNOSTICS
+  ${If} $0 != 0
+  ${AndIf} $0 != 3
+    !insertmacro InstallerDiagnosticError "ROLLBACK_ENGINE_STOP_FAILED" "시작 실패 후 정리 중 종료 명령도 실패 exit=$0"
+  ${EndIf}
+!endif
   Call WaitForEngineStopped
   ${If} $StageActivated == 1
     StrCpy $CleanupTarget "$INSTDIR"
@@ -556,10 +629,12 @@ readiness_failed:
     Exec '"$EngineExe"'
   ${EndIf}
   SetErrorLevel 30
-  MessageBox MB_OK|MB_ICONSTOP "새로 설치한 음성 분석 프로그램이 정상적으로 시작되지 않아 설치를 되돌렸습니다. 기존 데이터는 보존했습니다."
-  Abort
+  MessageBox MB_OK|MB_ICONSTOP "새로 설치한 음성 분석 프로그램이 정상적으로 시작되지 않아 설치를 되돌렸습니다. 기존 데이터는 보존했습니다.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+  !insertmacro InstallerDiagnosticAbort
 
 swap_failed:
+  !insertmacro InstallerDiagnosticError "PROGRAM_SWAP_FAILED" "프로그램 폴더 교체 실패"
+  !insertmacro InstallerDiagnostic "install.swap.failed"
   ${If} $StageActivated == 1
     StrCpy $CleanupTarget "$INSTDIR"
     StrCpy $CleanupManifest "$INSTDIR\poc-manifest.json"
@@ -576,6 +651,8 @@ swap_failed:
     IfErrors recovery_failed
   ${EndIf}
 stage_failed:
+  !insertmacro InstallerDiagnosticError "PROGRAM_STAGE_FAILED" "설치 파일 준비/배치 실패"
+  !insertmacro InstallerDiagnostic "install.stage.failed"
   IfFileExists "$StageDir\${INSTALL_MARKER}" 0 install_failed_message
   StrCpy $CleanupTarget "$StageDir"
   StrCpy $CleanupManifest "$PLUGINSDIR\poc-manifest.json"
@@ -584,26 +661,30 @@ stage_failed:
   Call CleanupOwnedTree
 install_failed_message:
   SetErrorLevel 30
-  MessageBox MB_OK|MB_ICONSTOP "설치 파일을 안전하게 배치하지 못했습니다. 이전 설치는 보존되었습니다."
-  Abort
+  MessageBox MB_OK|MB_ICONSTOP "설치 파일을 안전하게 배치하지 못했습니다. 이전 설치는 보존되었습니다.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+  !insertmacro InstallerDiagnosticAbort
 
 recovery_failed:
+  !insertmacro InstallerDiagnosticError "INSTALL_ROLLBACK_FAILED" "설치 실패 후 복구/정리 실패 exit=$CleanupExit"
   SetErrorLevel 30
-  MessageBox MB_OK|MB_ICONSTOP "이전 설치의 복구 상태를 안전하게 확인하지 못했습니다. 설치 파일을 변경하지 않고 중단했습니다."
-  Abort
+  MessageBox MB_OK|MB_ICONSTOP "이전 설치의 복구 상태를 안전하게 확인하지 못했습니다. 설치 파일을 변경하지 않고 중단했습니다.${INSTALLER_DIAGNOSTIC_SUFFIX}"
+  !insertmacro InstallerDiagnosticAbort
 
 unsafe_existing_install:
+  !insertmacro InstallerDiagnosticError "INSTALL_UNSAFE_CURRENT" "프로그램 폴더 소유권/검증 실패 exit=$CleanupExit"
   SetErrorLevel 20
   MessageBox MB_OK|MB_ICONSTOP "설치 위치에 이 설치 프로그램이 만들지 않은 파일이 있어 덮어쓰지 않았습니다."
-  Abort
+  !insertmacro InstallerDiagnosticAbort
 unsafe_rollback:
+  !insertmacro InstallerDiagnosticError "INSTALL_UNSAFE_ROLLBACK" "복원 폴더 소유권/검증 실패 exit=$CleanupExit"
   SetErrorLevel 20
   MessageBox MB_OK|MB_ICONSTOP "이전 복구 폴더의 소유권을 확인할 수 없어 설치를 중단했습니다."
-  Abort
+  !insertmacro InstallerDiagnosticAbort
 unsafe_stage:
+  !insertmacro InstallerDiagnosticError "INSTALL_UNSAFE_STAGE" "임시 폴더 소유권/검증 실패 exit=$CleanupExit"
   SetErrorLevel 20
   MessageBox MB_OK|MB_ICONSTOP "이전 임시 설치 폴더의 소유권을 확인할 수 없어 설치를 중단했습니다."
-  Abort
+  !insertmacro InstallerDiagnosticAbort
 
 install_done:
 SectionEnd

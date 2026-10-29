@@ -554,7 +554,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         )
         self.assertIn('공간을 확보한 뒤 설치 파일을 다시 실행해 주세요.', blocked_branch)
         self.assertEqual(confirm_branch.count('IDYES preflight_ready'), 3)
-        self.assertIn('SetErrorLevel 10\n    Abort', confirm_branch)
+        self.assertIn('SetErrorLevel 10\n    !insertmacro InstallerDiagnosticAbort', confirm_branch)
 
 
 if __name__ == "__main__":

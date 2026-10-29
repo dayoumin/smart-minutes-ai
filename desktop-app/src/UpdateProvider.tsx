@@ -32,6 +32,7 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
     const [checked, setChecked] = useState(false);
     const [open, setOpen] = useState(false);
     const [purpose, setPurpose] = useState<'install' | 'update'>('update');
+    const firstEngineInstall = !desktop && purpose === 'install' && !snapshot.engineVersion;
     const [message, setMessage] = useState('');
     const [downloadStarted, setDownloadStarted] = useState(false);
     const [activity, setActivity] = useState<BackendUpdateActivity>({ busy: false, verified: false });
@@ -159,7 +160,7 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
         void check();
         const timer = window.setInterval(() => void check(), 15_000);
         return () => { controller.abort(); window.clearInterval(timer); };
-    }, [desktop, open, snapshot.authorization]);
+    }, [desktop, firstEngineInstall, open, snapshot.authorization]);
 
     useEffect(() => {
         if (busy) { manualCheckRef.current = false; setManuallyChecked(false); }
@@ -195,8 +196,8 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
                 setMessage('진행 중인 작업이 있습니다. 작업이 끝난 뒤 다시 눌러 주세요.');
                 return;
             }
-            if (!result.verified && !manualCheckRef.current) {
-                setMessage('이 버전에서는 작업 상태를 확인하지 못했습니다. 다른 창에서도 작업 중이 아닌지 확인해 주세요.');
+            if (!firstEngineInstall && !result.verified && !manualCheckRef.current) {
+                setMessage('다른 창의 작업을 마친 뒤 확인란을 선택해 주세요.');
                 return;
             }
             // The only navigation to the artifact is this explicit user action.
@@ -215,8 +216,8 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
             if (epoch !== guideEpochRef.current) return;
             setDownloadStarted(true);
             setMessage(desktop
-                ? '브라우저에서 다운로드를 요청했습니다. 다운로드가 끝나면 앱을 종료하고 아래 순서로 적용해 주세요.'
-                : '설치 파일 다운로드를 요청했습니다. 다운로드가 끝나면 아래 순서로 설치해 주세요.');
+                ? '다운로드를 요청했습니다. 아래 순서로 적용해 주세요.'
+                : '다운로드를 요청했습니다. 받은 설치 파일을 실행해 주세요.');
         } catch {
             if (epoch === guideEpochRef.current) setMessage('다운로드를 열지 못했습니다. 잠시 후 다시 눌러 주세요.');
         } finally {
@@ -240,7 +241,8 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
                     <IconButton aria-label="업데이트 안내 닫기" icon={<X size={18} />} onClick={close} />
                 </div>
                 <div className="mt-4 space-y-3 text-sm leading-6">
-                    <p id="update-guide-description">다운로드 버튼을 눌러야 파일을 받습니다. 설치나 앱 재시작은 자동으로 진행하지 않습니다.</p>
+                    <p id="update-guide-description">{desktop ? '받은 업데이트 패키지는 직접 적용해 주세요.'
+                        : firstEngineInstall ? '설치 후 웹으로 돌아와 연결해 주세요.' : '기존 회의록·설정·모델은 유지됩니다.'}</p>
                     {desktop ? <>
                         {available && installed && release ? <p>설치본: {new Date(installed.generatedAt).toLocaleString('ko-KR')}<br />새 버전: {new Date(release.generatedAt).toLocaleString('ko-KR')}</p>
                             : <p>{checking ? '새 버전을 확인하고 있습니다.' : !installed && checked
@@ -258,27 +260,25 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
                             ? '새 분석을 시작하려면 업데이트가 필요합니다.'
                             : available ? '새 버전이 있습니다. 현재 작업을 마친 뒤 업데이트할 수 있습니다.'
                             : '새 업데이트가 확인되지 않았습니다. 웹 화면은 작업을 마친 뒤 직접 새로고침하면 최신 버전으로 열립니다.'}</p>}
-                        {latestRelease && <p>설치 파일 버전: {latestRelease.version}</p>}
-                        <ol className="list-decimal space-y-1 pl-5">
-                            <li>설치 파일을 다운로드합니다.</li>
-                            <li>다른 창의 작업까지 저장하고 이 PC의 모든 {LOCAL_ENGINE_NAME} 창을 종료한 뒤 설치 파일을 실행합니다.</li>
+                        {!firstEngineInstall && <ol className="list-decimal space-y-1 pl-5">
+                            <li>작업을 저장하고 이 PC의 모든 {LOCAL_ENGINE_NAME} 창을 종료한 뒤 설치 파일을 실행합니다.</li>
                             <li>설치가 끝나면 {withJosa(LOCAL_ENGINE_NAME, '을/를')} 다시 켜고 웹으로 돌아옵니다.</li>
-                        </ol>
-                        <p>기존 회의록·설정·모델은 유지합니다. 웹 화면은 자동으로 새로고침하지 않습니다.</p>
-                        {import.meta.env.VITE_LOCAL_ENGINE_TEST_RELEASE === 'true' && <p>테스트 설치 파일이라 Windows 보안 경고가 나올 수 있습니다.</p>}
+                        </ol>}
+                        <div>
+                            <p className="font-medium">설치할 때 보안 경고가 뜨면</p>
+                            <p>‘Windows의 PC 보호’ 화면에서 <strong>추가 정보 → 실행</strong>을 눌러 주세요.</p>
+                        </div>
                     </>}
                     {blocked && <StatusBanner tone="warning" heading="작업이 끝난 뒤 다운로드할 수 있습니다">
-                        분석·요약·모델 준비 등 진행 중인 작업이 끝나면 받을 수 있습니다. 작업이 끝나도 자동으로 다운로드하지 않습니다.
+                        분석·요약·모델 준비가 끝난 뒤 다시 눌러 주세요.
                     </StatusBanner>}
-                    {downloadUrl && !blocked && !activity.verified && !activityChecking && <StatusBanner tone="warning" heading="작업 상태를 자동으로 확인할 수 없습니다">
-                        <p>{purpose === 'install' && !snapshot.engineVersion
-                            ? '연결하기 전에는 다른 창의 작업 상태를 확인할 수 없습니다. 이미 사용 중인 앱이 있다면 작업을 마친 뒤 설치해 주세요.'
-                            : '이전 버전이거나 연결이 끊겼을 수 있습니다. 다른 창의 분석·요약·모델 다운로드도 끝났는지 확인해 주세요.'}</p>
+                    {downloadUrl && !firstEngineInstall && !blocked && !activity.verified && !activityChecking && <StatusBanner tone="warning" heading="다른 창의 작업도 확인해 주세요">
+                        <p>연결 상태를 확인하지 못했습니다. 분석·요약·모델 다운로드가 모두 끝난 뒤 진행해 주세요.</p>
                         <label className="mt-2 flex items-start gap-2">
                             <input type="checkbox" className="mt-1" checked={manuallyChecked}
                                 disabled={requestingDownload}
                                 onChange={event => { manualCheckRef.current = event.target.checked; setManuallyChecked(event.target.checked); }} />
-                            이 PC의 모든 작업이 끝났고 작성 중인 내용을 저장했습니다.
+                            작업을 마치고 작성 중인 내용을 저장했습니다.
                         </label>
                     </StatusBanner>}
                     {message && <p role="status">{message}</p>}
@@ -288,7 +288,7 @@ export const UpdateProvider: React.FC<Props> = ({ children, busy, isBusy }) => {
                     {desktop && <Button variant="ghost" disabled={checking} onClick={() => void checkDesktop(true)}><RefreshCw size={15} />다시 확인</Button>}
                     <Button variant="outline" onClick={close}>나중에</Button>
                     <Button disabled={blocked || !downloadUrl || downloadStarted || checking || activityChecking || requestingDownload
-                        || (!activity.verified && !manuallyChecked)} onClick={() => void download()}>
+                        || (!firstEngineInstall && !activity.verified && !manuallyChecked)} onClick={() => void download()}>
                         <Download size={15} />{requestingDownload ? '작업 상태 확인 중' : downloadStarted ? '다운로드 요청됨' : desktop ? '업데이트 패키지 받기' : '설치 파일 받기'}
                     </Button>
                 </div>

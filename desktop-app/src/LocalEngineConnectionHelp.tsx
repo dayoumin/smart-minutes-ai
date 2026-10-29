@@ -57,7 +57,6 @@ export const LocalEngineConnectionHelp: React.FC<LocalEngineConnectionHelpProps>
                 {downloadUrl && <div className="settings-row">
                     <span className="settings-row-copy">
                         <span className="settings-row-title">{repairRequired ? '연결 프로그램 다시 설치' : updateNeeded ? '업데이트' : '연결 프로그램 설치'}</span>
-                        <span className="settings-row-description">안내에서 설치 순서를 확인하고 설치 파일을 받으세요.</span>
                     </span>
                     <Button variant="outline" onClick={() => openGuide(updateNeeded && !repairRequired ? 'update' : 'install')}>
                         {updateNeeded && !repairRequired ? '업데이트 안내' : '설치 안내'}

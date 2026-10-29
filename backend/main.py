@@ -30,6 +30,8 @@ from fastapi.responses import FileResponse, Response, StreamingResponse, JSONRes
 
 from analysis_jobs import AnalysisCancelledError, AnalysisJobRegistry
 from update_activity import UpdateActivityMiddleware, UpdateRequestActivity
+from resumable_download import download_pinned_file, partial_size
+from windows_process_job import start_owned_process
 from brand import BRAND_NAME, with_josa
 from config_normalization import (
     DEFAULT_LONG_AUDIO_CHUNK_SECONDS,
@@ -1228,7 +1230,7 @@ def _parse_iso_datetime(value: str | None) -> datetime | None:
         return None
 
 
-def _model_download_progress(model_key: str, target_path: str, started_at: str | None, active: bool) -> dict:
+def _model_download_progress(model_key: str, target_path: str, started_at: str | None, active: bool, initial_bytes: int = 0) -> dict:
     expected_bytes = MODEL_DOWNLOAD_EXPECTED_BYTES.get(model_key, 0)
     downloaded_bytes = _directory_size_bytes(target_path) if target_path else 0
     progress_percent = None
@@ -1241,7 +1243,7 @@ def _model_download_progress(model_key: str, target_path: str, started_at: str |
         started = _parse_iso_datetime(started_at)
         if active and started and downloaded_bytes > 0:
             elapsed_seconds = max((datetime.now() - started).total_seconds(), 1)
-            bytes_per_second = downloaded_bytes / elapsed_seconds
+            bytes_per_second = max(0, downloaded_bytes - initial_bytes) / elapsed_seconds
             remaining_bytes = max(expected_bytes - downloaded_bytes, 0)
             if bytes_per_second > 0 and remaining_bytes > 0:
                 eta_seconds = int(remaining_bytes / bytes_per_second)
@@ -1262,7 +1264,9 @@ def _model_download_snapshot(model_key: str) -> dict:
             str(status.get("target_path") or ""),
             str(status.get("started_at") or ""),
             bool(status.get("active")),
+            int(status.get("initial_bytes") or 0),
         ))
+        status["can_resume"] = not status.get("active") and (status.get("status") == "cancelled" or (status.get("status") == "failed" and status["downloaded_bytes"] > 0))
         return status
     return {
         "key": model_key,
@@ -1297,7 +1301,7 @@ def _model_download_cancel_requested(model_key: str) -> bool:
     return bool(current.get("cancel_requested"))
 
 
-def _mark_model_download_cancelled(model_key: str, target_path: str, message: str = "모델 받기를 중지했습니다.") -> dict:
+def _mark_model_download_cancelled(model_key: str, target_path: str, message: str = "중지됨") -> dict:
     return _set_model_download_status(
         model_key,
         active=False,
@@ -1318,7 +1322,7 @@ def _request_model_download_stop(model_key: str) -> dict:
         current.update({
             "active": True,
             "status": "cancelling",
-            "message": "모델 받기를 중지하고 있습니다. 진행 중인 파일 작업이 끝나면 멈춥니다.",
+            "message": "중지하는 중입니다.",
             "cancel_requested": True,
             "updated_at": datetime.now().isoformat(),
         })
@@ -1327,12 +1331,39 @@ def _request_model_download_stop(model_key: str) -> dict:
 
 
 def _download_huggingface_snapshot(repo_id: str, target_dir: str) -> None:
-    from huggingface_hub import snapshot_download
-
-    snapshot_download(
-        repo_id=repo_id,
-        local_dir=target_dir,
-    )
+    # The HF client can block inside a network read. A separate, owned worker
+    # makes Stop prompt while leaving its incomplete files available for resume.
+    command = ([sys.executable, "--download-model"] if getattr(sys, "frozen", False)
+               else [sys.executable, "-B", str(Path(__file__).with_name("model_download_worker.py"))])
+    with tempfile.TemporaryDirectory(prefix="lmo-model-download-") as worker_dir, tempfile.TemporaryFile(mode="w+b") as output:
+        error_file = Path(worker_dir) / "error.log"
+        process, job = start_owned_process(
+            [*command, "--repo", repo_id, "--target", target_dir, "--error-file", str(error_file)],
+            stdout=output, stderr=subprocess.STDOUT, **hidden_subprocess_kwargs(),
+        )
+        try:
+            while process.poll() is None:
+                if _model_download_cancel_requested("stt_faster_whisper"):
+                    if job:
+                        job.terminate_and_wait()
+                    else:
+                        process.terminate()
+                        try:
+                            process.wait(timeout=5)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.wait(timeout=5)
+                    raise InterruptedError("stopped")
+                time.sleep(0.1)
+            if process.returncode:
+                if error_file.is_file():
+                    raise RuntimeError(error_file.read_text(encoding="utf-8")[-4000:])
+                output.seek(0, os.SEEK_END)
+                output.seek(max(0, output.tell() - 4000))
+                raise RuntimeError(output.read().decode("utf-8", errors="replace"))
+        finally:
+            if job:
+                job.close()
 
 
 def _support_contact_email(now: datetime | None = None) -> str:
@@ -1343,12 +1374,7 @@ def _support_contact_email(now: datetime | None = None) -> str:
 
 
 def _download_blocked_message(subject: str, recovery_action: str) -> str:
-    contact_email = _support_contact_email()
-    return (
-        f"{subject} 받지 못했습니다. 회사 보안 정책 또는 인터넷 연결 문제일 수 있습니다. "
-        f"사내망에서 계속 막히면 담당자에게 {recovery_action} 요청해 주세요. "
-        f"계속 실패하면 {contact_email}으로 문의해 주세요."
-    )
+    return "받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요."
 
 
 def _model_download_preflight(model_key: str, target_path: str) -> str:
@@ -1394,19 +1420,21 @@ def _model_download_preflight(model_key: str, target_path: str) -> str:
 def _run_model_download(model_key: str) -> None:
     spec = get_model_spec(model_key)
     target_path = resolve_model_path(BASE_DIR, spec)
-    if _model_download_cancel_requested(model_key):
-        _mark_model_download_cancelled(model_key, target_path)
-        return
-    _set_model_download_status(
-        model_key,
-        active=True,
-        status="running",
-        message=f"{spec.label} 모델을 받는 중입니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.",
-        target_path=target_path,
-        started_at=datetime.now().isoformat(),
-        error="",
-        cancel_requested=False,
-    )
+    with MODEL_DOWNLOAD_STATUS_LOCK:
+        if _model_download_cancel_requested(model_key):
+            _mark_model_download_cancelled(model_key, target_path)
+            return
+        _set_model_download_status(
+            model_key,
+            active=True,
+            status="running",
+            message="모델을 받는 중입니다.",
+            target_path=target_path,
+            initial_bytes=_directory_size_bytes(target_path),
+            started_at=datetime.now().isoformat(),
+            error="",
+            cancel_requested=False,
+        )
     try:
         Path(target_path).mkdir(parents=True, exist_ok=True)
         if _model_download_cancel_requested(model_key):
@@ -1422,7 +1450,7 @@ def _run_model_download(model_key: str) -> None:
             model_key,
             active=False,
             status="completed",
-            message=f"{spec.label} 모델 받기가 완료되었습니다.",
+            message="받기 완료",
             target_path=target_path,
             error="",
             cancel_requested=False,
@@ -1458,7 +1486,7 @@ def _start_model_download(model_key: str) -> dict:
             model_key,
             active=False,
             status="completed",
-            message=f"{spec.label} 모델이 이미 준비되어 있습니다.",
+            message="준비됨",
             target_path=target_path,
             started_at=datetime.now().isoformat(),
             error="",
@@ -1518,6 +1546,7 @@ def _ollama_runtime_download_progress(
     expected_bytes: int,
     started_at: str | None,
     active: bool,
+    initial_bytes: int = 0,
 ) -> dict:
     progress_percent = None
     eta_seconds = None
@@ -1528,7 +1557,7 @@ def _ollama_runtime_download_progress(
         started = _parse_iso_datetime(started_at)
         if active and started and downloaded_bytes > 0:
             elapsed_seconds = max((datetime.now() - started).total_seconds(), 1)
-            bytes_per_second = downloaded_bytes / elapsed_seconds
+            bytes_per_second = max(0, downloaded_bytes - initial_bytes) / elapsed_seconds
             remaining_bytes = max(expected_bytes - downloaded_bytes, 0)
             if bytes_per_second > 0 and remaining_bytes > 0:
                 eta_seconds = int(remaining_bytes / bytes_per_second)
@@ -1549,10 +1578,14 @@ def _ollama_runtime_snapshot() -> dict:
             int(status.get("expected_bytes") or OLLAMA_RUNTIME_EXPECTED_BYTES),
             str(status.get("started_at") or ""),
             bool(status.get("active")),
+            int(status.get("initial_bytes") or 0),
         ))
         status["available"] = bool(find_embedded_ollama_executable())
         status["executable_path"] = find_embedded_ollama_executable()
         status.setdefault("update_required", False)
+        part = Path(str(status.get("target_path") or _ollama_runtime_default_target())) / ".download" / "ollama-windows-amd64.zip.part"
+        status["can_resume"] = (not status["available"] and not status.get("active") and not status.get("update") and
+                                (status.get("status") == "cancelled" or bool(partial_size(part, OLLAMA_RUNTIME_DOWNLOAD_URL, OLLAMA_RUNTIME_SHA256, OLLAMA_RUNTIME_EXPECTED_BYTES))))
         return status
 
     embedded_executable = find_embedded_ollama_executable()
@@ -1617,7 +1650,7 @@ def _ollama_runtime_cancel_requested() -> bool:
     return bool(current.get("cancel_requested"))
 
 
-def _mark_ollama_runtime_cancelled(target_path: str, message: str = "요약 프로그램 받기를 중지했습니다.") -> dict:
+def _mark_ollama_runtime_cancelled(target_path: str, message: str = "중지됨") -> dict:
     return _set_ollama_runtime_download_status(
         available=bool(find_embedded_ollama_executable()),
         active=False,
@@ -1638,7 +1671,7 @@ def _request_ollama_runtime_download_stop() -> dict:
         current.update({
             "active": True,
             "status": "cancelling",
-            "message": "요약 프로그램 받기를 중지하고 있습니다. 진행 중인 파일 작업이 끝나면 멈춥니다.",
+            "message": "중지하는 중입니다.",
             "cancel_requested": True,
             "updated_at": datetime.now().isoformat(),
         })
@@ -1751,54 +1784,26 @@ def _safe_extract_zip(archive: zipfile.ZipFile, extract_dir: Path) -> None:
 
 
 def _download_ollama_runtime_zip(target_path: Path, zip_part_path: Path) -> None:
-    request = urllib.request.Request(
-        OLLAMA_RUNTIME_DOWNLOAD_URL,
-        headers={"User-Agent": "LMO-audio-runtime-downloader"},
-    )
-    downloaded_bytes = 0
-    expected_bytes = OLLAMA_RUNTIME_EXPECTED_BYTES
-    digest = hashlib.sha256()
-    with urllib.request.urlopen(request, timeout=30) as response:
-        content_length = response.headers.get("Content-Length")
-        if content_length:
-            try:
-                expected_bytes = max(1, int(content_length))
-            except ValueError:
-                expected_bytes = OLLAMA_RUNTIME_EXPECTED_BYTES
+    initial_bytes = partial_size(zip_part_path, OLLAMA_RUNTIME_DOWNLOAD_URL, OLLAMA_RUNTIME_SHA256, OLLAMA_RUNTIME_EXPECTED_BYTES)
+
+    def progress(downloaded_bytes, expected_bytes):
         _set_ollama_runtime_download_status(
             active=True,
             status="running",
-            message="요약 프로그램을 받는 중입니다. 파일이 커서 시간이 오래 걸릴 수 있습니다.",
+            message="AI 모델 사용에 필요한 파일을 받는 중입니다.",
             target_path=str(target_path),
             executable_path="",
             error="",
             expected_bytes=expected_bytes,
-            downloaded_bytes=0,
+            downloaded_bytes=downloaded_bytes,
+            initial_bytes=initial_bytes if downloaded_bytes >= initial_bytes else 0,
         )
-        with zip_part_path.open("wb") as handle:
-            while True:
-                if _ollama_runtime_cancel_requested():
-                    raise InterruptedError("cancelled")
-                chunk = response.read(OLLAMA_RUNTIME_DOWNLOAD_CHUNK_BYTES)
-                if not chunk:
-                    break
-                handle.write(chunk)
-                digest.update(chunk)
-                downloaded_bytes += len(chunk)
-                _set_ollama_runtime_download_status(
-                    active=True,
-                    status="running",
-                    message="요약 프로그램을 받는 중입니다. 파일이 커서 시간이 오래 걸릴 수 있습니다.",
-                    target_path=str(target_path),
-                    executable_path="",
-                    error="",
-                    expected_bytes=expected_bytes,
-                    downloaded_bytes=downloaded_bytes,
-                )
-    if OLLAMA_RUNTIME_SHA256:
-        actual_hash = digest.hexdigest().lower()
-        if not hmac.compare_digest(actual_hash, OLLAMA_RUNTIME_SHA256):
-            raise RuntimeError("Downloaded Ollama runtime checksum did not match.")
+
+    download_pinned_file(
+        zip_part_path, url=OLLAMA_RUNTIME_DOWNLOAD_URL, sha256=OLLAMA_RUNTIME_SHA256,
+        expected_bytes=OLLAMA_RUNTIME_EXPECTED_BYTES, cancelled=_ollama_runtime_cancel_requested,
+        progress=progress, chunk_bytes=OLLAMA_RUNTIME_DOWNLOAD_CHUNK_BYTES,
+    )
 
 
 def _run_ollama_runtime_download(target_path: Path) -> None:
@@ -1807,13 +1812,15 @@ def _run_ollama_runtime_download(target_path: Path) -> None:
     zip_path = download_dir / "ollama-windows-amd64.zip"
     extract_dir = download_dir / "extracted"
     try:
+        if download_dir.resolve() != target_path.resolve() / ".download":
+            raise RuntimeError("Download directory must not be a link to another location.")
         if _ollama_runtime_cancel_requested():
             _mark_ollama_runtime_cancelled(str(target_path))
             return
 
-        if download_dir.exists():
-            shutil.rmtree(download_dir)
         download_dir.mkdir(parents=True, exist_ok=True)
+        if extract_dir.exists():
+            shutil.rmtree(extract_dir)
 
         _download_ollama_runtime_zip(target_path, zip_part_path)
         if _ollama_runtime_cancel_requested():
@@ -1868,13 +1875,13 @@ def _run_ollama_runtime_download(target_path: Path) -> None:
         )
     finally:
         try:
-            if zip_part_path.exists():
-                zip_part_path.unlink()
-        except OSError:
-            pass
-        try:
-            if download_dir.exists():
-                shutil.rmtree(download_dir)
+            # Stop/failure keeps only this download's partial file for resume.
+            # Installed executables and model directories are never cleared here.
+            if download_dir.resolve() == target_path.resolve() / ".download":
+                if _ollama_runtime_snapshot().get("status") == "completed" and download_dir.exists():
+                    shutil.rmtree(download_dir)
+                elif zip_path.exists() and not zip_part_path.exists():
+                    zip_path.replace(zip_part_path)
         except OSError:
             pass
 
@@ -2075,6 +2082,9 @@ def _ollama_pull_snapshot(model_name: str) -> dict:
     with OLLAMA_PULL_STATUS_LOCK:
         status = dict(OLLAMA_PULL_STATUS.get(model_name) or {})
     if status:
+        status["can_resume"] = not status.get("active") and (status.get("status") == "cancelled" or
+            (status.get("status") == "failed" and float(status.get("progress_percent") or 0) > 0 and
+             status.get("error_code") not in {"runtime_update_required", "model_not_found", "ollama_missing"}))
         return status
     return {
         "model": model_name,
@@ -2166,7 +2176,7 @@ def _request_ollama_pull_stop(model_name: str) -> dict:
         current.update({
             "active": True,
             "status": "cancelling",
-            "message": f"{model_name} 모델 받기를 중지하고 있습니다.",
+            "message": "중지하는 중입니다.",
             "cancel_requested": True,
             "updated_at": datetime.now().isoformat(),
         })
@@ -2212,7 +2222,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 "model": model_name,
                 "active": False,
                 "status": "cancelled",
-                "message": f"{model_name} 모델 받기를 중지했습니다.",
+                "message": "중지됨",
                 "started_at": current.get("started_at") or started_at,
                 "updated_at": started_at,
                 "exit_code": None,
@@ -2226,7 +2236,7 @@ def _run_ollama_pull(model_name: str) -> None:
             "model": model_name,
             "active": True,
             "status": "running",
-            "message": f"{model_name} 모델을 받거나 업데이트를 확인하는 중입니다.",
+            "message": "받는 중",
             "started_at": current.get("started_at") or started_at,
             "updated_at": started_at,
             "exit_code": None,
@@ -2245,7 +2255,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 model_name,
                 active=False,
                 status="cancelled",
-                message=f"{model_name} 모델 받기를 중지했습니다.",
+                message="중지됨",
                 updated_at=datetime.now().isoformat(),
                 exit_code=None,
                 error="",
@@ -2328,7 +2338,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 model_name,
                 active=False,
                 status="cancelled",
-                message=f"{model_name} 모델 받기를 중지했습니다.",
+                message="중지됨",
                 exit_code=return_code,
                 error="",
                 output=output[-4000:],
@@ -2340,7 +2350,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 model_name,
                 active=False,
                 status="completed",
-                message=f"{model_name} 모델 받기가 완료되었습니다.",
+                message="받기 완료",
                 exit_code=return_code,
                 output=output[-4000:],
                 progress_percent=100,
@@ -2378,7 +2388,7 @@ def _run_ollama_pull(model_name: str) -> None:
                 model_name,
                 active=False,
                 status="cancelled",
-                message=f"{model_name} 모델 받기를 중지했습니다.",
+                message="중지됨",
                 exit_code=None,
                 error="",
                 cancel_requested=False,
@@ -2541,7 +2551,7 @@ def _start_ollama_pull(model_name: str) -> dict:
             "model": model_name,
             "active": True,
             "status": "starting",
-            "message": f"{model_name} 모델 받기 또는 업데이트 확인을 시작합니다.",
+            "message": "받기 시작",
             "started_at": datetime.now().isoformat(),
             "updated_at": datetime.now().isoformat(),
             "exit_code": None,

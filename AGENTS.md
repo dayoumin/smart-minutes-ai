@@ -39,6 +39,7 @@ When changing audio preprocessing, STT quality, diarization quality, or long-fil
 ## UI and Copy Work
 
 - Read `docs/design.md` before changing repeated UI surfaces.
+- Use the project Storybook (`desktop-app/stories`, `corepack pnpm --dir desktop-app storybook`) for shared UI and meaningful state examples. Reuse production components/CSS, update affected stories, and check a composed screen as well as isolated parts. Choose whether feedback is needed before choosing its placement; never force every action into an anchored popup. See `docs/design.md` and `docs/frontend-simulation-testing.md` for scope and checks.
 - Prefer user-facing terms such as `음성 파일`, `회의 요약`, and `대화록`.
 - Do not add redundant eyebrow labels, decorative section markers, or repeated helper text to the first meeting-writing screen when the title/control already explains the purpose.
 - Refer to the user product as `LMO 회의록` (the brand name in `configs/brand.json`) or the web app. Use desktop app only for the Windows Tauri executable, and use portable release only for the copied or zipped `lmo_audio` folder used on another PC.

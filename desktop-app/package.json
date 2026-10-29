@@ -57,6 +57,9 @@
     "test:topic-generation-ui": "node --experimental-strip-types scripts/simulate-topic-generation-ui.mjs",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "storybook": "storybook dev -p 6011 --host 127.0.0.1 --disable-telemetry --no-version-updates --no-open",
+    "storybook:build": "storybook build --output-dir storybook-static --disable-telemetry",
+    "storybook:check": "node scripts/check-storybook.mjs",
     "preview": "vite preview"
   },
   "dependencies": {
@@ -69,6 +72,9 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
+    "@storybook/addon-a11y": "10.6.2",
+    "@storybook/addon-docs": "10.6.2",
+    "@storybook/react-vite": "10.6.2",
     "@tailwindcss/postcss": "^4.2.4",
     "@tauri-apps/cli": "^2.10.1",
     "@types/react": "^19.2.14",
@@ -81,6 +87,7 @@
     "globals": "^17.5.0",
     "playwright": "^1.59.1",
     "postcss": "^8.5.10",
+    "storybook": "10.6.2",
     "tailwindcss": "^4.2.4",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.59.2",

@@ -1,6 +1,6 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ArrowLeft, Check, ChevronLeft, ChevronRight, Download, Loader2, Mail, RefreshCw, Square, Trash2, X } from 'lucide-react';
-import { AppToast, Button, ProgressBar, StatusBanner } from './components/common';
+import { AppToast, Button, ProgressBar, StatusBanner, TooltipIconButton } from './components/common';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
     DownloadFormat,
@@ -22,6 +22,13 @@ const SETTINGS_FETCH_TIMEOUT_MS = 20_000;
 const SETTINGS_RETRY_BASE_MS = 5000;
 const SETTINGS_RETRY_MAX_MS = 30_000;
 const SETTINGS_NOTICE_AUTO_DISMISS_MS = 7000;
+// A newly opened dialog must not read or overwrite a previous dialog's flush.
+const pendingGeneralSettingsSaves = new Map<string, Promise<void>>();
+const waitForGeneralSettingsSaves = async (base: string): Promise<void> => {
+    while (pendingGeneralSettingsSaves.has(base)) {
+        await pendingGeneralSettingsSaves.get(base);
+    }
+};
 const OLLAMA_INSTALL_URL = 'https://ollama.com/download/windows';
 const OLLAMA_INSTALL_OPENED_NOTICE = '설치한 뒤 이 화면으로 돌아오면 자동으로 확인합니다.';
 const SUPPORT_EMAIL_WORK = 'ecomarine@korea.kr';
@@ -33,7 +40,7 @@ const getSupportContactEmail = (now = new Date()): string => (
 );
 
 const getOllamaInstallFailedNotice = (): string => (
-    `요약 프로그램 설치 페이지를 열지 못했습니다. 회사 보안 정책 또는 인터넷 연결 문제일 수 있습니다. 계속 실패하면 ${getSupportContactEmail()}으로 문의해 주세요.`
+    '설치 페이지를 열지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.'
 );
 
 const DEFAULT_SUMMARY_MODEL_OPTIONS: SummaryModelOption[] = [
@@ -146,6 +153,9 @@ interface SettingsPayload {
     preprocessing?: {
         enabled?: boolean;
         normalize_audio?: boolean;
+        noise_gate?: boolean;
+        trim_silence?: boolean;
+        denoise?: boolean;
         normalization_mode?: 'auto' | 'loudnorm' | 'dynaudnorm' | 'speechnorm';
     };
     privacy?: {
@@ -193,6 +203,7 @@ interface OllamaPullStatus {
     progress_percent?: number | null;
     eta_seconds?: number | null;
     cancel_requested?: boolean;
+    can_resume?: boolean;
 }
 
 interface ModelDownloadStatus {
@@ -209,6 +220,7 @@ interface ModelDownloadStatus {
     progress_percent?: number | null;
     eta_seconds?: number | null;
     cancel_requested?: boolean;
+    can_resume?: boolean;
 }
 
 interface OllamaRuntimeDownloadStatus {
@@ -230,6 +242,7 @@ interface OllamaRuntimeDownloadStatus {
     eta_seconds?: number | null;
     cancel_requested?: boolean;
     update_required?: boolean;
+    can_resume?: boolean;
 }
 
 interface OllamaConnectionStatus {
@@ -257,7 +270,7 @@ interface SettingsProps {
 }
 
 export type SettingsTab = 'general' | 'models';
-/** Where a writer shortcut lands inside 일반: 문제 해결 (재시작), 분석 장치, or 참석자 구분까지 이어서 실행. */
+/** Where a writer shortcut lands inside 일반: 문제 해결 (재시작), 분석 장치, or 참석자 구분 실행. */
 export type SettingsSection = 'troubleshooting' | 'device' | 'diarization';
 
 const getUserModelLabel = (model: ModelStatus): string => {
@@ -284,14 +297,14 @@ const formatModelDownloadEta = (seconds?: number | null): string => {
 };
 
 const getModelDownloadProgressText = (status?: ModelDownloadStatus): string => {
-    if (!status?.active) return '';
+    if (!status?.active && !status?.can_resume) return '';
     if (status.status === 'cancelling') return '';
     const downloaded = formatModelDownloadBytes(status.downloaded_bytes);
     const expected = formatModelDownloadBytes(status.expected_bytes);
     const percent = typeof status.progress_percent === 'number' && Number.isFinite(status.progress_percent)
         ? `${Math.max(0, Math.min(100, Number(status.progress_percent))).toFixed(1)}%`
         : '';
-    const eta = formatModelDownloadEta(status.eta_seconds);
+    const eta = status.active ? formatModelDownloadEta(status.eta_seconds) : '';
     const parts = [
         percent && `${percent} 진행`,
         downloaded && expected ? `${downloaded} / ${expected}` : downloaded,
@@ -301,18 +314,30 @@ const getModelDownloadProgressText = (status?: ModelDownloadStatus): string => {
 };
 
 const getModelDownloadProgressPercent = (status?: ModelDownloadStatus): number => {
-    if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
+    if ((!status?.active && !status?.can_resume) || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
 };
 
 const getModelDownloadStatusMessage = (status?: ModelDownloadStatus): string => {
-    if (status?.active) return '';
-    if (!status?.message || status.message === '모델 받기를 시작합니다.') return '';
-    return status.message;
+    if (status?.status === 'cancelling') return '중지하는 중입니다.';
+    if (status?.active) return '받는 중입니다.';
+    if (status?.status === 'cancelled') return '중지됨';
+    if (status?.status === 'failed') return getDownloadFailureMessage(status.message);
+    return '';
+};
+
+// Older engines may return multi-paragraph technical advice. Keep the cause
+// and next action here; diagnostic details remain in the engine's log.
+const getDownloadFailureMessage = (detail = ''): string => {
+    if (/저장 공간|저장할 공간|여유 공간|no space/i.test(detail)) return '저장 공간이 부족합니다. 공간을 비우고 다시 시도해 주세요.';
+    if (/권한|접근하지|파일을 쓸|폴더를 만들/i.test(detail)) return '파일을 저장하지 못했습니다. 저장 폴더를 확인해 주세요.';
+    if (/모델을 찾지|model not found/i.test(detail)) return '모델을 찾지 못했습니다. 다른 모델을 선택해 주세요.';
+    if (/업데이트/.test(detail)) return 'AI 모델 사용에 필요한 업데이트가 있습니다.';
+    return '받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.';
 };
 
 const getOllamaRuntimeProgressText = (status?: OllamaRuntimeDownloadStatus | null): string => {
-    if (!status?.active) return '';
+    if (!status?.active && !status?.can_resume) return '';
     if (status.status === 'cancelling') return '';
     if (status.status === 'extracting') return '설치하는 중';
     const downloaded = formatModelDownloadBytes(status.downloaded_bytes);
@@ -320,7 +345,7 @@ const getOllamaRuntimeProgressText = (status?: OllamaRuntimeDownloadStatus | nul
     const percent = typeof status.progress_percent === 'number' && Number.isFinite(status.progress_percent)
         ? `${Math.max(0, Math.min(100, Number(status.progress_percent))).toFixed(1)}% 진행`
         : '';
-    const eta = formatModelDownloadEta(status.eta_seconds);
+    const eta = status.active ? formatModelDownloadEta(status.eta_seconds) : '';
     const parts = [
         percent,
         downloaded && expected ? `${downloaded} / ${expected}` : downloaded,
@@ -330,22 +355,22 @@ const getOllamaRuntimeProgressText = (status?: OllamaRuntimeDownloadStatus | nul
 };
 
 const getOllamaRuntimeProgressPercent = (status?: OllamaRuntimeDownloadStatus | null): number => {
-    if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
+    if ((!status?.active && !status?.can_resume) || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
 };
 
 const getOllamaPullProgressPercent = (status?: OllamaPullStatus): number => {
-    if (!status?.active || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
+    if ((!status?.active && !status?.can_resume) || typeof status.progress_percent !== 'number' || !Number.isFinite(status.progress_percent)) return 0;
     return Math.max(0, Math.min(100, Number(status.progress_percent)));
 };
 
 const getOllamaPullProgressText = (status?: OllamaPullStatus): string => {
-    if (!status?.active) return '';
+    if (!status?.active && !status?.can_resume) return '';
     if (status.status === 'cancelling') return '';
     const percent = typeof status.progress_percent === 'number' && Number.isFinite(status.progress_percent)
         ? `${Math.max(0, Math.min(100, Number(status.progress_percent))).toFixed(1)}% 진행`
         : '';
-    const eta = formatModelDownloadEta(status.eta_seconds);
+    const eta = status.active ? formatModelDownloadEta(status.eta_seconds) : '';
     const parts = [percent, eta].filter(Boolean);
     return parts.length > 0 ? parts.join(' · ') : '계산 중';
 };
@@ -398,6 +423,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const [modelStatusRetryRound, setModelStatusRetryRound] = useState(0);
     const [diarizationDuringAnalysis, setDiarizationDuringAnalysis] = useState(false);
     const [sttDevice, setSttDevice] = useState<'cpu' | 'cuda'>('cpu');
+    const [normalizeAudio, setNormalizeAudio] = useState(true);
+    const normalizationTouchedRef = useRef(false);
+    const [normalizationOffNotice, setNormalizationOffNotice] = useState(false);
+    const normalizationSwitchRef = useRef<HTMLInputElement>(null);
+    const normalizationNoticeRef = useRef<HTMLDivElement>(null);
+    const [normalizationNoticePosition, setNormalizationNoticePosition] = useState<{ left: number; top: number } | null>(null);
+    const normalizationNoticeGenerationRef = useRef(0);
+    const normalizationNoticeShownRef = useRef(0);
     const [downloadFormat, setDownloadFormat] = useState<DownloadFormat>(DEFAULT_DOWNLOAD_FORMAT);
     const [preserveExtractedAudio, setPreserveExtractedAudio] = useState(true);
     const [autoSaveHwpxCopy, setAutoSaveHwpxCopy] = useState(false);
@@ -457,6 +490,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const restoredOllamaPullsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
     const currentGeneralKeyRef = useRef('');
+    const generalSaveQueueRef = useRef<Promise<void> | null>(null);
+    const pendingGeneralKeyRef = useRef('');
     const dialogRef = useRef<HTMLDivElement | null>(null);
     const closeButtonRef = useRef<HTMLButtonElement | null>(null);
     const summaryModelMenuTriggerRef = useRef<HTMLButtonElement | null>(null);
@@ -692,6 +727,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const applyGeneralSettingsToForm = useCallback((nextSettings: SettingsPayload) => {
         setDiarizationDuringAnalysis(nextSettings.diarization?.generate_during_analysis ?? false);
         setSttDevice(nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu');
+        setNormalizeAudio(nextSettings.preprocessing?.enabled !== false && Boolean(nextSettings.preprocessing?.normalize_audio));
         setPreserveExtractedAudio(nextSettings.privacy?.preserve_extracted_audio ?? true);
         setAutoSaveHwpxCopy(nextSettings.privacy?.auto_save_hwpx_copy ?? false);
         setAutoSaveAudioCopy(nextSettings.privacy?.auto_save_audio_copy ?? false);
@@ -706,6 +742,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const generalSettingsKey = useCallback((values: {
         diarizationDuringAnalysis: boolean;
         sttDevice: 'cpu' | 'cuda';
+        normalizeAudio: boolean;
         preserveExtractedAudio: boolean;
         autoSaveHwpxCopy: boolean;
         autoSaveAudioCopy: boolean;
@@ -841,7 +878,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
             const response = await fetchWithTimeout(`${base}/api/models/download-status?key=${encodeURIComponent(modelKey)}`);
-            if (!response.ok) throw new Error(`download-status=${response.status}`);
+            if (!response.ok) throw new Error('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
             const status = await response.json() as ModelDownloadStatus;
             if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
             updateModelDownloadStatus(status);
@@ -860,7 +897,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 return;
             }
         }
-        throw new Error('모델 받기 상태 확인 시간이 초과되었습니다.');
+        throw new Error('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
     }, [isCurrentModelDownloadRequest, loadModelsStatus, updateModelDownloadStatus]);
 
     const handleDownloadModel = useCallback(async (model: ModelStatus) => {
@@ -894,10 +931,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             updateModelDownloadStatus(status);
             if (status.active) {
                 setMessage('');
-                void pollModelDownloadStatus(base, model.key, requestId).catch(error => {
+                void pollModelDownloadStatus(base, model.key, requestId).catch(() => {
                     if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
                     setMessage('');
-                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                    setErrorMessage('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
                 });
             } else if (status.status === 'completed') {
                 await loadModelsStatus(base, { surfaceErrors: false });
@@ -910,7 +947,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         } catch (error) {
             if (!isCurrentModelDownloadRequest(model.key, requestId)) return;
             setMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
+            setErrorMessage(getDownloadFailureMessage(error instanceof Error ? error.message : ''));
         } finally {
             finishUpdateActivity();
         }
@@ -935,13 +972,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             const status = await response.json() as ModelDownloadStatus;
             updateModelDownloadStatus(status);
             if (status.active) {
-                void pollModelDownloadStatus(base, modelKey, requestId).catch(error => {
+                void pollModelDownloadStatus(base, modelKey, requestId).catch(() => {
                     if (!isCurrentModelDownloadRequest(modelKey, requestId)) return;
-                    setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                    setErrorMessage('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
                 });
             }
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 중지하지 못했습니다.');
+        } catch {
+            setErrorMessage('중지하지 못했습니다. 다시 눌러 주세요.');
         }
     }, [apiBase, isCurrentModelDownloadRequest, pollModelDownloadStatus, updateModelDownloadStatus]);
 
@@ -962,7 +999,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             const response = await fetchWithTimeout(`${base}/api/models/ollama/runtime-status`);
-            if (!response.ok) throw new Error(`ollama-runtime-status=${response.status}`);
+            if (!response.ok) throw new Error('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
             const status = await response.json() as OllamaRuntimeDownloadStatus;
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             updateOllamaRuntimeDownloadStatus(status);
@@ -974,7 +1011,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     setErrorMessage('');
                 } else if (status.status === 'failed') {
                     setMessage('');
-                    setErrorMessage(status.update_required ? '' : status.message || '요약 프로그램을 받지 못했습니다.');
+                    setErrorMessage('');
                 } else if (status.status === 'cancelled') {
                     setMessage('');
                     setErrorMessage('');
@@ -982,16 +1019,16 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 return;
             }
         }
-        throw new Error('요약 프로그램 받기 상태 확인 시간이 초과되었습니다.');
+        throw new Error('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
     }, [isCurrentOllamaRuntimeRequest, loadModelsStatus, updateOllamaRuntimeDownloadStatus]);
 
     const beginOllamaRuntimePolling = useCallback((base: string, requestId: number) => {
         if (ollamaRuntimePollingRequestIdRef.current === requestId) return;
         ollamaRuntimePollingRequestIdRef.current = requestId;
-        void pollOllamaRuntimeDownloadStatus(base, requestId).catch(error => {
+        void pollOllamaRuntimeDownloadStatus(base, requestId).catch(() => {
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             setMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기 상태를 확인하지 못했습니다.');
+            setErrorMessage('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
         }).finally(() => {
             if (ollamaRuntimePollingRequestIdRef.current === requestId) {
                 ollamaRuntimePollingRequestIdRef.current = null;
@@ -1033,12 +1070,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage('');
                 setErrorMessage('');
             } else if (status.status === 'failed') {
-                setErrorMessage(status.update_required ? '' : status.message || '요약 프로그램을 받지 못했습니다.');
+                setErrorMessage('');
             }
         } catch (error) {
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
             setMessage('');
-            setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기를 시작하지 못했습니다.');
+            setErrorMessage(getDownloadFailureMessage(error instanceof Error ? error.message : ''));
         } finally {
             finishUpdateActivity();
         }
@@ -1070,9 +1107,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             if (status.active) {
                 beginOllamaRuntimePolling(base, requestId);
             }
-        } catch (error) {
+        } catch {
             if (!isCurrentOllamaRuntimeRequest(requestId)) return;
-            setErrorMessage(error instanceof Error ? error.message : '요약 프로그램 받기를 중지하지 못했습니다.');
+            setErrorMessage('중지하지 못했습니다. 다시 눌러 주세요.');
         }
     }, [apiBase, beginOllamaRuntimePolling, isCurrentOllamaRuntimeRequest, updateOllamaRuntimeDownloadStatus]);
 
@@ -1089,7 +1126,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             await new Promise(resolve => window.setTimeout(resolve, 2000));
             if (!isCurrentPullRequest(modelName, requestId)) return;
             const response = await fetchWithTimeout(`${base}/api/models/ollama/pull-status?model=${encodeURIComponent(modelName)}`);
-            if (!response.ok) throw new Error(`pull-status=${response.status}`);
+            if (!response.ok) throw new Error('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
             const status = await response.json() as OllamaPullStatus;
             if (!isCurrentPullRequest(modelName, requestId)) return;
             updateOllamaPullStatus(status);
@@ -1100,7 +1137,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     setMessage('');
                 } else if (status.status === 'failed') {
                     setMessage('');
-                    setErrorMessage(status.error_code === 'runtime_update_required' ? '' : status.message || '모델을 받지 못했습니다.');
+                    setErrorMessage('');
                 } else if (status.status === 'cancelled') {
                     setMessage('');
                     setErrorMessage('');
@@ -1108,7 +1145,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 return;
             }
         }
-        throw new Error('모델 받기 상태 확인 시간이 초과되었습니다.');
+        throw new Error('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
     }, [isCurrentPullRequest, loadModelsStatus, updateOllamaPullStatus]);
 
     const handleDownloadOllamaModel = useCallback(async (
@@ -1146,16 +1183,16 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             updateOllamaPullStatus(status);
             if (!status.active && status.status === 'failed' && isOllamaMissingPullStatus(status)) {
                 setMessage('');
-                setOllamaInstallNoticeMessage('요약 프로그램을 먼저 받은 뒤 요약 모델을 받을 수 있습니다.');
+                setOllamaInstallNoticeMessage('AI 모델 사용 준비를 먼저 해 주세요.');
                 setOllamaInstallPrompted(true);
                 setErrorMessage('');
                 return;
             }
             if (status.active) {
                 setMessage('');
-                void pollOllamaPullStatus(base, targetModel, requestId).catch(error => {
+                void pollOllamaPullStatus(base, targetModel, requestId).catch(() => {
                     if (!isCurrentPullRequest(targetModel, requestId)) return;
-                    setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
+                    setDownloadErrorMessage('받기 상태를 확인하지 못했습니다. 다시 시도해 주세요.');
                 });
             } else if (status.status === 'completed') {
                 await loadModelsStatus(base, { surfaceErrors: false });
@@ -1163,12 +1200,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 setMessage('');
             } else {
                 setMessage('');
-                setDownloadErrorMessage(status.error_code === 'runtime_update_required' ? '' : status.message || `${targetModel} 모델을 받지 못했습니다.`);
+                setDownloadErrorMessage('');
             }
         } catch (error) {
             if (!isCurrentPullRequest(targetModel, requestId)) return;
             setMessage('');
-            setDownloadErrorMessage(error instanceof Error ? error.message : '모델 받기를 시작하지 못했습니다.');
+            setDownloadErrorMessage(getDownloadFailureMessage(error instanceof Error ? error.message : ''));
         } finally {
             finishUpdateActivity();
         }
@@ -1200,8 +1237,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     setErrorMessage(error instanceof Error ? error.message : '모델 받기 상태를 확인하지 못했습니다.');
                 });
             }
-        } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '모델 받기를 중지하지 못했습니다.');
+        } catch {
+            setErrorMessage('중지하지 못했습니다. 다시 눌러 주세요.');
         }
     }, [apiBase, isCurrentPullRequest, pollOllamaPullStatus, updateOllamaPullStatus]);
 
@@ -1326,6 +1363,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         try {
             const base = await getApiBase();
             if (superseded()) return false;
+            await waitForGeneralSettingsSaves(base);
+            if (superseded()) return false;
             setApiBase(base);
             const settingsResponse = await fetchWithTimeout(`${base}/api/settings`);
 
@@ -1342,6 +1381,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             lastSavedGeneralKeyRef.current = generalSettingsKey({
                 diarizationDuringAnalysis: nextSettings.diarization?.generate_during_analysis ?? false,
                 sttDevice: nextSettings.stt?.device === 'cuda' ? 'cuda' : 'cpu',
+                normalizeAudio: nextSettings.preprocessing?.enabled !== false && Boolean(nextSettings.preprocessing?.normalize_audio),
                 preserveExtractedAudio: nextSettings.privacy?.preserve_extracted_audio ?? true,
                 autoSaveHwpxCopy: nextSettings.privacy?.auto_save_hwpx_copy ?? false,
                 autoSaveAudioCopy: nextSettings.privacy?.auto_save_audio_copy ?? false,
@@ -1515,6 +1555,70 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [ollamaInstallPrompted]);
 
     useEffect(() => {
+        if (!normalizationOffNotice) return;
+        const timeout = window.setTimeout(() => {
+            const returnFocus = normalizationNoticeRef.current?.contains(document.activeElement);
+            setNormalizationOffNotice(false);
+            if (returnFocus) normalizationSwitchRef.current?.focus({ preventScroll: true });
+        }, SETTINGS_NOTICE_AUTO_DISMISS_MS);
+        return () => window.clearTimeout(timeout);
+    }, [normalizationOffNotice]);
+
+    useLayoutEffect(() => {
+        if (!normalizationOffNotice) return;
+        const trigger = normalizationSwitchRef.current;
+        const notice = normalizationNoticeRef.current;
+        const dialog = dialogRef.current;
+        const content = trigger?.closest('.settings-content');
+        if (!trigger || !notice || !dialog || !content) {
+            setNormalizationOffNotice(false);
+            return;
+        }
+        const target = trigger.getBoundingClientRect();
+        const viewport = content.getBoundingClientRect();
+        if (target.top < viewport.top || target.bottom > viewport.bottom) {
+            setNormalizationOffNotice(false);
+            return;
+        }
+        const origin = dialog.getBoundingClientRect();
+        const originLeft = origin.left + dialog.clientLeft;
+        const originTop = origin.top + dialog.clientTop;
+        const width = notice.offsetWidth;
+        const height = notice.offsetHeight;
+        const minTop = viewport.top - originTop + 8;
+        const maxTop = viewport.bottom - originTop - height - 8;
+        const above = target.top - originTop - height - 8;
+        const below = target.bottom - originTop + 8;
+        setNormalizationNoticePosition({
+            left: Math.max(12, Math.min(target.right - originLeft - width, dialog.clientWidth - width - 12)),
+            top: Math.max(minTop, Math.min(above >= minTop ? above : below, maxTop)),
+        });
+        const dismiss = () => setNormalizationOffNotice(false);
+        const outside = (event: Event) => {
+            if (event.target instanceof Node && event.target !== trigger && !notice.contains(event.target)) dismiss();
+        };
+        const escape = (event: KeyboardEvent) => {
+            if (event.key !== 'Escape') return;
+            event.preventDefault();
+            event.stopPropagation();
+            dismiss();
+            trigger.focus({ preventScroll: true });
+        };
+        window.addEventListener('scroll', dismiss, true);
+        window.addEventListener('resize', dismiss);
+        window.addEventListener('pointerdown', outside, true);
+        window.addEventListener('focusin', outside, true);
+        window.addEventListener('keydown', escape, true);
+        return () => {
+            window.removeEventListener('scroll', dismiss, true);
+            window.removeEventListener('resize', dismiss);
+            window.removeEventListener('pointerdown', outside, true);
+            window.removeEventListener('focusin', outside, true);
+            window.removeEventListener('keydown', escape, true);
+        };
+    }, [normalizationOffNotice, errorMessage, modelDownloads, models, isRestartingBackend]);
+
+    useEffect(() => {
         if (!openSummaryModelMenu) return;
         const focusFrame = window.requestAnimationFrame(() => {
             const menuId = summaryModelMenuTriggerRef.current?.getAttribute('aria-controls');
@@ -1657,11 +1761,22 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         const requestValues = {
             diarizationDuringAnalysis,
             sttDevice,
+            normalizeAudio,
             preserveExtractedAudio,
             autoSaveHwpxCopy,
             autoSaveAudioCopy: preserveExtractedAudio ? autoSaveAudioCopy : false,
         };
         const requestKey = generalSettingsKey(requestValues);
+        const noticeGeneration = normalizationNoticeGenerationRef.current;
+        const previousSave = pendingGeneralSettingsSaves.get(apiBase) || generalSaveQueueRef.current;
+        let finishQueuedSave!: () => void;
+        const queuedSave = new Promise<void>(resolve => { finishQueuedSave = resolve; });
+        generalSaveQueueRef.current = queuedSave;
+        pendingGeneralSettingsSaves.set(apiBase, queuedSave);
+        pendingGeneralKeyRef.current = requestKey;
+        // A close-time flush must follow the earlier write, including when the
+        // user returned to the previously saved value while that write was pending.
+        await previousSave;
 
         const finishUpdateActivity = beginSettingsUpdateActivity();
         setIsSaving(true);
@@ -1676,6 +1791,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 method: 'PATCH',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
+                    ...(normalizationTouchedRef.current ? { preprocessing: {
+                        normalize_audio: requestValues.normalizeAudio,
+                        ...(requestValues.normalizeAudio ? { enabled: true } : {}),
+                    } } : {}),
                     diarization: {
                         generate_during_analysis: diarizationDuringAnalysis,
                     },
@@ -1697,6 +1816,14 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
             const nextSettings = await response.json() as SettingsPayload;
             setSettings(current => current ? { ...nextSettings, summary: current.summary } : nextSettings);
+            if (mountedRef.current && !requestValues.normalizeAudio
+                && (nextSettings.preprocessing?.enabled === false || !nextSettings.preprocessing?.normalize_audio)
+                && noticeGeneration > normalizationNoticeShownRef.current
+                && noticeGeneration === normalizationNoticeGenerationRef.current
+                && currentGeneralKeyRef.current === requestKey) {
+                normalizationNoticeShownRef.current = noticeGeneration;
+                setNormalizationOffNotice(true);
+            }
             window.dispatchEvent(new Event('analysis:settings-updated'));
             await loadModelsStatus(base, { surfaceErrors: false });
             if (currentGeneralKeyRef.current === requestKey) {
@@ -1709,7 +1836,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             setSaveState('idle');
         } finally {
             finishUpdateActivity();
-            setIsSaving(false);
+            if (generalSaveQueueRef.current === queuedSave) {
+                generalSaveQueueRef.current = null;
+                pendingGeneralKeyRef.current = '';
+                setIsSaving(false);
+            }
+            if (pendingGeneralSettingsSaves.get(apiBase) === queuedSave) {
+                pendingGeneralSettingsSaves.delete(apiBase);
+            }
+            finishQueuedSave();
         }
     }, [
         apiBase,
@@ -1722,6 +1857,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         preserveExtractedAudio,
         settings,
         sttDevice,
+        normalizeAudio,
     ]);
 
     const handleSaveSummaryModel = useCallback(async (modelOverride?: string) => {
@@ -1787,6 +1923,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         const nextKey = generalSettingsKey({
             diarizationDuringAnalysis,
             sttDevice,
+            normalizeAudio,
             preserveExtractedAudio,
             autoSaveHwpxCopy,
             autoSaveAudioCopy: preserveExtractedAudio ? autoSaveAudioCopy : false,
@@ -1810,6 +1947,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         saveGeneralSettings,
         settings,
         sttDevice,
+        normalizeAudio,
     ]);
 
     // Closing within the save delay (or while an earlier save is in flight) must not drop the change:
@@ -1823,7 +1961,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         generalSettingsLoadedRef.current = Boolean(settings);
     }, [settings]);
     useEffect(() => () => {
-        if (generalSettingsLoadedRef.current && currentGeneralKeyRef.current !== lastSavedGeneralKeyRef.current) {
+        if (generalSettingsLoadedRef.current && (pendingGeneralKeyRef.current
+            ? currentGeneralKeyRef.current !== pendingGeneralKeyRef.current
+            : currentGeneralKeyRef.current !== lastSavedGeneralKeyRef.current)) {
             void saveGeneralSettingsRef.current();
         }
     }, []);
@@ -1925,11 +2065,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const isSummaryOptionInstalled = (modelName?: string) => Boolean(modelName && installedSummaryModels.has(modelName));
     const gpuStatusText = gpuUsable ? '음성 인식에 GPU 가속을 사용할 수 있습니다.' : gpuReason;
     const modelStatusCanAutoRetry = Boolean(modelStatusErrorMessage && isModelStatusCheckFailure(modelStatusErrorMessage));
-    const summaryModelOllamaHelp = ollamaRuntimePreparing ? '요약 프로그램을 준비하고 있습니다.'
+    const summaryModelOllamaHelp = ollamaRuntimePreparing ? 'AI 모델 사용을 준비하고 있습니다.'
+        : showOllamaRuntimeAction && ollamaRuntimeStatus?.status === 'failed' ? getDownloadFailureMessage(ollamaRuntimeStatus.message)
+        : showOllamaRuntimeAction && ollamaRuntimeStatus?.status === 'cancelled' ? '중지됨'
+        : ollamaMissing ? 'AI 모델을 사용하려면 먼저 준비해 주세요.'
         : inventoryConfirmed ? '' : summaryConnectionError || (!models ? ''
             : ollamaSystemStopped ? 'Windows 시작 메뉴에서 Ollama를 실행해 주세요.'
-                : ollamaRuntimeStatus?.status === 'failed' ? '요약 프로그램을 받지 못했습니다. 다시 받아 주세요.'
-                    : ollamaMissing ? '회의 요약을 사용하려면 요약 프로그램을 받아 주세요.'
                     : ollamaCanAutoStart && !ollamaServerReady ? '요약 프로그램이 꺼져 있습니다.'
                         : summaryModelInventoryUnknown && !ollamaMissing ? '받은 모델 목록을 확인하지 못했습니다.' : '');
     const showSummaryConnectionNotice = Boolean(models && summaryModelInventoryUnknown && !ollamaMissing && !ollamaRuntimeActive);
@@ -1988,6 +2129,24 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     ) : (
         <span className="shrink-0 whitespace-nowrap text-xs text-[var(--status-error-fg)]">불러오지 못함</span>
     ));
+    const renderAnalysisModelAction = (model: ModelStatus) => {
+        const status = modelDownloads[model.key];
+        const active = Boolean(status?.active);
+        const stopping = status?.status === 'cancelling';
+        if (model.downloadable || active) return (
+            <Button variant="outline" className="h-8 shrink-0 px-3 text-xs"
+                aria-label={`${getUserModelLabel(model)} ${active ? '중지' : status?.can_resume ? '이어받기' : '받기'}`}
+                disabled={stopping}
+                onClick={() => { if (active) void handleStopModelDownload(model.key); else void handleDownloadModel(model); }}>
+                {active ? <>{stopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}{stopping ? '중지 중' : '중지'}</>
+                    : status?.can_resume ? '이어받기' : '받기'}
+            </Button>
+        );
+        const url = model.install_url || model.license_url;
+        return url ? <button type="button" className="btn btn-outline h-8 shrink-0 px-3 text-xs"
+            aria-label={`${getUserModelLabel(model)} 준비 안내 열기`}
+            onClick={() => { void openExternalUrl(url).catch(() => setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.')); }}>안내</button> : null;
+    };
     const renderDismissButton = (label: string, onClick: () => void) => (
         <button
             type="button"
@@ -2061,17 +2220,17 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
         searching={customSummarySearching} onSearch={() => void searchSummaryModels()}
         onChange={value => { customSearchRequestRef.current += 1; setCustomSummaryModelInput(value); setCustomSummarySearching(false); }} />;
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center overflow-hidden bg-[var(--bg-overlay)] p-4">
+        <div className="settings-backdrop fixed inset-0 z-50 flex justify-center overflow-hidden bg-[var(--bg-overlay)]">
             <div
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="settings-dialog-title"
                 aria-describedby={modelDeleteConfirmation ? 'settings-model-delete-description' : undefined}
-                className="settings-dialog relative flex w-full max-w-4xl flex-col overflow-hidden border border-border bg-background"
+                className="settings-dialog relative flex w-full flex-col overflow-hidden border border-border bg-background"
                 ref={dialogRef}
                 tabIndex={-1}
             >
-                <div className="settings-dialog-header flex items-center justify-between border-b border-border px-4 py-3">
+                <div className="settings-dialog-header flex items-center justify-between border-b border-border px-6 py-3">
                     <div className="flex items-center gap-3">
                         <h2 id="settings-dialog-title" className="text-lg font-semibold text-foreground">설정</h2>
                         <span className="settings-save-state min-w-10" role="status" aria-live="polite">
@@ -2080,8 +2239,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                     </div>
                     <div className="relative flex items-center gap-2">
                         <div className="relative">
-                            <button
-                                type="button"
+                            <TooltipIconButton
                                 onClick={event => {
                                     if (supportContactVisible) closeSupportContact();
                                     else {
@@ -2089,14 +2247,12 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         setSupportContactVisible(true);
                                     }
                                 }}
-                                className="btn btn-outline h-8 px-3 text-xs"
+                                className="h-8 w-8"
                                 aria-label="문의 연락처 보기"
                                 aria-expanded={supportContactVisible}
-                                title="문의"
-                            >
-                                <Mail size={13} aria-hidden="true" />
-                                문의
-                            </button>
+                                tooltip="문의"
+                                icon={<Mail size={16} aria-hidden="true" />}
+                            />
                             {supportContactVisible && (
                                 <div
                                     role="status"
@@ -2141,7 +2297,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
                 {showWarningPopup && (
                     <div className="settings-toast-slot">
-                        <AppToast
+                        {showWarningPopup && <AppToast
                             message={warningText}
                             tone="warning"
                             actionLabel="다시 확인"
@@ -2151,6 +2307,19 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             }}
                             closeLabel="연결 경고 닫기"
                             onClose={() => setDismissedWarning(warningText)}
+                        />}
+                    </div>
+                )}
+                {normalizationOffNotice && (
+                    <div ref={normalizationNoticeRef} className="settings-normalization-notice"
+                        style={normalizationNoticePosition || { visibility: 'hidden' }}>
+                        <AppToast
+                            message="음량을 보정하지 않고 분석합니다."
+                            closeLabel="음량 보정 안내 닫기"
+                            onClose={() => {
+                                setNormalizationOffNotice(false);
+                                normalizationSwitchRef.current?.focus({ preventScroll: true });
+                            }}
                         />
                     </div>
                 )}
@@ -2274,7 +2443,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                 <div className="settings-inline-models settings-analysis-model-cell" id="settings-analysis-models" tabIndex={-1} data-settings-highlighted={highlightedSetting === 'settings-analysis-models'}>
                                     <div className="settings-analysis-model-status">
                                         <div className="settings-row-title">음성 인식 모델</div>
-                                        {(engineSettingsPending && !models) || isCheckingModels ? (
+                                        {analysisModels[0] && (!analysisModels[0].installed || modelDownloads[analysisModels[0].key]?.active)
+                                            ? renderAnalysisModelAction(analysisModels[0])
+                                            : (engineSettingsPending && !models) || isCheckingModels ? (
                                             <span role="status" className="settings-analysis-readiness text-muted-foreground">
                                                 <Loader2 size={14} className="animate-spin" aria-hidden="true" />확인 중
                                             </span>
@@ -2321,79 +2492,30 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     )}
 
                                     {isLoading && !models ? null : analysisModels.length === 1 && analysisModels[0].installed ? null : analysisModels.length > 0 ? (
-                                        <div className="settings-model-list mt-2">
+                                        <div className="settings-analysis-downloads">
                                             {analysisModels.map(model => {
-                                                const modelUrl = model.install_url || model.license_url || '';
-                                                const modelName = model.repo_id || model.label;
                                                 const modelDownloadStatus = modelDownloads[model.key];
                                                 const modelDownloadActive = Boolean(modelDownloadStatus?.active);
-                                                const modelDownloadStopping = modelDownloadStatus?.status === 'cancelling';
+                                                const showProgress = modelDownloadActive || (modelDownloadStatus?.can_resume && modelDownloadStatus.status === 'cancelled');
                                                 const progressText = getModelDownloadProgressText(modelDownloadStatus);
                                                 const progressPercent = getModelDownloadProgressPercent(modelDownloadStatus);
                                                 const manualNote = model.manual_note || '관리자가 준비한 모델 파일을 실행 폴더의 models 폴더에 넣어 주세요.';
                                                 return (
-                                                    <div key={model.key} className="settings-model-row">
+                                                    <div key={model.key}>
                                                         <div className="flex items-center justify-between gap-3">
                                                             <div className="min-w-0">
                                                                 {analysisModels.length > 1 && <div className="text-sm font-semibold text-foreground">{getUserModelLabel(model)}</div>}
-                                                                {!model.installed && (
+                                                                {!model.installed && !showProgress && (
                                                                     <span className="mt-1 block text-xs text-muted-foreground">
                                                                         {getModelDownloadStatusMessage(modelDownloadStatus) || (model.downloadable
-                                                                            ? '앱에서 바로 받을 수 있습니다. 용량이 커서 시간이 오래 걸릴 수 있습니다.'
+                                                                            ? '처음 한 번만 받으면 됩니다.'
                                                                             : manualNote)}
                                                                     </span>
                                                                 )}
                                                             </div>
-                                                            {model.installed ? (
-                                                                <span
-                                                                    role="status"
-                                                                    className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-[var(--status-success-bg)] text-[var(--status-success-fg)]"
-                                                                    aria-label={`${getUserModelLabel(model)} 있음`}
-                                                                    title="모델 있음"
-                                                                >
-                                                                    <Check size={16} aria-hidden="true" />
-                                                                </span>
-                                                            ) : model.downloadable ? (
-                                                                <Button
-                                                                    variant="outline"
-                                                                    className="h-8 shrink-0 px-3 text-xs"
-                                                                    aria-label={`${getUserModelLabel(model)} ${modelDownloadActive ? '중지' : '받기'}`}
-                                                                    onClick={() => {
-                                                                        if (modelDownloadActive) {
-                                                                            void handleStopModelDownload(model.key);
-                                                                            return;
-                                                                        }
-                                                                        void handleDownloadModel(model);
-                                                                    }}
-                                                                    disabled={modelDownloadStopping}
-                                                                >
-                                                                    {modelDownloadActive
-                                                                        ? (
-                                                                            <>
-                                                                                {modelDownloadStopping ? <Loader2 size={13} className="animate-spin" aria-hidden="true" /> : <X size={13} aria-hidden="true" />}
-                                                                                {modelDownloadStopping ? '중지 중' : '중지'}
-                                                                            </>
-                                                                        )
-                                                                        : '받기'}
-                                                                </Button>
-                                                            ) : modelUrl ? (
-                                                                <button
-                                                                    type="button"
-                                                                    className="btn btn-outline h-8 shrink-0 px-3 text-xs"
-                                                                    aria-label={`${getUserModelLabel(model)} 준비 안내 열기`}
-                                                                    title={`${modelName} 준비 안내`}
-                                                                    onClick={() => {
-                                                                        void openExternalUrl(modelUrl).catch(() => {
-                                                                            setErrorMessage('모델 페이지를 열지 못했습니다. 잠시 후 다시 시도해 주세요.');
-                                                                        });
-                                                                    }}
-                                                                >
-                                                                    안내
-                                                                </button>
-                                                            ) : null}
                                                         </div>
-                                                        {modelDownloadActive && (
-                                                            <div className="mt-3 space-y-1.5">
+                                                        {showProgress && (
+                                                            <div className="settings-analysis-progress">
                                                                 <ProgressBar
                                                                     value={progressPercent}
                                                                     size="sm"
@@ -2402,8 +2524,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                 <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                                                     {progressText && (
                                                                         <>
-                                                                            <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
-                                                                            <span>{progressText}</span>
+                                                                            <span>{!modelDownloadActive ? '중지됨 · ' : ''}{progressText}</span>
                                                                         </>
                                                                     )}
                                                                 </div>
@@ -2424,25 +2545,34 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
 
                                 </div>
                                 <div className="settings-paired-row">
-                                <div className="settings-row">
+                                <label className="settings-row">
                                     <span className="settings-row-copy">
-                                        <span className="settings-row-title settings-title-with-hint">음량 자동 보정<SettingsHint label="음량 자동 보정" text="음성 인식 전에 작은 소리의 음량을 보정합니다. 앱 내부 설정에 따라 적용하며 기존 설정은 유지합니다." /></span>
+                                        <span className="settings-row-title settings-title-with-hint">음량 자동 보정<SettingsHint label="음량 자동 보정" text="음성 인식 전에 작은 소리의 음량을 보정합니다." /></span>
                                     </span>
-                                    <span className={`text-xs ${!settings && !engineSettingsPending ? 'text-[var(--status-error-fg)]' : 'text-muted-foreground'}`} role="status" aria-label="음량 자동 보정 상태">
-                                        {!settings ? (engineSettingsPending ? '확인 중' : '불러오지 못함') : settings.preprocessing?.enabled !== false && settings.preprocessing?.normalize_audio ? '자동' : '꺼짐'}
-                                    </span>
-                                </div>
+                                    {renderEngineSetting(<input ref={normalizationSwitchRef} aria-label="음량 자동 보정" type="checkbox" className="settings-switch"
+                                        checked={normalizeAudio} onChange={event => {
+                                            if (event.target.checked && settings?.preprocessing?.enabled === false
+                                                && (settings.preprocessing.noise_gate || settings.preprocessing.trim_silence || settings.preprocessing.denoise)) {
+                                                setErrorMessage('다른 음성 보정 설정이 있어 켜지 못했습니다. 문의해 주세요.');
+                                                return;
+                                            }
+                                            normalizationTouchedRef.current = true;
+                                            normalizationNoticeGenerationRef.current += 1;
+                                            setNormalizationOffNotice(false);
+                                            setNormalizeAudio(event.target.checked);
+                                        }} />)}
+                                </label>
                                 <label
                                     id="settings-analysis-diarization"
                                     data-settings-highlighted={highlightedSetting === 'settings-analysis-diarization'}
                                     className="settings-row"
-                                    title="켜면 대화록 생성 후 참석자 구분까지 이어서 실행하고, 끄면 대화록을 먼저 저장한 뒤 결과 화면에서 따로 실행합니다."
+                                    title="끄면 대화록만 만들고, 참석자 구분은 나중에 실행할 수 있습니다."
                                 >
                                     <span className="settings-row-copy">
-                                        <span className="settings-row-title settings-title-with-hint">참석자 구분까지 이어서 실행<SettingsHint label="참석자 구분까지 이어서 실행" text="끄면 음성 파일이 보관된 경우 결과 화면에서 따로 실행할 수 있습니다." /></span>
+                                        <span className="settings-row-title settings-title-with-hint">참석자 구분 실행<SettingsHint label="참석자 구분 실행" text="끄면 음성 파일이 보관된 경우 나중에 실행할 수 있습니다." /></span>
                                     </span>
                                     {renderEngineSetting(
-                                        <input aria-label="참석자 구분까지 이어서 실행"
+                                        <input aria-label="참석자 구분 실행"
                                             type="checkbox"
                                             ref={diarizationToggleRef}
                                             className="settings-switch"
@@ -2472,7 +2602,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                             <Button
                                                 variant={ollamaRuntimeActive ? 'outline' : 'primary'}
                                                 className="h-8 px-3 text-xs"
-                                                aria-label={`요약 프로그램 ${ollamaRuntimeActive ? '중지' : '받기'}`}
+                                                aria-label={ollamaRuntimeActive ? 'AI 모델 사용 준비 중지' : ollamaRuntimeStatus?.can_resume ? 'AI 모델 사용 준비 이어받기' : 'AI 모델 사용 준비'}
                                                 onClick={() => {
                                                     if (ollamaRuntimeActive) {
                                                         void handleStopOllamaRuntimeDownload();
@@ -2489,14 +2619,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                             {ollamaRuntimeStopping ? '중지 중' : '중지'}
                                                         </>
                                                     )
-                                                    : '요약 프로그램 받기'}
+                                                    : ollamaRuntimeStatus?.can_resume ? '이어받기' : 'AI 모델 사용 준비'}
                                             </Button>
                                         </div>
                                     )}
                                 </div>}
                                 {!ollamaRuntimeActive && ollamaMissing && (
                                     <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                                        <span>앱에서 받기(권장) 또는 직접 설치 중 하나만 선택하세요. 기존 Ollama가 있으면 그대로 사용합니다.</span>
                                         <button
                                             type="button"
                                             className="btn btn-ghost h-8 px-2 text-xs underline"
@@ -2534,17 +2663,17 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                         {ollamaInstallNotice}
                                     </StatusBanner>
                                 )}
-                                {ollamaRuntimeActive && !ollamaRuntimeNeedsUpdate && (
+                                {(ollamaRuntimeActive || ollamaRuntimeStatus?.can_resume) && !ollamaRuntimeNeedsUpdate && (
                                     <div className="mt-3 space-y-1.5">
                                         <ProgressBar
                                             value={ollamaRuntimeProgressPercent}
                                             size="sm"
-                                            label="요약 프로그램 받기 진행률"
+                                            label="AI 모델 사용 준비 진행률"
                                         />
                                         <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
                                             {ollamaRuntimeProgressText && (
                                                 <>
-                                                    <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />
+                                                    {ollamaRuntimeActive && <Loader2 size={12} className="animate-spin text-primary" aria-hidden="true" />}
                                                     <span>{ollamaRuntimeProgressText}</span>
                                                 </>
                                             )}
@@ -2552,18 +2681,18 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                     </div>
                                 )}
 
+                                <div id="settings-additional-models">
                                 {!models && engineSettingsPending && (
-                                    <div className="settings-model-note mt-3">
+                                    <div className="settings-model-note">
                                         <RefreshCw size={16} className="animate-spin text-primary" aria-hidden="true" />
                                         모델 상태를 불러오는 중입니다.
                                     </div>
                                 )}
                                 {!models && !engineSettingsPending && (settingsReadError || modelStatusWarning) && (
-                                    <div className="settings-model-note mt-3 text-[var(--status-error-fg)]">
+                                    <div className="settings-model-note text-[var(--status-error-fg)]">
                                         모델 상태를 불러오지 못했습니다.
                                     </div>
                                 )}
-                                <div id="settings-additional-models">
                                     {models && summaryModelOptions.length > 0 && <div className="settings-model-list settings-summary-model-list" data-model-capacity={summaryModelOptions.length > 2 ? 4 : 2} role="radiogroup" aria-label="요약 모델 선택">
                                         {visibleSummaryModels.map((option, index) => {
                                             const optionModel = normalizeSummaryModelName(option.model);
@@ -2592,8 +2721,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                                         disabled={ollamaRuntimeActive || summaryModelInventoryUnknown || isSaving || deleting} onChange={() => { if (!selected) void handleSaveSummaryModel(optionModel); }} />
                                                                     <Check size={16} strokeWidth={selected ? 2.5 : 2} aria-hidden="true" />
                                                                 </label>
-                                                                    : <button type="button" className="settings-model-icon" aria-label={`${optionModel} 받기`} title="받기" disabled={!canPull || deleting}
-                                                                        onClick={() => void handleDownloadOllamaModel(optionModel)}><Download size={16} aria-hidden="true" /></button>}
+                                                                    : pullStatus?.can_resume ? <button type="button" className="btn btn-outline h-8 shrink-0 px-3 text-xs" aria-label={`${optionModel} 이어받기`} title="이어받기" disabled={!canPull || deleting}
+                                                                        onClick={() => void handleDownloadOllamaModel(optionModel)}><Download size={16} aria-hidden="true" />이어받기</button>
+                                                                        : <TooltipIconButton className="settings-model-icon" aria-label={`${optionModel} AI 모델 받기`} tooltip="AI 모델 받기" icon={<Download size={16} aria-hidden="true" />} disabled={!canPull || deleting}
+                                                                            onClick={() => void handleDownloadOllamaModel(optionModel)} />}
                                                         <div data-summary-model-menu-root>
                                                             <button type="button" className="settings-model-icon settings-model-delete" aria-label={`${optionModel} 삭제 옵션`} aria-haspopup="menu"
                                                                 aria-expanded={openSummaryModelMenu === optionModel} aria-controls={menuId} disabled={deleteDisabled} title={deleteReason}
@@ -2609,8 +2740,8 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                     </div>
                                                 </div>
                                                 <div className="settings-model-progress" aria-live="polite">
-                                                    {pullActive ? <><ProgressBar value={getOllamaPullProgressPercent(pullStatus)} size="sm" tone="info" label={`${optionModel} 모델 받기 진행률`} /><span>{getOllamaPullProgressText(pullStatus)}</span></>
-                                                        : pullStatus?.error_code !== 'runtime_update_required' && (pullStatus?.status === 'failed' || pullStatus?.status === 'cancelled') ? <span>{pullStatus?.message || (pullStatus?.status === 'cancelled' ? '받기를 중지했습니다.' : '받지 못했습니다. 다시 받아 주세요.')}</span> : null}
+                                                    {(pullActive || (pullStatus?.status === 'cancelled' && pullStatus.can_resume)) && <><ProgressBar value={getOllamaPullProgressPercent(pullStatus)} size="sm" tone="info" label={`${optionModel} 모델 받기 진행률`} /><span>{!pullActive && pullStatus?.status === 'cancelled' ? '중지됨 · ' : ''}{getOllamaPullProgressText(pullStatus)}</span></>}
+                                                    {!pullActive && pullStatus?.error_code !== 'runtime_update_required' && pullStatus?.status === 'failed' && <span>{getDownloadFailureMessage(pullStatus.message)}</span>}
                                                 </div>
                                             </div>;
                                         })}

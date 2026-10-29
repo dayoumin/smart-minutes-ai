@@ -354,6 +354,7 @@ const installRoutes = async (page, state) => {
   await page.route('**/api/models/download', route => {
     const body = route.request().postDataJSON();
     state.sttDownloadRequests.push(body.key);
+    state.sttDownloadPaused = false;
     state.setSttDownloadStarted(true);
     route.fulfill({
       status: 200,
@@ -367,6 +368,7 @@ const installRoutes = async (page, state) => {
         expected_bytes: 3090839274,
         progress_percent: 3.4,
         eta_seconds: 3600,
+        ...(state.sttProgressFixture || {}),
       }),
     });
   });
@@ -374,6 +376,7 @@ const installRoutes = async (page, state) => {
   await page.route('**/api/models/download/stop', route => {
     const body = route.request().postDataJSON();
     state.sttStopRequests.push(body.key);
+    state.sttDownloadPaused = true;
     route.fulfill({
       status: 200,
       contentType: 'application/json',
@@ -387,6 +390,7 @@ const installRoutes = async (page, state) => {
         progress_percent: 17.0,
         eta_seconds: 2400,
         cancel_requested: true,
+        ...(state.sttProgressFixture || {}),
       }),
     });
   });
@@ -418,13 +422,15 @@ const installRoutes = async (page, state) => {
       contentType: 'application/json',
       body: JSON.stringify({
         key,
-        active: true,
-        status: 'running',
+        active: !state.sttDownloadPaused,
+        status: state.sttDownloadPaused ? 'cancelled' : 'running',
+        can_resume: Boolean(state.sttDownloadPaused),
         message: '음성 인식 모델을 받는 중입니다.',
         downloaded_bytes: 524288000,
         expected_bytes: 3090839274,
         progress_percent: 17.0,
         eta_seconds: 2400,
+        ...(state.sttProgressFixture || {}),
       }),
     });
   });
@@ -638,6 +644,7 @@ const installRoutes = async (page, state) => {
           model,
           active: false,
           status: 'cancelled',
+          can_resume: true,
           message: `${model} 모델 받기를 중지했습니다.`,
           cancel_requested: false,
           progress_percent: 25,
@@ -808,6 +815,12 @@ const run = async () => {
   let browser = null;
   let page = null;
   const state = createRouteState();
+  if (process.env.SETTINGS_MODEL_SCENARIO === 'controls') {
+    state.settingsState.preprocessing = { enabled: true, normalize_audio: true, normalization_mode: 'auto', noise_gate: false, denoise: false, trim_silence: false };
+  }
+  if (['controls', 'downloads'].includes(process.env.SETTINGS_MODEL_SCENARIO)) {
+    state.sttProgressFixture = { downloaded_bytes: 9272518, progress_percent: 0.3, eta_seconds: 3600 };
+  }
   const originalPreprocessing = structuredClone(state.settingsState.preprocessing);
   try {
     console.log('stage: checking test server');
@@ -836,7 +849,8 @@ const run = async () => {
     const modelsPanel = page.locator('#settings-general-panel');
     const summaryPanel = modelsPanel.locator('#settings-summary-models');
     const selection = model => summaryPanel.getByRole('radio', { name: model + ' 요약 모델로 선택', exact: true });
-    const download = model => summaryPanel.getByRole('button', { name: model + ' 받기', exact: true });
+    const download = model => summaryPanel.getByRole('button', { name: model + ' AI 모델 받기', exact: true })
+      .or(summaryPanel.getByRole('button', { name: model + ' 이어받기', exact: true }));
     const speechModelCell = modelsPanel.locator('#settings-analysis-models');
     const speechChecking = () => speechModelCell.getByRole('status').filter({ hasText: '확인 중' });
     const speechReady = () => speechModelCell.getByRole('status', { name: '음성 인식 모델 있음', exact: true });
@@ -865,7 +879,8 @@ const run = async () => {
     const checkDialogSize = async () => {
       const rect = await settingsDialog.boundingBox();
       const viewport = page.viewportSize();
-      assert.ok(Math.abs(rect.height - Math.min(760, viewport.height - 32)) <= 1, 'Settings uses the taller dialog cap while preserving the window margin');
+      assert.ok(rect.height <= Math.min(760, viewport.height - 32) + 1, 'Settings fits content up to the dialog cap');
+      assert.ok(Math.abs(rect.y - Math.max(16, (viewport.height - 760) / 2)) <= 1, 'Settings keeps its top anchor when content height changes');
       assert.ok(rect.y >= 15 && rect.y + rect.height <= viewport.height - 15, 'Settings remains inside the supported window');
     };
     const visibleModelLayout = async () => summaryPanel.evaluate(panel => {
@@ -942,6 +957,176 @@ const run = async () => {
       return row;
     };
 
+    if (process.env.SETTINGS_MODEL_SCENARIO === 'controls') {
+      await settingsButton.click();
+      await settingsDialog.waitFor();
+      const volume = modelsPanel.getByRole('checkbox', { name: '음량 자동 보정', exact: true });
+      const offNotice = settingsDialog.locator('.settings-normalization-notice').getByRole('status').filter({ hasText: '음량을 보정하지 않고 분석합니다.' });
+      const checkNoticeAnchor = async () => {
+        const notice = await offNotice.boundingBox();
+        const trigger = await volume.boundingBox();
+        const dialog = await settingsDialog.boundingBox();
+        const gap = Math.min(Math.abs(notice.y - trigger.y - trigger.height - 8), Math.abs(trigger.y - notice.y - notice.height - 8));
+        assert.ok(gap <= 2, 'normalization feedback is anchored within 8px of the switch');
+        assert.ok(notice.x >= dialog.x && notice.x + notice.width <= dialog.x + dialog.width, 'notice stays within the dialog');
+        assert.ok(notice.y >= dialog.y && notice.y + notice.height <= dialog.y + dialog.height, 'notice remains visible');
+      };
+      await volume.waitFor();
+      assert.equal(await volume.isChecked(), true, 'new-install default stays enabled');
+      assert.equal(await offNotice.count(), 0, 'opening settings does not announce normalization');
+      await modelsPanel.getByRole('checkbox', { name: '참석자 구분 실행', exact: true }).waitFor();
+      await modelsPanel.getByRole('button', { name: '음성 인식 모델 받기', exact: true }).click();
+      for (const width of [1360, 860]) {
+        await page.setViewportSize({ width, height: 900 });
+        const device = await page.locator('#settings-analysis-device .settings-row-title').boundingBox();
+        const speech = await page.locator('.settings-analysis-model-status .settings-row-title').boundingBox();
+        assert.ok(Math.abs((device.y + device.height / 2) - (speech.y + speech.height / 2)) <= 1, 'device and speech titles align while progress is visible');
+        const stop = await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지', exact: true }).boundingBox();
+        assert.ok(Math.abs((stop.y + stop.height / 2) - (speech.y + speech.height / 2)) <= 1, 'Stop is on the speech model title line');
+        assert.ok((await speechModelCell.boundingBox()).height <= 96, 'speech progress stays compact with comfortable edge padding');
+        const panel = await modelsPanel.locator('.settings-analysis-list').boundingBox();
+        const deviceSelect = await page.locator('#settings-analysis-device select').boundingBox();
+        assert.ok(deviceSelect.y - panel.y >= 12, 'analysis control has breathing room above it');
+        assert.ok(device.x - panel.x >= 20, 'analysis content is inset from the border');
+        const summaryBox = await summaryPanel.locator('.settings-summary-panel').boundingBox();
+        const searchBox = await searchInput().boundingBox();
+        assert.ok(searchBox.y - summaryBox.y >= 16 && searchBox.x - summaryBox.x >= 20, 'summary search is comfortably inset');
+        const dividers = await summaryPanel.locator('.settings-summary-model-list > .settings-model-row').evaluateAll(rows => rows.map(row => ({ top: getComputedStyle(row).borderTopWidth, bottom: getComputedStyle(row).borderBottomWidth })));
+        assert.ok(dividers.every(border => border.top === '0px' && border.bottom === '0px'), 'summary models use spacing instead of row dividers');
+        await captureSettings('settings-analysis-aligned-' + width);
+      }
+      const beforeOff = await getLayoutMetrics(modelsPanel);
+      await volume.uncheck();
+      await offNotice.waitFor();
+      await checkNoticeAnchor();
+      assert.equal(await modelsPanel.getByText('음량을 보정하지 않고 분석합니다.', { exact: true }).count(), 0, 'off guidance never occupies a setting row');
+      assertHeightDeltaAtMost(beforeOff, await getLayoutMetrics(modelsPanel), 1, 'off toast does not change panel height');
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === false, 'turning normalization off is saved');
+      await captureSettings('settings-volume-off-860');
+      await page.setViewportSize({ width: 1360, height: 900 });
+      await offNotice.waitFor({ state: 'hidden' });
+      await volume.check();
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === true, 'normalization is enabled before the next explicit off action');
+      await volume.uncheck();
+      await offNotice.waitFor();
+      await checkNoticeAnchor();
+      await captureSettings('settings-volume-off');
+      await offNotice.waitFor({ state: 'hidden', timeout: 10000 });
+      await volume.check();
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === true, 'normalization can be enabled before testing notice dismissal');
+      await volume.uncheck();
+      await offNotice.waitFor();
+      await settingsDialog.getByRole('button', { name: '음량 보정 안내 닫기', exact: true }).click();
+      assert.equal(await offNotice.count(), 0);
+      assert.equal(await volume.evaluate(element => document.activeElement === element), true, 'closing feedback returns focus to its switch');
+      const autoSave = modelsPanel.getByRole('checkbox', { name: '회의 요약 HWPX 자동 저장', exact: true });
+      await autoSave.check();
+      await waitForSaved(page, () => state.settingsState.privacy.auto_save_hwpx_copy === true, 'unrelated settings can be saved after dismissing the notice');
+      assert.equal(await offNotice.count(), 0, 'unrelated saves never repeat the off notice');
+      await autoSave.uncheck();
+      await waitForSaved(page, () => state.settingsState.privacy.auto_save_hwpx_copy === false, 'original privacy setting is restored');
+      await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
+      await settingsButton.click();
+      await volume.waitFor();
+      assert.equal(await volume.isChecked(), false);
+      assert.equal(await offNotice.count(), 0, 'reopening a saved off state never repeats the toast');
+      assert.equal(state.settingsState.preprocessing.normalization_mode, 'auto');
+      assert.equal(state.settingsState.preprocessing.noise_gate, false);
+      await volume.check();
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === true, 'turning normalization on is saved');
+      assert.equal(await offNotice.count(), 0);
+
+      const inFlight = holdNextSettingsResponse(state, 'PATCH');
+      await volume.uncheck();
+      await inFlight.arrived;
+      await volume.check();
+      await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
+      await settingsDialog.waitFor({ state: 'hidden' });
+      await settingsButton.click();
+      await settingsDialog.waitFor();
+      await sleep(200);
+      assert.equal(await volume.count(), 0, 'reopened settings waits for the previous dialog flush before exposing editable values');
+      inFlight.release();
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === true, 'closing during an older off-save flushes the latest on choice in order');
+      await volume.waitFor();
+      assert.equal(await volume.isChecked(), true, 'latest normalization choice survives reopening');
+      await volume.uncheck();
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === false, 'a new choice after reopening is saved after all previous writes');
+      await volume.check();
+      await waitForSaved(page, () => state.settingsState.preprocessing.normalize_audio === true, 'normalization can be enabled again');
+      for (const key of ['normalization_mode', 'noise_gate', 'denoise', 'trim_silence']) {
+        assert.deepEqual(state.settingsState.preprocessing[key], originalPreprocessing[key], key + ' is preserved');
+      }
+      await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
+      state.settingsState.preprocessing = { ...originalPreprocessing, enabled: false, normalize_audio: true, noise_gate: true };
+      const disabledAdvanced = structuredClone(state.settingsState.preprocessing);
+      const patchesBeforeGuard = state.settingsPatches.length;
+      await settingsButton.click();
+      await volume.waitFor();
+      assert.equal(await volume.isChecked(), false);
+      await volume.click();
+      await settingsDialog.getByText('다른 음성 보정 설정이 있어 켜지 못했습니다. 문의해 주세요.', { exact: true }).waitFor();
+      assert.equal(await volume.isChecked(), false, 'normalization cannot silently enable a disabled noise gate');
+      await sleep(800);
+      assert.equal(state.settingsPatches.length, patchesBeforeGuard);
+      assert.deepEqual(state.settingsState.preprocessing, disabledAdvanced, 'advanced settings are not overwritten');
+      console.log('ok - focused alignment, normalization on/off, stable guidance and save/close/reopen (mocked APIs)');
+      return;
+    }
+
+    if (process.env.SETTINGS_MODEL_SCENARIO === 'downloads') {
+      await settingsButton.click();
+      await settingsDialog.waitFor();
+      const chosenBefore = state.settingsState.summary.model;
+      await modelsPanel.getByRole('button', { name: '음성 인식 모델 받기', exact: true }).click();
+      await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지', exact: true }).click();
+      const resumeStt = modelsPanel.getByRole('button', { name: '음성 인식 모델 이어받기', exact: true });
+      await resumeStt.waitFor();
+      await captureSettings('settings-stt-paused');
+      assert.equal(state.sttDownloadRequests.length, 1, 'Stop never restarts a download');
+      await resumeStt.click();
+      await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지', exact: true }).waitFor();
+      assert.equal(state.sttDownloadRequests.length, 2, 'Resume is an explicit second request');
+      await modelsPanel.getByRole('button', { name: '음성 인식 모델 중지', exact: true }).click();
+      await resumeStt.waitFor();
+
+      await revealModel(summaryPanel, 'user-running:1b');
+      await download('user-running:1b').click();
+      await summaryPanel.getByRole('button', { name: 'user-running:1b 중지', exact: true }).click();
+      const resumeModel = summaryPanel.getByRole('button', { name: 'user-running:1b 이어받기', exact: true });
+      await resumeModel.waitFor();
+      await captureSettings('settings-model-paused');
+      assert.equal(state.pullRequests.length, 1);
+      await resumeModel.click();
+      await summaryPanel.getByRole('button', { name: 'user-running:1b 중지', exact: true }).waitFor();
+      assert.equal(state.pullRequests.length, 2);
+      assert.equal(state.settingsState.summary.model, chosenBefore, 'Stop/Resume never selects a model');
+
+      state.ollamaAvailable = false;
+      state.ollamaConnection = { status: 'missing', source: 'none', executable_available: false, server_ready: false, can_auto_start: false, managed_runtime_available: false };
+      state.runtimeStatusOverride = { available: false, active: false, status: 'cancelled', can_resume: true,
+        message: 'legacy long message', downloaded_bytes: 4800000, expected_bytes: 1600000000, progress_percent: 0.3 };
+      await refreshModelsOnFocus(page, state);
+      await modelsPanel.getByRole('button', { name: 'AI 모델 사용 준비 이어받기', exact: true }).waitFor();
+      assert.equal(await summaryPanel.getByText('legacy long message', { exact: true }).count(), 0);
+      await captureSettings('settings-runtime-paused');
+      state.runtimeStatusOverride = { ...state.runtimeStatusOverride, can_resume: false, status: 'idle', downloaded_bytes: 0, progress_percent: null };
+      await refreshModelsOnFocus(page, state);
+      await modelsPanel.getByRole('button', { name: 'AI 모델 사용 준비', exact: true }).waitFor();
+      assert.equal(await modelsPanel.getByRole('button', { name: 'AI 모델 사용 준비 이어받기', exact: true }).count(), 0, 'discarded/empty state offers a fresh download');
+      state.runtimeStatusOverride = { ...state.runtimeStatusOverride, status: 'failed', message: '회사 보안 정책 또는 인터넷 연결 문제일 수 있습니다. 사내망 담당자와 someone@example.com으로 문의해 주세요.' };
+      await refreshModelsOnFocus(page, state);
+      await summaryPanel.getByText('받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.', { exact: true }).waitFor();
+      assert.equal(await summaryPanel.getByText(/someone@example.com/).count(), 0);
+      for (const width of [1360, 860]) {
+        await page.setViewportSize({ width, height: 900 });
+        await captureSettings('settings-download-short-error-' + width);
+        assert.equal(await settingsDialog.evaluate(el => el.scrollWidth > el.clientWidth), false);
+      }
+      console.log('ok - focused STT/model/runtime stop, resume, empty state and short error copy (mocked APIs)');
+      return;
+    }
+
     let releaseModelStatus;
     state.modelStatusGate = new Promise(resolve => { releaseModelStatus = resolve; });
     state.summaryInventoryChecked = false;
@@ -961,7 +1146,7 @@ const run = async () => {
       await captureSettings('settings-speech-checking-' + width);
     }
     assert.equal(await speechModelCell.getByText('모델 상태를 불러오는 중입니다.', { exact: true }).count(), 0, 'loading does not add a separate status row below the model title');
-    assert.equal(await summaryPanel.getByRole('button', { name: /(?:gemma|user|list|search|broken)[^ ]* 받기$/ }).count(), 0, 'pending inventory never guesses a missing model');
+    assert.equal(await summaryPanel.getByRole('button', { name: /(?:gemma|user|list|search|broken)[^ ]* (?:AI 모델 받기|이어받기)$/ }).count(), 0, 'pending inventory never guesses a missing model');
     state.modelStatusGate = null;
     releaseModelStatus();
     await summaryPanel.getByRole('button', { name: '연결 다시 확인', exact: true }).waitFor();
@@ -972,7 +1157,7 @@ const run = async () => {
     assert.ok(Math.abs(readyPosition.titleCenter - readyPosition.statusCenter) <= 1);
     assert.equal(await selection('gemma4:e2b').isChecked(), true, 'configured choice remains visible while inventory is unknown');
     assert.equal(await selection('gemma4:e2b').isDisabled(), true, 'unknown inventory cannot change selection');
-    assert.equal(await summaryPanel.getByRole('button', { name: /(?:gemma|user|list|search|broken)[^ ]* 받기$/ }).count(), 0, 'unconfirmed inventory keeps downloads unavailable');
+    assert.equal(await summaryPanel.getByRole('button', { name: /(?:gemma|user|list|search|broken)[^ ]* (?:AI 모델 받기|이어받기)$/ }).count(), 0, 'unconfirmed inventory keeps downloads unavailable');
     assert.equal(await summaryPanel.locator('select').count(), 0, 'model choice is not repeated in a select dropdown');
     assert.equal(await summaryPanel.getByRole('button', { name: /고정/ }).count(), 0, 'pin controls are removed');
     // Match the reported real screen: two registered models, stopped runtime, inventory unknown.
@@ -1149,9 +1334,8 @@ const run = async () => {
     assert.equal(await activeDelete.isDisabled(), true, 'current model cannot be deleted through its trash action');
 
     assert.equal(await modelsPanel.getByRole('checkbox', { name: '음성 정리', exact: true }).count(), 0, 'the retired audio-cleanup switch is absent');
-    assert.equal(await modelsPanel.getByRole('checkbox', { name: '음량 자동 보정', exact: true }).count(), 0, 'volume correction is read-only');
-    assert.equal(await modelsPanel.getByRole('status', { name: '음량 자동 보정 상태', exact: true }).innerText(), '꺼짐', 'volume correction reflects the existing disabled internal setting');
-    for (const label of ['음량 자동 보정', '참석자 구분까지 이어서 실행', '다운로드 형식', '회의 요약 HWPX 자동 저장', '음성 재생 파일 보관', '음성 파일 자동 저장']) {
+    assert.equal(await modelsPanel.getByRole('checkbox', { name: '음량 자동 보정', exact: true }).isChecked(), false, 'the volume switch reflects the existing disabled setting');
+    for (const label of ['음량 자동 보정', '참석자 구분 실행', '다운로드 형식', '회의 요약 HWPX 자동 저장', '음성 재생 파일 보관', '음성 파일 자동 저장']) {
       const help = settingsDialog.getByRole('img', { name: label + ' 도움말', exact: true });
       await help.focus();
       await page.getByRole('tooltip').waitFor();
@@ -1202,7 +1386,7 @@ const run = async () => {
     await summaryPanel.getByText('요약 프로그램에 연결하지 못했습니다. 다시 시도해 주세요.', { exact: true }).waitFor();
     const checkModels = summaryPanel.getByRole('button', { name: '연결 다시 확인', exact: true });
     assert.equal(await checkModels.isEnabled(), true);
-    assert.equal(await summaryPanel.getByRole('button', { name: /(?:gemma|user|list|search|broken)[^ ]* 받기$/ }).count(), 0);
+    assert.equal(await summaryPanel.getByRole('button', { name: /(?:gemma|user|list|search|broken)[^ ]* (?:AI 모델 받기|이어받기)$/ }).count(), 0);
     state.ollamaConnectFailure = false;
     await checkModels.click();
     await summaryPanel.getByRole('button', { name: /^(요약 프로그램 실행|연결 다시 확인)$/ }).waitFor({ state: 'hidden' });
@@ -1219,7 +1403,7 @@ const run = async () => {
     await waitForSaved(page, async () => await selection('gemma4:e4b').isChecked() && await selection('gemma4:e4b').isEnabled(), 'ready model choice is reflected after save');
     assert.deepEqual(await visibleModelLayout(), beforeFirstPageChoice, 'choosing e4b preserves the first-page row order, coordinates and page');
 
-    const diarizationToggle = modelsPanel.getByRole('checkbox', { name: '참석자 구분까지 이어서 실행', exact: true });
+    const diarizationToggle = modelsPanel.getByRole('checkbox', { name: '참석자 구분 실행', exact: true });
     const autoSaveToggle = modelsPanel.getByRole('checkbox', { name: '회의 요약 HWPX 자동 저장', exact: true });
     await revealModel(summaryPanel, 'gemma4:e2b');
     await page.clock.install();
@@ -1312,7 +1496,7 @@ const run = async () => {
     await download('user-running:1b').waitFor();
     assert.equal(await download('user-running:1b').isEnabled(), true, 'completed cancellation restores the explicit download action');
     assert.equal(await stopPull.count(), 0, 'completed cancellation removes the stop action');
-    await summaryPanel.getByText('user-running:1b 모델 받기를 중지했습니다.', { exact: true }).waitFor();
+    await summaryPanel.getByText(/중지됨 · 25.0%/).waitFor();
     assert.ok(state.pullStatusRequests.filter(model => model === 'user-running:1b').length > pollsBeforeStop, 'the UI polls cancellation to its final state');
     assert.equal(state.settingsState.summary.model, selectedBeforeStop, 'cancelling a model download never changes the selected model');
     assert.equal(state.pullRequests.length, pullsBeforeStop, 'cancelling does not restart the download automatically');
@@ -1376,7 +1560,7 @@ const run = async () => {
     }
     await revealModel(summaryPanel, 'broken-model:1b');
     await download('broken-model:1b').click();
-    await summaryPanel.getByText('broken-model:1b 모델을 받지 못했습니다.', { exact: true }).waitFor();
+    await summaryPanel.getByText('받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.', { exact: true }).waitFor();
     assert.equal(state.pullRequests.at(-1), 'broken-model:1b');
     const registrationsBeforeExistingSearch = state.registrationRequests.length;
     const pullsBeforeExistingSearch = state.pullRequests.length;
@@ -1611,7 +1795,7 @@ const run = async () => {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ key: 'ollama_runtime', available: true, active: false, status: 'completed', message: '요약 프로그램이 준비되어 있습니다.' }) });
     });
     await refreshModelsOnFocus(page, state);
-    const installRuntime = modelsPanel.getByRole('button', { name: '요약 프로그램 받기', exact: true });
+    const installRuntime = modelsPanel.getByRole('button', { name: 'AI 모델 사용 준비', exact: true });
     const externalInstall = modelsPanel.getByRole('button', { name: '요약 프로그램 설치 페이지 열기', exact: true });
     await installRuntime.waitFor();
     assert.equal(runtimeDownloadRequests, 0, 'opening Settings never downloads a runtime automatically');
@@ -1641,7 +1825,7 @@ const run = async () => {
     assert.equal(await diarizationToggle.isChecked(), false);
     assert.equal(await autoSaveToggle.isChecked(), false);
     assert.equal(await settingsDialog.getByRole('tab').count(), 0);
-    assert.equal(await modelsPanel.getByRole('status', { name: '음량 자동 보정 상태', exact: true }).innerText(), '꺼짐', 'reopening preserves the read-only internal status');
+    assert.equal(await modelsPanel.getByRole('checkbox', { name: '음량 자동 보정', exact: true }).isChecked(), false, 'reopening preserves the existing disabled setting');
     assert.deepEqual(state.settingsState.preprocessing, originalPreprocessing, 'all button and recovery flows leave internal preprocessing unchanged');
     assert.ok(state.settingsPatches.every(patch => !Object.hasOwn(patch, 'preprocessing')), 'later saves and recovery actions also omit hidden preprocessing');
     await page.keyboard.press('Escape');

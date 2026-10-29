@@ -1,0 +1,6 @@
+/* Harness only: production CSS and components remain the visual source of truth. */
+html, body, #storybook-root { min-height: 100%; }
+.story-examples { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; padding: 16px; }
+.story-feedback { max-width: 560px; padding: 16px; }
+.story-feedback .operation-toast { position: static; inset: auto; width: 100%; max-width: none; }
+.story-progress { display: grid; gap: 16px; width: min(100%, 420px); padding: 16px; }

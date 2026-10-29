@@ -159,6 +159,10 @@ def _resolve_startup_layout(
 
 
 def main(argv: list[str] | None = None) -> int:
+    worker_args = list(sys.argv[1:] if argv is None else argv)
+    if worker_args[:1] == ["--download-model"]:
+        from model_download_worker import main as download_model
+        return download_model(worker_args[1:])
     args = _arguments(argv)
     frozen = bool(getattr(sys, "frozen", False))
     if args.preflight_json:

@@ -19,5 +19,5 @@
     "skipLibCheck": true,
     "types": ["react", "react-dom", "vite/client"]
   },
-  "include": ["src", "vite.config.js"]
+  "include": ["src", ".storybook", "stories", "vite.config.js"]
 }

@@ -557,6 +557,8 @@ export interface AnalysisMeetingView {
 interface MeetingWriterProps {
     onAnalysisViewChange?: (view: AnalysisMeetingView | null) => void;
     analysisStatusTarget?: HTMLElement | null;
+    /** The detail screen's toast stack slot, set only while the analysis meeting view is shown. */
+    analysisToastTarget?: HTMLElement | null;
     onOpenSettings?: () => void;
     analysisStartBlocked?: boolean;
     analysisStartBlockedReason?: string;
@@ -570,7 +572,7 @@ interface MeetingWriterProps {
     idleCompanion?: React.ReactNode;
 }
 
-export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChange, analysisStatusTarget, onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, onOpenAnalysisSettings, idleCompanion }) => {
+export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChange, analysisStatusTarget, analysisToastTarget, onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, onOpenAnalysisSettings, idleCompanion }) => {
     const appDialog = useAppDialog();
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport, probeLocalEngine } = useLocalEngineConnection();
     const [webConnectionRecoveryStarted, setWebConnectionRecoveryStarted] = useState(false);
@@ -2857,20 +2859,21 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         || storedErrorMessage === fileDurationLimitError
         ? ''
         : storedErrorMessage;
+    const operationToastTarget = analysisToastTarget ?? document.body;
+    const operationToastNode = operationToast && (
+        <AppToast
+            message={operationToast.message}
+            tone={operationToast.tone}
+            closeLabel="작업 알림 닫기"
+            onClose={() => setOperationToast(null)}
+        />
+    );
 
     return (
         <div className={`writer-shell ${showInputForm ? 'writer-shell-input' : ''}`} data-settings-focus-scope>
-            {/* Portal to the body: while the analysis shows in the shared meeting detail this shell is hidden,
-                and stop/cancel results would otherwise render inside it unseen. */}
-            {operationToast && createPortal(
-                <AppToast
-                    message={operationToast.message}
-                    tone={operationToast.tone}
-                    closeLabel="작업 알림 닫기"
-                    onClose={() => setOperationToast(null)}
-                />,
-                document.body,
-            )}
+            {/* App hides this writer surface while the analysis meeting view is shown, so its toasts would render
+                unseen: during that view they join the detail screen's toast stack, otherwise they go to the page. */}
+            {operationToastNode && createPortal(operationToastNode, operationToastTarget)}
             {showLocalProcessingIntro && (
                 <LocalProcessingNotice
                     runtime={localEngineConnection.runtime}

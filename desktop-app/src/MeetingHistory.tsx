@@ -60,6 +60,8 @@ interface MeetingHistoryProps {
     analysisMeeting?: MeetingRecord | null;
     analysisRunning?: boolean;
     analysisStatusRef?: React.Ref<HTMLDivElement>;
+    /** Slot at the end of the toast stack where the hidden writer places its toasts during the analysis view. */
+    analysisToastRef?: React.Ref<HTMLDivElement>;
     selectedMeetingId?: string | null;
     detailOpenRequest?: MeetingDetailOpenRequest | null;
     onCreateMeeting?: () => void;
@@ -1010,6 +1012,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     analysisMeeting,
     analysisRunning = false,
     analysisStatusRef,
+    analysisToastRef,
     selectedMeetingId,
     detailOpenRequest,
     onCreateMeeting,
@@ -4088,7 +4091,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                     {loadErrorMessage}
                 </StatusBanner>
             )}
-            {(noticeToast || operationToast || templateUndoToast) && (
+            {(noticeToast || operationToast || templateUndoToast || analysisToastRef) && (
                 <div className="meeting-history-toast-stack">
                     {noticeToast && (
                         <AppToast
@@ -4116,6 +4119,8 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                             onClose={() => setTemplateUndoToast(null)}
                         />
                     )}
+                    {/* The writer's own toasts join this stack instead of covering it from a second fixed layer. */}
+                    {analysisToastRef && <div ref={analysisToastRef} className="contents" />}
                 </div>
             )}
 

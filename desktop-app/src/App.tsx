@@ -179,6 +179,7 @@ export const App: React.FC = () => {
     const meetingSurfaceRef = useRef<HTMLDivElement>(null);
     const [analysisMeetingView, setAnalysisMeetingView] = useState<AnalysisMeetingView | null>(null);
     const [analysisStatusTarget, setAnalysisStatusTarget] = useState<HTMLDivElement | null>(null);
+    const [analysisToastTarget, setAnalysisToastTarget] = useState<HTMLDivElement | null>(null);
     useEffect(() => {
         if (activeTab === 'minutes' && analysisMeetingView?.meeting.analysisStatus === 'completed') {
             setSelectedMeetingId(analysisMeetingView.meeting.id);
@@ -430,6 +431,7 @@ export const App: React.FC = () => {
                         key={writerSessionKey}
                         onAnalysisViewChange={setAnalysisMeetingView}
                         analysisStatusTarget={activeTab === 'minutes' ? analysisStatusTarget : null}
+                        analysisToastTarget={activeTab === 'minutes' ? analysisToastTarget : null}
                         onOpenSettings={() => openSettings('models')}
                         analysisStartBlocked={analysisStartBlocked}
                         analysisStartBlockedReason={newMeetingBlockedReason}
@@ -453,6 +455,7 @@ export const App: React.FC = () => {
                         analysisMeeting={activeTab === 'minutes' ? analysisMeetingView?.meeting : null}
                         analysisRunning={activeTab === 'minutes' && Boolean(analysisMeetingView?.running)}
                         analysisStatusRef={activeTab === 'minutes' && analysisMeetingView ? setAnalysisStatusTarget : undefined}
+                        analysisToastRef={activeTab === 'minutes' && analysisMeetingView ? setAnalysisToastTarget : undefined}
                         detailOpenRequest={activeTab === 'history' ? meetingDetailOpenRequest : null}
                         onOpenSettings={() => openSettings('models')}
                         onCreateMeeting={handleCreateMeeting}

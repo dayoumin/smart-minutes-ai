@@ -12,18 +12,8 @@ import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
-const PROCESSING_HELP_TITLE = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
-// Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
-const openProcessingHelp = async page => {
-  await page.locator('.writer-local-promise').getByRole('button', { name: '처리 방식', exact: true }).click();
-  const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
-  await help.waitFor({ state: 'visible', timeout: 10000 });
-  return help;
-};
-const closeProcessingHelp = async (page, help) => {
-  await page.keyboard.press('Escape');
-  await help.waitFor({ state: 'hidden', timeout: 10000 });
-};
+// Since 2026-10-24 (docs/design.md) the writer shows only this promise; storage wording lives in the web first-visit notice.
+const LOCAL_PROMISE = '보안 걱정 NO, 외부 AI 전송 없음';
 const shouldStartServer = !process.env.APP_URL;
 
 const waitForApp = async (url, timeoutMs = 30000) => {
@@ -410,9 +400,7 @@ const runScenario = async (
     // Meeting information is a labelled region without a visible heading since a1307b8.
     assert.equal(writerSectionHeadings[0], '영상·음성 파일');
     await page.getByRole('region', { name: '회의 정보' }).waitFor({ timeout: 10000 });
-    const processingHelp = await openProcessingHelp(page);
-    await processingHelp.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
-    await closeProcessingHelp(page, processingHelp);
+    await page.locator('.writer-local-promise').getByText(LOCAL_PROMISE, { exact: true }).waitFor({ timeout: 10000 });
     const titleInput = page.getByLabel('회의 제목', { exact: true });
     await page.getByLabel('회의 목적', { exact: true }).fill('분석 중 중지와 취소 동작 확인');
     // Optional inputs: participants as typed text, key terms as chips (one left typed to prove it still counts).

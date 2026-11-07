@@ -84,10 +84,12 @@ class SummaryAttributionTest(unittest.TestCase):
         ]
         partials = [
             {"notes": [{"kind": "discussion", "topic": "발표 평가", "text": "발표 자료에 대한 평가",
-                        "evidence_ids": ["s1"], "opposing": [], "conditions": []}],
+                        "evidence_ids": ["s1"], "problems": [], "goals": [],
+                        "opposing": [], "conditions": []}],
              "needs_check": [uncertainty, uncertainty]},
             {"notes": [{"kind": "discussion", "topic": "대상 미확인 의견", "text": "대상이 불명확한 의견",
-                        "evidence_ids": ["s1"], "opposing": [], "conditions": []}],
+                        "evidence_ids": ["s1"], "problems": [], "goals": [],
+                        "opposing": [], "conditions": []}],
              "needs_check": [other_uncertainty]},
         ]
         for final in (

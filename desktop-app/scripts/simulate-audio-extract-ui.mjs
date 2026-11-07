@@ -9,18 +9,8 @@ let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
 const PAGE_GOTO_TIMEOUT_MS = 60000;
 
-const PROCESSING_HELP_TITLE = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
-// Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
-const openProcessingHelp = async page => {
-  await page.locator('.writer-local-promise').getByRole('button', { name: '처리 방식', exact: true }).click();
-  const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
-  await help.waitFor({ state: 'visible', timeout: 10000 });
-  return help;
-};
-const closeProcessingHelp = async (page, help) => {
-  await page.keyboard.press('Escape');
-  await help.waitFor({ state: 'hidden', timeout: 10000 });
-};
+// Since 2026-10-24 (docs/design.md) the writer shows only this promise; storage wording lives in the web first-visit notice.
+const LOCAL_PROMISE = '보안 걱정 NO, 외부 AI 전송 없음';
 const savedAudioPath = 'C:\\Users\\User\\Downloads\\meeting-demo.wav';
 
 const waitForApp = async (url, timeoutMs = 30000) => {
@@ -149,7 +139,7 @@ const run = async () => {
   let browser = null;
   let page = null;
   let extractRequests = 0;
-  let privacySettings = {
+  const privacySettings = {
     preserve_extracted_audio: true,
     auto_save_audio_copy: false,
   };
@@ -194,11 +184,11 @@ const run = async () => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded', timeout: PAGE_GOTO_TIMEOUT_MS });
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
-    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일', '회의 정보']);
-    await page.locator('.writer-local-promise').getByText('회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다', { exact: true }).waitFor({ timeout: 10000 });
-    let processingHelp = await openProcessingHelp(page);
-    await processingHelp.getByText('회의록과 분석용 음성을 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
-    await closeProcessingHelp(page, processingHelp);
+    // Meeting information is a labelled region without a visible heading since a1307b8.
+    assert.equal(writerSectionHeadings[0], '영상·음성 파일');
+    await page.getByRole('region', { name: '회의 정보' }).waitFor({ timeout: 10000 });
+    await page.locator('.writer-local-promise').getByText(LOCAL_PROMISE, { exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await page.getByRole('button', { name: '처리 방식', exact: true }).count(), 0, 'the writer has no persistent processing-help button');
     const desktopLayout = await page.evaluate(() => {
       const dropZone = document.querySelector('.file-drop-zone')?.getBoundingClientRect();
       const supportElement = document.querySelector('.writer-file-support');
@@ -221,79 +211,6 @@ const run = async () => {
     ));
     assert.ok(compactHorizontalOverflow <= 2, 'compact writer should not overflow horizontally');
     await page.setViewportSize({ width: 1280, height: 900 });
-    privacySettings = {
-      preserve_extracted_audio: true,
-      auto_save_audio_copy: true,
-    };
-    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    const autoSavePrivacyMessage = '회의록과 분석용 음성을 이 PC에 보관하고, 다운로드 폴더에도 음성 사본을 저장합니다.';
-    // Keep the help open through the stale-response checks so absence assertions inspect a rendered storage row.
-    processingHelp = await openProcessingHelp(page);
-    await processingHelp.getByText(autoSavePrivacyMessage, { exact: true }).waitFor({ timeout: 10000 });
-
-    await page.unroute('**/api/settings');
-    let releaseStaleSettings = () => {};
-    const staleSettingsCanFinish = new Promise(resolve => {
-      releaseStaleSettings = resolve;
-    });
-    let markStaleSettingsRequested = () => {};
-    const staleSettingsRequested = new Promise(resolve => {
-      markStaleSettingsRequested = resolve;
-    });
-    let markStaleSettingsFulfilled = () => {};
-    const staleSettingsFulfilled = new Promise(resolve => {
-      markStaleSettingsFulfilled = resolve;
-    });
-    let settingsRequestCount = 0;
-    await page.route('**/api/settings', async route => {
-      settingsRequestCount += 1;
-      if (settingsRequestCount === 1) {
-        markStaleSettingsRequested();
-        await staleSettingsCanFinish;
-        const staleResponse = await route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            privacy: { preserve_extracted_audio: true, auto_save_audio_copy: true },
-          }),
-        });
-        markStaleSettingsFulfilled();
-        return staleResponse;
-      }
-      if (settingsRequestCount === 2) {
-        return route.fulfill({
-          status: 200,
-          contentType: 'application/json',
-          body: JSON.stringify({
-            privacy: { preserve_extracted_audio: false, auto_save_audio_copy: false },
-          }),
-        });
-      }
-      return route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({ detail: 'settings unavailable' }),
-      });
-    });
-    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    await staleSettingsRequested;
-    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    await processingHelp.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
-    const staleSettingsResponseFinished = page.waitForResponse(response => (
-      response.url().endsWith('/api/settings') && response.status() === 200
-    )).then(response => response.finished());
-    releaseStaleSettings();
-    await staleSettingsFulfilled;
-    await staleSettingsResponseFinished;
-    await page.evaluate(() => new Promise(resolve => {
-      window.requestAnimationFrame(() => window.requestAnimationFrame(resolve));
-    }));
-    assert.equal(await processingHelp.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).count(), 1);
-    assert.equal(await processingHelp.getByText(autoSavePrivacyMessage, { exact: true }).count(), 0, 'a stale settings response must not replace the latest privacy message');
-    await page.evaluate(() => window.dispatchEvent(new Event('analysis:settings-updated')));
-    // An unreadable setting drops the exact wording, but the storage row keeps the local-only promise.
-    await processingHelp.getByText('회의록은 이 PC에만 보관합니다.', { exact: true }).waitFor({ timeout: 10000 });
-    await closeProcessingHelp(page, processingHelp);
     assert.equal(await page.getByRole('button', { name: '음성 추출', exact: true }).count(), 0, 'The extraction tool is not part of the current writer surface.');
     assert.equal(await page.locator('input[accept="video/*,.mp4,.mov,.mkv,.avi,.webm"]').count(), 0, 'The hidden extraction tool must not expose a separate file picker.');
     assert.equal(extractRequests, 0, 'Privacy and file-input interactions must not invoke the hidden extraction tool.');

@@ -386,6 +386,8 @@ const installTauriMock = () => {
         if (command === 'get_backend_base_url') return 'http://127.0.0.1:17863';
         if (command === 'get_desktop_action_token') return 'desktop-test-token';
         if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
+        // The update check reads the build identity on start and focus; development builds have none.
+        if (command === 'get_desktop_release_identity') return null;
         window.__unexpectedTauriCommands.push(command);
         return undefined;
       },
@@ -402,6 +404,8 @@ const verifyDesktopStatusRow = async (browser) => {
   try {
     await page.clock.install();
     await page.addInitScript(installTauriMock);
+    // Keep the desktop update check off the public release origin; no published update is the neutral answer.
+    await page.route('**/downloads/desktop-beta.json', route => route.fulfill({ status: 404, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' }));
     await page.route('**/api/**', route => {
       const path = new URL(route.request().url()).pathname;
       const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });

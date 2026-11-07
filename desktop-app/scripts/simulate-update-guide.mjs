@@ -223,9 +223,48 @@ try {
             await entry.click();
             await dialog.getByText('새 분석을 시작하려면 업데이트가 필요합니다.', { exact: true }).waitFor();
             await page.keyboard.press('Escape');
+            // First installation has no connected engine to check. Download needs no all-windows consent
+            // and opening/clicking it must not request loopback permission or replace the meeting tab.
+            artifact.failure = false;
+            await page.evaluate(() => {
+                window.setUpdateAuthorization('unpaired');
+                window.setUpdateEngineVersion(undefined);
+            });
+            const beforeInstallRequests = requests;
             await page.getByRole('button', { name: '설치 안내', exact: true }).click();
             await dialog.getByRole('heading', { name: /설치$/ }).waitFor();
             assert.equal(await countDownloads(), 2, 'first-install guidance also waits for a receive click');
+            assert.equal(await dialog.getByRole('checkbox').count(), 0, 'first install has no task-confirmation gate');
+            await until(() => receive.isEnabled());
+            await dialog.getByText('설치할 때 보안 경고가 뜨면', { exact: true }).waitFor();
+            await page.setViewportSize({ width: 860, height: 720 });
+            if (output) await page.screenshot({ path: `${output}/web-install-guide.png` });
+            assert.equal(await dialog.evaluate(el => el.scrollWidth <= el.clientWidth), true);
+            await receive.click();
+            await until(async () => await countDownloads() === 3);
+            assert.equal(requests, beforeInstallRequests, 'first install never starts an unauthenticated loopback request');
+            assert.equal(page.url(), fixture);
+            assert.equal(await page.getByRole('textbox', { name: '작성 중인 내용', exact: true }).inputValue(), '저장 전 내용 유지');
+            await page.keyboard.press('Escape');
+            // Repair also opens the install guide, but a known installed engine retains its safeguards.
+            await page.evaluate(() => {
+                window.setUpdateEngineVersion('0.1.8-beta-20261018');
+                window.setUpdateAuthorization('authenticated');
+            });
+            await page.getByRole('button', { name: '설치 안내', exact: true }).click();
+            await dialog.getByRole('checkbox').waitFor();
+            assert.equal(await receive.isDisabled(), true, 'unknown activity still needs confirmation before repair');
+            await dialog.getByText(/작업을 저장하고 이 PC의 모든 .+ 창을 종료한 뒤 설치 파일을 실행합니다\./).waitFor();
+            assert.equal(await countDownloads(), 3);
+            await page.keyboard.press('Escape');
+            // The exemption is for unknown activity only: connected installs still block real work.
+            unknown = false;
+            backendBusy = true;
+            await page.evaluate(() => window.setUpdateAuthorization('authenticated'));
+            await page.getByRole('button', { name: '설치 안내', exact: true }).click();
+            await dialog.getByText('작업이 끝난 뒤 다운로드할 수 있습니다', { exact: true }).waitFor();
+            assert.equal(await receive.isDisabled(), true);
+            assert.equal(await countDownloads(), 3);
             await page.keyboard.press('Escape');
         } else {
             unavailable = true;

@@ -4,6 +4,7 @@ import argparse
 import ctypes
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -89,7 +90,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("artifact", type=Path)
     parser.add_argument("--local-app-data", type=Path)
     parser.add_argument("--keep-data", action="store_true")
-    parser.add_argument("--verify-challenge-expiry", action="store_true")
+    parser.add_argument("--verify-challenge-expiry", action="store_true", help="Also wait for a real automatic browser-connection request to expire (about two minutes)")
     parser.add_argument("--manifest-only", action="store_true")
     return parser.parse_args()
 
@@ -621,7 +622,9 @@ def assert_sentinels(sentinels: dict[Path, str]) -> None:
             fail(f"User data was not preserved: {path.parent.name}")
 
 
-def scan_secret_leaks(data_root: Path, code: str, token: str) -> None:
+def scan_secret_leaks(data_root: Path, *credentials: str) -> None:
+    if not credentials or any(not value for value in credentials):
+        fail("Secret-leak checks require nonempty credentials")
     for path in data_root.rglob("*"):
         if not path.is_file() or path.stat().st_size > 5 * 1024 * 1024:
             continue
@@ -629,166 +632,170 @@ def scan_secret_leaks(data_root: Path, code: str, token: str) -> None:
             content = path.read_text(encoding="utf-8", errors="ignore")
         except OSError:
             continue
-        if code in content or token in content:
-            fail("A pairing secret was written to the local-engine user data")
+        if any(value in content for value in credentials):
+            fail("A connection secret was written to the local-engine user data")
 
 
-def exercise_pairing(
-    executable: Path,
-    environment: dict[str, str],
-    engine: subprocess.Popen[bytes],
-    origin: str,
-    data_root: Path,
-) -> None:
-    helper = start_process(executable, environment, "--pair")
-    helper_window = 0
-    code_window = 0
-    try:
-        helper_window = wait_for_window(helper.pid, f"{BRAND_NAME} 연결 준비")
-        helper_text = child_window_text(helper_window)
-        if origin not in helper_text or re.search(r"(?<!\d)\d{6}(?!\d)", helper_text):
-            fail("The pairing helper must show the exact origin without a code")
+def browser_completion_payload(pairing_id: str) -> dict[str, object]:
+    return {"mode": "browser-connection", "pairing_id": pairing_id}
 
-        status, probe = request_json("/api/probe", origin=origin)
-        if status != 200 or probe.get("pairing_available") is not True:
-            fail("The public probe did not report the manually armed helper")
 
-        wrong_status, _ = request_json(
-            "/api/pair/start",
-            origin="https://wrong.example",
-            method="POST",
+def validate_browser_start(body: dict[str, object]) -> str:
+    pairing_id = body.get("pairing_id")
+    ttl = body.get("expires_in_seconds")
+    if (body.get("mode") != "browser-connection" or not isinstance(pairing_id, str) or not pairing_id
+            or not isinstance(ttl, int) or isinstance(ttl, bool) or not 0 < ttl <= 130
+            or "code" in body or "session_token" in body):
+        fail("The automatic browser-connection start contract is invalid")
+    return pairing_id
+
+
+def validate_browser_credential(body: dict[str, object]) -> str:
+    token = body.get("session_token")
+    expires_at = body.get("expires_at")
+    if not isinstance(token, str) or not token:
+        fail("Automatic browser connection did not issue a session credential")
+    if (not isinstance(expires_at, (int, float)) or isinstance(expires_at, bool)
+            or not math.isfinite(expires_at) or expires_at <= time.time()):
+        fail("The automatic session expiry metadata is invalid")
+    return token
+
+
+def wait_for_browser_credential(origin: str, pairing_id: str, *, timeout: float = 15) -> str:
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        status, body = request_json(
+            "/api/pair/complete", origin=origin, method="POST",
+            payload=browser_completion_payload(pairing_id), timeout=min(5, max(.01, deadline - time.monotonic())),
         )
-        if wrong_status != 403:
-            fail("Pairing did not reject a different web origin")
+        if status == 200:
+            return validate_browser_credential(body)
+        if status != 202 or body.get("pending") is not True or "session_token" in body:
+            fail("The automatic browser-connection request was not completed safely")
+        time.sleep(min(.1, max(0, deadline - time.monotonic())))
+    fail("Automatic browser connection timed out")
 
-        with ThreadPoolExecutor(max_workers=2) as executor:
-            results = list(executor.map(
-                lambda _index: request_json("/api/pair/start", origin=origin, method="POST"),
-                range(2),
-            ))
-        successes = [(status, body) for status, body in results if status == 200]
-        rejected = [status for status, _body in results if status != 200]
-        if len(successes) != 1 or not rejected or rejected[0] not in (429, 503):
-            fail("Concurrent pairing starts were not fail-closed")
-        started = successes[0][1]
-        if "code" in started:
-            fail("The pairing start response exposed the local code")
 
-        code_window = wait_for_window(engine.pid, f"{BRAND_NAME} 연결 코드")
-        code_text = child_window_text(code_window)
-        match = re.search(r"(?<!\d)(\d{6})(?!\d)", code_text)
-        if origin not in code_text or match is None:
-            fail("The pairing code dialog did not show the origin and six-digit code")
-        code = match.group(1)
-        complete_status, credential = request_json(
-            "/api/pair/complete",
-            origin=origin,
-            method="POST",
-            payload={"pairing_id": started["pairing_id"], "code": code},
+def assert_browser_grants(data_root: Path, origin: str, browser_token: str | None) -> None:
+    payload = json.loads((data_root / "config" / "browser-approvals.json").read_text(encoding="utf-8"))
+    expected = {} if browser_token is None else {hashlib.sha256(browser_token.encode("ascii")).hexdigest(): origin}
+    if payload.get("format") != 1 or payload.get("grants") != expected:
+        fail("The saved browser grant does not match the expected credential digest and origin")
+
+
+def assert_session_health(origin: str, token: str, *, valid: bool) -> None:
+    status, body = request_json("/api/health", origin=origin, token=token)
+    if valid and (status != 200 or body.get("ok") is not True):
+        fail("The automatic session could not access the protected health endpoint")
+    if not valid and status not in (401, 403):
+        fail("An invalidated browser session could still access the protected API")
+
+
+def exercise_browser_connection(origin: str, data_root: Path) -> tuple[str, tuple[str, ...]]:
+    status, probe = request_json("/api/probe", origin=origin)
+    if status != 200 or probe.get("pairing_available") is not True or probe.get("pairing_mode") != "browser-connection":
+        fail("The frozen probe does not advertise automatic browser connection")
+    browser_token = secrets.token_urlsafe(32)
+    start_payload = {"mode": "browser-connection", "browser_token": browser_token}
+    for foreign_origin in ("https://wrong.example", ""):
+        for path, payload in (
+            ("/api/pair/start", start_payload),
+            ("/api/pair/complete", browser_completion_payload("unknown")),
+            ("/api/pair/restore", {"browser_token": browser_token}),
+            ("/api/pair/forget", {"browser_token": browser_token}),
+        ):
+            rejected, _ = request_json(path, origin=foreign_origin, method="POST", payload=payload)
+            if rejected != 403:
+                fail("Automatic browser connection did not reject a different or missing origin")
+    unknown, _ = request_json("/api/pair/restore", origin=origin, method="POST", payload={"browser_token": browser_token})
+    if unknown != 401:
+        fail("An unknown browser credential could restore a session")
+
+    # Automatic approval can finish before another start. The contract is a
+    # five-per-minute bound, not exactly one successful concurrent request.
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(
+            lambda _index: request_json("/api/pair/start", origin=origin, method="POST", payload=start_payload), range(6),
+        ))
+    successful = [body for status, body in results if status == 200]
+    rejected = [status for status, _body in results if status != 200]
+    if not 1 <= len(successful) <= 5 or not rejected or any(status != 429 for status in rejected):
+        fail("Concurrent browser-connection starts exceeded the request limit")
+    pairing_ids = [validate_browser_start(body) for body in successful]
+    if len(set(pairing_ids)) != len(pairing_ids):
+        fail("Automatic browser-connection requests reused an identifier")
+    tokens = []
+    for pairing_id in pairing_ids:
+        token = wait_for_browser_credential(origin, pairing_id)
+        tokens.append(token)
+        assert_session_health(origin, token, valid=True)
+        replay_status, _ = request_json(
+            "/api/pair/complete", origin=origin, method="POST", payload=browser_completion_payload(pairing_id),
         )
-        token = str(credential.get("session_token") or "")
-        if complete_status != 200 or not token:
-            fail("The pairing code did not produce a session credential")
-        health_status, health = request_json("/api/health", origin=origin, token=token)
-        if health_status != 200 or health.get("ok") is not True:
-            fail("The paired session could not access the protected health endpoint")
-        replay_status, _replay = request_json(
-            "/api/pair/complete",
-            origin=origin,
-            method="POST",
-            payload={"pairing_id": started["pairing_id"], "code": code},
-        )
-        if replay_status != 401:
-            fail("A consumed pairing code could be reused")
-        scan_secret_leaks(data_root, code, token)
-    finally:
-        close_window(code_window)
-        close_window(helper_window)
-        try:
-            helper.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            helper.kill()
-            helper.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            helper.kill()
-            helper.wait(timeout=3)
+        if replay_status != 403:
+            fail("A consumed browser-connection request could be reused")
+    assert_browser_grants(data_root, origin, browser_token)
+    scan_secret_leaks(data_root, browser_token, *tokens)
+    return browser_token, tuple(tokens)
 
 
-def exercise_expired_pairing_arm(
-    executable: Path,
-    environment: dict[str, str],
-    origin: str,
-    data_root: Path,
-) -> None:
-    helper = start_process(executable, environment, "--pair")
-    helper_window = 0
-    try:
-        helper_window = wait_for_window(helper.pid, f"{BRAND_NAME} 연결 준비")
-        arm_path = data_root / "runtime" / "pairing-arm.json"
-        arm_payload = json.loads(arm_path.read_text(encoding="utf-8"))
-        arm_payload["expires_at"] = 0
-        arm_path.write_text(json.dumps(arm_payload), encoding="utf-8")
-        status, probe = request_json("/api/probe", origin=origin)
-        if status != 200 or probe.get("pairing_available") is not False:
-            fail("The frozen probe trusted an expired pairing arm")
-        start_status, _body = request_json(
-            "/api/pair/start",
-            origin=origin,
-            method="POST",
-        )
-        if start_status != 503:
-            fail("The frozen engine accepted an expired pairing arm")
-    finally:
-        close_window(helper_window)
-        try:
-            helper.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            helper.kill()
-            helper.wait(timeout=3)
+def exercise_expired_browser_challenge(origin: str, data_root: Path) -> None:
+    browser_token = secrets.token_urlsafe(32)
+    status, started = request_json("/api/pair/start", origin=origin, method="POST", payload={
+        "mode": "browser-connection", "browser_token": browser_token,
+    })
+    if status != 200:
+        fail("The automatic request-expiry smoke could not start a request")
+    pairing_id = validate_browser_start(started)
+    remaining = int(started["expires_in_seconds"]) + 1
+    print(f"Waiting {remaining}s for the automatic connection request to expire.", flush=True)
+    while remaining:
+        step = min(5, remaining)
+        time.sleep(step)
+        remaining -= step
+        if remaining and remaining % 30 == 1:
+            print(f"Automatic request expiry: {remaining}s remaining.", flush=True)
+    status, _ = request_json("/api/pair/complete", origin=origin, method="POST", payload=browser_completion_payload(pairing_id))
+    if status != 403:
+        fail("An expired automatic browser-connection request was accepted")
+    if (data_root / "config" / "browser-approvals.json").exists():
+        grants = json.loads((data_root / "config" / "browser-approvals.json").read_text(encoding="utf-8"))
+        if hashlib.sha256(browser_token.encode("ascii")).hexdigest() in grants.get("grants", {}):
+            fail("An expired automatic connection saved a browser grant")
+    scan_secret_leaks(data_root, browser_token)
 
 
-def exercise_expired_pairing_challenge(
-    executable: Path,
-    environment: dict[str, str],
-    engine: subprocess.Popen[bytes],
-    origin: str,
-) -> None:
-    helper = start_process(executable, environment, "--pair")
-    helper_window = 0
-    code_window = 0
-    try:
-        helper_window = wait_for_window(helper.pid, f"{BRAND_NAME} 연결 준비")
-        status, started = request_json("/api/pair/start", origin=origin, method="POST")
-        if status != 200 or "code" in started:
-            fail("The challenge-expiry smoke could not start a code challenge safely")
-        code_window = wait_for_window(engine.pid, f"{BRAND_NAME} 연결 코드")
-        code_text = child_window_text(code_window)
-        match = re.search(r"(?<!\d)(\d{6})(?!\d)", code_text)
-        if origin not in code_text or match is None:
-            fail("The challenge-expiry dialog did not show the expected origin and code")
-        code = match.group(1)
-        expires_in_seconds = int(started.get("expires_in_seconds") or 0)
-        if expires_in_seconds <= 0 or expires_in_seconds > 130:
-            fail("The frozen pairing challenge reported an unexpected TTL")
-        close_window(code_window)
-        code_window = 0
-        time.sleep(expires_in_seconds + 1)
-        complete_status, _credential = request_json(
-            "/api/pair/complete",
-            origin=origin,
-            method="POST",
-            payload={"pairing_id": started["pairing_id"], "code": code},
-        )
-        if complete_status != 401:
-            fail("An expired frozen pairing code was accepted")
-    finally:
-        close_window(code_window)
-        close_window(helper_window)
-        try:
-            helper.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            helper.kill()
-            helper.wait(timeout=3)
+def exercise_browser_restoration(origin: str, data_root: Path, browser_token: str, previous_tokens: tuple[str, ...]) -> None:
+    assert_browser_grants(data_root, origin, browser_token)
+    for token in previous_tokens:
+        assert_session_health(origin, token, valid=False)
+    restored_tokens = []
+    for _ in range(2):
+        status, restored = request_json("/api/pair/restore", origin=origin, method="POST", payload={"browser_token": browser_token})
+        if status != 200:
+            fail("The remembered browser connection could not be restored after restart")
+        restored_token = validate_browser_credential(restored)
+        if restored_token in (*previous_tokens, *restored_tokens):
+            fail("Browser restoration reused a session credential")
+        restored_tokens.append(restored_token)
+        assert_session_health(origin, restored_token, valid=True)
+    # Foreign attempts must neither use nor erase the live grant.
+    for path in ("/api/pair/restore", "/api/pair/forget"):
+        status, _ = request_json(path, origin="https://wrong.example", method="POST", payload={"browser_token": browser_token})
+        if status != 403:
+            fail("A foreign origin could restore or revoke the remembered browser")
+    for token in restored_tokens:
+        assert_session_health(origin, token, valid=True)
+    status, revoked = request_json("/api/pair/forget", origin=origin, method="POST", payload={"browser_token": browser_token})
+    if status != 200 or revoked.get("revoked") is not True:
+        fail("The remembered browser connection could not be revoked")
+    for token in (*previous_tokens, *restored_tokens):
+        assert_session_health(origin, token, valid=False)
+    status, _ = request_json("/api/pair/restore", origin=origin, method="POST", payload={"browser_token": browser_token})
+    if status != 401:
+        fail("A revoked browser connection could still be restored")
+    assert_browser_grants(data_root, origin, None)
+    scan_secret_leaks(data_root, browser_token, *previous_tokens, *restored_tokens)
 
 
 def exercise_port_collision(executable: Path, environment: dict[str, str]) -> None:
@@ -890,6 +897,8 @@ def run() -> None:
         print("Frozen web local-engine closed manifest verification passed.")
         print(f"Engine version: {manifest['engineVersion']}")
         return
+    if listener_rows():
+        fail("The fixed engine port is already occupied; stop no existing installation for this smoke")
     origin = str(manifest["allowedOrigin"])
     install_handles: list[int] = []
 
@@ -933,19 +942,20 @@ def run() -> None:
         if status not in (401, 403):
             fail("The frozen engine exposed a protected API without a session")
 
-        second = start_process(executable, environment)
+        # Old shortcuts use --pair. It must now behave as an ordinary start
+        # alias, returning without a numeric-code/helper window.
+        second = start_process(executable, environment, "--pair")
         try:
             if second.wait(timeout=10) != 0 or engine.poll() is not None:
-                fail("The packaged single-instance guard did not preserve the first engine")
+                fail("The packaged --pair start alias did not preserve the first engine")
         finally:
             if second.poll() is None:
                 second.kill()
                 second.wait(timeout=3)
 
-        exercise_expired_pairing_arm(executable, environment, origin, data_root)
         if arguments.verify_challenge_expiry:
-            exercise_expired_pairing_challenge(executable, environment, engine, origin)
-        exercise_pairing(executable, environment, engine, origin, data_root)
+            exercise_expired_browser_challenge(origin, data_root)
+        browser_token, session_tokens = exercise_browser_connection(origin, data_root)
         sentinels = create_preservation_sentinels(data_root)
         stop_engine(executable, environment, engine)
         engine = None
@@ -961,9 +971,14 @@ def run() -> None:
         try:
             engine = start_and_probe(relocated_executable, environment, origin)
             assert_sentinels(sentinels)
+            exercise_browser_restoration(origin, data_root, browser_token, session_tokens)
             stop_engine(relocated_executable, environment, engine)
             engine = None
         finally:
+            if engine is not None and engine.poll() is None:
+                engine.kill()
+                engine.wait(timeout=5)
+                engine = None
             if relocated.exists():
                 rename_directory_with_retry(relocated, artifact)
 
@@ -976,9 +991,13 @@ def run() -> None:
         print(f"Running-engine installer preflight status: {running_installer_preflight['overall_status']}")
         print(
             "Verified: host and installer-target preflight JSON, closed manifest, read-only payload, ffmpeg, "
-            "loopback, default-deny, single instance, pairing expiry/reuse/concurrency, startup-safe stop, "
+            "loopback, default-deny, --pair start alias, automatic connection/replay/rate limit, "
+            "restart session invalidation, browser restoration/revocation, no raw credentials, startup-safe stop, "
             "own/foreign fixed-port classification, port collision, relocation preservation"
         )
+        print("Automatic request expiry: " + ("verified" if arguments.verify_challenge_expiry else "not exercised (use --verify-challenge-expiry)"))
+        print("Session expiry: future expiry metadata checked; wall-clock session expiration not exercised.")
+        print("Legacy numeric-code pairing and native installer execution are outside this smoke.")
     finally:
         if engine is not None and engine.poll() is None:
             engine.kill()

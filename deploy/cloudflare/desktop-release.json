@@ -1,3 +1,12 @@
 {
-  "release": null
+  "release": {
+    "schemaVersion": 1,
+    "type": "portable-update",
+    "origin": "https://barorok.ecomarin.workers.dev",
+    "commit": "21f76bb3f6677d4292f63ab03d92a99513f67763",
+    "generatedAt": "2026-10-28T12:52:22.1199775+09:00",
+    "downloadPath": "/downloads/lmo_audio_update_21f76bb3f6677d4292f63ab03d92a99513f67763.zip",
+    "bytes": 432065205,
+    "sha256": "bbca257b7c40f3f863ae89058393fa144596c506bd7ca53da2fe465d6b0c825b"
+  }
 }

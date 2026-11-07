@@ -14,11 +14,13 @@ export const Harness = () => {
     const [busy, setBusy] = useState(false);
     const [required, setRequired] = useState(false);
     const [authorization, setAuthorization] = useState<LocalEngineAuthorizationState>('authenticated');
-    Object.assign(window, { setUpdateBusy: setBusy, setUpdateRequired: setRequired, setUpdateAuthorization: setAuthorization });
+    const [engineVersion, setEngineVersion] = useState<string | undefined>('0.1.8-beta-20261018');
+    Object.assign(window, { setUpdateBusy: setBusy, setUpdateRequired: setRequired, setUpdateAuthorization: setAuthorization,
+        setUpdateEngineVersion: setEngineVersion });
     const context = {
         snapshot: {
             ...createInitialLocalEngineConnection(getRuntimeEnvironment().kind),
-            transport: 'reachable', authorization, engineVersion: '0.1.8-beta-20261018',
+            transport: 'reachable', authorization, engineVersion,
             capabilities: new Set(['analysis']), updateRequired: required,
         },
         latestRelease: { version: '0.1.12-beta-20261026', downloadUrl: `${location.origin}/downloads/engine-test.exe` },

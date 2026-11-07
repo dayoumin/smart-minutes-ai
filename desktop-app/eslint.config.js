@@ -8,6 +8,7 @@ import { defineConfig, globalIgnores } from 'eslint/config'
 export default defineConfig([
   globalIgnores([
     'dist',
+    'storybook-static',
     'src-tauri',
     'vite.config.js',
   ]),
@@ -27,5 +28,13 @@ export default defineConfig([
       'react-hooks/set-state-in-effect': 'off',
       'react-hooks/immutability': 'off',
     },
+  },
+  {
+    files: ['stories/**/*.stories.tsx'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
+    files: ['scripts/check-storybook.mjs'],
+    languageOptions: { globals: globals.node },
   },
 ])

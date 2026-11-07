@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 import tempfile
@@ -237,6 +238,134 @@ def _apply_package(package_root: Path, target: Path) -> subprocess.CompletedProc
 
 def _file_hashes(root: Path) -> dict:
     return {path.relative_to(root).as_posix(): _sha256(path) for path in root.rglob("*") if path.is_file()}
+
+
+def _hash_helper(script_name: str) -> str:
+    source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+    match = re.search(r"^function Get-FileHashValue\b[\s\S]+?(?=^function |\Z)", source, re.MULTILINE)
+    if match is None:
+        raise AssertionError(f"Hash helper missing from {script_name}")
+    return match.group(0)
+
+
+class UpdateHashSelectionTest(unittest.TestCase):
+    def test_full_verifier_keeps_target_hash_package_hash_and_size_failures(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            portable = _make_fake_portable(root / "source")
+            target = _make_fake_target(root / "target")
+            package_name = _package_name("test_cached_hash_verifier")
+            package_root = ROOT / "releases" / "updates" / package_name
+            try:
+                created = _create_package(portable, package_name)
+                self.assertEqual(created.returncode, 0, created.stdout + created.stderr)
+                applied = _apply_package(package_root, target)
+                self.assertEqual(applied.returncode, 0, applied.stdout + applied.stderr)
+                target_before = _file_hashes(target)
+                protected_before = {relative: target_before[relative] for relative in BACKEND_USER_FILES}
+                verify_command = (
+                    "& " + _ps_quote(package_root / "verify_update.ps1")
+                    + " -TargetDir " + _ps_quote(target) + " -PackageDir " + _ps_quote(package_root)
+                )
+                for path, message in (
+                    (target / "backend/main.py", "main.py hash mismatch"),
+                    (package_root / "payload/backend/main.py", "package hash mismatch"),
+                ):
+                    with self.subTest(path=path.parent.name, message=message):
+                        original = path.read_bytes()
+                        path.write_bytes(bytes([original[0] ^ 1]) + original[1:])
+                        try:
+                            rejected = _run_powershell(verify_command)
+                            self.assertNotEqual(rejected.returncode, 0)
+                            self.assertIn(message, rejected.stdout + rejected.stderr)
+                        finally:
+                            path.write_bytes(original)
+                manifest_path = package_root / "update-manifest.json"
+                original_manifest = manifest_path.read_bytes()
+                manifest = json.loads(original_manifest.decode("utf-8-sig"))
+                manifest["payloadFiles"][0]["bytes"] += 1
+                manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+                try:
+                    rejected = _run_powershell(verify_command)
+                    self.assertNotEqual(rejected.returncode, 0)
+                    self.assertIn("package size mismatch", rejected.stdout + rejected.stderr)
+                finally:
+                    manifest_path.write_bytes(original_manifest)
+                accepted = _run_powershell(verify_command)
+                self.assertEqual(accepted.returncode, 0, accepted.stdout + accepted.stderr)
+                self.assertEqual(_file_hashes(target), target_before)
+                for relative, expected in protected_before.items():
+                    self.assertEqual(_sha256(target / relative), expected, relative)
+            finally:
+                if package_root.exists():
+                    self.assertTrue(package_root.resolve().is_relative_to((ROOT / "releases/updates").resolve()))
+                    shutil.rmtree(package_root)
+
+    def test_missing_hash_command_is_discovered_once_but_every_file_is_read_again(self):
+        for script in ("verify_update.ps1", "update_lmo_audio.ps1"):
+            with self.subTest(script=script), tempfile.TemporaryDirectory() as temp_dir:
+                path = Path(temp_dir) / "content.bin"
+                path.write_bytes(b"first")
+                command = f"""
+$ErrorActionPreference = 'Stop'
+$script:FileHashCommandResolved = $false
+$script:FileHashCommand = $null
+$script:DiscoveryCalls = 0
+function Get-Command {{ $script:DiscoveryCalls++; throw 'Hash command unavailable' }}
+{_hash_helper(script)}
+$path = {_ps_quote(path)}
+if ($null -ne (Get-FileHashValue ($path + '.missing'))) {{ throw 'Missing file became valid' }}
+if ($script:DiscoveryCalls -ne 0) {{ throw 'Missing file should not require a hash command' }}
+$first = Get-FileHashValue $path
+[IO.File]::WriteAllText($path, 'other')
+$second = Get-FileHashValue $path
+if ($first -ne '{hashlib.sha256(b'first').hexdigest().upper()}') {{ throw 'First hash mismatch' }}
+if ($second -ne '{hashlib.sha256(b'other').hexdigest().upper()}') {{ throw 'Changed file was not read again' }}
+if ($script:DiscoveryCalls -ne 1) {{ throw "Expected one discovery, got $script:DiscoveryCalls" }}
+$locked = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+try {{
+    $rejected = $false
+    try {{ $null = Get-FileHashValue $path }} catch {{ $rejected = $true }}
+    if (-not $rejected) {{ throw 'Unreadable file was accepted' }}
+}} finally {{ $locked.Dispose() }}
+if ((Get-FileHashValue $path) -ne $second) {{ throw 'Read did not recover after unlock' }}
+if ($script:DiscoveryCalls -ne 1) {{ throw 'Fallback selection was rediscovered' }}
+"""
+                result = _run_powershell(command)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_available_hash_command_is_cached_and_invocation_failure_still_falls_back(self):
+        for fail_invocation in (False, True):
+            for script in ("verify_update.ps1", "update_lmo_audio.ps1"):
+                with self.subTest(script=script, fail_invocation=fail_invocation), tempfile.TemporaryDirectory() as temp_dir:
+                    path = Path(temp_dir) / "content.bin"
+                    path.write_bytes(b"verify")
+                    setup = """
+Import-Module ($env:WINDIR + '\\System32\\WindowsPowerShell\\v1.0\\Modules\\Microsoft.PowerShell.Utility\\Microsoft.PowerShell.Utility.psd1') -ErrorAction Stop
+$script:ActualHashCommand = Microsoft.PowerShell.Core\\Get-Command Get-FileHash -ErrorAction Stop
+"""
+                    if fail_invocation:
+                        setup = """
+$script:InvocationCalls = 0
+function Invoke-BrokenHash { $script:InvocationCalls++; throw 'Per-file command failure' }
+$script:ActualHashCommand = Microsoft.PowerShell.Core\\Get-Command Invoke-BrokenHash -ErrorAction Stop
+"""
+                    result = _run_powershell(f"""
+$ErrorActionPreference = 'Stop'
+$script:FileHashCommandResolved = $false
+$script:FileHashCommand = $null
+$script:DiscoveryCalls = 0
+{setup}
+function Get-Command {{ $script:DiscoveryCalls++; return $script:ActualHashCommand }}
+{_hash_helper(script)}
+$path = {_ps_quote(path)}
+foreach ($index in 1..3) {{
+    if ((Get-FileHashValue $path) -ne '{_sha256(path)}') {{ throw 'SHA256 mismatch' }}
+}}
+if ($script:DiscoveryCalls -ne 1) {{ throw "Expected one discovery, got $script:DiscoveryCalls" }}
+if ({'$true' if fail_invocation else '$false'} -and $script:InvocationCalls -ne 3) {{ throw 'Invocation failure must still read each file' }}
+""")
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
 
 class UpdatePackageScriptTest(unittest.TestCase):

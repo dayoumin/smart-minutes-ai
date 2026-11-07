@@ -191,10 +191,10 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
 
         verifier = (ROOT / "scripts" / "verify_web_local_engine_poc.py").read_text(encoding="utf-8")
         self.assertIn('"engine/ffmpeg.exe"', verifier)
-        self.assertIn('Concurrent pairing starts were not fail-closed', verifier)
+        self.assertIn('Concurrent browser-connection starts exceeded the request limit', verifier)
         self.assertIn('The packaged --stop command', verifier)
         self.assertIn('The --stop command lost the engine-startup race', verifier)
-        self.assertIn('An expired frozen pairing code was accepted', verifier)
+        self.assertIn('An expired automatic browser-connection request was accepted', verifier)
         self.assertIn('The frozen --preflight-json command did not create a result', verifier)
         self.assertIn('The frozen preflight command overwrote an existing result', verifier)
         self.assertIn('The frozen installer target preflight did not create a result', verifier)
@@ -554,7 +554,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         )
         self.assertIn('공간을 확보한 뒤 설치 파일을 다시 실행해 주세요.', blocked_branch)
         self.assertEqual(confirm_branch.count('IDYES preflight_ready'), 3)
-        self.assertIn('SetErrorLevel 10\n    Abort', confirm_branch)
+        self.assertIn('SetErrorLevel 10\n    !insertmacro InstallerDiagnosticAbort', confirm_branch)
 
 
 if __name__ == "__main__":

@@ -5,8 +5,6 @@ import traceback
 
 import uvicorn
 
-from main import app
-
 _NULL_STREAMS = []
 
 
@@ -37,6 +35,11 @@ def configure_file_logging() -> str:
 
 def main() -> None:
     ensure_standard_streams()
+    if sys.argv[1:2] == ["--download-model"]:
+        from model_download_worker import main as download_model
+        raise SystemExit(download_model(sys.argv[2:]))
+    from main import app
+
     log_path = configure_file_logging()
     os.environ.setdefault("ANALYSIS_MODE", "real")
     port = int(os.environ.get("PORT", "17863"))

@@ -6,6 +6,10 @@ export type { ButtonProps } from './Button';
 export { IconButton } from './IconButton';
 export type { IconButtonProps } from './IconButton';
 
+/** 아이콘 조작: hover·키보드 초점 설명, Escape 닫기, 표시 이름 필수 */
+export { TooltipIconButton } from './TooltipIconButton';
+export type { TooltipIconButtonProps } from './TooltipIconButton';
+
 /** 텍스트 입력: input-field 스타일 (회의 정보, 이름 변경, 연결 코드) */
 export { Input } from './Input';
 export type { InputProps } from './Input';

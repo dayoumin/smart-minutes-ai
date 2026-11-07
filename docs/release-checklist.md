@@ -10,6 +10,266 @@
 
 6-1절은 웹·설치형 엔진·데스크톱의 공통 데이터 안전 기준이다. 7절의 빌드·패키지 명령은 Tauri portable용이며 웹 배포나 설치형 엔진 제작 명령으로 대신 사용하지 않는다. 아래 날짜별 결과의 버전·환경·미확인 범위를 확인한 뒤 현재 후보를 판정한다.
 
+## 데스크톱 두 패키지 공개 다운로드 갱신 — 2026-10-28
+
+후속 사용자 요청으로 검증된21f76bb3의 두 ZIP을 그대로 공개했다. 첫 푸시는 이번3커밋 외 선행11개를 포함한14개 범위가 불명확해 자동 승인 검토에서 거절됐으며, 사용자에게14개 전체·이번 공개 후속 커밋·배포 태그의 명시적 승인을 받은 뒤 진행했다. 실제 pre-push 훅 통과 후 `main`을4dd24980까지 보냈고, 아래 데스크톱 공개 정보2파일만 바꾼 `44621e52124b2e2ac8dc88b3648cbe8be79d3936`도 푸시했다. 웹 화면·설치형 엔진을 새로 빌드하거나 사용자 PC에 업데이트를 적용하지 않았다.
+
+| 현재 공개 대상 | 파일·검증 |
+| --- | --- |
+| 신규 설치 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_install_21f76bb3f6677d4292f63ab03d92a99513f67763.zip),463,106,588bytes. SHA256 `5c7cf853e6e6e72a8bbbda3e80999c323d6adc4a415967b2e8bd757d4a3ec634`. 기본 설정·화자 구분 모델 포함, Whisper·Ollama 실행 파일·요약 모델 별도 준비. |
+| 업데이트 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_update_21f76bb3f6677d4292f63ab03d92a99513f67763.zip),432,065,205bytes. SHA256 `bbca257b7c40f3f863ae89058393fa144596c506bd7ca53da2fe465d6b0c825b`. 기존 설정·기록·모델·runtime를 교체하는 파일은 제외했다. |
+| 공개 정보 | `/downloads/desktop-install-beta.json`·`/downloads/desktop-beta.json`이 각각 portable-install/update와빌드21f76bb3, `2026-10-28T12:52:22.1199775+09:00`, 각 파일 경로·bytes·SHA를 반환한다. 업로드 시각이나 Worker 커밋으로 빌드 값을 바꾸지 않았다. |
+| R2·실제 공개 다운로드 | 정확한 새2키만 전송하고 원격 전체895,171,793bytes·SHA·MIME/첨부 메타데이터를 대조했다. 실제 공개 HTTPS에서도 두 ZIP 전체를 별도로 다시 내려받아 같은 크기/SHA를 확인했다. HEAD·206 Range/원본 앞64bytes·잘못된 범위416·PUT405·미등록404 통과. 기존 데스크톱 파일 URL의404 정책은 그대로이며 이전 R2 객체는 삭제하지 않았다. |
+| Worker·웹/엔진 보존 | 문서화된 `corepack pnpm --dir deploy/cloudflare run deploy --config ...` 경로로 Worker `9499459a-3139-4c1b-b2f3-760af0b3c6b6` 배포. 배포 전 실제 공개10파일을 저장·해시 고정했고 Wrangler도 `No updated asset files to upload`를 확인했다. 공개 후10자산 SHA와엔진0.1.13 정보가 모두 동일하다. 복원 기준은기존 `abbea4dc-1145-4860-8d47-b6d7ac7d96a3`와보관한기존2JSON/자산이다. |
+| 전송 도구·자격 정보 정리 | 4시간·두ZIP키·크기·SHA만허용한임시Worker `barorok-desktop-upload-20261028-709230c0`를전송후삭제하고endpoint404를확인했다. 로컬bearer·서명설정·세션·생성bundle도제거했으며완료객체는유지했다. 조각전송의ECONNRESET1회는동일조각의허용된재시도로복구했고전체해시를통과했다. |
+| Git·배포 태그 | 공개 소스44621e52에annotated `prod-2026-10-28.1`을남겨푸시했다. 실제hook검사의타입·Node18·백엔드35와신규태그의hook회귀21도통과했다. GitHub Actions조회에서는이번push로시작된자동실행이없으며기존manual/dynamic성공이력과구분한다. |
+
+전송 소스는 이전 검토본의 지정한 7파일만 복사하고 작업 경로·날짜·정확한 2객체 승인 목록을 고정했다. 자격 정보나 이전 세션은 복사하지 않았다. 합성 전송 13검사, 다운로드 HTTP 계약, 데스크톱 공개 정보 5검사, Worker 타입, dry-run과 독립 배포 전 검토를 통과했다. 공개 Worker 코드·설정·공유 파서는 이전 공개 소스 0139ed5d 이후 차이가 없고 새 공개 커밋은 두 descriptor 값만 바꿨다. 이미 공개된 10파일의 동일 바이트를 사용했다.
+
+근거는 `.tmp/desktop-public-20261028/final-report.json`, `public-verification.json`, `deployment-source.json`, `uploader-cleanup.json`, `transfer/upload-verification.json`과 각 단계 로그다. 로컬 21f 패키지 실물 검증·54파일 보존과 이전 34db 실제 적용·분석·재시작 기록은 아래 해당 절을 따른다. 이번 공개 ZIP의 실제 updater 적용·새 GUI 실행·다른 PC·NSIS·첫 모델 검사를 새로 통과한 것으로 세지 않으며 기존 QA 대기를 유지한다. 최종 독립 agent 검토에서도 공개 파일·태그·웹/엔진 보존·업로더 정리의 증거가 일치했고 새 P1/P2는 없었다.
+
+## 최신 병합본 빌드·로컬 실제 업데이트·자료 보존 — 2026-10-28
+
+사용자 요청으로 자동 연결 검증 도구·업데이트 해시 탐색 개선·검증 문서를 `a418a3c8`, `ef2e0820`, `34dbf4df`로 커밋하고, 병합본 `b80a8ddd`를 포함한 clean `34dbf4df9325308474ad842d668ef464040dacae`에서 전체 빌드했다. 아래는 로컬 패키지와 기존 전용 QA 설치본의 결과다. 공개 다운로드는 기존9b를 유지하며 push·업로드·웹/설치형 엔진 배포는 수행하지 않았다.
+
+| 확인 대상 | 결과·증거 |
+| --- | --- |
+| 전체 빌드 | 루트 `corepack pnpm build -NoClearWebViewCache` 종료0. sidecar·Tauri·배포 폴더를 재구성하고 clean manifest·전체 SHA·엔진 시작/상태·모델 준비·내보내기 smoke 통과. `-NoClearWebViewCache`로 기존 사용자 프로필을 유지했다. 실행 Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14, 사전 타입 검사·`test:runtime-boundary` 통과. |
+| 업데이트 패키지 ZIP | `corepack pnpm package:update` 후 `releases/updates/lmo_audio_update_34dbf4df9325308474ad842d668ef464040dacae.zip`, **432,065,207 bytes**, SHA-256 `145aee3b2aed1afd3f72327f6c56d29d6ee2aa4b30094ec3626083d565e91ad7`. 4,921항목 CRC 추출·4,916 payload 파일 크기/SHA 통과. 변경된 updater/verifier 포함, 기존 설정·기록·모델·runtime 제외. |
+| 신규 설치 패키지 ZIP | `corepack pnpm package:handoff`, `releases/handoff/lmo_audio_no_ollama_no_whisper_34dbf4d.zip`, **463,106,590 bytes**, SHA-256 `0536341ab957f75ec26b8a17fda01a31ea12cfa2565ebc9beabde1f0d93b409e`. 4,932항목 CRC 추출·4,917 프로그램 파일 크기/SHA·HEAD 기본 설정·사용자 자료 제외·화자 구분 모델 포함 확인. Whisper·Ollama 실행 파일·요약 모델은 별도 준비한다. 이번 신규 설치 ZIP의 실제 첫 실행은 미실행이다. |
+| 실제 업데이트 | 기존 전용9b설치본·기존 QA 프로필에 **로컬 ZIP의 실제 updater**로34db적용. 검증 생략 없이 updater/verifier 종료0, 실제 updater **376.516초**(ZIP 추출·별도 보호 자료 대조 제외). 적용 직후 설정·기록 파일·음성·모델·runtime 등 기준89파일 전체 SHA 동일. `runtime/{applied,data-after-apply}.json`, `runtime/actual-updater.log`. |
+| 실제 EXE·재시작 | 경로·backend17864·WebView9445 소유권과 실행 commit 확인. 기존4기록 전체 JSON·설정·TXT선호 유지. CPU로 새30초음성 분석122.854초·15구간·자동 저장 성공. 기존4개+새1개 모두 재생, 정상 종료·재시작 뒤5개 전체 JSON·설정·재생 유지. `runtime/{before,after,restart}.json`. 모의 응답·요청 가로채기는 사용하지 않았다. |
+| 최종 자료·종료 | 기준89파일 중88파일 SHA 동일, `backend/temp/analysis_eta_metrics.json`만 새 분석의 유효 처리시간 표본으로 변경. 별도 원본 보호56파일(실제 사용자 WebView 기록 포함)은 크기/SHA 모두 불변. 시험 앱·엔진·전용 WebView 프로세스0개,17864/9445해제·다른 세션 프로세스 종료 없음. `runtime/data-final.json`, `original-data-after.json`, `cleanup.json`. |
+
+증거 소유 경로는 `.tmp/merged-desktop-20261028`의 `final-report.json`, `artifacts.json`과 위 보고서다. 첫 빌드는 조용한 구간을 정체로 판단해 너무 일찍 중단했으나 종료 후 로그에서는 분석 진행이 확인됐다. 프로젝트 전용 `PYINSTALLER_CONFIG_DIR`로 같은 전체 빌드를 다시 실행해 통과했다. 패키징 중 TorchCodec hook의 DLL/자식 종료 경고는 남았으며, 이번 STT·내보내기 성공을 화자 구분 추론 검증으로 확대하지 않는다. 앱 검증 드라이버도 최초에는 `applied.json` 생성 전에 호출돼 앱 실행 전 중단됐고, 자료 대조 완료 뒤 재실행한 성공 증거를 사용한다. 실제 사용자 설치본/NSIS·Windows 재부팅·다른 PC·첫 모델 받기·요약/화자 구분 추론은 기존 QA 대기를 유지한다.
+
+동시 작업 구분: 전체 빌드는11:07종료했고, 다른 세션이11:09:41에 다섯 portable 배포 스크립트와 새 회귀 검사를 수정했다. 업데이트 패키지 생성은 그 전에 시작했으며 신규 설치 ZIP 생성은 그 뒤에 실행했다. 실제 앱/엔진 payload는34db의 clean manifest와 전체 SHA로 확인했다. 신규 설치 ZIP 생성 도구에는 당시 미커밋 `create_handoff_package.ps1` 변경이 사용됐으므로, 이 결과를 다섯 스크립트 전체가 커밋된 소스의 재빌드 검증으로 세지 않는다. 당시 남긴 후속은 아래21f76bb3의 커밋 후 재사용 실물 검증으로 완료했다.
+
+## 업데이트 검증의 반복 해시 기능 탐색 개선 — 2026-10-28
+
+`verify_update.ps1`·`update_lmo_audio.ps1`에서 파일마다 `Get-Command Get-FileHash`를 호출하던 준비 작업을 실행당 한 번으로 줄였다. 저장하는 것은 명령 사용 가능 여부/CommandInfo뿐이며 파일 경로·해시값·검사 결과는 저장하지 않는다. 파일이 바뀌거나 잠기면 각 호출이 다시 읽고 기존 방식으로 판정한다. 명령이 없거나 호출이 실패할 때의 .NET SHA256 대체 경로를 유지한다. 패키지/대상/manifest의 파일 목록·크기·SHA 검사, 변경 전 패키지 검증과 사용자 자료 보존 로직, 검증 실행 횟수·의존 파일은 변경하지 않았다.
+
+| 검증 | 결과·한계 |
+| --- | --- |
+| 변경 전 회귀 | 같은 경로를 다시 해시할 때 두 기존 helper 모두2회 탐색으로 새 회귀가 실패했고 수정 후1회로 통과했다. 명령 사용 가능/불가, 명령 실행 실패, 같은 길이의 내용 변경, 없는 파일, 잠긴 파일의 거부와 잠금 해제 후 복구를 확인했다. |
+| 실제 스크립트 진입점 | 임시 fixture의 updater 적용·별도 verifier를 실행해 정상 동작 및 같은 크기의 대상/패키지 내용 변조와 패키지 크기 불일치를 거부했다. 원본 사용자 파일·config·모델 등 기존 보존 회귀도 유지하며 관련 단일 모듈18/18 통과. 실행 Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14, `-B -X utf8 -m unittest tests.test_update_package_scripts`다. |
+| 명령 미탐지 비교 | 전용 Windows PowerShell 자식에서 Utility 모듈을 제거하고 자동 로딩을 꺼 실제 `Get-FileHash` 미탐지를 확인했다. 양쪽 같은128파일×64KiB×3회 순회(384회 해시 호출·24MiB 입력), 구/신 순서를 교대한3쌍 비교의 중앙값21.94초→0.52초. 준비 탐색은384회→1회, 모든 반환 SHA는 기준과 일치했다. 실제 OS 읽기 횟수를 별도 측정하거나 공개4,915파일/약3.4GB 전체를 실행한 결과는 아니다. |
+| 정상 명령·독립 검토 | 명령을 사용할 수 있는 자식에서도384회 해시 결과 일치와 탐색1회를 확인했다. 독립 agent가 실패 처리·실행 범위 초기화·별도 verifier 프로세스·파일 해시값을 저장하지 않는 점·검증 루프/패키지 호환성을 검토했고 새 확정 P1/P2 없음. |
+| 실물 후속 | **완료, 마지막 확인2026-10-28.** updater/verifier는 위34db 실제 적용376.516초·자료/재시작 보존을 확인했다. 추가 다섯 스크립트도 커밋 후 clean21f76bb3에서 재컴파일 없이 모두 실물 실행·패키지 재생성·CRC/SHA·54파일 보존을 통과했다. 명령 미탐지의 실제 portable 전체 검증80.948초·탐색1회도 확인했다. 단계별 시간·범위는 아래 「커밋 후 실물 검증·패키지 재생성」을 따른다. 과거 전체 업데이트600초 한도나 모든 PC 속도를 보장하지 않으며 공개 ZIP·운영 메타데이터는 변경하지 않았다. |
+
+비교 스크립트·수정 전 원본·`benchmark.json`과 `tests.log`는 `.tmp/update-hash-speed-20261028`에 보존했다. updater/verifier의 변경 커밋·로컬 패키지·전용 QA 설치본 실물 후속은 위 기록을 따른다. 다섯 추가 스크립트의 후속과 구분하며 push·공개 배포는 수행하지 않았다. 반복 해시 계산 자체나 안전 검사를 생략하는 최적화는 이 변경에 포함하지 않는다.
+
+### 다른 portable 배포 스크립트의 같은 반복 탐색 — 2026-10-28
+
+대상 다섯 스크립트에서도 파일마다 해시 명령을 다시 찾는 코드를 확인했다. 기존 `verify_update.ps1`·`update_lmo_audio.ps1`처럼 실행 범위의 가용성/CommandInfo만 최초 호출 때 한 번 저장한다. SHA256 결과는 저장하지 않는다. `verify_portable.ps1`·`release_portable.ps1`·`diagnose_portable.ps1`의 없는 파일 반환, 네 스크립트의 명령 실행 실패 시 .NET 대체, `create_handoff_package.ps1`의 기존 명령 실행 실패 전파·소문자 해시를 유지한다. 목록·크기·내용 검사와 복사 후 별도 .NET 해시, 기록·설정·모델 보존·경로 차단·오류 처리·로그는 그대로다.
+
+호출 경로는 다음과 같다. 아래 횟수는 당시 `releases/lmo_audio/release-manifest.json`의 `9b5f6574` 목록(주요 파일5개, payload4,916개, 업데이트 대상4,915개, 화면 자산2개)을 기준으로 **모든 해당 파일이 존재하고 통상 분기를 끝까지 지나는 경우의 코드상 산정**이다. 실제 전체 빌드를 새로 실행하거나 이4,916개를 모두 해시한 실측값이 아니다. 명령 탐색은 해시가 필요한 실행에서만 한 번이며, 검사 전에 종료하면0회다.
+
+| 스크립트 | 실제 활성 경로·기존 대상 helper 호출 수 | 변경 후 도구 탐색 |
+| --- | --- | --- |
+| `verify_portable.ps1` | `Test-ReleaseManifest`: 주요 파일5 + payload4,916 = 4,921회 | 실행당1회 |
+| `create_update_package.ps1` | 원본 주요 파일4 + 원본 payload4,915 + 복사본4,915 + 복사 manifest1 = 9,835회 | 실행당1회 |
+| `create_handoff_package.ps1` | 원본 목록4,916 + 안내/기본 설정의 manifest 반영3 + staging4,916 = 9,835회. Ollama 안내 복원/추가 분기는 달라질 수 있다. `Get-HandoffPayloadFiles`는 정의만 있고 현재 진입점에서 호출하지 않는다. | 실행당1회 |
+| `release_portable.ps1` | `Write-ReleaseManifest`: 주요 파일5 + payload4,916 + 화면 자산2 = 4,923회. 이후 중간/설치본 `verify_portable.ps1` 각각4,921회, 합계14,765회 예상 | 부모1 + 자식 스크립트 각각1 = 합계3회 |
+| `diagnose_portable.ps1` | 요약4 + `Test-ManifestDrift` 주요 파일5 = 9회. payload 전체 순회는 하지 않는다. | 실행당1회 |
+
+성능 비교는 같은 Windows PowerShell5.1.26100.9711, 같은 파일·순회 수, 수정 전/후 순서 교대3쌍의 중앙값이다. Utility 모듈을 명시적으로 불러온 뒤 `Get-FileHash` 함수만 제거하고 자동 로딩을 꺼 실제 미탐지를 확인했다. 나머지 cmdlet·검증은 유지했다. 정상 명령 사용 조건에서도 각32회/82회 SHA 결과와 탐색1회를 확인했다. 당시 다른 세션의 sidecar 빌드(PID33832→1216→17596)가 함께 실행 중이므로 무부하 PC나 일반 Windows 전체 시간으로 일반화하지 않는다.
+
+| 측정 범위 | 수정 전 → 수정 후 | 유지한 검증 |
+| --- | --- | --- |
+| `verify_portable.ps1` 해시 함수 구간 | 2.297초 → 0.180초 | 16파일×64KiB×2회 = helper32회·입력2MiB |
+| `create_update_package.ps1` 해시 함수 구간 | 2.373초 → 0.128초 | 동일32회·2MiB |
+| `create_handoff_package.ps1` 해시 함수 구간 | 1.884초 → 0.111초 | 동일32회·2MiB |
+| `release_portable.ps1` 해시 함수 구간 | 2.326초 → 0.123초 | 동일32회·2MiB |
+| `diagnose_portable.ps1` 해시 함수 구간 | 2.198초 → 0.155초 | 동일32회·2MiB |
+| 가짜 설치본의 업데이트 패키지 생성 본문 전체 | 7.381초 → 1.172초 | 실제 스크립트 진입점, helper82회·입력4,201,882바이트, 탐색82→1회 |
+| 같은 생성 작업의 PowerShell 자식 프로세스 전체 | 7.995초 → 1.997초 | 시작·모듈 준비·계측 준비·실행·종료 포함 |
+
+함수 구간 시간은 프로세스 시작을 포함하지 않는다. 생성 본문은 원본 검사·복사·manifest 작성까지 포함하며 ZIP 제작·실제 업데이트 적용·전체 릴리스 빌드는 포함하지 않는다. 호출/바이트 수는 **최적화 대상 helper의 호출과 입력량**이며 실제 OS I/O 횟수·전체 SHA 계산량이 아니다. `Copy-ListedPayloadFiles`가 `Get-PortableSha256`로 수행하는 복사 후 별도 검사도 유지했고 본문 시간에는 포함되지만 위 helper 계수에는 포함되지 않는다. 각 측정 뒤 생성 manifest의 모든 payload SHA·크기를 Python 기준과 대조하고 설정/모델 제외와 원본 파일 불변을 확인했다. 한 번의 전체 측정은 계측 변수 범위 오류로 폐기했으며 수정 후 유효한3쌍만 보고했다.
+
+수정 전에는 신규3검사의15조건 모두 반복 탐색 횟수로 실패했고, 수정 후에는15조건이 통과했다. 실제 저장소에 적용한 뒤에도 새 해시 선택3검사, 기존 portable 보존/손상/배포 완료8검사, 기존 업데이트 생성/적용/자료 보존4검사로 집중15/15 통과했다. 없는 파일의 지연 탐색·실행 범위 초기화·같은 크기의 내용 변경·파일 잠금과 해제·명령 실행 실패·해시 대소문자·LiteralPath를 포함한다. 수정된 스크립트가 격리 사본과 정확히 같음과 PowerShell 문법·diff 검사도 확인했다. 최종 독립 agent 검토에서 새 확정 P1/P2 없음. 기존 빌드33832와 뒤이은 업데이트 패키지 생성38992의 종료 및 관련 실행0개를 확인한 뒤 원본을 반영했다. 이 작업에서 기존 빌드의 성공 여부를 별도 판정하거나 원래 프로세스를 중단하지 않았다. 전후 원본·계측/시험 도구·JSON·로그는 `.tmp/portable-hash-speed-20261028`에 보존한다. Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14와 `-B -X utf8`를 사용했다. 실제 설치본·기존 ZIP·공개 메타데이터는 이 작업에서 변경하지 않는다.
+
+이 단계에서 남긴 실물 후속은 아래 「커밋 후 실물 검증·패키지 재생성」과 기존 `todo.md` 항목에서 완료했다. 통제된 시험 결과만으로 기존600초 검증 한도 문제의 해소나 실제 전체 빌드 시간 개선을 판정하지 않는다. 이번 요청은 추가 커밋·push·배포를 포함하지 않는다.
+
+### 커밋 후 실물 검증·패키지 재생성 — 2026-10-28
+
+후속 사용자 승인으로 코드/회귀 검사를 `dbdf0942`, 앞선 검토·측정 문서를 `21f76bb3`로 커밋했다. clean 소스 `21f76bb3f6677d4292f63ab03d92a99513f67763`에서 `corepack pnpm build -SkipSidecarBuild -SkipTauriBuild -NoClearWebViewCache`를 실행했다. 앱·sidecar는 재컴파일하지 않았고 WebView 캐시도 지우지 않았다. 이전 `34dbf4df` 이후 앱/백엔드 소스 차이가 없고 재사용할 바이너리4,888파일이 기존 빌드 목록과 일치함을 먼저 확인했다. 아래 결과는 로컬 portable 폴더와 두 새 ZIP의 검증이며 공개 ZIP·운영 웹·설치형 엔진은 갱신하지 않았다.
+
+| 실제 실행 경로 | 결과·전체 프로세스 시간 |
+| --- | --- |
+| `release_portable.ps1` + 두 `verify_portable.ps1` | `corepack pnpm build`의 두 skip 옵션으로650.999초·exit0. 재포장/새 manifest 작성·중간 실제 frozen 엔진 health/settings/models/내보내기 smoke·설치 폴더 읽기 전용 무결성 전부 PASS. commit=`21f76bb3...`, dirty=false, 프로그램 목록4,917개. |
+| 실제 설치 폴더의 명령 미탐지 대체 경로 |80.948초·exit0. Windows PowerShell에서 Utility 함수 `Get-FileHash`만 제거하고 자동 로딩을 꺼 미탐지를 확인한 뒤 실제 `verify_portable.ps1 -ExistingInstallation` 전체를 실행했다. SHA/자료 검사는 생략하지 않았고 계측한 탐색은정확히1회다. |
+| `diagnose_portable.ps1` | `corepack pnpm diagnose:portable`,4.569초·exit0. 주요 파일·모델 표식 PASS, 기존 개인 설정은 `user settings differ from build default`로 정상 인정했다. |
+| `create_update_package.ps1` | `corepack pnpm package:update`,202.405초·exit0. 업데이트 폴더 생성·원본/복사본 SHA 대조 포함이며 ZIP 압축·독립 ZIP 검사 시간은 포함하지 않는다. |
+| `create_handoff_package.ps1` | `corepack pnpm package:handoff`,253.408초·exit0. 기본 설정·정한 모델·staging 검증·신규 설치 ZIP 생성/자체 검수 포함이며 이후 독립 ZIP 대조는 별도다. |
+
+위 시간은 각 PowerShell/Corepack 프로세스의 시작·준비·실행·종료 전체이며, 앞선 함수32회 부분 측정의 전후 비교와 다른 실물 단회 관측이다. 일반 실행에는 이전 실물 QA와 같은 Windows 기본 `PSModulePath`를 명시했고, 별도 미탐지 검사는 통제된 별도 자식이다. 과거 Python→PowerShell의 전체 업데이트600초 한도나 모든 PC 속도를 보장하는 값으로 확대하지 않는다. 업데이트 ZIP의 최초 압축 단독 시간은 초기 검사 도구 중단으로 저장되지 않아 미계측으로 남겼고 파일 시각으로 대체하지 않았다. 보완 후 재검사는 이미 CRC/SHA가 확인된 동일 업데이트 후보를 SHA로 확인해 재사용한17.373초이며 전체 ZIP 생성 시간과 구분한다.
+
+| 산출물 | 크기·검증 |
+| --- | --- |
+| 업데이트 패키지 ZIP `releases/updates/lmo_audio_update_21f76bb3f6677d4292f63ab03d92a99513f67763.zip` |432,065,205bytes. SHA256 `bbca257b7c40f3f863ae89058393fa144596c506bd7ca53da2fe465d6b0c825b`.4,921항목 CRC·4,916 payload 파일 크기/SHA·빌드 목록과 교차 대조 통과. updater/verifier/자료 안전 도우미는 커밋된 원본과 일치하고 설정·모델·runtime·기록은 제외했다. |
+| 신규 설치 패키지 ZIP `releases/handoff/lmo_audio_no_ollama_no_whisper_21f76bb.zip` |463,106,588bytes. SHA256 `5c7cf853e6e6e72a8bbbda3e80999c323d6adc4a415967b2e8bd757d4a3ec634`.4,932항목 CRC·4,917 프로그램 파일 크기/SHA·HEAD 기본 설정·화자 구분 모델 원본 SHA 통과. Whisper·Ollama 실행 파일·요약 모델과 개인 자료는 제외했다. |
+
+독립 ZIP 대조는 압축 파일의 모든 파일 내용을 읽어 CRC와 SHA를 확인하고 빌드/패키지 목록과 비교했다. 이전34db빌드와 안내문 `START_HERE.txt` 외 불변 프로그램4,916파일이 일치하며 앱·sidecar 실행 파일도 작업 전 SHA와 같다. 신규 설치 ZIP의 `models/README.txt`를 검사 도구 허용 목록에서 빠뜨린1건은 제품 결함과 구분했다. 커밋된 생성 템플릿과 안내문 바이트까지 확인하도록 검사 도구만 보완하고 두 ZIP을 재검사했다. 검증을 마친 업데이트 후보만 최종 ZIP 경로로 옮겼고 이전 패키지는 보존했다.
+
+보존 대상은 실제 설치 폴더의 설정·기록·사용자 파일·모델·runtime와 원래 WebView 저장소의54파일(3,126,559,085bytes)이며 전후 SHA가 모두 동일하고 추가/누락0이다. 검증 소유 앱·sidecar0개,17864 listener0을 확인했다. 이번에는 ZIP의 실제 updater 적용·새 GUI 분석·새 ZIP 첫 실행을 반복하지 않았다. 이전34db의 실제 적용/분석/재시작 증거와 현재 비트 동일성·배포 스크립트 검증을 구분하며, 다른 PC·첫 모델·NSIS·요약/화자 구분 추론의 기존 QA 대기는 유지한다.
+
+근거는 `.tmp/portable-hash-release-20261028/final-report.json`, `artifacts.json`, `reuse-before.json`, `protected-before.json`, `preservation-after.json`, `cleanup.json`과 각 단계 JSON/log다. Python은 `backend/.venv-desktop/Scripts/python.exe`3.12.14(`-B -X utf8`)다. 패키지 기준 커밋은21f76bb3이며 이후 검증 결과 문서만 별도 커밋한다. 이 문서 커밋은 프로그램·패키지 내용 변경이나 재컴파일을 뜻하지 않는다. push·공개 업로드·웹/설치형 엔진 배포는 하지 않았다.
+
+최종 독립 agent가 산출물 출처·실행 파일 재사용·시간 범위·ZIP 대조·자료 보존·정리 증거와 이번 미실행 범위의 표현을 읽기 전용으로 확인했고 새 확정 P1/P2는 없었다.
+
+## 설치형 엔진 검증 도구의 자동 연결 계약 갱신 — 2026-10-28
+
+`scripts/verify_web_local_engine_poc.py`가 예전 숫자 코드 창을 기다려 정상 자동 연결도 실패로 판정하던 문제를 수정했다. 제품 연결 코드·사용자 설치본·공개 배포물은 변경하지 않았다. 아래 결과는 기존 `0.1.13-beta-20261027` 시험 산출물 기준이며, 오늘 병합된 설정·모델 관리·승인 파일 손상 복구 기능 전체의 배포 검증이 아니다.
+
+| 확인 범위 | 결과·근거 |
+| --- | --- |
+| 현재 연결 계약 | `--pair` 시작 별칭, `browser-connection` 공개 상태와 연결 요청·완료·재사용 거부, 다른/없는 웹 origin 거부, 미등록 브라우저 복구 거부, 최대5회/분 동시 요청 한도를 검사한다. 자동 승인에서는 정확히 한 요청만 성공해야 한다고 가정하지 않는다. |
+| 저장·재시작·연결 해제 | 원문 브라우저/세션 자격정보 대신 SHA256 digest와 허용 origin만 저장한다. 재시작 후 이전 세션 거부→정상 브라우저 복구로 서로 다른 새 세션2개 발급→두 세션 정상 접근→연결 해제 후 둘 다 거부·재복구 거부를 확인한다. 사용한 모든 자격정보를 파일 누출 검사에 포함한다. |
+| 만료 범위 | 첫 전체 실행에서 `--verify-challenge-expiry`로 실제121초 뒤 연결 요청 완료가403으로 거부됨을 확인했다. 5초 이하 주기로 대기한다. 세션은 유효한 미래 만료 시각을 검사하며15분 실시간 경과 검사는 하지 않았다. 세션 만료·origin·해제 경계의 기존 가상 시계 단위 검사1개는 통과했다. |
+| 기존 실행·자료 보호 | 사전 점검 JSON, 닫힌 manifest, 읽기 전용 프로그램 파일, loopback 소유권·무인증 거부, 단일 인스턴스, startup/stop, 자신의 엔진/다른 listener 구분, 포트 충돌, 폴더 이동 뒤 시험 config/models/database/results 보존 검사를 유지했다. 이미17863을 사용하는 엔진이 있으면 실행 전에 거부한다. |
+| 자동 검사·독립 검토 | 프로젝트 Python3.12.14로 검증 모듈 전체+배포 계약1개22검사, 세션 경계1검사 통과. 실제 승인 조정기와 세션 저장소를 사용하는 회귀 검사 및 잘못된 origin/재사용/무제한 요청/자격정보 누출/부분 해제의 거부를 포함한다. agent가 지적한 활성 세션 전체 해제 공백을 수정하고 재검토에서 남은 P1/P2 없음. |
+| 실제 실행 파일 | 기존 `releases/web-local-engine-poc`에서 전체 검사2회 통과. 첫 실행 `frozen-smoke.log`는 실제 요청 만료 포함이며, 세션2개 보강 후 최종본 `frozen-final.log`는 기본 모드 전체 통과다. 두 번째 로그의 만료 미실행 문구를 첫 실행의 실제 만료 증거와 구분한다. `.tmp/automatic-verifier-20261028`에 로그·전용 시험 데이터를 보존했다. 종료 후 소유 엔진0개·17863 listener0개·프로그램 원래 경로 복원·이동 폴더 없음(`cleanup.json`). |
+
+재실행은 고정 포트가 비어 있고, 사용 중인 설치본이 아닌 검증용 산출물에서 수행한다. 기본 실행은 고유 임시 데이터 폴더를 만들며, `--local-app-data`를 지정할 때는 엔진 자료가 없는 새 시험 경로를 사용한다. `--keep-data`는 실패 조사용 시험 자료를 남긴다. Windows 기본 계정의 실제 자료 폴더나 설치 프로그램을 대상으로 하지 않는다.
+
+```powershell
+backend\.venv-desktop\Scripts\python.exe -B -X utf8 scripts\verify_web_local_engine_poc.py releases\web-local-engine-poc --keep-data
+# 실제 약2분 요청 만료도 검사하려면 위 명령에 --verify-challenge-expiry 추가
+```
+
+숫자 코드 legacy API는 소스에 남아 있지만 이 도구의 기본 검사 대상이 아니다. 손상된 승인 파일의 로컬 동의 복구·최신 병합 후보 재빌드·실제 NSIS·Windows 재부팅·다른 PC 판정은 기존 QA 항목으로 유지한다. 이 도구 통과가 해당 항목이나 운영 배포 승인을 대신하지 않는다.
+
+## 데스크톱 최신 화면 재빌드·재공개 — 2026-10-27
+
+사용자 요청으로 하단 최근 회의록 제거가 포함된 데스크톱을 다시 빌드하고 두 ZIP과 공개 정보를 갱신했다. 아래는 `.tmp/desktop-refresh-20261027`의 새 증거이며, 뒤의 282 빌드 공개 기록을 대체하는 최신 데스크톱 결과다. 웹 화면과 설치형 엔진은 이번에 다시 빌드하지 않았다.
+
+| 대상 | 결과·증거 |
+| --- | --- |
+| 전체 데스크톱 빌드 | 루트 `corepack pnpm build -NoClearWebViewCache`로 sidecar·Tauri·portable 완료. 실제 배포 폴더 `releases/lmo_audio`, clean source `9b5f6574edbc52baec9acbc9ab51531665e4733d`, `dirty=false`, 생성 시각 `2026-10-27T15:29:44.1527604+09:00`. 깨끗한 중간 설치본의 실제 시작 검사와 배포 폴더 읽기 전용 무결성 검사 통과. 기존 WebView 캐시를 지우지 않았다. |
+| 신규 설치 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_install_9b5f6574edbc52baec9acbc9ab51531665e4733d.zip), **463,054,544 bytes**, SHA-256 `9404d4b33647af3e637380216c0f80f8fd6d21df3ea158f755bb70538cf99b6c`. `corepack pnpm package:handoff` 결과 4,931항목 CRC·4,916 프로그램 파일 SHA·기본 설정·개인 자료 제외·모델 포함/제외 확인. 화자 구분 모델은 포함하고 Whisper·Ollama 실행 파일·요약 모델은 별도 준비한다. |
+| 업데이트 패키지 ZIP | [공개 다운로드](https://barorok.ecomarin.workers.dev/downloads/lmo_audio_update_9b5f6574edbc52baec9acbc9ab51531665e4733d.zip), **432,012,847 bytes**, SHA-256 `5f2fbd158e2153171cb6a6d4f4a93a5b46fcbbf2edf8c0c433ef4716f2585365`. `corepack pnpm package:update` 결과 4,920항목 CRC·4,915 payload 파일 SHA 확인. 기존 설정·모델·기록·temp·로그·DB를 배포 payload에 넣지 않았다. |
+| 신규 설치 첫 실행 | 별도 추출 폴더·빈 WebView 프로필의 실제 9b EXE에서 기본 설정·빈 기록·모델 준비 안내·하단 최근 목록 제거·웹 전용 데스크톱 받기 버튼 없음·정상 종료/포트 해제 통과. `runtime/fresh-local.json`은 **로컬 공개 전 ZIP** 실행이며 `actualPublicZIPUsed:false`다. 공개 ZIP 전체 SHA가 이 로컬 ZIP과 같다는 별도 증거와 구분한다. 모델 받기·첫 분석·다른 PC 검증으로 세지 않는다. |
+| R2·공개 파일 | 정확히 새 두 키만 업로드, 원격 전체 읽기·크기·SHA·메타데이터 일치. 공개 URL에서도 두 ZIP 전체 다운로드·HEAD·부분 다운로드·잘못된 범위416 통과. `transfer/upload-verification.json`, `public-verification.json`. 이전 R2 객체는 유지했다. |
+| 공개 정보 반영 | metadata source `0139ed5d0b34e19bb3220b7d29b97c4aaad79b0a`, Worker `abbea4dc-1145-4860-8d47-b6d7ac7d96a3`. 문서화된 `corepack pnpm --dir deploy/cloudflare run deploy` 경로로 데스크톱 두 feed만 갱신했다. 설치 엔진 `0.1.13-beta-20261027`의 정보·웹 자산 10개 SHA 불변. 이전 Worker `fbfd43a9-53a4-4253-a815-b34c460974b7`을 복원 기준으로 보존한다. |
+| 구형 앱의 실제 업데이트 안내 | 기존 시험용 282 EXE가 실제 공개 9b feed를 읽어 새 업데이트 안내를 표시하고 수동 안내 열기/닫기를 통과했다. 기존 기록 3개 전체 JSON·음성·TXT 설정 유지, 관측 구간 ZIP 자동 요청 없음. `runtime/offer.json`. |
+| 실제 업데이트·재시작·자료 보존 | **완료.** 전용 시험 설치본에 실제 공개 ZIP updater를 적용해 검증 생략 없이 종료 코드0 확인. 적용 직후 기준79파일 전부 SHA 동일. 실제 30초 음성 분석79.322초·대화록15구간·새 저장 통과. 기존3개 전체 JSON·음성·TXT 설정과 새1개를 포함한4개 기록은 정상 종료·재실행 후에도 그대로이며 모두 재생됐다. 최신 실제 EXE에서 하단 최근 목록 없음 확인. 최종79기준 중78파일 SHA 동일, `backend/temp/analysis_eta_metrics.json`만 새 분석의 유효한 처리시간 표본으로 갱신됐다. 원본 보호48파일은 최종 재대조도 불변. `runtime/{applied,after,restart,data-after-apply,data-final}.json`, `original-data-after.json`, `final-report.json`. 시험용17864/9445 포트 해제 확인. |
+| 임시 업로드 권한 회수 | 임시 Worker `barorok-desktop-upload-20261027-1dd26147` 삭제, 실제 endpoint404, 로컬 임시 인증 파일·세션·캐시 제거 완료. `transfer/cleanup-final.json`. 첫 전송의 네트워크 실패 로그와 자기 세션 정리 증거도 보존했다. |
+
+시험 도구의 첫 적용 준비에서 `SystemRoot` 누락으로 중단됐으며 제품 updater 실행 전이었다. 실패 추출본·로그를 보존하고 자식 환경의 Windows 모듈 경로만 보완한 뒤 `Get-FileHash` 탐색 성공을 한 번 확인했다. 제품 소스·전역 환경·검증 범위를 바꾸지 않았다. 실제 NSIS·Windows 재부팅·첫 모델 받기·다른 PC 검증은 아래 수동 확인의 대기 범위를 유지한다. 이번 로컬 annotated 배포 태그는 metadata source를 가리키는 `prod-2026-10-27.3`이며 Git 원격 push는 하지 않았다. 포터블은 clean 빌드 commit으로 식별하고 설치 엔진 버전 태그는 그대로 유지한다.
+
+## 설치 화면 전 Python 기동 오류 조사 — 2026-10-28
+
+**상태: 사용자 보고 확인, 원인 미확정·실제 설치 합격 보류. 최종 확인 2026-10-28.** 다른 PC에서 기존 설치 없이 처음 설치할 때 `Failed to start embedded python interpreter!`가 먼저 뜨고 이어 `실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다`가 나타났다는 제보다. 사용자는 설치 화면이 나오기 전이라고 설명했다. 두 번째 문구만으로 이전 설치가 있거나 실제 분석이 실행 중이라고 판단하지 않는다. 첫 실패 프로세스가 설치 점검 도구인지 설치 과정에서 배치된 엔진인지, 실패 정리/재시도 과정인지 아직 확인하지 못했다. 이는 SmartScreen 보안 경고 대응 문구로 해결됐다고 처리하지 않는다. 발생 PC의 Windows 버전·실제 다운로드 파일 경로·오류 전문은 추가 확인 중이다.
+
+공개 정보와 크기 431,955,440 bytes·전체 SHA-256 `70b3f244b4b4bca2f12c4bd53a520e75da2e361d31daf1f6cbd133ed78e4763c`가 같은 로컬 0.1.13 EXE에서 NSIS zlib 블록을 읽어 점검 도구만 추출했다. 도구는 9,370,029 bytes·SHA-256 `e5bbc1d271ea655466723641c1d05156332248dc4c02498b645861177e20645f`이며 `base_library.zip` 155항목과 encodings 항목을 확인했다. 프로젝트 `backend\.venv-desktop\Scripts\python.exe` 3.12.14 / PyInstaller 6.20.0으로 정적 추출·임시 환경의 `--help` 검사만 실행했다. 일반 경로, 한글·공백 임시 경로, 191자 임시 경로에서 모두 exit0·stderr 없음이다. NSIS 전체는 실행하지 않았고 현재 계정 설치본·등록 정보·사용자 자료는 바꾸지 않았다. 증거 `.tmp/installer-start-error-20261028/{static-report.json,path-report.json}`. 이 결과를 사용자 PC의 파일 무결성·백신 원인·전체 설치 정상으로 확대하지 않는다.
+
+동일 로컬 엔진의 `--help`도 엔진 폴더와 별도 임시 작업 폴더에서 각각 exit0이었다(`engine-help-report.json`). 다른 PC의 초기화 오류를 재현하지 못했으므로 종료 절차나 설치 파일은 수정하지 않았다. 실행 로그 `%LOCALAPPDATA%\Barorok\LocalEngine\logs\engine.log`는 Python 초기화와 자료 폴더 준비 이후 설정된다. 부트로더의 Python 시작 실패는 이 로그에 남지 않을 수 있다. NSIS 점검 JSON/INI는 `$PLUGINSDIR`에만 쓰며 설치 종료 후 보존을 보장하지 않는다. 현재 설치 파일에 이 단계의 지속적인 실패 기록이 부족하다는 관측성 한계도 후속에 포함한다. `.tmp/installer-start-error-20261028/diagnose-installer-start.ps1`은 다른 PC의 Windows 버전·다운로드 SHA·핵심 프로그램 파일 존재/해시를 확인하는 읽기 전용 임시 도구이며 설치·엔진 실행이나 설정/자료 변경을 하지 않는다. 현재 PC의 Windows PowerShell 5.1에서 진단 보고서 생성만 확인했다.
+
+닫기 조건: 발생 환경의 파일 SHA와 오류 전문/발생 프로세스를 확보하고 원인을 확인한다. Python 시작 전 설치 실패도 남길 수 있는 기록 경로를 보완한다. 수정이 필요하면 해당 시작 경로를 재검증하고 별도 계정/VM에서 실제 NSIS 첫 설치·기존 설치 업데이트·기록/설정/모델 보존을 확인한다. 상태 소유는 `todo.md`의 기존 「설치형 엔진 설치 프로그램 실측」 행이며 기존 수동 QA 범위는 아래 절을 유지한다.
+
+### 임시 단일 파일 설치 진단 — 2026-10-29
+
+**진단 파일 준비 완료·다른 PC의 실제 실패 로그 대기. 원인은 계속 미확정이다.** 사용자 요청에 따라 `-DiagnosticLogs`를 지정한 임시 빌드만 실제 Windows 다운로드 폴더의 `LMO-install-diagnostic.log`에 기록한다. 일반 빌드는 로그 기능을 포함하지 않는다. 실행 시도별 PID·시각·버전·Windows 빌드/환경, 설치 전 점검·파일 배치·프로그램 시작·종료/복구 순서, 실행 파일 존재/크기, 각 오류 번호/코드/종료 코드, 최종 결과와 첫 오류를 한 파일에 이어 쓴다. Python 경고창의 원문 전체나 Python 시작 전 내부 traceback 수집을 보장하지 않으며, 회의록·설정·모델 파일 내용을 읽거나 전송하지 않는다.
+
+| 항목 | 확인 결과 |
+| --- | --- |
+| 진단 설치 파일 | `releases\web-local-engine-installer-diagnostic\Barorok-Local-Engine-Setup-0.1.13-beta-20261027-diagnostic.exe`, 431,958,922 bytes, SHA-256 `851961af95ee497cf71651e5769f23f7480d8005f0104ffd7e9fa04ffb485f7f` |
+| 기존 파일 재사용 | 기존 0.1.13 엔진 payload를 다시 빌드하지 않았다. 기존 설치 EXE의 전체 SHA를 확인한 뒤 그 안의 동일 점검 도구(`e5bbc1d2…e20645f`)도 재사용했다. 생성 EXE의 NSIS 블록을 스트림으로 읽어 manifest 4,892경로가 요구하는 파일 내용(1,118,813,888 bytes)·점검 도구·manifest 포함을 대조했다. 실제 설치 대상 경로 배치까지 실행한 검사는 아니다. |
+| 집중 검사 | `tests.test_installer_diagnostic_log` 5개(로그 누적/다중 오류·상태 보존, 비활성, 기록 실패, 화면 전 Abort, 실제 MUI+가짜 payload의 두 모드 컴파일), `tests.test_installer_diagnostic_helper` 3개, `tests.test_web_local_engine_packaging` 8개 통과. `backend\.venv-desktop\Scripts\python.exe` 3.12.14의 `-B -X utf8 -m unittest ...`를 사용했다. 일반 모드의 NSIS 전처리 명령 1,390줄은 HEAD와 완전히 동일하다. |
+| 실행 환경·독립 검토 | NSIS 3.11(`C:\Users\User\AppData\Local\tauri\NSIS\makensis.exe`)은 샌드박스 밖에서 컴파일했다. `TEMP`/`TMP`는 `.tmp\installer-diagnostic-20261029\temp`로 한정했다. 독립 검토가 제시한 초기 `.onInit Abort`의 최종 결과 누락을 격리 실행에서 재현하고 보완했다. MUI 취소 확장점 연결을 포함한 재검토에서 남은 확정 P1/P2 없음. |
+| 미확인·보존 | 실제 진단 설치 EXE는 이 PC에 설치/실행하지 않았다. 다른 PC의 Python 기동 실패 재현·실제 다운로드 폴더 로그·설치 성공·기록/설정/모델 보존은 아직 미확인이다. 기존 일반 0.1.13 EXE의 전체 SHA는 `70b3f244…78e4763c`로 불변이며 원격 공개 파일도 변경하지 않았다. |
+
+실행 명령은 저장소 루트의 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_web_local_engine_installer_poc.ps1 -Python backend\.venv-desktop\Scripts\python.exe -Makensis C:\Users\User\AppData\Local\tauri\NSIS\makensis.exe -DiagnosticLogs`다. 첫 빌드의 문자열 splat 인수 오류와 MUI 취소 콜백 중복은 수정했으며 최종 실제 빌드 exit0이다. 기존 미사용 label 3개 경고는 유지한다. 증거 `.tmp/installer-diagnostic-20261029/{build-ready.log,normal-equivalence.json,package-verification.json}` 및 산출물의 `installer-poc-manifest.json`·`진단 안내.txt`. 이 진단 후보의 소스 인계와 실제 설치·공개 배포는 구분하며 원인 확인과 공개 배포는 아직 완료하지 않았다.
+
+다른 PC에서는 진단 EXE를 실행하고 경고창들을 닫은 뒤 다운로드 폴더의 로그 하나를 확보한다. 처음 실패와 후속 종료/복구 실패를 구분해 원인을 확인하고 수정한다. 원인 수정·확인 뒤 이 임시 진단 모드와 추가 다운로드 폴더 기록을 제거하고 일반 설치 방식으로 되돌린다. 사용자의 기존 진단 로그를 자동 삭제하지 않는다.
+
+## 실제 공개·설치 프로그램 수동 확인 — 2026-10-27
+
+후속 사용자 요청으로 R2 세 파일 업로드·웹 배포와 공개 후 실물 검증을 승인받았다. 이전 「준비」와 「로컬 통합」 절의 미업로드·미배포 표기는 그 시점의 이력이다. 이번 작업은 `.tmp/publication-run-20261027`에서 진행하며, 이전 증거를 덮어쓰지 않는다. 현재 완료 여부·실제 Worker 버전·다운로드 SHA와 자료 보존 결과는 이 절에 후속 기록한다. Git 원격 push는 이 배포 승인과 구분한다.
+
+| 실제 공개·검증 대상 | 2026-10-27 결과 |
+| --- | --- |
+| R2 세 파일 | 신규 설치 ZIP 463,056,074 bytes·업데이트 ZIP 432,014,366 bytes·엔진 EXE 431,955,440 bytes의 원격 전체 읽기 SHA·메타데이터 일치. 두 ZIP을 보존한 채 실패한 엔진 multipart만 정리·재전송했다. `transfer/upload-verification.json`의 세 항목 `allVerified:true`. |
+| 임시 업로드 권한 회수 | 임시 Worker `barorok-upload-20261027-959bf653` 삭제, 실제 endpoint HTTP404, 로컬 bearer·서명 config·생성 entry/세션·Worker 캐시 제거 확인. `transfer/delete.log`, `cleanup-final.json`. 기존 R2 객체는 삭제하지 않았다. |
+| 첫 웹 공개 | source `b2e3e61473228af1aa552c81411407404404efe0`, Worker `cd75513c-de76-4471-ac16-9f342a6e5b08`. 새 회의록 우측 상단의 웹 전용 `데스크톱 앱 받기`와 세 공개 feed/주소를 반영했다. 복원 기준은 기존 `2c951ec2-03d7-4c18-a355-af69cd79d742`와 실제 공개 자산 10개 사본이다. |
+| 실제 공개 다운로드 | 새 브라우저에서 공개 버튼→안내창→명시적 ZIP 받기로 받은 신규 설치 ZIP의 파일명·크기·SHA 일치. 안내만 열 때 archive 요청 0. 업데이트 ZIP과 엔진 EXE도 공개 URL의 전체 파일 SHA 일치, 세 feed·HEAD/Range/416·과거 엔진 링크 7개·웹 자산 10개 확인. `public-ui-download.json`, `public-verification.json`. 모의 응답·로컬 자산 대체 없음. |
+| 하단 중복 목록 제거 후 공개 | 사용자 후속 요청으로 하단 최근 회의록을 제거하고 왼쪽 목록을 유지했다. source `49cfb03fdb4eb38e2b722375613c20c60ce6ce4a`, Worker `fbfd43a9-53a4-4253-a815-b34c460974b7`, JS `index-50sntI4d.js`. 최종 공개 자산 10개 SHA와 세 feed/HEAD·실제 화면·Escape/초점·1032px 가로 넘침 없음 통과. `final-web-verification.json`, `final-public-ui.json`, `public-final-*.png`. |
+| 기록 접근·복구 회귀 | `NEW_RECORD_HOME_SCENARIO=sidebar-recovery`로 왼쪽 기록 6개 열기/DB 개수 보존·이어서 분석·취소 정리 중 새 분석 잠금의 세 장면 통과. 기존 문서의 Vite 개발 환경(`VITE_LOCAL_ENGINE_CONNECTION_UI=false`)과 모의 API로 검사했으며 운영 엔진 연결 증거로 세지 않는다. 생산 웹 빌드에서 먼저 시도한 첫 안내창·연결 상태 우선순위 준비 불일치는 로그를 보존했고 제품 잠금을 약화하지 않았다. `home-sidebar-recovery-dev.log`. |
+| 공개 파일의 실제 적용·재시작 | **완료: 프로그램 적용·앱/엔진 정상 재시작 범위.** 이전 `46fab033` 데스크톱·엔진 0.1.12의 별도 복사본/프로필에서 기존 기록 2개씩을 확인한 뒤 실제 공개 ZIP의 updater로 282d5d20을 적용했다. 드라이버 600초 한도는 부모를 중단했지만 계속 실행 중인 실제 공개 `verify_update.ps1`의 정확한 Windows 인수·동일 PID를 확인하고 핸들로 기다려 종료 코드 0을 확보했다. 검증을 생략하거나 updater를 반복하지 않았다. 공개 EXE는 7-Zip으로 추출해 0.1.13 payload 해시 대조 후 프로그램 폴더만 교체했다. NSIS는 실행하지 않았다. |
+| 실제 분석·재열기·설정 | 데스크톱·최종 운영 HTTPS/실제 엔진에서 각각 새 30초 음성의 실제 분석·저장·15개 대화록 구간·음성 재생 통과. 각각 정상 종료·재실행 뒤 기존 2개와 새 1개 기록의 전체 JSON·음성·TXT 설정이 유지됐다. 실제 공개 feed 조회·업데이트 안내 열기/닫기에서 ZIP/EXE 자동 요청 없음, 소유 EXE/sidecar/engine/CDP 정상 종료와 포트 해제 확인. `runtime/native-after.json`, `web-after.json`, `native-restart.json`, `web-restart.json`. 이 표본을 장문 성능·요약 품질·Windows 재부팅 시험으로 세지 않는다. |
+| 최종 자료 보존 | 적용 직후 시험본 110파일 모두 SHA 동일, 원본 시험 자료 110파일 불변. 새 분석·재시작까지 마친 최종에는 시험본 108파일 동일·각 환경의 `temp/analysis_eta_metrics.json` 2개만 정상 파생 갱신, 원본 110파일은 그대로다. 기존 기록·설정·모델이 보존됐다. `runtime/data-update-comparison.json`, `data-final-comparison.json`. 독립 에이전트가 다운로드·runtime·파일 대조 증거를 읽고 완료/미확인 범위 일치를 확인했다. |
+
+이 절의 첫 공개 당시 바이너리는 clean `282d5d20` 데스크톱·엔진 0.1.13이었다. 이후 웹 전용 다운로드 진입점과 하단 목록 제거는 먼저 웹에 반영했고, 현재 데스크톱도 위 「데스크톱 최신 화면 재빌드·재공개」의 9b ZIP으로 갱신했다. 이 첫 공개의 로컬 annotated 태그는 `prod-2026-10-27.1`, `prod-2026-10-27.2`, `v0.1.13-beta-20261027`이며 원격 push는 하지 않았다. 실제 NSIS·다른 PC·첫 모델 다운로드는 아래 수동 확인과 기존 미완료 QA 표를 따른다.
+
+이번 Python→Windows PowerShell 검증 환경에서 `Get-FileHash` 탐색 실패와 .NET fallback 선택을 매 파일 반복하는 비용을 재현했다. 실제 검증은 종료 코드 0이며 검증 생략으로 통과시킨 것이 아니다. 반복 탐색 캐시 최적화와 동일 환경 시간 비교는 TODO의 P2에 기록했다. 캡처 서버 5179·모의 검사 서버 5181도 이 세션의 정확한 소유 PID만 종료했으며 운영 사이트는 유지한다. 마지막 확인2026-10-27.
+
+### 사용자가 수행할 설치 프로그램 실측
+
+설치 EXE는 현재 Windows 계정의 고정 프로그램 경로·시작 메뉴·등록 정보를 바꾸므로, 기존 합의대로 **별도 Windows 계정이나 VM**에서 확인한다. 현재 사용 중인 계정의 설치본을 시험 대상으로 바꾸지 않는다. 복원 시험 전에는 VM 스냅샷 또는 시험 자료의 별도 복사본을 확보한다. 실제 회의 자료 대신 짧은 시험 음성을 쓴다.
+
+| 순서 | 실행·확인할 내용 | 남길 증거 |
+| --- | --- | --- |
+| 1. 첫 설치 | 새 계정/VM에서 공개 `Barorok-Local-Engine-Setup-0.1.13-beta-20261027.exe`의 SHA·크기를 배포 기록과 맞춘 뒤 실행한다. 설치 완료·시작 메뉴·설치 등록·웹의 엔진 연결을 확인한다. 서명되지 않은 베타 파일이므로 경고가 나오면 게시자 서명과 파일 해시·회사 허용 정책을 구분해 확인한다. | Windows/브라우저 버전, 설치 화면·엔진 버전, 오류 전문(토큰·개인 자료 제외) |
+| 2. 첫 모델 준비 | 웹 설정의 모델 관리에서 음성 인식 모델을 받고, 요약 프로그램과 요약 모델을 준비한다. 기존 시스템 Ollama가 감지되면 새 프로그램을 중복 설치하기 전에 안내된 기존 프로그램 실행 경로를 따른다. | 받기 완료 상태·선택 모델, 다운로드 중단/재시도 여부 |
+| 3. 기준 자료 만들기 | 짧은 음성 분석·요약·저장·재생을 수행하고 다운로드 형식을 TXT로 바꾼다. 회의 제목·대화록·요약과 모델 목록을 기록한 뒤 앱/엔진을 정상 종료한다. | 기록 화면, 설정·모델 상태, 내보낸 시험 회의록 |
+| 4. 설치 프로그램으로 업데이트 | 이전 0.1.12가 설치된 시험 환경에서 0.1.13 설치 EXE를 실행한다. 새 설치 시험과 구분한다. 이전 설치 파일은 과거 공개 URL이 최신판으로 리디렉션되므로 별도로 검증·보관한 0.1.12 파일을 쓴다. 같은 브라우저 프로필과 웹 주소를 유지한다. | 이전/이후 버전, 기존 기록·설정·모델 유지, 다시 받기 요구 여부 |
+| 5. 재시작·다시 설치 | Windows 재시작 뒤 웹을 다시 열어 기존 기록·음성·TXT 설정·모델을 확인하고 새 분석도 저장한다. 같은 버전의 설치 EXE 재실행 시에도 기존 자료가 유지되는지 확인한다. | 재시작 후 재열기·재생·새 저장, 시작 메뉴/등록 중복 여부 |
+| 6. 실패·복원 | 실패가 실제로 발생하면 화면·로그와 남은 버전을 기록하고 시험 환경 복원점으로 돌아간다. 강제 종료·설치 폴더 삭제로 실패를 인위적으로 만들지 않는다. 실패 롤백이 관측되지 않았다면 합격으로 쓰지 않는다. | 실패 원인·현재 버전·자료 보존·복원 결과, 미실행이면 대기 |
+
+브라우저의 사이트 데이터나 프로필을 지우면 웹 회의 목록까지 지워질 수 있다. 자료 보존 시험 중에는 이를 지우거나 다른 프로필로 바꾸지 않는다. 별도 계정/VM을 준비하지 못하면 설치 프로그램 실측은 대기로 유지하고, 이미 완료한 프로그램 payload 교체 검증과 구분한다. 결과를 받으면 기존 QA 표의 NSIS·다른 PC 항목을 갱신한다.
+
+이 PC에는 업데이트 시험용 이전 설치 파일을 `.tmp/publication-run-20261027/manual/Barorok-Local-Engine-Setup-0.1.12-beta-20261026.exe`로 별도 보관했다. 과거 R2 전체 읽기 검증본에서 복사했으며 431,952,029 bytes, SHA-256 `db7882287c138261991bb381853c133e651a884734169e24831771332f05a373`을 다시 확인했다. 공개할 새 0.1.13과 혼동하지 않는다. 사용자가 시험 계정/VM으로 이 파일과 새 설치 파일을 옮겨 설치 프로그램에 의한 실제 0.1.12→0.1.13 갱신을 확인할 수 있다.
+
+## 신규 설치 ZIP·R2 업로드·웹 배포 준비 — 2026-10-27
+
+사용자 요청에 따라 앞서 clean `282d5d20c686b742c3ed12f29588efa494d7b687`에서 만든 데스크톱 빌드를 재사용해 루트 `corepack pnpm package:handoff`로 신규 설치 패키지(ZIP)를 만들었다. 기존 설정·기록이 있는 릴리스 폴더 전체를 압축하지 않았다. 이번 Worker 경로 추가와 문서 변경은 아직 미커밋이며, 데스크톱 빌드의 `dirty=false`·commit 표시는 실제 빌드 당시 값을 유지한다.
+
+| 확인 대상 | 결과·증거 |
+| --- | --- |
+| 신규 설치 ZIP | `releases/handoff/lmo_audio_no_ollama_no_whisper_282d5d2.zip`, **463,056,074 bytes**, SHA-256 `d38341d59a7dc511db5d64fc737281f178c3a925bfa90a0023b0220b088d5897`. 4,931항목 CRC 추출·프로그램 4,916파일 SHA·HEAD 기본 설정 일치·사용자 자료 제외·화자 구분 모델 포함·Whisper/Ollama 실행 파일/요약 모델 제외 통과. `.tmp/release-publication-prep-20261027/new-install-audit.json`. |
+| 새 추출본 실행 | 격리한 실제 `lmo_audio.exe`·새 WebView 프로필로 화면 표시, 추출본 backend 경로와 건강 상태, 필수 STT 미설치·화자 구분 모델 설치 상태, 설정 화면 접근·정상 종료와 포트 해제 확인. 모델 다운로드·새 분석은 이 신규 설치 시험에서 실행하지 않았다. 시스템 Ollama는 있는 PC이므로 시스템 Ollama가 없는 다른 PC의 첫 준비까지 증명하지 않는다. `.tmp/release-publication-prep-20261027/new-install-first-run.json` 및 PNG. |
+| R2 업로드 후보 | `.tmp/publication-20261027/r2-upload-manifest.json`: 신규 설치 ZIP·기존 업데이트 ZIP·엔진 0.1.13 EXE의 세 키, 실제 파일 크기·SHA·`customMetadata.sha256`, 합계 1,327,025,880 bytes. 아직 미업로드이며 실제 전송 코드는 승인된 업로드 단계에서 대상 세 파일에 맞춰 검토한다. |
+| 웹 공개 후보 | 같은 폴더의 세 release JSON·Worker 소스·`wrangler.jsonc`와 실제 웹 자산 10개의 SHA 목록. 신규 설치와 업데이트 feed·파일명을 분리했고, 종류/경로/원본/크기/해시 불일치·객체 누락을 차단한다. `corepack pnpm --dir deploy/cloudflare test`, 생성된 Worker 타입을 쓰는 `corepack pnpm --dir desktop-app exec tsc --noEmit -p ../deploy/cloudflare/tsconfig.json` 통과. 후보 config로 `corepack pnpm --dir deploy/cloudflare run check --config ... --outdir ...` dry-run 통과. 로그는 `.tmp/release-publication-prep-20261027`. |
+
+독립 에이전트 검토에서 다운로드 경로·종류 분리·파일 무결성 조건의 확정 P1/P2는 없었다. 문서의 엔진 feed 경로 오기 P2는 실제 `/downloads/engine-beta.json`으로 수정하고 Worker 분기와 대조했다.
+
+실제 R2 업로드·운영 웹 배포·공개 정본 버전 변경·commit·push는 하지 않았다. `deploy/cloudflare/release.json`은 0.1.12, 두 desktop 정본은 `release:null`이다. 후보 디렉터리는 원본 저장소·웹 자산을 참조하므로 독립 배포물로 전달하지 않는다. 배포 직전 해시 대조·운영 복원점·원격 전체 읽기 검증과 실제 공개 HTTPS 확인이 남는다. 실제 NSIS 설치는 별도 계정/VM 대기로 유지한다. 업로드·승격·복원 절차는 [데스크톱 공개 절차](../deploy/cloudflare/DESKTOP-UPDATES.md#2026-10-27-로컬-공개-준비)를 따른다. 기존의 실제 공개·설치 QA 행은 이 로컬 준비만으로 완료 처리하지 않는다. 마지막 확인 2026-10-27.
+
+## 로컬 통합 빌드·업데이트 검증 — 2026-10-27
+
+사용자 요청으로 `282d5d20c686b742c3ed12f29588efa494d7b687`의 데스크톱·웹·Windows 설치형 엔진과 업데이트 패키지를 만들었다. 빌드 당시 소스는 clean이며 데스크톱 manifest는 `dirty=false`, HEAD 일치다. 이후 이 절과 TODO에 검증 결과만 기록한다. 공개 업로드·배포, 공개 버전 JSON 변경, commit·push는 하지 않았다. 아래의 2026-10-26 회사 환경 보류는 당시 이력이며 이번 로컬 빌드·격리 시험은 별도 사용자 요청으로 수행했다.
+
+| 대상 | 산출물·식별자 | 판정 |
+| --- | --- | --- |
+| 데스크톱 | `releases/lmo_audio`, commit `282d5d20` | 루트 `corepack pnpm build -NoClearWebViewCache` 통과. 깨끗한 중간 폴더의 실제 내부 엔진 실행·설정/모델 조회·내보내기 기본 검사와 최종 릴리스 폴더의 읽기 전용 무결성 검사 통과. 사용자 WebView 캐시는 지우지 않았다. |
+| 데스크톱 업데이트 패키지(ZIP) | `releases/updates/lmo_audio_update_282d5d20c686b742c3ed12f29588efa494d7b687.zip`, 432,014,366 bytes | `corepack pnpm package:update` 후 ZIP 생성·CRC를 포함한 추출·프로그램 4,915파일 SHA-256 대조 통과. `payload/models`, `payload/runtime`, 사용자 설정·기록은 포함하지 않는다. SHA-256 `54c07bad14f5f98d959b2c5b4cf5901cfa891cffb5ec84a5f46bbcad0255c35e`. |
+| Windows 설치형 엔진 | `releases/web-local-engine-installer-poc/Barorok-Local-Engine-Setup-0.1.13-beta-20261027.exe`, 431,955,440 bytes | 현재 소스로 엔진·설치 도우미·NSIS 3.13 설치 파일 빌드. 설치 EXE를 실행하지 않고 추출한 프로그램 4,892파일 SHA-256 일치. SHA-256 `70b3f244b4b4bca2f12c4bd53a520e75da2e361d31daf1f6cbd133ed78e4763c`. |
+| 웹·Worker | `.tmp/cloudflare-web/dist`, `.tmp/release-20261027/worker-build` | 새 엔진의 후보 HTTPS 주소를 지정한 `prepare_cloudflare_web.ps1 -TestRelease`와 `corepack pnpm --dir deploy/cloudflare check --outdir ...` 통과. Worker는 `--dry-run`이며 업로드하지 않았다. 저장소의 공개 메타데이터는 갱신하지 않았다. |
+
+실제 업데이트는 사용자 설치본·브라우저 프로필 대신 시험 복사본과 전용 프로필에서 했다. 웹은 같은 허용 HTTPS origin에서 로컬 빌드 자산을 제공한 격리 Chromium이며 **엔진 API 응답은 모의 처리하지 않았다**. 운영 HTTPS 배포·일반 Chrome/Edge 권한·다른 PC 검증을 뜻하지 않는다.
+
+| 실제 사용자 흐름 | 판정·증거 |
+| --- | --- |
+| 데스크톱 `46fab033 → 282d5d20` | 이전 실제 EXE에서 30초 WAV 분석·자동 저장·보관 음성 재생 후, 검증한 ZIP 추출본의 `update_lmo_audio.ps1`을 기존 시험 폴더에 기본 검증을 생략하지 않고 적용했다. 새 EXE의 실제 build identity 일치, 기존 회의 기록 전체 JSON 값·음성 재생·TXT 다운로드 설정·사용자 backend 설정 유지, 새 30초 분석·자동 저장, 정상 종료·재실행 뒤 이전/새 기록 재열기·각 음성 재생을 통과했다. |
+| 웹·엔진 `0.1.12 → 0.1.13` | 이전 웹·실제 엔진에서 같은 음성의 분석·저장·재생을 확인했다. 같은 프로그램 폴더를 새 설치 EXE에서 추출·검증한 payload로 교체하고, 같은 자료 폴더·브라우저 프로필에서 새 웹을 실행했다. 실제 0.1.13 probe, 기존 기록 JSON·음성·TXT 설정 유지, 새 분석·저장, 브라우저와 엔진 정상 종료·재시작 뒤 두 기록 재열기·각 음성 재생 통과. **NSIS 설치·등록·시작 메뉴·롤백 실측은 아니다.** |
+| 새 업데이트 안내 | 실제 새 EXE와 새 웹에서 안내 열기·닫기 및 인증된 `/api/update-activity` 200·작업 상태 응답을 확인했다. 공개 배포물의 다운로드·업데이트 비교 전체를 실측한 것으로 확대하지 않는다. |
+| 파일 보존 | 업데이트 직후 시험 자료 89파일과 원본 릴리스 자료 34파일의 내용 지문(SHA-256)이 모두 같았다. 새 분석·재시작 후에도 설정, 기존 결과/보관 음성/개인 파일과 Whisper·참석자 구분 모델을 포함한 불변 시험 자료 87파일·원본 34파일의 SHA-256이 모두 일치했다. 나머지 2파일은 새 분석 시간으로 정상 갱신된 파생 캐시이며 아래에 별도로 설명한다. 최종 결과 `.tmp/release-20261027/preservation-result.json`, `final-report.json`. |
+| 종료·환경 복원 | 시험용 EXE·내부 엔진·브라우저가 남지 않았고 17863·17864·9439 listener 없음. 분석 중 강제 종료나 Windows 재부팅 시험은 아니다. |
+
+프론트 자산은 데스크톱 `index-CvagcyAt.js`·`index-CRyP1ZJ2.css`, 웹 `index-C6-y_Bd7.js`·`index-CRyP1ZJ2.css`다. 두 실행 모드를 각각 빌드했고 같은 프로필로 갱신한 실제 화면에서 새 업데이트 진입점도 확인했다.
+
+검사 실행 환경은 Windows Node 22.22.2와 `backend/.venv-desktop/Scripts/python.exe`의 Python 3.12.14다. `COREPACK_HOME=.cache/corepack`, `TEMP`/`TMP=.tmp/release-20261027/temp`, `PYINSTALLER_CONFIG_DIR=.cache/pyinstaller`, `PLAYWRIGHT_BROWSERS_PATH=.cache/ms-playwright`를 검사 프로세스에만 지정했다. 프론트 타입·lint, Node 계약 16검사·hook 회귀 21검사(앞선 동일 소스 검증 재사용), 이번 backend 활동/보안 38검사와 브라우저 연결 13검사, Worker 다운로드 검사가 통과했다. 전체 `check:release`·장문·요약/참석자 구분 추론 품질 평가를 실행한 것은 아니다.
+
+검사 중 보정·남은 항목:
+
+- 기존 `verify_web_local_engine_poc.py` 전체 실행은 제거된 숫자 코드 「연결 준비」 창을 기다리다 실패했다. 현재 `--pair`는 창 없는 시작 별칭이다. 독립 에이전트 검토 후 `.tmp/release-20261027/frozen-current-check.py`로 현재 계약의 실제 실행을 별도 검증했다. 무결성·사전 점검·loopback·무인증 거부·다른 origin 거부·자동 세션 발급·연결 요청 재사용 거부·저장된 승인 digest·재시작 복구/연결 해제·중복 실행·포트 충돌·정상 종료·폴더 이동 시 시험 파일 보존과 프로그램 파일 불변을 통과했다. **legacy 전체 검사 통과로 기록하지 않는다.** 재사용 가능한 검증 도구 갱신과 남아 있는 legacy API 정책 확인은 `todo.md`의 후속 항목을 따른다.
+- 회의 기록 비교의 첫 실패는 기준 JSON에서 생략된 `undefined` 선택 항목과 브라우저 객체 표현 차이였다. 시험 코드를 동일 JSON 표현으로 맞춘 뒤 전체 JSON 값 일치를 확인했다. 의미 있는 필드·배열·null·시각은 제외하지 않았다. 제품 소스는 바꾸지 않았다.
+- 재시작 후 첫 해시 비교는 새 분석 시간으로 정상 갱신되는 두 `temp/analysis_eta_metrics.json`을 불변 자료에 포함해 멈췄다. `main.py`의 `_record_stt_eta_baseline`이 쓰는 파생 처리시간 캐시다. 두 경로만 별도 분류해 새 30초 표본·유효한 양수 처리시간/비율·갱신 시각을 확인하고, 나머지 87파일의 모든 SHA-256 비교는 유지한다. `temp` 전체나 임의의 다른 변경 파일을 제외하지 않는다.
+- 사용자는 현재 PC의 격리 검증 후 **설치 프로그램 실측을 대기로 남기기로 선택**했다. 별도 Windows 계정/VM에서 실제 NSIS 업데이트, 시작 메뉴·등록·재시작 복원·실패 롤백과 자료 보존을 확인해야 닫는다. 공개 업로드·버전 정보 갱신·운영 배포·실제 공개 다운로드는 별도 승인 범위다.
+
+상세 증거: `.tmp/release-20261027/{build-desktop,build-engine,build-installer,build-web,worker-dry-run}.log`, `update-package.json`, `installer-package.json`, `native-{before,after,restart}.json/png`, `web-{before,after,restart}.json/png`, `frozen-current-result.json`, `cleanup-result.json`. 실제 자료·프로필·대용량 생성물은 Git에 넣지 않는다.
+
 ## 업데이트 안내 변경 — 2026-10-26, 소스 검증 단계
 
 웹과 데스크톱은 새 버전 안내 후 사용자가 `받기`를 눌러야 다운로드한다. 안내를 열거나 작업이 끝났다는 이유로 다운로드·설치·종료·재시작·웹 새로고침을 실행하지 않는다. 작성 중인 내용만 있는 경우 다운로드는 가능하지만, 실제 설치 전에는 작업을 저장하고 이 PC의 관련 앱 창을 모두 종료한다. 파일·모델·저장 위치·브라우저 저장소 식별자는 바꾸지 않았다.
@@ -54,8 +314,9 @@ CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261
 
 | QA 추적 항목 | 상태·마지막 확인 | 필요한 증거·종료 기준 |
 | --- | --- | --- |
+| 모델 받기 중지·이어받기와 설정 변경 | 소스·좁은 검사 완료, 새 실행 파일 QA 대기. 최종 확인2026-10-29. 기존21f76bb 시험 복사본에서 실제 Ollama 2B/4B 소량 받기·재시도·UI 중지, 수정된 소스 HF 경로에서 실제 전송·빠른 소유 자식 종료·부분 파일 보존을 확인했다. 화면 정렬·음량 스위치·저장 순서는 모의 API 검사다. | 새 clean 데스크톱과 설치 엔진에서 다운로드 worker 포함, 네트워크 실패 시 PyInstaller 팝업 없음, UI 중지 뒤 전송 정지·이어받기·설정/모델 보존을 확인한다. 앱 재시작 뒤 상태 표시 복원과 전체 모델 준비/실제 요약은 별도 확인한다. 원래 사용자 자료로 시험하지 않는다. 증거 `.tmp/model-download-live-20261029/evidence`, `.tmp/model-download-checks`; 후속 `todo.md`의 모델 작업 상태 계약 항목. |
 | 브라우저 승인 정보 손상 복구 | 소스 수정·격리 자동 검사 완료, 설치 후보 QA 대기. 최종 확인2026-10-27. 잘못된 JSON·크기 초과·다른 Origin에서 재시작해도 연결 불가인 기존 문제를 재현했다. Windows 복구 확인 기본값은 `아니요`이며, `예`에서만 손상 파일을 같은 config 폴더의 `browser-approvals.json.damaged-<임의 식별자>`로 보관하고 등록을 비운다. 연결/Windows runtime/보안 경계70검사로 거절·보관 실패·파일 교체·링크/폴더 차단과 원본·자료 보존, 재등록·재시작·해제, 거절 후 실행 잠금 해제·바로가기 재시도를 확인했다. 추가 사용자 동선 agent 검토에서 지적이 없었고 임시 파일12항목 시뮬레이션은 실제 Windows 잠금 재획득과 핵심 연결 코드로 통과했다(동의 선택만 모의, `.tmp/browser-approval-recovery-20261027/scenario-f9db5f4ff529/result.json`). 실제 Windows 창은 표시됐으나 화면 도구의 `foreground window did not report a process id` 오류와 창 종료로 직접 클릭 흐름은 완료로 판정하지 않았다. | 새 설치 후보의 EXE/버전·OS·HTTPS Origin을 기록하고 격리된 QA 자료 폴더에서 실제 Windows 확인창의 기본 거절·아니요·예, 거절 후 바로가기 재실행에서 다시 복구 확인, 손상 파일 전체 보관과 기존 설정·회의록·모델 해시 보존, 허용 사이트 재연결·재시작 복원·명시적 해제, 다른 Origin 거절을 확인한다. 현재 `예/아니요` 창의 X/Esc 취소를 전제하지 말고 실제 닫기 가능 여부를 기록한다. 정상 파일에는 추가 확인창이 없어야 한다. 잠긴 파일 보관 실패는 차단·원본 보존·안내 후 잠금 해제/재시도로 복구되어야 한다. 실제 사용자 원본에 손상을 주입하지 않는다. |
-| 새 업데이트 안내의 실제 배포·기존 설치본 적용 | 대기, 최종 확인2026-10-26. 원격0c4e1a4와 로컬 작업 통합 후3관점 독립 검토, 집중47검사·Worker 검사·웹/모의 Tauri 안내 시뮬레이션 통과. 인증 만료·재연결과 설정 위 안내의 키보드 충돌도 재검증했다. 소스 검증이며 기존 운영 산출물은 불변이고 데스크톱 공개 정보는 미공개다. 근거 `docs/frontend-simulation-testing.md`의 원격 병합 후 통합 검증, `.tmp/remote-merge-20261026/update-guide`. | 독립 검토를 마친 커밋으로 웹·설치 엔진·데스크톱을 빌드하고 대상별 실제 실행을 확인한다. 기존 기록·설정·모델 보존, 분석·요약·다른 창의 모델 받기 중 다운로드 차단, 안내 닫기·재열기, 받기 클릭 전 파일 요청 없음, 오류 시 작업 화면 유지, 구형 엔진 상태 미확인 확인 절차, 같은/이전 빌드 미안내를 검증한다. 승인된 공개 후 ZIP 전체 해시·metadata·HEAD/Range·실제 EXE의 안내와 수동 적용 증거로 닫는다. |
+| 새 업데이트 안내의 실제 배포·기존 설치본 적용 | 공개 다운로드·프로그램 적용·앱/엔진 재시작·기록/설정/모델 보존 통과, 최종 확인2026-10-27. 세 파일의 원격·공개 전체 SHA, 실제 웹 버튼의 신규 설치 ZIP 다운로드, 46fab033→282d5d20 실제 ZIP updater와 공개 EXE에서 검증한 0.1.12→0.1.13 payload 교체, 각 기존 2개/새 1개 기록의 JSON·음성·TXT와 새 실제 분석을 확인했다. 적용 직후 110파일 동일, 최종 파생 ETA 캐시 2개만 정상 변경·원본110불변. 실제 최종 verifier는 600초 드라이버 한도 후에도 중단하지 않고 소유 인수/동일 PID·실제 종료 코드0을 확인했다. 상세 수치·로그는 위 실제 공개 절이 소유한다. | 별도 계정/VM의 실제 NSIS 적용·등록/시작 메뉴·Windows 재부팅·복원/롤백·첫 모델 받기와 다른 PC는 대기다. 업데이트 안내를 열기만 할 때 파일 요청 없음과 현재 공개 빌드 동등 비교는 실제 확인했다. 진행 중 분석/요약·다른 창의 모델 받기 차단, 구형 엔진의 미확인 확인·과거 빌드 미안내는 기존 모의 증거와 향후 실제 대상별 증거를 구분해 닫는다. 현재 실제 공개본과 같은 commit이므로 새 버전 알림이 없는 것이 정상이며 다음 빌드의 실제 새 알림까지 증명한 것은 아니다. |
 | 공개 웹 첫 재시작 검사에서 음성 요소 대기30초 초과1회 | 미분류·추적, 2026-10-26. `public-browser.log`와 당시 엔진 access log 보존. 이후 실제 공개 웹 재시작/재생은 통과했지만 최초 실패 원인이 해결됐다고 단정하지 않는다. 제품 결함 여부 미확정이며 데이터 손실은 관측하지 않았다. | 같은 버전·QA 프로필/캐시 상태·시스템 부하·실제 권한을 기록하고 cold start의 HEAD/GET 실패 시각과 Console/Network를 함께 수집한다. 실패 원인을 확인하고 필요 시 수정·독립 재검토한 뒤 같은 조건의 재시작/기록 전환·추가 재확인 없는 재생 성공 증거로 닫는다. 재현돼 계획 작업이 되면 기존 runtime QA/TODO 항목으로 승격한다. |
 
 ## 이전 판정 — 2026-10-25
@@ -445,6 +706,7 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 | 브라우저 회의 목록(IndexedDB) | 사용자 | 배포가 건드리지 않는다. 사이트 주소(프로토콜·도메인·포트)마다 따로 저장된다 | 운영 주소 `https://barorok.ecomarin.workers.dev` |
 | 엔진 프로그램 `%LOCALAPPDATA%\Programs\Barorok\LocalEngine` | 패키지 | 설치 프로그램이 준비 폴더에 풀어 교체한다. 새 엔진이 시작되지 않으면 되돌린다 | 정리는 설치 프로그램이 만든 파일 목록 안에서만 한다. 허용하는 웹 주소는 빌드 때 `defaults\engine-settings.json`에 고정된다 |
 | 엔진 자료 `%LOCALAPPDATA%\Barorok\LocalEngine`(설정·모델·DB·결과·임시·로그·런타임) | 사용자 | 설치·업데이트·제거 모두 보존한다 | |
+| 실제 다운로드 폴더의 `LMO-install-diagnostic.log` | 사용자(임시 진단 기록) | `-DiagnosticLogs` 빌드만 누적 기록한다. 일반 설치·업데이트·제거는 건드리지 않는다 | Python 시작 전부터 기록. 원인 확인 뒤 진단 모드 제거, 기존 로그는 보존 |
 
 ### 체크 항목
 

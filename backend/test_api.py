@@ -954,6 +954,23 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(recommendation["model"], "gemma4:e2b")
         self.assertEqual(recommendation["basis"], "memory")
 
+    def test_update_settings_volume_switch_preserves_other_preprocessing_options(self) -> None:
+        config_ref = main.normalize_app_config({
+            "preprocessing": {"enabled": True, "normalize_audio": True, "normalization_mode": "auto", "noise_gate": False, "denoise": False, "trim_silence": False},
+        })
+        def save(config, config_path="config.json"):
+            config_ref.clear()
+            config_ref.update(copy.deepcopy(config))
+        with patch.object(main, "load_config", side_effect=lambda: copy.deepcopy(config_ref)), patch.object(main, "save_config", side_effect=save):
+            off = self.client.patch("/api/settings", json={"preprocessing": {"normalize_audio": False}})
+            self.assertEqual(off.status_code, 200)
+            self.assertIsNone(resolve_preprocessing_plan("unused", "unused", config_ref["preprocessing"])["audio_filter"])
+            on = self.client.patch("/api/settings", json={"preprocessing": {"enabled": True, "normalize_audio": True}})
+            self.assertEqual(on.status_code, 200)
+            with patch("pipeline.audio_preprocess._probe_mean_volume", return_value=-25):
+                self.assertTrue(resolve_preprocessing_plan("unused", "unused", config_ref["preprocessing"])["audio_filters"])
+            self.assertEqual(config_ref["preprocessing"], {"enabled": True, "normalize_audio": True, "normalization_mode": "auto", "noise_gate": False, "denoise": False, "trim_silence": False})
+
     def test_update_settings_accepts_summary_model_name(self) -> None:
         config_ref = main.normalize_app_config({
             "paths": {"stt_model": "../models/faster-whisper-large-v3"},
@@ -1502,6 +1519,7 @@ class AnalyzeApiTest(unittest.TestCase):
             zip_part_path = Path(tmp) / "ollama.zip.part"
             with (
                 patch.object(main, "OLLAMA_RUNTIME_SHA256", "0" * 64),
+                patch.object(main, "OLLAMA_RUNTIME_EXPECTED_BYTES", len(b"not expected")),
                 patch.object(main.urllib.request, "urlopen", return_value=FakeResponse(b"not expected")),
             ):
                 with self.assertRaisesRegex(RuntimeError, "checksum"):
@@ -1879,7 +1897,7 @@ class AnalyzeApiTest(unittest.TestCase):
             "ecomarin@naver.com",
         )
 
-    def test_run_model_download_failure_mentions_security_and_current_contact(self) -> None:
+    def test_run_model_download_failure_has_short_recovery_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             backend_dir = os.path.join(tmp, "backend")
             os.makedirs(backend_dir, exist_ok=True)
@@ -1898,9 +1916,10 @@ class AnalyzeApiTest(unittest.TestCase):
 
         self.assertFalse(status["active"])
         self.assertEqual(status["status"], "failed")
-        self.assertIn("회사 보안 정책", status["message"])
         self.assertIn("인터넷 연결", status["message"])
-        self.assertIn("ecomarine@korea.kr", status["message"])
+        self.assertNotIn("ecomarine@korea.kr", status["message"])
+        self.assertLess(len(status["message"]), 60)
+        self.assertEqual(status["error"], "blocked")
 
     def test_model_download_snapshot_reports_progress(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

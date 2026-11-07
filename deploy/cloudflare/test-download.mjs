@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import release from './release.json' with { type: 'json' };
-import handler, { parseByteRange, serveDesktopDownload } from './src/index.ts';
+import desktopPublication from './desktop-release.json' with { type: 'json' };
+import desktopInstallPublication from './desktop-install-release.json' with { type: 'json' };
+import handler, { parseByteRange, serveDesktopDownload, serveDesktopInstallDownload } from './src/index.ts';
+import { parseDesktopRelease } from '../../desktop-app/src/desktopRelease.ts';
+import { parseDesktopInstallRelease } from './src/desktopInstallRelease.ts';
 
 assert.deepEqual(parseByteRange('bytes=0-7', 32), { offset: 0, length: 8 });
 assert.deepEqual(parseByteRange('bytes=8-', 32), { offset: 8, length: 24 });
@@ -66,7 +70,12 @@ metadata.customMetadata.sha256 = 'b'.repeat(64);
 assert.equal((await call(release.downloadPath)).status, 503);
 
 // Desktop release metadata is a separate contract. Unpublished/missing objects never become links.
-assert.equal((await call('/downloads/desktop-beta.json')).status, 404);
+const canonicalStatus = (publication, parse) => {
+    if (publication.release === null) return 404;
+    assert.ok(parse(publication.release), 'A published canonical descriptor must satisfy its release schema');
+    return 503; // The shared engine fixture does not match a published desktop artifact.
+};
+assert.equal((await call('/downloads/desktop-beta.json')).status, canonicalStatus(desktopPublication, parseDesktopRelease));
 assert.equal((await call('/downloads/desktop-beta.json')).headers.get('access-control-allow-origin'), '*');
 assert.equal((await call('/downloads/lmo_audio_update_unknown.zip')).status, 404);
 const desktopPayload = {
@@ -78,6 +87,7 @@ const desktopCall = (path, init, publication = { release: desktopPayload }) => s
     new Request(`https://barorok.ecomarin.workers.dev${path}`, init), env, publication,
 );
 const feedPath = '/downloads/desktop-beta.json';
+assert.equal((await desktopCall(feedPath, undefined, { release: null })).status, 404, 'explicit unpublished update contract');
 assert.equal((await desktopCall(feedPath)).status, 503, 'object hash must match before advertising a release');
 assert.equal((await desktopCall(feedPath)).headers.get('access-control-allow-origin'), '*');
 assert.equal((await desktopCall(feedPath, { method: 'POST' })).status, 405);
@@ -106,4 +116,85 @@ env.RELEASES.head = async () => null;
 assert.equal((await desktopCall(feedPath)).status, 503);
 env.RELEASES.head = async () => { throw new Error('R2 unavailable'); };
 assert.equal((await desktopCall(feedPath)).status, 503);
-console.log('Download HTTP/range/metadata checks passed');
+// First installs are published independently and cannot be confused with an update.
+const installFeedPath = '/downloads/desktop-install-beta.json';
+assert.equal((await call(installFeedPath)).status, canonicalStatus(desktopInstallPublication, parseDesktopInstallRelease));
+assert.equal((await call('/downloads/lmo_audio_install_unknown.zip')).status, 404);
+const installPayload = {
+    ...desktopPayload, type: 'portable-install',
+    downloadPath: `/downloads/lmo_audio_install_${desktopPayload.commit}.zip`, sha256: 'f'.repeat(64),
+};
+let installObject = { size: 32, customMetadata: { sha256: installPayload.sha256 } };
+const installKey = installPayload.downloadPath.slice('/downloads/'.length);
+const installEnv = {
+    ...env,
+    RELEASES: {
+        head: async key => { assert.equal(key, installKey); return installObject; },
+        get: async (key, options) => {
+            assert.equal(key, installKey);
+            if (!installObject) return null;
+            const range = options?.range;
+            return { ...installObject, body: new Response(range ? data.subarray(range.offset, range.offset + range.length) : data).body };
+        },
+    },
+};
+const installCall = (path, init, publication = { release: installPayload }) => serveDesktopInstallDownload(
+    new Request(`https://barorok.ecomarin.workers.dev${path}`, init), installEnv, publication,
+);
+assert.equal((await installCall(installFeedPath, undefined, { release: null })).status, 404, 'explicit unpublished install contract');
+for (const invalid of [desktopPayload, { ...installPayload, origin: 'https://wrong.example' },
+    { ...installPayload, downloadPath: '/downloads/unlisted.zip' }, { ...installPayload, bytes: 0 },
+    { ...installPayload, sha256: 'invalid' }]) {
+    assert.equal((await installCall(installFeedPath, undefined, { release: invalid })).status, 503);
+}
+assert.equal((await desktopCall(feedPath, undefined, { release: installPayload })).status, 503);
+assert.equal((await installCall(installPayload.downloadPath, { method: 'POST' })).status, 405);
+assert.equal((await installCall(desktopPayload.downloadPath)).status, 404);
+const installFeed = await installCall(installFeedPath);
+assert.equal(installFeed.status, 200);
+assert.equal(installFeed.headers.get('access-control-allow-origin'), '*');
+assert.equal(installFeed.headers.get('cache-control'), 'no-store');
+assert.deepEqual(await installFeed.json(), installPayload);
+assert.equal(await (await installCall(installFeedPath, { method: 'HEAD' })).text(), '');
+const installFull = await installCall(installPayload.downloadPath);
+assert.equal(installFull.status, 200);
+assert.ok(installFull.headers.get('content-disposition').includes(installKey));
+assert.deepEqual(Buffer.from(await installFull.arrayBuffer()), data);
+const installRange = await installCall(installPayload.downloadPath, { headers: { Range: 'bytes=8-15' } });
+assert.equal(installRange.status, 206);
+assert.equal(installRange.headers.get('content-range'), 'bytes 8-15/32');
+assert.deepEqual(Buffer.from(await installRange.arrayBuffer()), data.subarray(8, 16));
+assert.equal((await installCall(installPayload.downloadPath, { headers: { Range: 'bytes=32-' } })).status, 416);
+assert.equal((await installCall(installPayload.downloadPath, { method: 'HEAD' })).headers.get('content-length'), '32');
+installObject.customMetadata.sha256 = '0'.repeat(64);
+assert.equal((await installCall(installFeedPath)).status, 503);
+assert.equal((await installCall(installPayload.downloadPath)).status, 503);
+installObject.customMetadata.sha256 = installPayload.sha256;
+installObject.size = 31;
+assert.equal((await installCall(installFeedPath)).status, 503);
+installObject = null;
+assert.equal((await installCall(installPayload.downloadPath)).status, 503);
+
+// Check the actual canonical route wiring with matching R2 metadata as well as
+// the independent, explicit unpublished contracts above. No large fixture body is needed.
+for (const [publication, parse, path] of [
+    [desktopPublication, parseDesktopRelease, feedPath],
+    [desktopInstallPublication, parseDesktopInstallRelease, installFeedPath],
+]) {
+    if (publication.release === null) continue;
+    const parsed = parse(publication.release);
+    assert.ok(parsed, 'Canonical published release must parse before an R2 success fixture is accepted');
+    const key = new URL(parsed.downloadUrl).pathname.slice('/downloads/'.length);
+    const canonicalEnv = { ...env, RELEASES: {
+        head: async requestedKey => {
+            assert.equal(requestedKey, key);
+            return { size: parsed.bytes, customMetadata: { sha256: parsed.sha256 } };
+        },
+        get: async () => assert.fail('A metadata feed must not read the archive body'),
+    } };
+    const response = await handler.fetch(new Request(`https://barorok.ecomarin.workers.dev${path}`), canonicalEnv);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('access-control-allow-origin'), '*');
+    assert.deepEqual(await response.json(), publication.release);
+}
+console.log('Download HTTP/range/metadata checks passed (engine, desktop update and first install)');

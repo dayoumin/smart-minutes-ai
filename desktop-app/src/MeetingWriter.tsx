@@ -31,6 +31,7 @@ import {
 } from './analysisResumeDrafts';
 import type { LeaveGuard } from './appView';
 import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone, useAppDialog } from './components/common';
+import { DesktopInstallDownload } from './DesktopInstallDownload';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
@@ -339,7 +340,7 @@ const describeMissingModels = (models: ModelStatus[] = [], diarizationDuringAnal
     const missing = models.filter(model => model.required && !model.installed);
     // The diarization model is required only while 참석자 구분까지 이어서 실행 is on; turning it off is the quick way through.
     if (diarizationDuringAnalysis && missing.length > 0 && missing.every(model => model.key === 'diarization')) {
-        return '참석자 구분 모델이 없어 분석 중에 참석자를 구분할 수 없습니다. 설정에서 참석자 구분까지 이어서 실행을 끄면 대화록부터 만들 수 있습니다.';
+        return '참석자 구분 모델이 없습니다. 설정에서 참석자 구분 실행을 끄면 대화록부터 만들 수 있습니다.';
     }
     const list = missing.map(model => getUserModelLabel(model)).join(', ') || '필수 모델';
     if (missing.some(model => model.downloadable)) {
@@ -2876,6 +2877,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             )}
             <div className="writer-header">
                 <h2 className="page-title" tabIndex={-1}>{writerHeading}</h2>
+                {!desktopApp && <DesktopInstallDownload />}
             </div>
 
             <div className="writer-panel">

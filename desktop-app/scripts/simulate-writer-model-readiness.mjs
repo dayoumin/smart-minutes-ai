@@ -403,6 +403,9 @@ const verifyDesktopStatusRow = async (browser) => {
   page.on('pageerror', error => errors.push(error.message));
   try {
     await page.clock.install();
+    // Installed time keeps flowing, so a slow cold load would eat the 2s between the 43s and 45s checks below.
+    // Pause until the warning appears; the replayed pause also holds on the app page.
+    await page.clock.pauseAt(Date.now() + 1_000);
     await page.addInitScript(installTauriMock);
     // Keep the desktop update check off the public release origin; no published update is the neutral answer.
     await page.route('**/downloads/desktop-beta.json', route => route.fulfill({ status: 404, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' }));
@@ -442,6 +445,7 @@ const verifyDesktopStatusRow = async (browser) => {
     assert.equal(await rowOf(page).getAttribute('data-state'), 'readiness-checking', 'no warning before 45s');
     await page.clock.runFor(4_000);
     await waitForRowState(page, 'no-response');
+    await page.clock.resume();
     assert.deepEqual(await readRow(page), {
       state: 'no-response', title: '분석 기능이 아직 준비되지 않았습니다', message: null, buttons: ['문제해결'],
     });

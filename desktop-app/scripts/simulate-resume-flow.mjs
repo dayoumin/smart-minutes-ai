@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
@@ -151,6 +152,7 @@ const createFixtureFile = async () => {
 
 const runResumeReuseScenario = async (browser, fixturePath) => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const appDialogs = await installAppDialogs(page);
   const requests = [];
   let analyzeRequestSnapshot = null;
 
@@ -205,8 +207,9 @@ const runResumeReuseScenario = async (browser, fixturePath) => {
     });
   });
 
-  page.once('dialog', async dialog => {
-    assert.match(dialog.message(), /이전 음성 인식 진행분 재사용을 시도할까요/);
+  appDialogs.once(async dialog => {
+    assert.match(dialog.message(), /같은 파일로 이어서 할 분석이 있습니다/);
+    assert.equal(dialog.type(), 'choice');
     await dialog.accept();
   });
 
@@ -237,6 +240,7 @@ const runResumeReuseScenario = async (browser, fixturePath) => {
 
 const runResumeFallbackScenario = async (browser, fixturePath) => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const appDialogs = await installAppDialogs(page);
   let analyzeRequestSnapshot = null;
 
   await installBaseRoutes(page);
@@ -284,7 +288,7 @@ const runResumeFallbackScenario = async (browser, fixturePath) => {
     });
   });
 
-  page.once('dialog', async dialog => {
+  appDialogs.once(async dialog => {
     await dialog.accept();
   });
 

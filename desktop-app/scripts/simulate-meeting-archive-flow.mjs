@@ -4,6 +4,7 @@ import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
 const shouldStartServer = !process.env.APP_URL;
@@ -231,8 +232,10 @@ const runEmptyArchive = async browser => {
 };
 
 const runFolderFlow = async browser => {
-  const context = await browser.newContext({ viewport: { width: 1100, height: 720 } });
+  // Below 1200px the sidebar is an icon rail (a1307b8); this flow works in the expanded list.
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   await installBaseRoutes(page);
   const original = {
     id: 'folder-preservation-meeting', title: '폴더 선택 전 회의', date: '2026-10-18T09:00:00',
@@ -415,16 +418,11 @@ const runFolderFlow = async browser => {
         transaction.onerror = () => { db.close(); reject(transaction.error); };
       };
     }), folderBId);
-    const failedMoveAlert = new Promise((resolve, reject) => page.once('dialog', async dialog => {
-      try {
-        assert.equal(dialog.type(), 'alert');
-        assert.match(dialog.message(), /회의록 폴더를 변경하지 못했습니다/);
-        await dialog.accept();
-        resolve();
-      } catch (error) { reject(error); }
-    }));
     await moveRecord('두 번째 폴더');
-    await failedMoveAlert;
+    // A failed move is an error toast that stays until closed, not a browser alert.
+    const failedMoveToast = page.locator('.operation-toast.status-error').filter({ hasText: '회의록 폴더를 변경하지 못했습니다.' });
+    await failedMoveToast.waitFor({ timeout: 10000 });
+    await failedMoveToast.getByRole('button', { name: '알림 닫기' }).click();
     assert.deepEqual((await readStored()).meetings, beforeFailedMove, 'a failed move preserves all records');
     assert.equal(await recordButton.isVisible(), true);
     // A short desktop window and many folders must keep the last destination reachable.

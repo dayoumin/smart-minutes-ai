@@ -6,6 +6,7 @@ import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173';
 const shouldStartServer = !process.env.APP_URL;
@@ -1153,6 +1154,7 @@ const run = async () => {
     }
 
     page = await browser.newPage({ viewport: { width: 1200, height: 800 } });
+    const appDialogs = await installAppDialogs(page);
     page.on('request', request => {
       if (request.url().includes('/api/')) {
         apiCalls.push(`${request.method()} ${request.url()}`);
@@ -1292,7 +1294,7 @@ const run = async () => {
     }), true, 'folder pin state should persist');
     await openFolderMenu();
     const renameFolderDialog = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'prompt');
           await dialog.accept('UI 검수 폴더 변경');
@@ -1309,7 +1311,7 @@ const run = async () => {
     await renamedFolderButton.waitFor({ state: 'visible' });
     await openFolderMenu();
     const deleteFolderDialog = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'confirm');
           await dialog.accept();
@@ -1505,7 +1507,7 @@ const run = async () => {
 
     sidebarMenuItems = await openSidebarRecordMenu();
     const renameDialogDismissed = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'prompt');
           await dialog.dismiss();
@@ -1522,7 +1524,7 @@ const run = async () => {
 
     sidebarMenuItems = await openSidebarRecordMenu();
     const deleteDialogDismissed = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'confirm');
           await dialog.dismiss();
@@ -2233,10 +2235,10 @@ const run = async () => {
       window.__guardCancelSkeletonObserver.observe(document.body, { childList: true, subtree: true });
     });
     const cancelledLeaveDialog = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'confirm');
-          assert.match(dialog.message(), /저장되지 않은 변경/);
+          assert.match(dialog.message(), /저장하지 않은 변경/);
           await dialog.dismiss();
           resolve();
         } catch (error) {
@@ -2268,15 +2270,15 @@ const run = async () => {
       unexpectedRefreshDialogCount += 1;
       await dialog.dismiss();
     };
-    page.on('dialog', handleUnexpectedRefreshDialog);
+    appDialogs.on(handleUnexpectedRefreshDialog);
     await page.evaluate(() => window.dispatchEvent(new Event('meetings:updated')));
     await sleep(150);
-    page.off('dialog', handleUnexpectedRefreshDialog);
+    appDialogs.off(handleUnexpectedRefreshDialog);
     assert.equal(unexpectedRefreshDialogCount, 0);
     assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
 
     const acceptedMissingTargetDialog = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'confirm');
           await dialog.accept();
@@ -2315,7 +2317,7 @@ const run = async () => {
       });
     });
     const acceptedLeaveDialog = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'confirm');
           await dialog.accept();
@@ -2396,7 +2398,7 @@ const run = async () => {
       nonNavigationDialogCount += 1;
       await dialog.dismiss();
     };
-    page.on('dialog', handleNonNavigationDialog);
+    appDialogs.on(handleNonNavigationDialog);
     const otherMeetingMenuTrigger = page.getByRole('button', {
       name: '다른 회의록, 2026-05-08 00:01 회의록 메뉴',
       exact: true,
@@ -2406,7 +2408,7 @@ const run = async () => {
     await sidebarRecordMenu.getByRole('button', { name: '상단 고정', exact: true }).click();
     await page.getByText('회의 기록을 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.').waitFor({ timeout: 10000 });
     await page.waitForFunction(() => document.activeElement?.getAttribute('aria-label') === '다른 회의록, 2026-05-08 00:01 회의록 메뉴');
-    page.off('dialog', handleNonNavigationDialog);
+    appDialogs.off(handleNonNavigationDialog);
     assert.equal(nonNavigationDialogCount, 0);
     assert.equal(await page.getByRole('heading', { name: '시뮬레이션 회의록' }).count(), 1);
     assert.equal(await unsavedTranscriptDraft.inputValue(), '저장하지 않은 대화록 편집 내용');
@@ -2430,10 +2432,10 @@ const run = async () => {
       assert.equal(dialog.type(), 'confirm');
       await dialog.accept();
     };
-    page.on('dialog', handleSidebarLeaveDialog);
+    appDialogs.on(handleSidebarLeaveDialog);
     await page.getByText('다른 회의록').first().click();
     await page.getByRole('heading', { name: '다른 회의록' }).waitFor({ timeout: 10000 });
-    page.off('dialog', handleSidebarLeaveDialog);
+    appDialogs.off(handleSidebarLeaveDialog);
     assert.equal(sidebarLeaveDialogCount, 1);
     await page.getByRole('button', { name: '회의 정보 수정' }).click();
     await page.locator('.meeting-detail-shell').getByRole('textbox', { name: '회의 제목', exact: true }).fill('');
@@ -2510,7 +2512,7 @@ const run = async () => {
     await legacyDeleteMenuTrigger.focus();
     await legacyDeleteMenuTrigger.press('Enter');
     const selectedDeleteDialog = new Promise((resolve, reject) => {
-      page.once('dialog', async dialog => {
+      appDialogs.once(async dialog => {
         try {
           assert.equal(dialog.type(), 'confirm');
           await dialog.accept();

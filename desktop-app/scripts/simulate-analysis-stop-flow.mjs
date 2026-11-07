@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
@@ -246,6 +247,7 @@ const runScenario = async (
     };
   });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   let releaseAnalyzeResponse = () => {};
   const analyzeCanFinish = new Promise(resolve => {
     releaseAnalyzeResponse = resolve;
@@ -405,7 +407,9 @@ const runScenario = async (
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await assertProjectPage(page);
     const writerSectionHeadings = await page.locator('.writer-section-heading h3').allTextContents();
-    assert.deepEqual(writerSectionHeadings.slice(0, 2), ['영상·음성 파일', '회의 정보']);
+    // Meeting information is a labelled region without a visible heading since a1307b8.
+    assert.equal(writerSectionHeadings[0], '영상·음성 파일');
+    await page.getByRole('region', { name: '회의 정보' }).waitFor({ timeout: 10000 });
     const processingHelp = await openProcessingHelp(page);
     await processingHelp.getByText('회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.', { exact: true }).waitFor({ timeout: 10000 });
     await closeProcessingHelp(page, processingHelp);
@@ -670,7 +674,7 @@ const runScenario = async (
       assert.equal(meetings.length, 1, 'stopping after transcript readiness should retain one meeting');
       assert.equal(meetings[0].jobId, analyzeJobId);
       assert.equal(meetings[0].analysisStatus, 'diarization_stopped');
-      page.once('dialog', dialog => dialog.accept());
+      appDialogs.once(dialog => dialog.accept());
       await page.getByRole('button', { name: `${action} 분석 중지 테스트`, exact: true }).click();
       await page.getByText('중지 전 저장된 대화록', { exact: true }).waitFor({ timeout: 10000 });
       await page.getByText('중지됨', { exact: true }).first().waitFor({ timeout: 10000 });
@@ -1229,6 +1233,7 @@ const runEngineCheckingScenario = async (browser, fixture) => {
 const runDetailContinuityScenario = async (browser, fixture, background = false, viewportWidth = 1280, audioFailure = false) => {
   const context = await browser.newContext({ viewport: { width: viewportWidth, height: 720 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   let releaseSettings;
   let releaseResult;
   const settingsReady = new Promise(resolve => { releaseSettings = resolve; });
@@ -1315,7 +1320,7 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
         await addMeeting({ id: 'continuity-other', title: '다른 회의록', date: '2026-10-20', summary: '', participants: '', segments: [] });
         window.dispatchEvent(new CustomEvent('meetings:updated'));
       });
-      page.once('dialog', dialog => dialog.accept());
+      appDialogs.once(dialog => dialog.accept());
       await selectSidebarMeeting(page, '다른 회의록');
       await page.getByRole('heading', { name: '다른 회의록', exact: true }).waitFor();
     }
@@ -1344,7 +1349,7 @@ const runDetailContinuityScenario = async (browser, fixture, background = false,
       await captureState('completed');
       await page.getByRole('button', { name: '회의 정보 수정', exact: true }).click();
       await page.getByLabel('회의 제목', { exact: true }).fill('아직 저장하지 않은 제목');
-      page.once('dialog', dialog => dialog.dismiss());
+      appDialogs.once(dialog => dialog.dismiss());
       await page.getByRole('button', { name: '새 회의록', exact: true }).click();
       assert.equal(await page.getByLabel('회의 제목', { exact: true }).inputValue(), '아직 저장하지 않은 제목', 'navigation preserves an unsaved completed-result edit');
       await page.getByRole('button', { name: '수정 취소', exact: true }).click();

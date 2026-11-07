@@ -11,7 +11,7 @@ import { AsrBenchmark } from './AsrBenchmark';
 import { addMeeting, getAllMeetings, MeetingRecord, MeetingSegment } from './meetingRepository';
 import { isTauriRuntime, setTauriCloseGuardActive } from './apiBase';
 import { localEngineClient } from './localEngineClient';
-import { AppView, getInitialAppView } from './appView';
+import { AppView, getInitialAppView, type LeaveGuard } from './appView';
 import { AnalysisRecoveryCoordinator } from './AnalysisRecoveryCoordinator';
 import { RecentMeetingsPanel } from './RecentMeetingsPanel';
 import { MeetingArchive } from './MeetingArchive';
@@ -173,8 +173,8 @@ export const App: React.FC = () => {
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
     const [settingsInitialTab, setSettingsInitialTab] = useState<SettingsTab>('general');
     const [settingsInitialSection, setSettingsInitialSection] = useState<SettingsSection | undefined>(undefined);
-    const leaveGuardRef = React.useRef<() => boolean>(() => true);
-    const writerLeaveGuardRef = React.useRef<() => boolean>(() => true);
+    const leaveGuardRef = React.useRef<LeaveGuard>(() => true);
+    const writerLeaveGuardRef = React.useRef<LeaveGuard>(() => true);
     const writerSurfaceRef = useRef<HTMLDivElement>(null);
     const meetingSurfaceRef = useRef<HTMLDivElement>(null);
     const [analysisMeetingView, setAnalysisMeetingView] = useState<AnalysisMeetingView | null>(null);
@@ -201,16 +201,18 @@ export const App: React.FC = () => {
         : '다른 실행에서 진행 중인 분석이 끝난 뒤 새 회의록을 만들 수 있습니다.';
     const backendTaskSourcesRef = useRef(new Map<string, boolean>());
     const showAsrBenchmark = import.meta.env.VITE_ENABLE_ASR_BENCHMARK === 'true';
-    const canLeaveCurrentMeeting = React.useCallback(() => {
+    // Guards may ask in an app dialog, so leaving is decided asynchronously; callers navigate only after it resolves.
+    const canLeaveCurrentMeeting = React.useCallback(async () => {
         if (activeTab === 'minutes') {
-            return (!analysisMeetingView || leaveGuardRef.current()) && writerLeaveGuardRef.current();
+            if (analysisMeetingView && !(await leaveGuardRef.current())) return false;
+            return writerLeaveGuardRef.current();
         }
         if (activeTab === 'history') return leaveGuardRef.current();
         return true;
     }, [activeTab, analysisMeetingView]);
 
-    const handleCreateMeeting = () => {
-        if (!canLeaveCurrentMeeting()) return;
+    const handleCreateMeeting = async () => {
+        if (!(await canLeaveCurrentMeeting())) return;
         if (analysisStartBlocked) return;
         setMeetingDetailOpenRequest(null);
         setSelectedMeetingId(null);
@@ -218,8 +220,8 @@ export const App: React.FC = () => {
         if (!analysisStatus.active) setWriterSessionKey(current => current + 1);
         setActiveTab('minutes');
     };
-    const handleSelectResumeDraft = (jobId: string) => {
-        if (!canLeaveCurrentMeeting()) return;
+    const handleSelectResumeDraft = async (jobId: string) => {
+        if (!(await canLeaveCurrentMeeting())) return;
         const selectedDraft = recoverySnapshot.drafts.find(draft => draft.jobId === jobId);
         if (analysisStartBlocked && selectedDraft?.status !== 'active') return;
         setMeetingDetailOpenRequest(null);
@@ -320,12 +322,12 @@ export const App: React.FC = () => {
     }, []);
 
     useEffect(() => {
-        const handleMeetingsUpdated = (event: Event) => {
+        const handleMeetingsUpdated = async (event: Event) => {
             const detail = (event as CustomEvent<{ id?: string; openHistory?: boolean; detailTab?: MeetingDetailTab }>).detail;
             if (!detail?.id || !detail.openHistory) return;
             const changesWorkSurface = activeTab !== 'history' || detail.id !== selectedMeetingId;
             if (changesWorkSurface) {
-                const canOpenMeeting = canLeaveCurrentMeeting();
+                const canOpenMeeting = await canLeaveCurrentMeeting();
                 if (!canOpenMeeting) return;
             }
             setMeetingDetailOpenRequest({
@@ -370,9 +372,9 @@ export const App: React.FC = () => {
         };
     }, [showAsrBenchmark]);
 
-    const handleTabChange = (tab: AppView) => {
+    const handleTabChange = async (tab: AppView) => {
         if (tab === activeTab) return;
-        if (!canLeaveCurrentMeeting()) return;
+        if (!(await canLeaveCurrentMeeting())) return;
         if (tab === 'history') {
             setMeetingDetailOpenRequest(null);
         }
@@ -399,8 +401,8 @@ export const App: React.FC = () => {
                     }
                     handleTabChange('minutes');
                 }}
-                onOpenAnalysis={() => {
-                    if (!canLeaveCurrentMeeting()) return;
+                onOpenAnalysis={async () => {
+                    if (!(await canLeaveCurrentMeeting())) return;
                     setActiveTab('minutes');
                     window.requestAnimationFrame(() => {
                         const surface = analysisMeetingView ? meetingSurfaceRef.current : writerSurfaceRef.current;
@@ -415,9 +417,9 @@ export const App: React.FC = () => {
                 onSelectResumeDraft={handleSelectResumeDraft}
                 analysisStatus={analysisStatus}
                 showAsrBenchmark={showAsrBenchmark}
-                onSelectMeeting={(id) => {
+                onSelectMeeting={async (id) => {
                     if (activeTab === 'history' && id === selectedMeetingId) return;
-                    if (!canLeaveCurrentMeeting()) return;
+                    if (!(await canLeaveCurrentMeeting())) return;
                     setMeetingDetailOpenRequest(null);
                     setSelectedMeetingId(id);
                     setActiveTab('history');
@@ -439,8 +441,8 @@ export const App: React.FC = () => {
                         }}
                         idleCompanion={activeTab === 'minutes' && (
                             <RecentMeetingsPanel
-                                onOpenMeeting={(id) => {
-                                    if (!canLeaveCurrentMeeting()) return;
+                                onOpenMeeting={async (id) => {
+                                    if (!(await canLeaveCurrentMeeting())) return;
                                     setMeetingDetailOpenRequest(null);
                                     setSelectedMeetingId(id);
                                     setActiveTab('history');

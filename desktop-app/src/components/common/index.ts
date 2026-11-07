@@ -21,3 +21,8 @@ export type { ProgressBarProps } from './ProgressBar';
 /** 토스트: 저장·중지 같은 일시 알림, 화면을 밀지 않음 (새 회의록, 회의 상세) */
 export { AppToast } from './AppToast';
 export type { AppToastMessage, AppToastTone } from './AppToast';
+
+/** 앱 확인·이름 입력 창: window.confirm/prompt 대신 쓰는 모달, 포커스 가둠·복귀 (삭제, 되돌리기, 이름 변경, 이동 확인) */
+export { AppDialogProvider } from './AppDialog';
+export { useAppDialog } from './appDialogContext';
+export type { AppChoice, AppChoiceOptions, AppConfirmOptions, AppDialogApi, AppPromptOptions } from './appDialogContext';

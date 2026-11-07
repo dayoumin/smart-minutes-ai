@@ -1,6 +1,7 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { AudioLines, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
-import { Button, IconButton, Input, StatusBanner, ProgressBar, AppToast, AppToastMessage, AppToastTone } from './components/common';
+import type { LeaveGuard } from './appView';
+import { Button, IconButton, Input, StatusBanner, ProgressBar, AppToast, AppToastMessage, AppToastTone, useAppDialog } from './components/common';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
 import { isTauriRuntime, openSavedFileLocation } from './apiBase';
 import { localEngineClient } from './localEngineClient';
@@ -65,7 +66,7 @@ interface MeetingHistoryProps {
     newMeetingBlocked?: boolean;
     newMeetingBlockedReason?: string;
     onSelectMeetingId?: (id: string | null) => void;
-    onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
+    onRegisterLeaveGuard?: (guard: LeaveGuard | null) => void;
     onOpenSettings?: () => void;
 }
 
@@ -1131,7 +1132,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
     const missingMeetingNoticeRef = useRef(false);
     const meetingUpdateQueuesRef = useRef<Record<string, Promise<void>>>({});
     const hydratedMeetingIdRef = useRef<string | null>(null);
-    const canLeaveMeetingRef = useRef<(nextMeetingId: string | null) => boolean>(() => true);
+    const appDialog = useAppDialog();
     const diarizationProgressJobIdRef = useRef<string | null>(null);
     const diarizationAbortControllerRef = useRef<AbortController | null>(null);
     const diarizationStopActionRef = useRef<DiarizationStopAction | null>(null);
@@ -2397,6 +2398,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             showDetailError('summary', summaryModelUnavailable ? organizeModelGuidanceMessage : hasTranscriptData ? '분석 원본이 있어야 전체 요약을 정리할 수 있습니다.' : '대화록이 있어야 전체 요약을 정리할 수 있습니다.');
             return;
         }
+        if (summaryRegenerationWillResetDerived) {
+            const confirmMeetingId = selectedMeeting.id;
+            const confirmed = await appDialog.confirm({
+                title: '전체 요약을 다시 정리할까요?',
+                description: '지금 있는 주제별·참석자별 정리는 지워지고, 보고서는 이전 기준으로 표시됩니다.',
+                confirmLabel: '다시 정리',
+                tone: 'danger',
+            });
+            // The meeting or generation state may have changed while the dialog was open.
+            if (!confirmed || currentSelectedMeetingIdRef.current !== confirmMeetingId) return;
+        }
 
         const targetMeeting = selectedMeeting;
         const targetJobId = selectedMeeting.jobId;
@@ -3440,20 +3452,22 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         hydratedMeetingIdRef.current = selectedMeeting.id;
     }, [hasSpeakerLabelChanges, isEditing, selectedMeeting]);
 
-    const confirmDiscardUnsavedChanges = React.useCallback((nextMeetingId: string | null) => {
+    const confirmDiscardUnsavedChanges = React.useCallback(async (nextMeetingId: string | null) => {
         const currentMeetingId = currentSelectedMeetingIdRef.current;
         if (!currentMeetingId || currentMeetingId === nextMeetingId || !hasUnsavedDraftChanges) return true;
 
-        const shouldDiscard = window.confirm('저장되지 않은 변경이 있습니다. 이동하면 현재 편집 내용이 사라집니다. 계속하시겠습니까?');
+        const shouldDiscard = await appDialog.confirm({
+            title: '저장하지 않은 변경을 버리고 이동할까요?',
+            description: '이동하면 지금 편집한 내용이 사라집니다.',
+            confirmLabel: '버리고 이동',
+            cancelLabel: '계속 편집',
+            tone: 'danger',
+        });
         if (!shouldDiscard) {
             onSelectMeetingId?.(currentMeetingId);
         }
         return shouldDiscard;
-    }, [hasUnsavedDraftChanges, onSelectMeetingId]);
-
-    useEffect(() => {
-        canLeaveMeetingRef.current = confirmDiscardUnsavedChanges;
-    }, [confirmDiscardUnsavedChanges]);
+    }, [appDialog, hasUnsavedDraftChanges, onSelectMeetingId]);
 
     useEffect(() => {
         if (!onRegisterLeaveGuard) return;
@@ -3551,6 +3565,13 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         if (!selectedMeeting?.editedDisplaySegments?.length) return;
         const targetMeetingId = selectedMeeting.id;
         const targetJobId = selectedMeeting.jobId;
+        const confirmed = await appDialog.confirm({
+            title: '원본 대화록으로 되돌릴까요?',
+            description: '직접 고친 대화록 내용이 지워지며, 되돌린 뒤에는 다시 살릴 수 없습니다.',
+            confirmLabel: '원본으로 되돌리기',
+            tone: 'danger',
+        });
+        if (!confirmed || currentSelectedMeetingIdRef.current !== targetMeetingId) return;
         try {
             clearDetailError();
             setNoticeMessage('');

@@ -9,6 +9,7 @@ import {
     deleteMeetingFolder,
     getAllMeetingFolders,
     getAllMeetings,
+    getMeetingById,
     MeetingFolder,
     MeetingRecord,
     moveMeetingToFolder,
@@ -20,8 +21,9 @@ import {
 } from './meetingRepository';
 import { deleteMeetingWithAnalysis } from './meetingDeletion';
 import { isTauriRuntime } from './apiBase';
+import { toUserFacingError } from './apiError';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
-import { AppToast, ProgressBar, type AppToastMessage } from './components/common';
+import { AppToast, ProgressBar, useAppDialog, type AppToastMessage } from './components/common';
 import { SidebarRecordMoveMenu } from './SidebarRecordMoveMenu';
 import { formatAnalysisDuration, formatTranscriptReadyEstimate, getTranscriptReadyProgressPercent } from './analysisTimeEstimate';
 import type { SidebarMode } from './useSidebarCollapse';
@@ -163,6 +165,13 @@ const focusSidebarFallback = (createButton: HTMLButtonElement | null, sidebar: H
     sidebar?.querySelector<HTMLElement>('.sidebar-brand')?.focus();
 };
 
+// Toast ids only need to differ from the previous toast's, so a counter is enough.
+let sidebarToastSeq = 0;
+const nextSidebarToastId = () => {
+    sidebarToastSeq += 1;
+    return sidebarToastSeq;
+};
+
 export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse, onExpand, onRequestClose, activeTab, selectedMeetingId, onSelectMeeting, onCreateMeeting, onDeleteMeeting, onSelectResumeDraft, onOpenStart, onOpenAnalysis, onOpenArchive, newMeetingBlocked, newMeetingBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeSelectionBlocked, onOpenSettings, onOpenAsrBenchmark, analysisStatus }) => {
     const [records, setRecords] = useState<MeetingRecord[]>([]);
     const recordLoadSequence = useRef(0);
@@ -182,14 +191,19 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
     const resumeDrafts = useMemo(() => selectVisibleRecoveryDrafts(resumeSnapshot), [resumeSnapshot]);
     const [showResumeDrafts, setShowResumeDrafts] = useState(false);
     const [openMenuId, setOpenMenuId] = useState<string | null>(null);
-    const [deletionToast, setDeletionToast] = useState<AppToastMessage | null>(null);
+    const appDialog = useAppDialog();
+    const [sidebarToast, setSidebarToast] = useState<AppToastMessage | null>(null);
     useEffect(() => {
-        if (!deletionToast) return undefined;
+        // An error stays until the user closes it, so it is not missed while looking elsewhere.
+        if (!sidebarToast || sidebarToast.tone === 'error') return undefined;
         const timerId = window.setTimeout(() => {
-            setDeletionToast(current => (current?.id === deletionToast.id ? null : current));
+            setSidebarToast(current => (current?.id === sidebarToast.id ? null : current));
         }, 5000);
         return () => window.clearTimeout(timerId);
-    }, [deletionToast]);
+    }, [sidebarToast]);
+    const showSidebarError = (error: unknown, failed: string) => {
+        setSidebarToast({ id: nextSidebarToastId(), tone: 'error', message: toUserFacingError(error, failed, { desktopApp: isTauriRuntime() }) });
+    };
     const [draggedFolderId, setDraggedFolderId] = useState<string | null>(null);
     const [folderDropTarget, setFolderDropTarget] = useState<{ folderId: string; position: 'before' | 'after' } | null>(null);
     const [isReorderingFolders, setIsReorderingFolders] = useState(false);
@@ -525,10 +539,25 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
     };
 
     const handleRenameRecord = async (record: MeetingRecord) => {
-        closeRecordMenu(record.id, true);
-        const nextTitle = window.prompt('회의록 이름 변경', record.title)?.trim();
+        // Focus goes back to the menu trigger only after the dialog closes; a queued focus would leave the dialog.
+        closeRecordMenu(record.id);
+        const nextTitle = await appDialog.prompt({
+            title: '회의록 이름 변경',
+            label: '회의록 이름',
+            initialValue: record.title,
+            confirmLabel: '변경',
+        });
+        focusRecordMenuTrigger(record.id);
         if (!nextTitle || nextTitle === record.title) return;
-        await updateMeeting({ ...record, title: nextTitle });
+        try {
+            // Results saved while the dialog was open must survive, so rename the stored record, not the menu's copy.
+            const latest = await getMeetingById(record.id);
+            if (!latest) throw new Error('수정할 회의록을 찾을 수 없습니다.');
+            await updateMeeting({ ...latest, title: nextTitle });
+        } catch (error) {
+            showSidebarError(error, '회의록 이름을 바꾸지 못했습니다.');
+            return;
+        }
         window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
     };
 
@@ -545,7 +574,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
             window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
         } catch (error) {
             setOpenMenuId(null);
-            window.alert(error instanceof Error ? error.message : '회의록 고정 상태를 바꾸지 못했습니다.');
+            showSidebarError(error, '회의록 고정 상태를 바꾸지 못했습니다.');
             await loadRecords();
             focusRecordMenuTrigger(record.id);
         }
@@ -587,7 +616,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
             window.dispatchEvent(new CustomEvent('meetings:updated', { detail: { id: record.id } }));
         } catch (error) {
             setOpenMenuId(null);
-            window.alert(error instanceof Error ? error.message : '회의록 폴더를 변경하지 못했습니다.');
+            showSidebarError(error, '회의록 폴더를 변경하지 못했습니다.');
             await loadRecords();
             focusRecordMenuTrigger(record.id);
         }
@@ -601,7 +630,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
             await loadFolders();
         } catch (error) {
             pendingFolderMenuFocusRef.current = null;
-            window.alert(error instanceof Error ? error.message : '폴더 고정 상태를 바꾸지 못했습니다.');
+            showSidebarError(error, '폴더 고정 상태를 바꾸지 못했습니다.');
         }
     };
 
@@ -636,7 +665,7 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                 window.requestAnimationFrame(() => folderMenuTriggerRefs.current.get(focusFolderId)?.focus());
             }
         } catch (error) {
-            window.alert(error instanceof Error ? error.message : '폴더 순서를 바꾸지 못했습니다.');
+            showSidebarError(error, '폴더 순서를 바꾸지 못했습니다.');
             await loadFolders();
         } finally {
             folderOrderSavingRef.current = false;
@@ -706,8 +735,16 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
 
     const handleRenameFolder = async (folder: MeetingFolder) => {
         closeFolderMenu(folder.id);
-        const nextName = window.prompt('폴더 이름 변경', folder.name)?.trim();
-        if (!nextName || nextName === folder.name || folders.some(item => item.id !== folder.id && item.name === nextName)) {
+        const nextName = await appDialog.prompt({
+            title: '폴더 이름 변경',
+            label: '폴더 이름',
+            initialValue: folder.name,
+            confirmLabel: '변경',
+            validate: value => folders.some(item => item.id !== folder.id && item.name === value)
+                ? '같은 이름의 폴더가 이미 있습니다.'
+                : null,
+        });
+        if (!nextName || nextName === folder.name) {
             window.requestAnimationFrame(() => folderMenuTriggerRefs.current.get(folder.id)?.focus());
             return;
         }
@@ -717,19 +754,31 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
             await loadFolders();
         } catch (error) {
             pendingFolderMenuFocusRef.current = null;
-            window.alert(error instanceof Error ? error.message : '폴더 이름을 바꾸지 못했습니다.');
+            showSidebarError(error, '폴더 이름을 바꾸지 못했습니다.');
         }
     };
 
     const handleDeleteFolder = async (folder: MeetingFolder) => {
         closeFolderMenu(folder.id);
-        if (!window.confirm(`"${folder.name}" 폴더를 삭제할까요?\n\n폴더 안의 회의록은 삭제되지 않고 폴더 없음으로 이동합니다.`)) {
+        const confirmed = await appDialog.confirm({
+            title: `"${folder.name}" 폴더를 삭제할까요?`,
+            description: '폴더 안의 회의록은 삭제되지 않고 회의록 목록으로 옮겨집니다.',
+            confirmLabel: '폴더 삭제',
+            tone: 'danger',
+        });
+        if (!confirmed) {
             window.requestAnimationFrame(() => folderMenuTriggerRefs.current.get(folder.id)?.focus());
             return;
         }
         const folderIndex = folders.findIndex(item => item.id === folder.id);
         const fallbackFolderId = folders[folderIndex + 1]?.id ?? folders[folderIndex - 1]?.id ?? null;
-        await deleteMeetingFolder(folder.id);
+        try {
+            await deleteMeetingFolder(folder.id);
+        } catch (error) {
+            showSidebarError(error, '폴더를 삭제하지 못했습니다.');
+            window.requestAnimationFrame(() => folderMenuTriggerRefs.current.get(folder.id)?.focus());
+            return;
+        }
         setOpenFolderMenuId(null);
         window.dispatchEvent(new Event('meetings:updated'));
         window.requestAnimationFrame(() => {
@@ -742,15 +791,29 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
     const handleDeleteRecord = async (record: MeetingRecord) => {
         const recordIndex = visibleRecords.findIndex(item => item.id === record.id);
         const fallbackRecordId = visibleRecords[recordIndex + 1]?.id ?? visibleRecords[recordIndex - 1]?.id ?? null;
-        closeRecordMenu(record.id, true);
-        if (!window.confirm(`"${record.title}" 회의록을 삭제할까요?\n\n앱 안의 회의 기록과 분석 산출물은 삭제되지만, 다운로드 폴더에 저장한 HWPX/음성 파일은 직접 삭제해야 합니다.`)) return;
+        closeRecordMenu(record.id);
+        const confirmed = await appDialog.confirm({
+            title: `"${record.title}" 회의록을 삭제할까요?`,
+            description: '회의 기록과 이 PC의 분석 결과가 함께 삭제됩니다. 다운로드 폴더에 저장한 파일은 직접 삭제해야 합니다.',
+            confirmLabel: '삭제',
+            tone: 'danger',
+        });
+        if (!confirmed) {
+            focusRecordMenuTrigger(record.id);
+            return;
+        }
         const result = await deleteMeetingWithAnalysis(record);
         if (result === 'analysis-active' || result === 'engine-failed' || result === 'cleanup-not-remembered') {
-            window.alert({
-                'analysis-active': '아직 분석이 진행 중인 회의록입니다. 분석을 중단한 뒤 삭제해 주세요.',
-                'engine-failed': '분석 산출물을 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.',
-                'cleanup-not-remembered': `이 PC의 분석 파일을 나중에 지울 수 있도록 기억하지 못해 회의록을 삭제하지 않았습니다. ${isTauriRuntime() ? '앱' : '브라우저'} 저장 공간을 확인한 뒤 다시 삭제해 주세요.`,
-            }[result]);
+            focusRecordMenuTrigger(record.id);
+            setSidebarToast({
+                id: nextSidebarToastId(),
+                tone: 'error',
+                message: {
+                    'analysis-active': '아직 분석이 진행 중인 회의록입니다. 분석을 중단한 뒤 삭제해 주세요.',
+                    'engine-failed': '이 PC의 분석 결과를 삭제하지 못했습니다. 잠시 후 다시 시도해 주세요.',
+                    'cleanup-not-remembered': `이 PC의 분석 결과를 나중에 지울 수 있도록 기억하지 못해 회의록을 삭제하지 않았습니다. ${isTauriRuntime() ? '앱' : '브라우저'} 저장 공간을 확인한 뒤 다시 삭제해 주세요.`,
+                }[result],
+            });
             return;
         }
         window.dispatchEvent(new Event('meetings:updated'));
@@ -758,8 +821,8 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
         focusRecordMenuTrigger(fallbackRecordId);
         if (result === 'deleted-engine-later') {
             // A transient note: the record is gone, and nothing is left for the user to do.
-            setDeletionToast({
-                id: Date.now(),
+            setSidebarToast({
+                id: nextSidebarToastId(),
                 tone: 'neutral',
                 message: isTauriRuntime()
                     ? '회의록을 삭제했습니다. 이 PC의 분석 파일은 분석 기능이 다시 연결되면 지웁니다.'
@@ -1358,12 +1421,12 @@ export const Sidebar: React.FC<SidebarProps> = ({ mode = 'expanded', onCollapse,
                 )}
             </div>
             </>}
-            {deletionToast && createPortal(
+            {sidebarToast && createPortal(
                 <AppToast
-                    message={deletionToast.message}
-                    tone={deletionToast.tone}
-                    closeLabel="삭제 알림 닫기"
-                    onClose={() => setDeletionToast(null)}
+                    message={sidebarToast.message}
+                    tone={sidebarToast.tone}
+                    closeLabel="알림 닫기"
+                    onClose={() => setSidebarToast(null)}
                 />,
                 document.body,
             )}

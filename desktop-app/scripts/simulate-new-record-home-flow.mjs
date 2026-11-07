@@ -6,6 +6,7 @@ import { mkdir } from 'node:fs/promises';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
@@ -175,7 +176,8 @@ const runEmptyHomeScene = async browser => {
       await page.setViewportSize(viewport);
       await settleHomePaint(page);
       const layout = await readHomeLayout(page);
-      assert.ok(Math.abs(layout.info.width - 280) <= 1, `meeting information keeps a 280px column at ${viewport.width}px`);
+      // a1307b8 set the meeting information column to 15.5rem.
+      assert.ok(Math.abs(layout.info.width - 248) <= 1, `meeting information keeps a 248px column at ${viewport.width}px`);
       assert.ok(layout.info.right <= layout.work.left, 'meeting information sits left of the file work area');
       assert.ok(layout.drop.left >= layout.work.left && layout.cta.right <= layout.work.right + 1, 'file and start action stay in the right column');
       assert.ok(layout.cta.bottom <= viewport.height, 'analysis start stays visible on the supported desktop window');
@@ -609,11 +611,12 @@ const runAnalysisEntryPointScene = async browser => {
     };
   });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   await installBaseRoutes(page);
   await page.route('**/api/analyze/draft-statuses', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ drafts: [] }) }));
   await page.route('**/api/analyze/resume-candidates', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ recommended_job_id: null, candidates: [] }) }));
   await page.route('**/api/analyze/preflight', route => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ ok: true, level: 'ok', reason: 'enough_storage', required_bytes: 1, available_bytes: 1e9, message: 'ok' }) }));
-  page.on('dialog', dialog => dialog.accept());
+  appDialogs.on(dialog => dialog.accept());
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
@@ -749,6 +752,7 @@ const runEngineDownDeleteScene = async browser => {
   // Without an engine answer the record is deleted at once and its copy on this PC is deleted on the next answer.
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   const jobId = 'engine-down-delete-job';
   const blockedJobId = 'engine-down-blocked-job';
   let engineUp = false;
@@ -765,7 +769,7 @@ const runEngineDownDeleteScene = async browser => {
     return route.abort('connectionrefused');
   });
   const dialogs = [];
-  page.on('dialog', dialog => {
+  appDialogs.on(dialog => {
     dialogs.push({ type: dialog.type(), message: dialog.message() });
     void dialog.accept();
   });
@@ -814,9 +818,11 @@ const runEngineDownDeleteScene = async browser => {
       window.__restoreSetItem = () => { Storage.prototype.setItem = setItem; };
     });
     await deleteFromMenu('정리 기억 실패 회의');
-    await waitFor(() => dialogs.length === 3, 'the storage alert');
-    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'confirm', 'alert']);
-    assert.match(dialogs[2].message, /기억하지 못해 회의록을 삭제하지 않았습니다/);
+    // The refusal is an error toast that stays until closed, not a browser alert.
+    const storageToast = page.locator('.operation-toast.status-error').filter({ hasText: '기억하지 못해 회의록을 삭제하지 않았습니다' });
+    await storageToast.waitFor({ timeout: 10000 });
+    assert.deepEqual(dialogs.map(dialog => dialog.type), ['confirm', 'confirm']);
+    await storageToast.getByRole('button', { name: '알림 닫기' }).click();
     assert.deepEqual(await readMeetingIds(page), ['engine-down-blocked', 'engine-down-keep']);
     assert.equal(await menuTrigger('정리 기억 실패 회의').count(), 1);
     assert.deepEqual(await pendingCleanups(), [jobId]);
@@ -836,7 +842,7 @@ const runEngineDownDeleteScene = async browser => {
     assert.ok(!deleteRequests.includes(`answered ${blockedJobId}`), 'a kept record keeps its analysis');
     assert.ok(!deleteRequests.some(request => request.endsWith('engine-down-keep-job')), 'a job a record uses is never deleted from the queue');
     assert.deepEqual(await readMeetingIds(page), ['engine-down-blocked', 'engine-down-keep']);
-    assert.equal(dialogs.length, 3, 'the background cleanup shows no dialog');
+    assert.equal(dialogs.length, 2, 'the background cleanup shows no dialog');
     console.log('ok - deleting with the engine off removes the record now and its PC copy on the next answer');
   } finally {
     await context.close();

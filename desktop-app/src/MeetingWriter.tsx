@@ -29,7 +29,8 @@ import {
     unsuppressResumeCandidateKey,
     upsertAnalysisResumeDraft,
 } from './analysisResumeDrafts';
-import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone } from './components/common';
+import type { LeaveGuard } from './appView';
+import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone, useAppDialog } from './components/common';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
@@ -435,20 +436,15 @@ const isMatchingResumeDraftFile = (draft: AnalysisResumeDraft, selectedFile: Fil
     );
 };
 
-const getResumePromptMessage = (candidate: ResumeCandidate): string => {
+// One line of facts for the resume choice dialog: when it stopped, at which step, and how much is reusable.
+const getResumePromptDescription = (candidate: ResumeCandidate): string => {
     const stageLabel = translateStatusMessage(candidate.last_progress?.message || candidate.stage);
     const updatedAt = formatResumeUpdatedAt(candidate.updated_at);
     const chunkLabel = candidate.chunk_count > 0
         ? `음성 인식 ${candidate.completed_chunk_count}/${candidate.chunk_count} 구간 완료`
-        : '이전 분석 기록';
-    return [
-        '같은 파일로 이어서 할 분석을 찾았습니다.',
-        updatedAt ? `최근 상태: ${updatedAt}` : undefined,
-        stageLabel ? `진행 단계: ${stageLabel}` : undefined,
-        chunkLabel,
-        '',
-        '이전 음성 인식 진행분 재사용을 시도할까요?',
-    ].filter(Boolean).join('\n');
+        : '';
+    const facts = [updatedAt, stageLabel, chunkLabel].filter(Boolean).join(' · ');
+    return `${facts ? `${facts}. ` : ''}이어서 분석하면 끝난 구간은 다시 인식하지 않습니다.`;
 };
 
 const sortResumeCandidates = (
@@ -564,7 +560,7 @@ interface MeetingWriterProps {
     analysisStartBlocked?: boolean;
     analysisStartBlockedReason?: string;
     resumeDraftSelectionRequest?: { jobId: string; requestId: number } | null;
-    onRegisterLeaveGuard?: (guard: (() => boolean) | null) => void;
+    onRegisterLeaveGuard?: (guard: LeaveGuard | null) => void;
     /** Opens Settings at 문제 해결 (desktop: restart the analysis engine). */
     onOpenTroubleshooting?: () => void;
     /** Opens Settings > 일반 at 분석 장치 (GPU unusable) or 참석자 구분까지 이어서 실행 (its model is missing). */
@@ -574,6 +570,7 @@ interface MeetingWriterProps {
 }
 
 export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChange, analysisStatusTarget, onOpenSettings, analysisStartBlocked = false, analysisStartBlockedReason = '진행 중인 분석이 끝나면 새 회의록을 만들 수 있습니다.', resumeDraftSelectionRequest, onRegisterLeaveGuard, onOpenTroubleshooting, onOpenAnalysisSettings, idleCompanion }) => {
+    const appDialog = useAppDialog();
     const { snapshot: localEngineConnection, beginTransportCheck, reportTransport, probeLocalEngine } = useLocalEngineConnection();
     const [webConnectionRecoveryStarted, setWebConnectionRecoveryStarted] = useState(false);
     const [webConnectionCheckPending, setWebConnectionCheckPending] = useState(false);
@@ -1081,18 +1078,29 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         if (!onRegisterLeaveGuard) return;
         onRegisterLeaveGuard(() => {
             if (isAnalyzing) {
-                return window.confirm('분석이 진행 중입니다. 화면을 이동하면 진행 상태 확인이 어려울 수 있습니다. 이동할까요?');
+                return appDialog.confirm({
+                    title: '분석 중에 다른 화면으로 이동할까요?',
+                    description: '분석은 계속되지만, 이동하면 진행 상태를 이 화면에서 확인하기 어려울 수 있습니다.',
+                    confirmLabel: '이동',
+                });
             }
             if (isExtractingAudio) {
-                return window.confirm('음성 추출이 진행 중입니다. 다른 화면으로 이동할까요?');
+                return appDialog.confirm({
+                    title: '음성 추출 중에 다른 화면으로 이동할까요?',
+                    confirmLabel: '이동',
+                });
             }
             if (!hasDraftableInput) return true;
-            return window.confirm('작성 중인 내용이 있습니다. 다른 기록으로 이동할까요?');
+            return appDialog.confirm({
+                title: '작성 중인 회의록을 두고 다른 기록으로 이동할까요?',
+                confirmLabel: '이동',
+                cancelLabel: '계속 작성',
+            });
         });
         return () => {
             onRegisterLeaveGuard(null);
         };
-    }, [hasDraftableInput, isAnalyzing, isExtractingAudio, onRegisterLeaveGuard]);
+    }, [appDialog, hasDraftableInput, isAnalyzing, isExtractingAudio, onRegisterLeaveGuard]);
 
     const selectedResumeDraft = useMemo(
         () => resumeDrafts.find(draft => draft.jobId === selectedResumeDraftId) ?? null,
@@ -1459,11 +1467,15 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     const handleDeleteResumeDraft = async (draft: AnalysisResumeDraft) => {
         if (deletingResumeDraftIds.has(draft.jobId)) return;
         const confirmMessage = draft.status === 'active'
-            ? '진행 중이던 분석 기록을 삭제할까요? 실제로 분석이 계속 진행 중이면 삭제되지 않습니다.'
-            : '이전 분석 진행 기록을 삭제할까요? 저장된 회의 기록은 삭제하지 않습니다.';
-        if (typeof window.confirm === 'function' && !window.confirm(confirmMessage)) {
-            return;
-        }
+            ? { title: '진행 중이던 분석 기록을 삭제할까요?', description: '실제로 분석이 계속 진행 중이면 삭제되지 않습니다.' }
+            : { title: '이전 분석 진행 기록을 삭제할까요?', description: '저장된 회의 기록은 삭제하지 않습니다.' };
+        const confirmed = await appDialog.confirm({
+            title: confirmMessage.title,
+            description: confirmMessage.description,
+            confirmLabel: '삭제',
+            tone: 'danger',
+        });
+        if (!confirmed) return;
         let deleted = false;
         let deletedLocalOnly = false;
         let deleteNotice = '';
@@ -1922,8 +1934,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 });
                 const availableCandidate = orderedCandidates[0] || null;
                 if (availableCandidate) {
-                    const shouldResume = window.confirm(getResumePromptMessage(availableCandidate));
-                    if (shouldResume) {
+                    const resumeChoice = await appDialog.choose({
+                        title: '같은 파일로 이어서 할 분석이 있습니다',
+                        description: getResumePromptDescription(availableCandidate),
+                        primaryLabel: '이어서 분석',
+                        secondaryLabel: '처음부터 분석',
+                    });
+                    if (analysisCancelledRef.current) return;
+                    if (resumeChoice === null) {
+                        // Closing the choice starts nothing; `finally` returns to the input.
+                        setStatusMessage('');
+                        return;
+                    }
+                    if (resumeChoice === 'primary') {
                         analysisJobId = availableCandidate.job_id;
                         resumeRequested = true;
                         setStatusMessage('이전 음성 인식 진행분 재사용을 시도합니다.');

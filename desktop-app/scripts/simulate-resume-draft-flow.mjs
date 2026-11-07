@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
@@ -184,7 +185,7 @@ const runWriterLayoutScenario = async (browser) => {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await page.getByRole('heading', { name: '새 회의록' }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
-    await page.getByText('회의 정보', { exact: true }).waitFor({ timeout: 10000 });
+    await page.getByRole('region', { name: '회의 정보' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('참석자 구분까지 이어서 실행', { exact: true }).count(), 0, 'participant separation should be owned by Settings');
     assert.equal(await page.getByRole('button', { name: '음성 추출', exact: true }).count(), 0, 'audio extraction stays implemented but hidden from the new-record surface');
     const startButton = page.getByRole('button', { name: '분석 시작' });
@@ -422,6 +423,7 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
 const runPartialRecordFailureScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   let analysisJobId = null;
 
   await installBaseRoutes(page);
@@ -493,7 +495,7 @@ const runPartialRecordFailureScenario = async (browser, fixtureUpload) => {
     assert.equal(meetings[0].jobId, analysisJobId);
     assert.equal(meetings[0].analysisStatus, 'diarization_failed');
 
-    page.once('dialog', dialog => dialog.accept());
+    appDialogs.once(dialog => dialog.accept());
     await page.getByRole('button', { name: '중간 저장 실패 테스트', exact: true }).click();
     await page.getByText('실패 전 저장된 대화록', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByText('참석자 구분 실패', { exact: true }).first().waitFor({ timeout: 10000 });
@@ -1187,6 +1189,7 @@ const runResumeCancelKeepsUserResultScenario = async (browser) => {
 const runResumeDraftScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   page.on('pageerror', error => console.error('resume draft scenario page error:', error));
   let analyzeRequestSnapshot = null;
   let resumeCandidatesCalled = false;
@@ -1320,7 +1323,7 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     });
     await page.getByText('이어하기-전-선택.mp3', { exact: true }).waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: /이어서 할 분석 2건/ }).click();
-    page.once('dialog', dialog => dialog.accept());
+    appDialogs.once(dialog => dialog.accept());
     await page.locator('.sidebar-resume-draft-button').filter({ hasText: '중단된 회의' }).click();
     await page.getByRole('heading', { name: '이어하기' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('이어하기-전-선택.mp3', { exact: true }).count(), 0);
@@ -1807,6 +1810,7 @@ const runInvalidResumeDraftScenario = async (browser, fixtureUpload) => {
 const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   page.on('pageerror', error => console.error('suppressed scenario page error:', error));
   let analyzeRequestSnapshot = null;
   let dialogShown = false;
@@ -1818,7 +1822,7 @@ const runSuppressedResumeCandidateScenario = async (browser, fixtureUpload) => {
     window.localStorage.setItem('analysisResumeDrafts', '[]');
   }, suppressedKey);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     dialogShown = true;
     await dialog.dismiss();
   });
@@ -1950,6 +1954,7 @@ const runSuppressedActiveCandidateBlocksFreshStartScenario = async (browser, fix
 const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   let analyzeRequestSnapshot = null;
   let dialogShown = false;
 
@@ -1973,7 +1978,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
     window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     dialogShown = true;
     await dialog.dismiss();
   });
@@ -2073,6 +2078,7 @@ const runSelectedResumeFreshStartScenario = async (browser, fixtureUpload) => {
 const runActiveDraftDeleteAfterBackendErrorScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
 
   const draft = {
     jobId: 'stale-active-delete-job',
@@ -2094,7 +2100,7 @@ const runActiveDraftDeleteAfterBackendErrorScenario = async (browser, fixtureUpl
     window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     assert.match(dialog.message(), /진행 중이던 분석 기록을 삭제할까요/);
     await dialog.accept();
   });
@@ -2133,6 +2139,7 @@ const runActiveDraftDeleteAfterBackendErrorScenario = async (browser, fixtureUpl
 const runLocalOnlyDeleteRetriesPendingCleanupScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   let deleteCalls = 0;
 
   const draft = {
@@ -2156,7 +2163,7 @@ const runLocalOnlyDeleteRetriesPendingCleanupScenario = async (browser, fixtureU
     window.localStorage.setItem('pendingAnalysisDraftCleanups', '[]');
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     assert.match(dialog.message(), /이전 분석 진행 기록을 삭제할까요/);
     await dialog.accept();
   });
@@ -2216,6 +2223,7 @@ const runLocalOnlyDeleteRetriesPendingCleanupScenario = async (browser, fixtureU
 const runDeleteServerErrorKeepsDraftScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
 
   const draft = {
     jobId: 'delete-server-error-job',
@@ -2237,7 +2245,7 @@ const runDeleteServerErrorKeepsDraftScenario = async (browser, fixtureUpload) =>
     window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     assert.match(dialog.message(), /이전 분석 진행 기록을 삭제할까요/);
     await dialog.accept();
   });
@@ -2297,6 +2305,7 @@ const runDeleteServerErrorKeepsDraftScenario = async (browser, fixtureUpload) =>
 const runActiveDraftNetworkFailureKeepsDraftScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
 
   const draft = {
     jobId: 'active-network-delete-job',
@@ -2319,7 +2328,7 @@ const runActiveDraftNetworkFailureKeepsDraftScenario = async (browser, fixtureUp
     window.localStorage.setItem('pendingAnalysisDraftCleanups', '[]');
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     assert.match(dialog.message(), /진행 중이던 분석 기록을 삭제할까요/);
     await dialog.accept();
   });
@@ -2354,6 +2363,7 @@ const runActiveDraftNetworkFailureKeepsDraftScenario = async (browser, fixtureUp
 const runDeleteDoesNotSuppressFileCandidateScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
 
   const draft = {
     jobId: 'delete-no-suppress-job',
@@ -2376,7 +2386,7 @@ const runDeleteDoesNotSuppressFileCandidateScenario = async (browser, fixtureUpl
     window.localStorage.setItem('suppressedResumeCandidateKeys', '[]');
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     assert.match(dialog.message(), /이전 분석 진행 기록을 삭제할까요/);
     await dialog.accept();
   });
@@ -2427,6 +2437,7 @@ const runDeleteDoesNotSuppressFileCandidateScenario = async (browser, fixtureUpl
 const runCancelledDraftImmediateDeleteScenario = async (browser, fixtureUpload) => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 960 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
 
   const draft = {
     jobId: 'cancelled-immediate-delete-job',
@@ -2448,7 +2459,7 @@ const runCancelledDraftImmediateDeleteScenario = async (browser, fixtureUpload) 
     window.localStorage.setItem('analysisResumeDrafts', JSON.stringify([value]));
   }, draft);
 
-  page.on('dialog', async dialog => {
+  appDialogs.on(async dialog => {
     assert.match(dialog.message(), /이전 분석 진행 기록을 삭제할까요/);
     await dialog.accept();
   });

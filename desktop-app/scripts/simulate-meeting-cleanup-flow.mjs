@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/';
@@ -188,9 +189,10 @@ const runCleanupScene = async browser => {
     }]));
   });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   const engine = await installEngine(page);
   const dialogs = [];
-  page.on('dialog', dialog => {
+  appDialogs.on(dialog => {
     dialogs.push({ type: dialog.type(), message: dialog.message() });
     void dialog.accept();
   });
@@ -308,12 +310,13 @@ const runUnresponsiveDeleteScenes = async browser => {
   for (const target of ['record', 'pc-files']) {
     const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
     const page = await context.newPage();
+    const appDialogs = await installAppDialogs(page);
     const engine = await installEngine(page);
     engine.stored = [
       { job_id: 'cleanup-timeout-job', completed_at: '2026-10-19T00:00:00+00:00', size_bytes: 1024 },
       { job_id: 'cleanup-timeout-orphan', completed_at: '2026-10-19T00:00:00+00:00', size_bytes: 1024 },
     ];
-    page.on('dialog', dialog => { void dialog.accept(); });
+    appDialogs.on(dialog => { void dialog.accept(); });
     try {
       await page.clock.install();
       await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });

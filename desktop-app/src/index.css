@@ -3447,6 +3447,61 @@
     color: var(--color-neutral-0);
   }
 
+  /* App confirm/prompt dialog: above settings (z-50) and the pairing/processing dialogs (z-80). */
+  .app-dialog-backdrop {
+    @apply fixed inset-0 z-[90] flex items-center justify-center p-4;
+    background: var(--bg-overlay);
+    overscroll-behavior: contain;
+  }
+
+  .app-dialog {
+    @apply w-full max-w-md border bg-background p-5 text-foreground;
+    word-break: keep-all;
+    overflow-wrap: anywhere;
+    border-radius: var(--radius-dialog);
+    border-color: var(--border-default);
+    box-shadow: var(--shadow-overlay);
+  }
+
+  .app-dialog-title {
+    @apply text-lg font-semibold;
+  }
+
+  .app-dialog-description {
+    @apply mt-2 text-sm leading-relaxed text-muted-foreground;
+  }
+
+  .app-dialog-form {
+    @apply mt-4 flex flex-col gap-2;
+  }
+
+  .app-dialog-label {
+    @apply text-sm font-medium;
+  }
+
+  .app-dialog-error {
+    @apply min-h-5 text-xs leading-5;
+    color: var(--status-error-fg);
+  }
+
+  .app-dialog-actions {
+    @apply mt-5 flex flex-wrap justify-end gap-2;
+  }
+
+  .app-dialog-form .app-dialog-actions {
+    @apply mt-1;
+  }
+
+  .app-dialog-danger {
+    @apply border-0;
+    background-color: var(--status-error-fg);
+    color: var(--color-neutral-0);
+  }
+
+  .app-dialog-danger:hover {
+    background-color: var(--status-error-progress);
+  }
+
   .detail-action-button {
     @apply h-8 shrink-0 border-border bg-background px-3 text-xs text-foreground shadow-none hover:text-foreground;
   }

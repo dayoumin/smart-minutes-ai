@@ -10,7 +10,7 @@ import {
 import { getApiBase, getDesktopActionHeaders, isTauriRuntime, openExternalUrl, restartDesktopBackend } from './apiBase';
 import { localEngineClient, toLocalEngineApiPath } from './localEngineClient';
 import { requestFiniteEngineJson } from './localEngineClientCore';
-import { readApiErrorMessage } from './apiError';
+import { readApiErrorMessage, toUserFacingError } from './apiError';
 import { LocalEngineConnectionHelp } from './LocalEngineConnectionHelp';
 import { OllamaModelSearch } from './OllamaModelSearch';
 import { SettingsHint } from './SettingsHint';
@@ -456,6 +456,9 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     const modelDownloadRequestIdsRef = useRef<Record<string, number>>({});
     const restoredOllamaPullsRef = useRef<Record<string, number>>({});
     const lastSavedGeneralKeyRef = useRef('');
+    // Values whose save failed are not retried on their own; the banner offers 다시 저장, and changing a value saves again.
+    const failedGeneralKeyRef = useRef('');
+    const [generalSaveFailed, setGeneralSaveFailed] = useState(false);
     const currentGeneralKeyRef = useRef('');
     const dialogRef = useRef<HTMLDivElement | null>(null);
     const closeButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -1717,9 +1720,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 applyGeneralSettingsToForm(nextSettings);
             }
             lastSavedGeneralKeyRef.current = requestKey;
+            failedGeneralKeyRef.current = '';
+            setGeneralSaveFailed(false);
             setSaveState('saved');
         } catch (error) {
-            setErrorMessage(error instanceof Error ? error.message : '설정 저장 중 오류가 발생했습니다.');
+            failedGeneralKeyRef.current = requestKey;
+            setGeneralSaveFailed(true);
+            setErrorMessage(toUserFacingError(error, '설정을 저장하지 못했습니다.', { desktopApp: isTauriRuntime() }));
             setSaveState('idle');
         } finally {
             finishUpdateActivity();
@@ -1806,8 +1813,10 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
             autoSaveAudioCopy: preserveExtractedAudio ? autoSaveAudioCopy : false,
         });
         currentGeneralKeyRef.current = nextKey;
+        // Moving off the failed values forgets them, so coming back to them later saves again.
+        if (nextKey !== failedGeneralKeyRef.current) failedGeneralKeyRef.current = '';
         if (!settings || isLoading || isSaving || isRestartingBackend) return;
-        if (nextKey === lastSavedGeneralKeyRef.current) return;
+        if (nextKey === lastSavedGeneralKeyRef.current || nextKey === failedGeneralKeyRef.current) return;
         const timeoutId = window.setTimeout(() => {
             void saveGeneralSettings();
         }, 600);
@@ -2239,7 +2248,17 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                             <StatusBanner
                                 tone="error"
                                 heading={errorHeading}
-                                action={renderDismissButton('설정 오류 알림 닫기', () => setErrorMessage(''))}
+                                action={<>
+                                    {generalSaveFailed && (
+                                        <Button variant="outline" className="h-7 px-2.5 text-xs" disabled={isSaving || isRestartingBackend} onClick={() => void saveGeneralSettings()}>
+                                            다시 저장
+                                        </Button>
+                                    )}
+                                    {renderDismissButton('설정 오류 알림 닫기', () => {
+                                        setErrorMessage('');
+                                        setGeneralSaveFailed(false);
+                                    })}
+                                </>}
                             >
                                 {errorMessage}
                             </StatusBanner>

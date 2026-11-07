@@ -4,7 +4,7 @@ import { ChevronLeft } from 'lucide-react';
 import { listAnalysisResumeDrafts } from './analysisResumeDrafts';
 import { isTauriRuntime } from './apiBase';
 import { LOCAL_ENGINE_NAME, withJosa } from './brand';
-import { AppToast, type AppToastMessage } from './components/common';
+import { AppToast, useAppDialog, type AppToastMessage } from './components/common';
 import {
     deleteMeetingsWithAnalysis,
     deleteStoredAnalyses,
@@ -83,6 +83,7 @@ interface MeetingCleanupPanelProps {
 }
 
 export const MeetingCleanupPanel: React.FC<MeetingCleanupPanelProps> = ({ onBack, onMeetingsDeleted, onBusyChange }) => {
+    const appDialog = useAppDialog();
     const desktop = isTauriRuntime();
     const [records, setRecords] = useState<MeetingRecord[] | null>(null);
     const [recordsFailed, setRecordsFailed] = useState(false);
@@ -213,7 +214,13 @@ export const MeetingCleanupPanel: React.FC<MeetingCleanupPanelProps> = ({ onBack
     const deleteSelected = async () => {
         const targets = visibleRecords.filter(record => selectedIds.has(record.id));
         if (targets.length === 0 || deleting) return;
-        if (!window.confirm(`회의록 ${targets.length}개를 삭제할까요?\n\n회의 기록과 이 PC의 분석 결과가 함께 삭제됩니다. 다운로드 폴더에 저장한 파일은 직접 삭제해야 합니다.`)) return;
+        const confirmed = await appDialog.confirm({
+            title: `회의록 ${targets.length}개를 삭제할까요?`,
+            description: '회의 기록과 이 PC의 분석 결과가 함께 삭제됩니다. 다운로드 폴더에 저장한 파일은 직접 삭제해야 합니다.',
+            confirmLabel: '삭제',
+            tone: 'danger',
+        });
+        if (!confirmed || !mountedRef.current) return;
         setKeptMessage('');
         setDeleting({ done: 0, total: targets.length });
         const summary = await deleteMeetingsWithAnalysis(targets, done => {
@@ -243,10 +250,15 @@ export const MeetingCleanupPanel: React.FC<MeetingCleanupPanelProps> = ({ onBack
     const deletePcFiles = async () => {
         if (pcFiles.status !== 'ready' || pcFiles.jobIds.length === 0 || pcDeleting || !records) return;
         const count = pcFiles.jobIds.length;
-        const question = desktop
-            ? `이 PC에만 남은 분석 결과 ${count}개를 삭제할까요?`
-            : `이 PC에만 남은 분석 결과 ${count}개를 삭제할까요?\n\n같은 PC를 다른 브라우저에서도 쓴다면, 그 브라우저 회의록의 분석 결과도 함께 지워집니다.`;
-        if (!window.confirm(question)) return;
+        const confirmed = await appDialog.confirm({
+            title: `이 PC에만 남은 분석 결과 ${count}개를 삭제할까요?`,
+            description: desktop
+                ? undefined
+                : '같은 PC를 다른 브라우저에서도 쓴다면, 그 브라우저 회의록의 분석 결과도 함께 지워집니다.',
+            confirmLabel: '삭제',
+            tone: 'danger',
+        });
+        if (!confirmed || !mountedRef.current) return;
         setPcMessage('');
         setPcDeleting(true);
         const outcome = await deleteStoredAnalyses(pcFiles.jobIds);

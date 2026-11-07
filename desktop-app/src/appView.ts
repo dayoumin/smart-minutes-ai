@@ -5,3 +5,6 @@ export const getInitialAppView = (): AppView => (
         ? 'archive'
         : 'minutes'
 );
+
+// Asked before leaving the current work surface; it may open an app dialog, so callers await it.
+export type LeaveGuard = () => boolean | Promise<boolean>;

@@ -39,7 +39,7 @@ const MIN_MANUAL_CHECK_MS = 700;
 // Connection state the writer's status row needs: whether the user started connecting, the manual
 // check in progress, and the `?` help. The connection step itself is getLocalEngineConnectionView.
 export const useLocalEngineConnectionControls = ({
-    installerUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_INSTALLER_URL),
+    installerUrl: configuredInstallerUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_INSTALLER_URL),
     updateUrl: configuredUpdateUrl = getDistributionUrl(import.meta.env.VITE_LOCAL_ENGINE_UPDATE_URL),
     connectionRequested = false,
     checkRequested = false,
@@ -54,6 +54,9 @@ export const useLocalEngineConnectionControls = ({
         resetPairing,
     } = useLocalEngineConnection();
     const updateUrl = latestRelease?.downloadUrl ?? configuredUpdateUrl;
+    // The published latest installer is also the first-install file, so a deploy built without an installer
+    // address still offers one once the release note loads.
+    const installerUrl = configuredInstallerUrl ?? latestRelease?.downloadUrl;
     const [connectionStarted, setConnectionStarted] = useState(false);
     const [manualCheckPending, setManualCheckPending] = useState(false);
     const [showHelp, setShowHelp] = useState(false);

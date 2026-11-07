@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { chromium } from 'playwright';
 import { LOCAL_ENGINE_NAME, withJosa } from '../src/brand.ts';
+import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes&localEngineConnection=1';
 const shouldStartServer = !process.env.APP_URL;
@@ -807,6 +808,7 @@ const verifyAutomaticEngineConnection = async browser => {
 const verifyInputStage = async browser => {
   const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
   const page = await context.newPage();
+  const appDialogs = await installAppDialogs(page);
   page.setDefaultTimeout(15000);
   const fixtureDir = await mkdtemp(join(tmpdir(), 'lmo-input-stage-'));
   const samePath = join(fixtureDir, 'same-file.mp4');
@@ -821,7 +823,7 @@ const verifyInputStage = async browser => {
   let holdStatuses = null;
   let failStatuses = false;
   page.on('pageerror', error => errors.push(error.message));
-  page.on('dialog', dialog => dialog.accept());
+  appDialogs.on(dialog => dialog.accept());
   await page.addInitScript(() => {
     window.localStorage.setItem('localProcessingIntroSeen', '1');
     // Only over.wav reports a length past the 2-hour limit; other files keep the browser's own metadata.

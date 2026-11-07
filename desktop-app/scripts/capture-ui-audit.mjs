@@ -440,7 +440,8 @@ const seedDb = async (page, meetings, folders = []) => page.evaluate(([meetingVa
   };
 }), [meetings, folders]);
 
-const ready = page => page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 20000 });
+// 설정 is in both the expanded sidebar and the narrow icon rail (which has no 새 회의록 button).
+const ready = page => page.getByRole('complementary', { name: '앱 메뉴' }).getByRole('button', { name: '설정', exact: true }).first().waitFor({ timeout: 20000 });
 
 const seedAndReload = async (page, meetings = ALL_MEETINGS, folders = FOLDERS) => {
   await ready(page);
@@ -452,6 +453,9 @@ const seedAndReload = async (page, meetings = ALL_MEETINGS, folders = FOLDERS) =
 };
 
 const openMeeting = async (page, title) => {
+  // Below 1200px the sidebar is an icon rail; its 메뉴 button opens the list over the page.
+  const railMenu = page.getByRole('complementary', { name: '앱 메뉴' }).getByRole('button', { name: '메뉴', exact: true });
+  if (await railMenu.isVisible()) await railMenu.click();
   const navigation = page.locator('.barorok-navigation');
   const row = navigation.getByText(title, { exact: true }).first();
   // A meeting in a folder is listed only while its folder is open (sidebar folders expand in place).
@@ -557,7 +561,7 @@ const captures = [
   {
     id: 'A2', note: '분석 실패',
     routes: { analyze: route => route.fulfill(sse([['progress', { type: 'progress', progress: 34, status: 'transcribing', message: 'Transcribing chunk 1/3...' }], ['error', { type: 'error', progress: 34, status: 'error', message: 'CUDA out of memory. Tried to allocate 2.00 GiB' }], ['done', '[DONE]']])) },
-    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 }); await page.waitForTimeout(400); },
+    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.locator('.meeting-detail-shell').getByRole('alert').first().waitFor({ timeout: 10000 }); await page.waitForTimeout(400); },
   },
   {
     id: 'A3', note: '분석 완료',
@@ -568,7 +572,7 @@ const captures = [
         ['done', '[DONE]'],
       ])),
     },
-    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); const started = Date.now(); await page.getByRole('button', { name: '결과 보기' }).first().waitFor({ timeout: 30000 }); await page.waitForTimeout(400); return { completedAfterMs: Date.now() - started }; },
+    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); const started = Date.now(); await page.locator('.meeting-detail-shell').getByText(mainSegments[0].text, { exact: true }).first().waitFor({ timeout: 30000 }); await page.locator('.meeting-detail-shell .animate-spin').first().waitFor({ state: 'detached', timeout: 30000 }); await page.waitForTimeout(400); return { completedAfterMs: Date.now() - started }; },
   },
   // Stage 3 states (audit 4.4): engine check before the 45s notice, failure after the transcript was saved, preparation phase.
   {
@@ -585,7 +589,7 @@ const captures = [
       ])),
       generation: { 'partial-result': route => route.fulfill(json({ job_id: 'audit-partial-job', source_file: '2026-10-18_자원조사_보고회의.mp4', partial: true, segments: mainSegments, display_segments: mainSegments, diarization_requested: true })) },
     },
-    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 }); await page.waitForTimeout(400); },
+    steps: async page => { await seedAndReload(page); await fillWriter(page); await page.getByRole('button', { name: '분석 시작' }).click(); await page.locator('.meeting-detail-shell').getByRole('alert').first().waitFor({ timeout: 10000 }); await page.waitForTimeout(400); },
   },
   {
     id: 'A5', note: '분석 준비 단계 (저장 공간 확인 응답 대기)', routes: { generation: { 'api/analyze/preflight': () => hangForever() } },
@@ -686,11 +690,11 @@ const captures = [
   },
   {
     id: 'S3', note: '설정 모델 준비됨',
-    steps: async page => { await seedAndReload(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await openTab(page, '모델'); await page.waitForTimeout(700); },
+    steps: async page => { await seedAndReload(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await page.waitForTimeout(700); },
   },
   {
     id: 'S4', note: '설정 모델 없음', routes: { model: { sttInstalled: false, downloadable: true } },
-    steps: async page => { await seedAndReload(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await openTab(page, '모델'); await page.waitForTimeout(700); },
+    steps: async page => { await seedAndReload(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await page.waitForTimeout(700); },
   },
   // S1/S3/S4 capture the dialog 0.7 s after opening (still loading); S5–S7 wait for loaded values.
   {
@@ -711,7 +715,6 @@ const captures = [
       await seedAndReload(page);
       await page.getByRole('button', { name: '설정', exact: true }).first().click();
       await page.getByRole('dialog').waitFor();
-      await openTab(page, '모델');
       await page.getByText('모델 상태를 불러오는 중입니다').first().waitFor({ state: 'detached', timeout: 20000 });
       await page.waitForTimeout(400);
     },
@@ -722,7 +725,6 @@ const captures = [
       await seedAndReload(page);
       await page.getByRole('button', { name: '설정', exact: true }).first().click();
       await page.getByRole('dialog').waitFor();
-      await openTab(page, '모델');
       await page.getByText('모델 상태를 불러오는 중입니다').first().waitFor({ state: 'detached', timeout: 20000 });
       await page.waitForTimeout(400);
     },
@@ -733,7 +735,7 @@ const captures = [
   },
   {
     id: 'S9', note: '설정 모델, 모델 상태 응답 전(상태 요청 보류)', routes: { holdModels: true },
-    steps: async page => { await ready(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await openTab(page, '모델'); await page.waitForTimeout(600); },
+    steps: async page => { await ready(page); await page.getByRole('button', { name: '설정', exact: true }).first().click(); await page.getByRole('dialog').waitFor(); await page.waitForTimeout(600); },
   },
   {
     id: 'B2', note: '사이드바 회의록 행 메뉴',

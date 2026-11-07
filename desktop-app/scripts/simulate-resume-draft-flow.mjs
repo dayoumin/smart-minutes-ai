@@ -11,18 +11,8 @@ import { installAppDialogs } from './appDialogHarness.mjs';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 
-const PROCESSING_HELP_TITLE = '회의 파일과 대화록은 이 PC 밖으로 나가지 않습니다';
-// Storage wording follows the engine setting and lives in the 처리 방식 help, not on the writer surface.
-const openProcessingHelp = async page => {
-  await page.locator('.writer-local-promise').getByRole('button', { name: '처리 방식', exact: true }).click();
-  const help = page.getByRole('dialog', { name: PROCESSING_HELP_TITLE });
-  await help.waitFor({ state: 'visible', timeout: 10000 });
-  return help;
-};
-const closeProcessingHelp = async (page, help) => {
-  await page.keyboard.press('Escape');
-  await help.waitFor({ state: 'hidden', timeout: 10000 });
-};
+// The 처리 방식 help entry was removed from the writer on 2026-10-24 (docs/design.md); storage wording now
+// appears only in the web build's first-visit notice, so these scenarios no longer read it from the writer.
 const shouldStartServer = !process.env.APP_URL;
 const WRITER_CAPTURE_DIR = process.env.WRITER_CAPTURE_DIR ?? null;
 
@@ -188,8 +178,9 @@ const runWriterLayoutScenario = async (browser) => {
     await page.getByRole('region', { name: '회의 정보' }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText('참석자 구분까지 이어서 실행', { exact: true }).count(), 0, 'participant separation should be owned by Settings');
     assert.equal(await page.getByRole('button', { name: '음성 추출', exact: true }).count(), 0, 'audio extraction stays implemented but hidden from the new-record surface');
+    // Since 2026-10-24 분석 시작 appears only after a file is chosen.
     const startButton = page.getByRole('button', { name: '분석 시작' });
-    await startButton.waitFor({ timeout: 10000 });
+    assert.equal(await startButton.count(), 0, 'analysis start waits for a file');
 
     for (const viewport of [{ width: 1280, height: 800 }, { width: 1440, height: 900 }, { width: 1600, height: 900 }, { width: 1280, height: 720 }, { width: 1024, height: 800 }]) {
       await page.setViewportSize(viewport);
@@ -201,12 +192,12 @@ const runWriterLayoutScenario = async (browser) => {
           return element ? element.scrollWidth - element.clientWidth : null;
         };
         const grid = rect('.writer-input-grid');
-        const upload = rect('.writer-input-grid > .writer-section:first-child');
+        const work = rect('.writer-work-column');
+        const upload = rect('.writer-upload-section');
         const info = rect('.writer-info-column');
         const action = rect('.writer-action-row');
         const title = rect('.writer-shell .page-title');
         const fileButton = rect('.file-drop-zone');
-        const startButton = rect('.writer-start-button');
         const workspace = document.querySelector('.barorok-workspace');
         const frame = rect('.barorok-app-frame');
         const shell = rect('.barorok-shell-body');
@@ -226,12 +217,12 @@ const runWriterLayoutScenario = async (browser) => {
           overflowY: workspace ? getComputedStyle(workspace).overflowY : '',
           viewportHeight: window.innerHeight,
           grid: grid && { left: grid.left, right: grid.right, width: grid.width },
+          work: work && { left: work.left, right: work.right, top: work.top },
           upload: upload && { left: upload.left, top: upload.top, bottom: upload.bottom },
-          info: info && { left: info.left, right: info.right, top: info.top, bottom: info.bottom },
+          info: info && { left: info.left, right: info.right, top: info.top, bottom: info.bottom, width: info.width },
           action: action && { left: action.left, right: action.right, top: action.top, bottom: action.bottom },
-          startButton: startButton && { right: startButton.right },
           workspace: workspaceRect && { left: workspaceRect.left, right: workspaceRect.right },
-          visibleBottoms: [title?.bottom, fileButton?.bottom, info?.bottom, action?.bottom, startButton?.bottom],
+          visibleBottoms: [title?.bottom, fileButton?.bottom, info?.bottom, action?.bottom],
         };
       });
       for (const [surface, overflow] of Object.entries(metrics.horizontalOverflow)) {
@@ -241,15 +232,17 @@ const runWriterLayoutScenario = async (browser) => {
         metrics.viewportBounds.every(bounds => bounds.left >= -1 && bounds.right <= viewport.width + 1),
         `${viewport.width}px app surfaces should remain inside viewport bounds`,
       );
-      assert.ok(metrics.grid && metrics.upload && metrics.info && metrics.action && metrics.workspace, 'writer layout elements should exist');
-      assert.ok(metrics.grid.width <= 880.5, `${viewport.width}px writer column should stay within 880px`);
+      assert.ok(metrics.grid && metrics.work && metrics.upload && metrics.info && metrics.action && metrics.workspace, 'writer layout elements should exist');
+      // Since a1307b8 (10-23) meeting information is a 15.5rem column left of the file work column.
+      assert.ok(metrics.grid.width <= 1120.5, `${viewport.width}px writer content should stay within the 70rem rail`);
       const leftGap = metrics.grid.left - metrics.workspace.left;
       const rightGap = metrics.workspace.right - metrics.grid.right;
       assert.ok(Math.abs(leftGap - rightGap) <= 16, `${viewport.width}px writer column should sit centered in the workspace`);
-      assert.ok(Math.abs(metrics.info.left - metrics.upload.left) <= 1, `${viewport.width}px should keep upload and meeting information in one column`);
-      assert.ok(metrics.info.top >= metrics.upload.bottom - 1, `${viewport.width}px meeting information should follow the upload zone`);
-      assert.ok(metrics.action.top >= metrics.info.bottom - 1, `${viewport.width}px action row should follow the meeting information`);
-      assert.ok(metrics.startButton && Math.abs(metrics.startButton.right - metrics.info.right) <= 1, 'analysis start should align with the meeting information right edge');
+      assert.ok(Math.abs(metrics.info.width - 248) <= 1, `${viewport.width}px meeting information keeps a 248px column`);
+      assert.ok(metrics.info.right <= metrics.work.left + 1, `${viewport.width}px meeting information sits left of the file work column`);
+      assert.ok(metrics.upload.left >= metrics.work.left - 1 && metrics.upload.top <= metrics.action.top, `${viewport.width}px upload leads the file work column`);
+      assert.ok(metrics.action.top >= metrics.upload.bottom - 1, `${viewport.width}px action row should follow the upload zone`);
+      assert.ok(metrics.action.left >= metrics.work.left - 1 && metrics.action.right <= metrics.work.right + 1, `${viewport.width}px action row stays in the file work column`);
       assert.ok(['auto', 'scroll'].includes(metrics.overflowY), 'workspace should keep normal vertical scrolling');
       assert.ok(
         metrics.visibleBottoms.every(bottom => typeof bottom === 'number' && bottom <= metrics.viewportHeight),
@@ -275,8 +268,8 @@ const runWriterLayoutScenario = async (browser) => {
     }, droppedFilename);
     await page.getByText(droppedFilename, { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.getByText(droppedFilename, { exact: true }).isVisible(), true, 'drag/drop should show the selected filename');
-    await page.getByRole('button', { name: `${droppedFilename} 제거` }).click();
-    await page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
+    await page.getByLabel('회의 제목', { exact: true }).fill('');
+    await page.getByLabel('회의 목적', { exact: true }).fill('');
     await startButton.click();
     // The status row beside 분석 시작 lists what is left; no banner under the form repeats it.
     await page.locator('.writer-action-row[data-state="required-fields"]').waitFor({ timeout: 10000 });
@@ -285,6 +278,9 @@ const runWriterLayoutScenario = async (browser) => {
     assert.equal(await page.locator('.status-banner').count(), 0, 'no required-field banner');
     assert.equal(await page.getByLabel('회의 제목', { exact: true }).getAttribute('aria-invalid'), 'true');
     assert.equal(await page.getByLabel('회의 목적', { exact: true }).getAttribute('aria-invalid'), 'true');
+    // Removing the file after a start attempt marks the file area as the remaining required input too.
+    await page.getByRole('button', { name: `${droppedFilename} 제거` }).click();
+    await page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ }).waitFor({ timeout: 10000 });
     const requiredFileButton = page.getByRole('button', { name: /필수: 영상 또는 음성 파일 선택/ });
     assert.equal(await requiredFileButton.getAttribute('aria-invalid'), 'true');
     assert.equal(await requiredFileButton.getAttribute('aria-describedby'), 'writer-form-error');
@@ -299,9 +295,6 @@ const runWriterLayoutScenario = async (browser) => {
 };
 
 const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
-  const stalePrivacyMessage = '회의록은 이 PC에만 보관하고, 분석용 임시 음성은 완료 후 삭제합니다.';
-  const preloadPrivacyMessage = '회의록과 분석용 음성을 이 PC에만 보관합니다.';
-  const startPrivacyMessage = '회의록과 분석용 음성을 이 PC에 보관하고, 다운로드 폴더에도 음성 사본을 저장합니다.';
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   let settingsReadCount = 0;
@@ -384,10 +377,6 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
     await page.setInputFiles('#meeting-file-input', fixtureUpload.path);
     await page.getByLabel('회의 제목', { exact: true }).fill('최신 설정 확인');
     await page.getByLabel('회의 목적', { exact: true }).fill('분석 시작 직전 설정 재조회');
-    const preloadHelp = await openProcessingHelp(page);
-    await preloadHelp.locator('#local-processing-details').waitFor({ timeout: 10000 });
-    assert.equal(await preloadHelp.getByText(startPrivacyMessage, { exact: true }).count(), 0, 'analysis-start privacy guidance should not appear before the start request');
-    await closeProcessingHelp(page, preloadHelp);
     const preloadSettingsCount = await waitForSettingsQuiet(1);
     acceptStartSettings = true;
     await page.getByRole('button', { name: '분석 시작' }).click();
@@ -397,7 +386,8 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
     }
     assert.equal(settingsReadCount, preloadSettingsCount + 1, `analysis start should read settings once after preload requests settle (preload=${preloadSettingsCount}, total=${settingsReadCount})`);
     assert.equal(submittedDiarizationValue, 'false', 'analysis payload should use the analysis-start settings value');
-    await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+    // Since f58aabe the failure shows in the meeting workspace's status panel, not as a page heading.
+    await page.locator('.writer-analysis-panel-error').waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '입력 확인' }).click();
     releaseInitialSettings();
     const settleDeadline = Date.now() + 5000;
@@ -405,14 +395,6 @@ const runLatestDiarizationSettingScenario = async (browser, fixtureUpload) => {
       await sleep(25);
     }
     assert.ok(initialSettingsSettled, 'stale initial settings response should be delivered');
-    await sleep(200);
-    const latestHelp = await openProcessingHelp(page);
-    const latestPrivacyMessage = latestHelp.getByText(startPrivacyMessage, { exact: true });
-    await latestPrivacyMessage.waitFor({ timeout: 10000 });
-    assert.equal(await latestPrivacyMessage.isVisible(), true, 'latest privacy guidance should remain after a failed analysis and a stale settings response');
-    assert.equal(await latestHelp.getByText(stalePrivacyMessage, { exact: true }).count(), 0, 'stale privacy guidance should not replace the analysis-start response');
-    assert.equal(await latestHelp.getByText(preloadPrivacyMessage, { exact: true }).count(), 0, 'preload privacy guidance should not replace the analysis-start response');
-    await closeProcessingHelp(page, latestHelp);
     console.log('ok - latest analysis settings scenario');
   } finally {
     releaseInitialSettings();
@@ -477,7 +459,8 @@ const runPartialRecordFailureScenario = async (browser, fixtureUpload) => {
     await page.getByLabel('회의 제목', { exact: true }).fill('중간 저장 실패 테스트');
     await page.getByLabel('회의 목적', { exact: true }).fill('참석자 구분 실패 후 대화록 보존 확인');
     await page.getByRole('button', { name: '분석 시작' }).click();
-    await page.getByRole('heading', { name: '분석을 마치지 못했습니다' }).waitFor({ timeout: 10000 });
+    // Since f58aabe the failure shows in the meeting workspace's status panel, not as a page heading.
+    await page.locator('.writer-analysis-panel-error').waitFor({ timeout: 10000 });
 
     const meetings = await page.evaluate(() => new Promise((resolve, reject) => {
       const request = indexedDB.open('MeetingHistoryDB');
@@ -1335,7 +1318,9 @@ const runResumeDraftScenario = async (browser, fixtureUpload) => {
     // The status row asks for the draft's own file; no note under the upload area repeats it.
     await page.locator('.writer-action-row[data-state="resume-choose-file"]').waitFor({ timeout: 10000 });
     assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '이어서 분석할 파일을 선택해 주세요');
-    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-message').innerText(), 'resume-draft-target.mp4');
+    // Since 2026-10-24 problem rows carry no visible sub-text; the expected file name stays in the upload section.
+    assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-message').count(), 0);
+    await page.locator('.writer-upload-section').getByText('resume-draft-target.mp4', { exact: true }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('#writer-resume-note').count(), 0);
     await expectValue(page, '#meeting-title', '중단된 회의');
     await expectValue(page, '#meeting-purpose', '중단된 분석 이어하기 확인');
@@ -1493,7 +1478,10 @@ const runActiveDraftBackendSyncScenario = async (browser, fixtureUpload) => {
         transaction.onerror = () => reject(transaction.error);
       };
     }));
-    await page.getByRole('button', { name: '사용자가 수정한 제목', exact: true }).click();
+    // The edited record sits in a collapsed sidebar folder (saved meetings live only in the sidebar since 8efa82d).
+    const sidebar = page.locator('.barorok-navigation');
+    await sidebar.getByRole('button', { name: '사용자 폴더', exact: true }).click();
+    await sidebar.getByRole('button', { name: '사용자가 수정한 제목', exact: true }).click();
     await page.getByText('사용자가 수정한 대화록', { exact: true }).waitFor({ timeout: 10000 });
 
     recoveryEnabled = true;

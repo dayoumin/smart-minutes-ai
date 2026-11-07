@@ -1589,7 +1589,9 @@ const run = async () => {
     });
     await page.getByRole('button', { name: '스크롤 검수 폴더 18', exact: true }).waitFor({ state: 'attached' });
     await page.setViewportSize({ width: 800, height: 720 });
-    await page.getByRole('button', { name: '메뉴 펼치기', exact: true }).click();
+    // Below 1200px the navigation is a top bar; 메뉴 turns it into the 앱 메뉴 drawer (was 메뉴 펼치기 before a1307b8).
+    await page.getByRole('button', { name: '메뉴', exact: true }).click();
+    await page.getByRole('dialog', { name: '앱 메뉴' }).waitFor();
     const sidebarContentScroll = page.locator('.sidebar-content-scroll');
     assert.equal(await sidebarContentScroll.evaluate(element => element.scrollHeight > element.clientHeight), true);
     const lastOverflowFolderMenuTrigger = page.getByRole('button', {
@@ -1813,16 +1815,12 @@ const run = async () => {
     await page.getByText('모델 필요').waitFor({ timeout: 10000 });
     await page.getByText('요약 모델이 준비되지 않아 대화록만 생성했습니다. 요약을 사용하려면 모델 상태를 확인해 주세요.').waitFor({ timeout: 10000 });
     await page.getByRole('button', { name: '모델 준비', exact: true }).click();
-    const settingsModelsTab = page.getByRole('tab', { name: '모델' });
-    await settingsModelsTab.waitFor({ timeout: 10000 });
-    assert.equal(await settingsModelsTab.getAttribute('aria-selected'), 'true');
-    await page.getByText('회의 요약 모델', { exact: true }).waitFor({ timeout: 10000 });
-    await page.getByText('모델 선택', { exact: true }).waitFor({ timeout: 10000 });
-    await page.locator('#settings-models-panel select').first().waitFor({ timeout: 10000 });
-    await page.getByPlaceholder('예: llama3.2:3b').waitFor({ timeout: 10000 });
-    await page.locator('#settings-models-panel option[value="gemma4:e2b"]').waitFor({ state: 'attached', timeout: 10000 });
-    await page.locator('#settings-models-panel option[value="gemma4:e4b"]').waitFor({ state: 'attached', timeout: 10000 });
-    await page.getByRole('link', { name: 'gemma4:e2b 모델 페이지' }).waitFor({ timeout: 10000 });
+    // Since 4578583 (10-27) Settings is one page: the 요약 모델 group lists the offered models as radio choices.
+    const summaryModels = page.getByRole('dialog', { name: '설정' }).locator('#settings-summary-models');
+    await summaryModels.getByRole('heading', { name: '요약 모델', exact: true }).waitFor({ timeout: 10000 });
+    await summaryModels.getByRole('textbox', { name: '요약 모델 검색', exact: true }).waitFor({ timeout: 10000 });
+    await summaryModels.getByRole('radio', { name: 'gemma4:e2b 요약 모델로 선택', exact: true }).waitFor({ state: 'attached', timeout: 10000 });
+    await summaryModels.getByRole('radio', { name: 'gemma4:e4b 요약 모델로 선택', exact: true }).waitFor({ state: 'attached', timeout: 10000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isDisabled(), true);
 
@@ -1845,8 +1843,11 @@ const run = async () => {
     // check the ready guidance through the sidebar instead of racing that refresh.
     await page.getByRole('button', { name: '모델 준비', exact: true }).waitFor({ state: 'hidden', timeout: 12000 });
     await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
-    await page.getByRole('tab', { name: '모델' }).click();
-    await page.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ timeout: 12000 });
+    // Single-page Settings (was a 모델 tab note before 4578583): the configured model stays chosen and, once the
+    // status reports an installed model, the other offered model gets its own 받기 action.
+    const readySummaryModels = page.getByRole('dialog', { name: '설정' }).locator('#settings-summary-models');
+    await page.waitForFunction(() => document.querySelector('#settings-summary-models input[aria-label="gemma4:e2b 요약 모델로 선택"]')?.checked === true, undefined, { timeout: 12000 });
+    await readySummaryModels.getByRole('button', { name: 'gemma4:e4b AI 모델 받기', exact: true }).waitFor({ timeout: 12000 });
     await page.getByRole('button', { name: '설정 닫기' }).click();
     await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();
 

@@ -526,16 +526,19 @@ const runScenario = async (
     assert.equal(await page.locator('.writer-local-promise').count(), 0, 'the title promise belongs to the input screen');
     const progressLayout = await page.evaluate(() => {
       const panel = document.querySelector('.writer-analysis-panel');
+      // Since f58aabe the panel sits in the scrollable meeting information column; a saved-transcript note may
+      // follow below the fold, but the progress block and its stop action must stay in view.
+      const progressBlock = panel?.querySelector('.writer-analysis-progress');
       const stopButton = panel?.querySelector('button[aria-label="중지/취소"]');
       return {
-        panelBottom: panel?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
+        panelBottom: progressBlock?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
         stopButtonBottom: stopButton?.getBoundingClientRect().bottom ?? Number.POSITIVE_INFINITY,
         viewportHeight: window.innerHeight,
         overflowX: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       };
     });
     assert.equal(progressLayout.overflowX, 0, 'analysis progress should not create horizontal overflow');
-    assert.ok(progressLayout.panelBottom <= progressLayout.viewportHeight, 'analysis panel should fit within the 1280x720 viewport');
+    assert.ok(progressLayout.panelBottom <= progressLayout.viewportHeight, `analysis progress should fit within the 1280x720 viewport: ${JSON.stringify(progressLayout)}`);
     assert.ok(progressLayout.stopButtonBottom <= progressLayout.viewportHeight, 'stop action should remain visible at 1280x720');
     await stopMenuButton.click();
     await page.getByText('분석을 어떻게 처리할까요?').waitFor({ timeout: 10000 });
@@ -563,6 +566,8 @@ const runScenario = async (
     }
     if (!cancelAccepted) {
       await page.getByRole('status').getByText('중지할 분석을 찾지 못했습니다.', { exact: true }).waitFor({ timeout: 10000 });
+      // The hidden writer's toast joins the detail screen's toast stack so the two never cover each other.
+      assert.equal(await page.locator('.meeting-history-toast-stack .operation-toast').filter({ hasText: '중지할 분석을 찾지 못했습니다.' }).count(), 1, 'writer toast stacks with the detail toasts');
       await page.locator('.analysis-stop-panel').waitFor({ state: 'detached' });
       if (!completedResultAfterStop) {
         await stopMenuButton.waitFor({ state: 'visible' });
@@ -609,11 +614,9 @@ const runScenario = async (
 
     if (action === 'cancel' && keepPendingCancellation) {
       await page.getByText('분석을 취소했습니다.').waitFor({ timeout: 10000 });
-      const restartButton = page.getByRole('button', { name: '분석 시작', exact: true });
-      await restartButton.waitFor({ state: 'visible', timeout: 10000 });
-      assert.equal(await restartButton.isDisabled(), true, 'pending cancellation must keep analysis start disabled');
-      await restartButton.evaluate(button => button.click());
-      await page.waitForTimeout(100);
+      // Since 2026-10-24 a blocked start is removed rather than disabled, so there is nothing to press again.
+      await page.waitForTimeout(300);
+      assert.equal(await page.getByRole('button', { name: '분석 시작', exact: true }).count(), 0, 'pending cancellation must keep analysis start unavailable');
       assert.equal(analyzeRequestCount, 1, 'pending cancellation must prevent a second analyze request');
       assert.deepEqual(await readLocalStorageJson(page, 'pendingCancelledAnalysisCleanups'), [analyzeJobId]);
       console.log('ok - pending cancellation transition keeps writer locked');
@@ -1186,8 +1189,8 @@ const runEngineCheckingScenario = async (browser, fixture) => {
     await checkingLine.waitFor({ timeout: 5000 });
     assert.equal(await page.locator('#writer-local-engine-requirement .writer-status-title').innerText(), '분석 준비 확인 중');
     const startButton = page.getByRole('button', { name: '분석 시작' });
-    assert.equal(await startButton.getAttribute('aria-disabled'), 'true', '분석 시작 waits for the engine');
-    assert.equal(await startButton.getAttribute('aria-describedby'), 'writer-local-engine-requirement', 'the blocked button says why');
+    // Since 2026-10-24 a blocked start is removed rather than disabled; the status line says why.
+    assert.equal(await startButton.count(), 0, '분석 시작 waits for the engine');
     assert.equal(await row.getByRole('button', { name: /다시 확인|문제 해결/ }).count(), 0, 'no recovery button before the 45s notice');
 
     engineUp = true;

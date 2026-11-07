@@ -138,7 +138,8 @@ const runArchiveFlow = async browser => {
   const oldDate = '2020-01-15T10:00:00.000Z';
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor({ timeout: 10000 });
+    // At 1100px the sidebar items sit in the closed 메뉴 drawer; the page heading shows the app is ready.
+    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
     assert.equal(await page.locator('.barorok-navigation').getByRole('button', { name: '기록 찾기', exact: true }).count(), 0, 'archive entry is hidden from the sidebar for now');
     await putMeetings(page, [
       {
@@ -232,7 +233,7 @@ const runEmptyArchive = async browser => {
 };
 
 const runFolderFlow = async browser => {
-  // Below 1200px the sidebar is an icon rail (a1307b8); this flow works in the expanded list.
+  // Below 1200px the sidebar collapses into a top bar with a 메뉴 drawer; this flow works in the expanded list.
   const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
   const page = await context.newPage();
   const appDialogs = await installAppDialogs(page);
@@ -444,6 +445,9 @@ const runFolderFlow = async browser => {
       };
     }));
     await page.setViewportSize({ width: 760, height: 480 });
+    // Below 1200px the navigation is a top bar; 메뉴 turns it into the 앱 메뉴 drawer with the folder list.
+    await page.getByRole('button', { name: '메뉴', exact: true }).click();
+    await page.getByRole('dialog', { name: '앱 메뉴' }).waitFor();
     await sidebar.getByRole('button', { name: '추가 폴더 23', exact: true }).waitFor();
     const row = recordButton.locator('xpath=..');
     await row.hover();
@@ -476,6 +480,9 @@ const runFolderPaginationFlow = async browser => {
   try {
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     const sidebar = page.locator('.barorok-navigation');
+    // Below 1200px the navigation is a top bar; 메뉴 turns it into the 앱 메뉴 drawer with the folder list.
+    await page.getByRole('button', { name: '메뉴', exact: true }).click();
+    await page.getByRole('dialog', { name: '앱 메뉴' }).waitFor();
     await sidebar.getByRole('button', { name: '폴더 만들기', exact: true }).waitFor();
     await page.evaluate(() => new Promise((resolve, reject) => {
       const request = indexedDB.open('MeetingHistoryDB', 2);

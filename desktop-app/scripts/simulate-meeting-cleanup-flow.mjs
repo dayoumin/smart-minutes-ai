@@ -376,12 +376,40 @@ const runUnresponsiveDeleteScenes = async browser => {
   }
 };
 
+// 2026-10-24 single-page Settings removed the 회의록 정리 entry (docs/design.md "이전 회의록 정리 화면 기록").
+// MeetingCleanupPanel is preserved but mounted nowhere, so by default this checks that Settings offers no entry.
+// When an entry returns, point the scenes below at it and run them with SIMULATE_MEETING_CLEANUP_PANEL=1.
+const runNoCleanupEntryScene = async browser => {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const page = await context.newPage();
+  await installAppDialogs(page);
+  await installEngine(page);
+  try {
+    await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
+    await page.getByRole('heading', { name: '새 회의록', level: 2 }).waitFor({ timeout: 10000 });
+    await page.getByRole('button', { name: '설정', exact: true }).first().click();
+    const settings = page.getByRole('dialog', { name: '설정' });
+    await settings.waitFor({ timeout: 10000 });
+    await settings.getByRole('button', { name: '설정 닫기', exact: true }).waitFor({ timeout: 10000 });
+    assert.equal(await settings.getByRole('button', { name: '정리하기', exact: true }).count(), 0, 'Settings no longer opens 회의록 정리');
+    assert.equal(await settings.getByRole('heading', { name: '회의록 정리' }).count(), 0, 'the cleanup panel is not mounted in Settings');
+    console.log('ok - Settings has no 회의록 정리 entry since the 2026-10-24 single-page Settings');
+  } finally {
+    await context.close();
+  }
+};
+
 const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
   try {
-    await runCleanupScene(browser);
-    await runUnresponsiveDeleteScenes(browser);
+    await runNoCleanupEntryScene(browser);
+    if (process.env.SIMULATE_MEETING_CLEANUP_PANEL === '1') {
+      await runCleanupScene(browser);
+      await runUnresponsiveDeleteScenes(browser);
+    } else {
+      console.log('skip - 회의록 정리 panel scenes: no entry point (set SIMULATE_MEETING_CLEANUP_PANEL=1 once one returns)');
+    }
   } finally {
     await browser.close();
     await stopServer(server);

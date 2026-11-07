@@ -199,6 +199,9 @@ const runEmptyHomeScene = async browser => {
       const optional = page.getByRole('button', { name: '참석자·주요 용어 (선택)' });
       await optional.click();
       await assertLongTermFits(page);
+      // Typing the term scrolls the short 1024x768 workspace; compare positions at the same scroll offset.
+      await page.locator('.barorok-workspace').evaluate(element => element.scrollTo(0, 0));
+      await settleHomePaint(page);
       const expanded = await readHomeLayout(page);
       assert.deepEqual(expanded.drop, layout.drop, 'opening optional information does not move file selection');
       assert.deepEqual(expanded.cta, layout.cta, 'opening optional information does not move analysis start');
@@ -230,7 +233,8 @@ const runEmptyHomeScene = async browser => {
     await page.getByRole('button', { name: 'weekly-meeting.wav 제거', exact: true }).click();
     assert.equal(await start.count(), 0, 'removing the file removes analysis start');
 
-    await page.setViewportSize({ width: 880, height: 768 });
+    // Below 1200px the navigation is a top bar, so the 50rem writer container stacks only below ~848px.
+    await page.setViewportSize({ width: 820, height: 768 });
     await settleHomePaint(page);
     const stacked = await readHomeLayout(page);
     assert.ok(stacked.info.bottom <= stacked.work.top + 1, 'below the supported two-column threshold the information stacks above the file area');

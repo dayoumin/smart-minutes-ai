@@ -516,7 +516,7 @@ const run = async () => {
     const firstPatch = routeState.settingsPatches[0];
     assert.equal('processing' in firstPatch, false, 'general save should preserve hidden processing settings');
     assert.deepEqual(firstPatch.diarization, { generate_during_analysis: false }, 'general save should not rewrite diarization.enabled');
-    assert.equal('preprocessing' in firstPatch, false, 'general save should leave the display-only 음량 자동 보정 setting alone');
+    assert.equal('preprocessing' in firstPatch, false, 'general save should leave the untouched 음량 자동 보정 switch alone');
 
     routeState.settingsPatches.length = 0;
     routeState.delayNextSettingsPatchMs = 900;
@@ -565,14 +565,15 @@ const run = async () => {
     }
     assert.equal(routeState.heldSettingsGets, 1, 'the settings load should be held so the dialog is still loading');
     assert.equal(await settingsDialog.getByRole('checkbox').count(), 0, 'no engine-backed switch should render before settings load');
-    assert.equal(await settingsDialog.getByText('불러오는 중', { exact: true }).count(), 5, 'each engine-backed control should show 불러오는 중');
+    // Six engine-backed controls: 음량 자동 보정 became a switch (2026-10-29), so it loads like the other five.
+    assert.equal(await settingsDialog.getByText('불러오는 중', { exact: true }).count(), 6, 'each engine-backed control should show 불러오는 중');
     assert.equal(await page.getByLabel('다운로드 형식', { exact: true }).isEnabled(), true, 'the browser-only download format stays usable while loading');
     assert.equal(await page.getByRole('button', { name: '재시작' }).count(), 0, 'a first load that has not failed yet is not a recovery context');
     // Only this load is held; it then fails like an engine that stopped answering.
     routeState.settingsGetGate = null;
     releaseSettingsGet();
     await settingsDialog.getByText('설정을 불러오지 못했습니다', { exact: false }).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await settingsDialog.getByText('불러오지 못함', { exact: true }).count(), 6, 'each engine-backed row and the 음량 자동 보정 status should show a one-line failure');
+    assert.equal(await settingsDialog.getByText('불러오지 못함', { exact: true }).count(), 6, 'each engine-backed control, including the 음량 자동 보정 switch, should show a one-line failure');
     const restartCallsBeforeRecovery = await page.evaluate(() => window.__restartCalls);
     await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should be offered once the settings read fails');
     await page.getByRole('button', { name: '재시작' }).click();

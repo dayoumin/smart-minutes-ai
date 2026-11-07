@@ -874,6 +874,13 @@
     }
   }
 
+  /* Short windows (860×720) need about 25px more for a full four-model page; trim the vertical gaps only. */
+  @media (max-height: 760px) {
+    .settings-content { padding-block: 16px; }
+    #settings-general-panel { gap: 12px; }
+    .settings-summary-panel { padding-block: 12px; }
+  }
+
 
   .floating-panel {
     @apply rounded-[var(--radius-card)] border border-border bg-background;

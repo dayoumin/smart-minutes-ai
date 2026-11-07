@@ -178,7 +178,9 @@ try {
         assert.ok(Math.abs(before.dialog.y - Math.max(16, (height - 760) / 2)) <= 1, 'dialog top is independent of content height');
         if (height >= 720) {
             const remaining = await page.locator('.settings-storage').evaluate(el => document.querySelector('.settings-dialog').getBoundingClientRect().bottom - el.getBoundingClientRect().bottom);
-            assert.ok(remaining >= 18 && remaining <= 24, 'dialog ends after the final group and its padding');
+            // Body padding is 20px, or 16px in windows up to 760px tall; the dialog border adds 1px.
+            const bottomPadding = height <= 760 ? 16 : 20;
+            assert.ok(Math.abs(remaining - (bottomPadding + 1)) <= 3, 'dialog ends after the final group and its padding');
             assert.ok(before.dialog.height < 680, 'short content does not fill the old 760px window');
             assert.ok(Math.abs(before.header.x - before.analysis.x) <= 1, 'header and group titles share a start edge');
         }
@@ -205,9 +207,10 @@ try {
         assert.ok(Math.abs(action.x + action.width - resumedAction.x - resumedAction.width) <= 1, 'longer resume label keeps the same action edge');
         await page.screenshot({ path: resolve(output, `layout-${width}x${height}.png`) });
         if (height < 600) {
-            await page.getByRole('combobox', { name: '다운로드 형식', exact: true }).scrollIntoViewIfNeeded();
+            // The last storage row stays below the fold; the compact short-window spacing can bring 다운로드 형식 into view.
+            await page.locator('.settings-storage .settings-paired-row').last().scrollIntoViewIfNeeded();
             const scroll = await page.locator('.settings-content').evaluate(el => ({ top: el.scrollTop, overflow: el.scrollHeight - el.clientHeight }));
-            assert.ok(scroll.overflow > 0 && scroll.top > 0, 'short windows scroll inside the dialog');
+            assert.ok(scroll.overflow > 0 && scroll.top > 0, 'short windows scroll inside the dialog, got ' + JSON.stringify(scroll));
             assert.ok(Math.abs((await measure()).header.y - before.header.y) <= 1, 'header remains fixed while body scrolls');
             await page.screenshot({ path: resolve(output, `layout-${width}x${height}-scrolled.png`) });
         }

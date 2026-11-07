@@ -907,8 +907,10 @@ const run = async () => {
     };
     const checkPlainModelLabels = async container => {
       assert.equal(await container.getByRole('img', { name: / 모델 정보 도움말$/ }).count(), 0, 'model lists do not expose optional description tooltip icons');
+      // docs/design.md: only the normal 1360×900/860×720 windows must fit; lower windows may scroll the body.
+      if (page.viewportSize().height < 720) return;
       const overflow = await settingsDialog.locator('.settings-content').evaluate(element => element.scrollHeight - element.clientHeight);
-      assert.ok(overflow <= 2, 'normal model views fit the supported window without adding a scroll bar');
+      assert.ok(overflow <= 2, 'normal model views fit the supported window without adding a scroll bar, got ' + overflow);
     };
     const addModel = async model => {
       const pullsBefore = state.pullRequests.length;
@@ -1183,6 +1185,8 @@ const run = async () => {
         const button = section.querySelector('[aria-label="요약 프로그램 실행"]');
         const firstRow = rows[0]?.getBoundingClientRect();
         return { panelHeight: panel.getBoundingClientRect().height,
+          listHeight: section.querySelector('.settings-summary-model-list').getBoundingClientRect().height,
+          rowHeight: firstRow?.height,
           overflowY: content.scrollHeight - content.clientHeight,
           rowCount: rows.length, firstModel: rows[0]?.dataset.modelName,
           recoveryBelowList: footer.contains(button) && button.getBoundingClientRect().top >= firstRow.bottom,
@@ -1191,9 +1195,15 @@ const run = async () => {
       });
       assert.equal(metrics.rowCount, 2, 'real inventory is not padded with mock model names');
       assert.equal(metrics.firstModel, 'gemma4:e2b', 'the first registered option keeps its place despite unknown inventory');
-      assert.ok(metrics.panelHeight <= 160, width + 'px: two models do not reserve a blank second row, got ' + metrics.panelHeight);
-      assert.ok(metrics.overflowY <= 2, width + 'px: unknown inventory does not push storage out, got ' + metrics.overflowY);
-      assert.ok(metrics.storageBottom <= metrics.contentBottom + 1, width + 'px: storage controls remain visible');
+      // Two models share one row; a reserved blank second row would double the list height.
+      assert.ok(metrics.listHeight <= metrics.rowHeight + 1, width + 'px: two models do not reserve a blank second row, got list ' + metrics.listHeight + ' for row ' + metrics.rowHeight);
+      // docs/design.md spacing: 16px padding (12px up to 760px tall) + search + one 68px row + recovery footer = 178px at most.
+      assert.ok(metrics.panelHeight <= 180, width + 'px: the summary panel adds no reserved space, got ' + metrics.panelHeight);
+      // docs/design.md: normal 1360×900/860×720 windows fit without scrolling; lower windows (917×627) may scroll the body.
+      if (height >= 720) {
+        assert.ok(metrics.overflowY <= 2, width + 'px: unknown inventory does not push storage out, got ' + metrics.overflowY);
+        assert.ok(metrics.storageBottom <= metrics.contentBottom + 1, width + 'px: storage controls remain visible');
+      }
       assert.equal(metrics.recoveryBelowList, true);
       assert.equal(await selection('gemma4:e2b').isChecked(), true);
       assert.equal(await selection('gemma4:e4b').isDisabled(), true);
@@ -1220,7 +1230,7 @@ const run = async () => {
       state.summaryReason = scenario === 'runtime_preparing' ? 'runtime_preparing' : undefined;
       state.summaryInventoryChecked = scenario === 'runtime_preparing';
       await refreshModelsOnFocus(page, state);
-      await summaryPanel.getByText('요약 프로그램을 준비하고 있습니다.', { exact: true }).waitFor();
+      await summaryPanel.getByText('AI 모델 사용을 준비하고 있습니다.', { exact: true }).waitFor();
       assert.equal(await summaryPanel.getByRole('button', { name: /^(요약 프로그램 실행|연결 다시 확인)$/ }).count(), 0, 'preparing is informational and offers no duplicate connection action');
       assert.equal(state.pullRequests.length, pullsBeforePreparing, 'preparing cannot download a model automatically');
       assert.equal(state.ollamaConnectRequests.length, connectsBeforePreparing, 'preparing does not send another connection action');
@@ -1230,7 +1240,7 @@ const run = async () => {
     state.summaryReason = undefined;
     state.ollamaConnection = originalConnection;
     state.summaryInventoryChecked = true;
-    await summaryPanel.getByText('요약 프로그램을 준비하고 있습니다.', { exact: true }).waitFor({ state: 'hidden', timeout: 10000 });
+    await summaryPanel.getByText('AI 모델 사용을 준비하고 있습니다.', { exact: true }).waitFor({ state: 'hidden', timeout: 10000 });
     assert.ok(state.modelStatusRequests.length > requestsBeforeAutomaticReady, 'preparing refreshes readiness without a focus event or user action');
     assert.equal(await selection('gemma4:e2b').isEnabled(), true, 'automatic readiness refresh restores model selection');
     assert.equal(await speechModelCell.getByText('GPU 가속을 사용할 수 없습니다.', { exact: false }).count(), 1, 'a separate GPU warning does not stop the summary readiness refresh');
@@ -1570,7 +1580,8 @@ const run = async () => {
     await settingsDialog.waitFor({ state: 'hidden' });
     await settingsButton.click();
     await revealModel(summaryPanel, 'broken-model:1b');
-    await summaryPanel.getByText('broken-model:1b 모델을 받지 못했습니다.', { exact: true }).waitFor();
+    // The row maps the engine's failure to the same short reason (2026-10-29 short error copy).
+    await summaryPanel.locator('[data-model-name="broken-model:1b"]').getByText('받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.', { exact: true }).waitFor();
     assert.equal(await download('broken-model:1b').isEnabled(), true, 'a failed summary model download can be retried after reopening');
     assert.equal(state.pullRequests.length, pullsBeforeFailedReopen, 'reopening Settings does not retry a failed download');
     const registrationsBeforeExistingSearch = state.registrationRequests.length;
@@ -1784,11 +1795,12 @@ const run = async () => {
 
     // An analysis model download that failed while Settings was closed shows its reason after reopening.
     state.setSttInstalled(false);
-    state.sttEarlierFailure = '음성 인식 모델을 받지 못했습니다. 인터넷 연결을 확인한 뒤 다시 받아 주세요.';
+    // A classified reason (storage) proves the engine's message, not just the failed status, reaches the reopened row.
+    state.sttEarlierFailure = '저장 공간이 부족해 음성 인식 모델을 받지 못했습니다.';
     await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
     await settingsDialog.waitFor({ state: 'hidden' });
     await settingsButton.click();
-    await modelsPanel.getByText(state.sttEarlierFailure, { exact: true }).waitFor();
+    await speechModelCell.getByText('저장 공간이 부족합니다. 공간을 비우고 다시 시도해 주세요.', { exact: true }).waitFor();
     assert.equal(state.sttDownloadRequests.length, 0, 'reopening Settings does not retry a failed analysis model download');
     state.sttEarlierFailure = '';
     console.log('stage: failed download reasons survive reopening Settings');

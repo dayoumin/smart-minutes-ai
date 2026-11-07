@@ -265,6 +265,8 @@ const createRouteState = () => {
     sttDownloadRequests,
     sttStopRequests,
     sttDownloadStatusRequests,
+    // Set to a reason to report a download that failed while Settings was closed.
+    sttEarlierFailure: '',
     installedModels,
     ollamaAvailable: true,
     ollamaConnectRequests: [],
@@ -402,8 +404,8 @@ const installRoutes = async (page, state) => {
         body: JSON.stringify({
           key,
           active: false,
-          status: 'idle',
-          message: '',
+          status: state.sttEarlierFailure ? 'failed' : 'idle',
+          message: state.sttEarlierFailure,
           downloaded_bytes: 0,
           expected_bytes: 3090839274,
           progress_percent: null,
@@ -1378,6 +1380,15 @@ const run = async () => {
     await download('broken-model:1b').click();
     await summaryPanel.getByText('broken-model:1b 모델을 받지 못했습니다.', { exact: true }).waitFor();
     assert.equal(state.pullRequests.at(-1), 'broken-model:1b');
+    // The engine keeps the failed result, so reopening Settings shows the same reason instead of a bare 받기 button.
+    const pullsBeforeFailedReopen = state.pullRequests.length;
+    await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
+    await settingsDialog.waitFor({ state: 'hidden' });
+    await settingsButton.click();
+    await revealModel(summaryPanel, 'broken-model:1b');
+    await summaryPanel.getByText('broken-model:1b 모델을 받지 못했습니다.', { exact: true }).waitFor();
+    assert.equal(await download('broken-model:1b').isEnabled(), true, 'a failed summary model download can be retried after reopening');
+    assert.equal(state.pullRequests.length, pullsBeforeFailedReopen, 'reopening Settings does not retry a failed download');
     const registrationsBeforeExistingSearch = state.registrationRequests.length;
     const pullsBeforeExistingSearch = state.pullRequests.length;
     await search('new-search:1b');
@@ -1587,13 +1598,26 @@ const run = async () => {
     await page.setViewportSize({ width: 1360, height: 900 });
     console.log('stage: runtime update recovery and explicit model retry/selection passed');
 
+    // An analysis model download that failed while Settings was closed shows its reason after reopening.
+    state.setSttInstalled(false);
+    state.sttEarlierFailure = '음성 인식 모델을 받지 못했습니다. 인터넷 연결을 확인한 뒤 다시 받아 주세요.';
+    await settingsDialog.getByRole('button', { name: '설정 닫기', exact: true }).click();
+    await settingsDialog.waitFor({ state: 'hidden' });
+    await settingsButton.click();
+    await modelsPanel.getByText(state.sttEarlierFailure, { exact: true }).waitFor();
+    assert.equal(state.sttDownloadRequests.length, 0, 'reopening Settings does not retry a failed analysis model download');
+    state.sttEarlierFailure = '';
+    console.log('stage: failed download reasons survive reopening Settings');
+
     // STT uses its existing independent stop route, even within the compact layout.
     state.setSttInstalled(false);
     await refreshModelsOnFocus(page, state);
+    // Reopening Settings already checks the status, so count only the checks made after 받기.
+    const sttStatusChecksBeforeDownload = state.sttDownloadStatusRequests.length;
     await modelsPanel.getByRole('button', { name: '음성 인식 모델 받기', exact: true }).click();
     const stopStt = modelsPanel.getByRole('button', { name: '음성 인식 모델 중지', exact: true });
     await stopStt.waitFor();
-    await waitForSaved(page, () => state.sttDownloadStatusRequests.length > 0, 'STT download polls progress');
+    await waitForSaved(page, () => state.sttDownloadStatusRequests.length > sttStatusChecksBeforeDownload, 'STT download polls progress');
     await stopStt.click();
     assert.deepEqual(state.sttDownloadRequests, ['stt_faster_whisper']);
     assert.deepEqual(state.sttStopRequests, ['stt_faster_whisper']);

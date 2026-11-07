@@ -1394,7 +1394,13 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 const response = await fetchWithTimeout(`${apiBase}/api/models/download-status?key=${encodeURIComponent(model.key)}`);
                 if (!response.ok) return;
                 const status = await response.json() as ModelDownloadStatus;
-                if (!mountedRef.current || !status.active) return;
+                if (!mountedRef.current) return;
+                if (!status.active) {
+                    // A download that failed while Settings was closed keeps its reason in the engine; show it instead of the
+                    // generic note. Anything already shown here (a new attempt, an earlier result) wins.
+                    if (status.status === 'failed') setModelDownloads(previous => (previous[model.key] ? previous : { ...previous, [model.key]: status }));
+                    return;
+                }
                 const requestId = (modelDownloadRequestIdsRef.current[model.key] || 0) + 1;
                 modelDownloadRequestIdsRef.current[model.key] = requestId;
                 updateModelDownloadStatus(status);
@@ -1455,7 +1461,15 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                 const response = await fetchWithTimeout(`${apiBase}/api/models/ollama/pull-status?model=${encodeURIComponent(modelName)}`);
                 if (!response.ok) return;
                 const status = await response.json() as OllamaPullStatus;
-                if (!mountedRef.current || !status.active) return;
+                if (!mountedRef.current) return;
+                if (!status.active) {
+                    // Same for a summary model. Old runtime failures (needs an update, Ollama missing) stay out: the runtime status
+                    // reports those itself and they may be fixed by now.
+                    if (status.status === 'failed' && status.error_code !== 'runtime_update_required' && !isOllamaMissingPullStatus(status)) {
+                        setOllamaPulls(previous => (previous[modelName] ? previous : { ...previous, [modelName]: status }));
+                    }
+                    return;
+                }
                 const requestId = (pullRequestIdsRef.current[modelName] || 0) + 1;
                 pullRequestIdsRef.current[modelName] = requestId;
                 updateOllamaPullStatus(status);
@@ -2610,7 +2624,7 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                 </div>
                                                 <div className="settings-model-progress" aria-live="polite">
                                                     {pullActive ? <><ProgressBar value={getOllamaPullProgressPercent(pullStatus)} size="sm" tone="info" label={`${optionModel} 모델 받기 진행률`} /><span>{getOllamaPullProgressText(pullStatus)}</span></>
-                                                        : pullStatus?.error_code !== 'runtime_update_required' && (pullStatus?.status === 'failed' || pullStatus?.status === 'cancelled') ? <span>{pullStatus?.message || (pullStatus?.status === 'cancelled' ? '받기를 중지했습니다.' : '받지 못했습니다. 다시 받아 주세요.')}</span> : null}
+                                                        : !installed && pullStatus?.error_code !== 'runtime_update_required' && (pullStatus?.status === 'failed' || pullStatus?.status === 'cancelled') ? <span>{pullStatus?.message || (pullStatus?.status === 'cancelled' ? '받기를 중지했습니다.' : '받지 못했습니다. 다시 받아 주세요.')}</span> : null}
                                                 </div>
                                             </div>;
                                         })}

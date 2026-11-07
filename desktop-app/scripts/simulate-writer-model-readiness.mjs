@@ -809,7 +809,8 @@ const verifyDevelopmentReadinessError = async (browser, viewport = { width: 1280
     await waitForRowState(page, 'readiness-error');
     assert.equal(await rowOf(page).getByRole('button', { name: '문제해결', exact: true }).count(), 1, 'a persistent error keeps its recovery action during automatic checks');
     assert.equal(await startButtonOf(page).count(), 0, 'readiness errors show recovery instead of analysis start');
-    const anchors = () => page.evaluate(() => Object.fromEntries(['.writer-header', '.writer-upload-section', '.writer-action-buttons', '.writer-privacy', '.recent-meetings'].map(selector => {
+    // design.md layout stability: title, upload and the local processing notice (saved meetings live in the sidebar).
+    const anchors = () => page.evaluate(() => Object.fromEntries(['.writer-header', '.writer-upload-section', '.writer-action-buttons', '.writer-privacy'].map(selector => {
       const box = document.querySelector(selector).getBoundingClientRect();
       return [selector, { x: box.x, y: box.y, width: box.width, height: box.height }];
     })));

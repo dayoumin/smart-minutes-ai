@@ -388,6 +388,8 @@ const installTauriMock = () => {
         // A packaged portable build reads this from release-manifest.json beside the executable.
         if (command === 'get_desktop_release_identity') return { commit: 'a'.repeat(40), generatedAt: '2026-10-25T01:00:00Z' };
         if (command === 'set_close_guard_active' || command === 'write_frontend_log') return undefined;
+        // The update check reads the build identity on start and focus; development builds have none.
+        if (command === 'get_desktop_release_identity') return null;
         window.__unexpectedTauriCommands.push(command);
         return undefined;
       },
@@ -403,17 +405,12 @@ const verifyDesktopStatusRow = async (browser) => {
   page.on('pageerror', error => errors.push(error.message));
   try {
     await page.clock.install();
+    // Installed time keeps flowing, so a slow cold load would eat the 2s between the 43s and 45s checks below.
+    // Pause until the warning appears; the replayed pause also holds on the app page.
+    await page.clock.pauseAt(Date.now() + 1_000);
     await page.addInitScript(installTauriMock);
-    // Keep the desktop update check off the live release server: the latest build is the installed one.
-    await page.route('https://barorok.ecomarin.workers.dev/downloads/desktop-beta.json', route => route.fulfill({
-      status: 200,
-      contentType: 'application/json',
-      body: JSON.stringify({
-        schemaVersion: 1, type: 'portable-update', origin: 'https://barorok.ecomarin.workers.dev',
-        commit: 'a'.repeat(40), generatedAt: '2026-10-25T01:00:00Z',
-        downloadPath: `/downloads/lmo_audio_update_${'a'.repeat(40)}.zip`, bytes: 123, sha256: 'c'.repeat(64),
-      }),
-    }));
+    // Keep the desktop update check off the public release origin; no published update is the neutral answer.
+    await page.route('**/downloads/desktop-beta.json', route => route.fulfill({ status: 404, headers: { 'Access-Control-Allow-Origin': '*' }, body: '' }));
     await page.route('**/api/**', route => {
       const path = new URL(route.request().url()).pathname;
       const json = (body, status = 200) => route.fulfill({ status, contentType: 'application/json', body: JSON.stringify(body) });
@@ -450,6 +447,7 @@ const verifyDesktopStatusRow = async (browser) => {
     assert.equal(await rowOf(page).getAttribute('data-state'), 'readiness-checking', 'no warning before 45s');
     await page.clock.runFor(4_000);
     await waitForRowState(page, 'no-response');
+    await page.clock.resume();
     assert.deepEqual(await readRow(page), {
       state: 'no-response', title: '분석 기능이 아직 준비되지 않았습니다', message: null, buttons: ['문제해결'],
     });

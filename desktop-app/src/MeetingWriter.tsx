@@ -2860,13 +2860,16 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
 
     return (
         <div className={`writer-shell ${showInputForm ? 'writer-shell-input' : ''}`} data-settings-focus-scope>
-            {operationToast && (
+            {/* Portal to the body: while the analysis shows in the shared meeting detail this shell is hidden,
+                and stop/cancel results would otherwise render inside it unseen. */}
+            {operationToast && createPortal(
                 <AppToast
                     message={operationToast.message}
                     tone={operationToast.tone}
                     closeLabel="작업 알림 닫기"
                     onClose={() => setOperationToast(null)}
-                />
+                />,
+                document.body,
             )}
             {showLocalProcessingIntro && (
                 <LocalProcessingNotice

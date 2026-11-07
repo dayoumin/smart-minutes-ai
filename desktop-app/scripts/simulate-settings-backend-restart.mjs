@@ -7,10 +7,7 @@ import { chromium } from 'playwright';
 
 let APP_URL = process.env.APP_URL ?? 'http://127.0.0.1:5173/?view=minutes';
 const shouldStartServer = !process.env.APP_URL;
-const STT_MODEL_LABEL = '\uC74C\uC131 \uC778\uC2DD \uBAA8\uB378';
 const DIARIZATION_MODEL_LABEL = '\uCC38\uC11D\uC790 \uAD6C\uBD84 \uBAA8\uB378';
-const RECEIVED_LABEL = '\uC788\uC74C';
-const DOWNLOAD_LABEL = '\uBC1B\uAE30';
 
 const waitForApp = async (url, timeoutMs = 30000) => {
   const deadline = Date.now() + timeoutMs;
@@ -140,6 +137,8 @@ const installRoutes = async (page) => {
     modelDownloadRequests,
     modelDownloadStatusRequests,
     readinessAuthHeaders,
+    // Engine-reported model problems; 재시작 only appears in such a recovery context.
+    modelStatusErrors: [],
     audioModelState: {
       sttInstalled: false,
       diarizationInstalled: true,
@@ -181,6 +180,7 @@ const installRoutes = async (page) => {
       contentType: 'application/json',
       body: JSON.stringify({
       ready: true,
+      errors: routeState.modelStatusErrors,
       ollama_runtime_status: {
         key: 'ollama_runtime',
         available: true,
@@ -422,7 +422,8 @@ const runTroubleshootingEntryScene = async (browser) => {
     await installRoutes(page);
     await page.route('**/api/health', route => route.abort());
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
-    const troubleshootButton = page.getByRole('button', { name: '문제 해결', exact: true });
+    // The writer status row shows its one visible action as 문제해결.
+    const troubleshootButton = page.getByRole('button', { name: '문제해결', exact: true });
     // The writer waits out its first-start window (45s) before calling the engine unreachable.
     await troubleshootButton.waitFor({ state: 'visible', timeout: 70000 });
     await troubleshootButton.click();
@@ -458,62 +459,13 @@ const run = async () => {
       }));
     });
 
+    // 재시작 is shown only when something needs recovery; a reported model problem is one.
+    routeState.modelStatusErrors.push('모델 환경 설정을 확인해 주세요.');
     await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
     const settingsDialog = page.getByRole('dialog', { name: '설정' });
     await settingsDialog.waitFor({ state: 'visible', timeout: 10000 });
-    const generalDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));
-    await page.getByRole('tab', { name: '모델' }).click();
-    const modelDialogHeight = await settingsDialog.evaluate(element => Math.round(element.getBoundingClientRect().height));
-    assert.equal(modelDialogHeight, generalDialogHeight, 'settings dialog height should not shift between tabs');
-    const modelsPanel = page.locator('#settings-models-panel');
-    await modelsPanel.getByText('처음 준비:', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('1. 음성 인식 모델을 준비합니다. 2. 요약 프로그램 준비 상태를 확인합니다. 3. 회의 요약 모델을 받습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('음성 인식 모델', { exact: true }).first().waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
-    const sttDownloadButton = modelsPanel.getByRole('button', { name: new RegExp(`${STT_MODEL_LABEL}.*${DOWNLOAD_LABEL}`) });
-    await sttDownloadButton.waitFor({ state: 'visible', timeout: 10000 });
-    await sttDownloadButton.click();
-    await modelsPanel.getByLabel(new RegExp(`${STT_MODEL_LABEL}.*${RECEIVED_LABEL}`)).waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await modelsPanel.getByText('모델 받기를 시작합니다.').count(), 0, 'STT download start message should not be shown to users');
-    assert.deepEqual(routeState.modelDownloadRequests, ['stt_faster_whisper'], 'STT download button should call the model download API');
-    assert.equal(
-      routeState.modelDownloadStatusRequests.includes('stt_faster_whisper'),
-      true,
-      'STT download button should poll the model download status API',
-    );
-    await modelsPanel.getByText('회의 요약 모델을 바로 사용할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(
-      await modelsPanel.getByRole('link', { name: '요약 프로그램 설치 페이지 열기' }).count(),
-      0,
-      'installed Ollama should not show the install page link again',
-    );
-    assert.equal(await modelsPanel.getByText('준비됨').count(), 0);
-    assert.equal(await modelsPanel.getByText('대화록 작성에 필요합니다.').count(), 0);
-    await modelsPanel.getByText('권장 항목으로 시작할 수 있습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await modelsPanel.locator('.status-pill').filter({ hasText: /메모리/ }).count(), 0);
-    assert.equal(
-      await modelsPanel.locator('button').filter({ hasText: /^받기$/ }).count(),
-      1,
-      'only unavailable Ollama summary models should show download buttons',
-    );
-    routeState.audioModelState.diarizationInstalled = false;
-    await page.getByRole('tab', { name: '일반' }).click();
-    await page.getByRole('tab', { name: '모델' }).click();
-    assert.equal(await modelsPanel.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'missing diarization model should still stay out of the user-facing download list');
-
-    await modelsPanel.getByLabel('고급: 직접 입력').fill('gemma4:4b');
-    await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 검색' }).click();
-    assert.equal(
-      (await page.evaluate(() => window.__openedUrls)).at(-1),
-      'https://ollama.com/search?q=gemma4%3Ae4b',
-      'custom model search should open Ollama search first',
-    );
-    await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 받기' }).click();
-    await modelsPanel.getByRole('button', { name: '직접 입력 gemma4:e4b 모델 중지' }).waitFor({ state: 'visible', timeout: 10000 });
-    await modelsPanel.getByText('20.0% 진행 · 약 20분 남음').waitFor({ state: 'visible', timeout: 10000 });
-    assert.deepEqual(routeState.pullRequests, ['gemma4:e4b'], 'custom alias pull should normalize before calling backend');
-
-    await page.getByRole('tab', { name: '일반' }).click();
+    // Model download, search and selection live in simulate-settings-model-management.mjs; this scene covers restart and general saves.
+    assert.equal(await settingsDialog.getByText(DIARIZATION_MODEL_LABEL, { exact: true }).count(), 0, 'diarization model should not be a separate user-facing model card');
 
     const restartButton = page.getByRole('button', { name: '재시작' });
     await expectDisabled(restartButton, true, 'active analysis should disable backend restart');
@@ -548,7 +500,7 @@ const run = async () => {
     await page.getByText(/분석 기능을 다시 시작/).waitFor({ state: 'visible', timeout: 10000 });
 
     // The download format is a browser preference: saved at once, never through the engine.
-    await page.getByLabel('다운로드 형식').selectOption('docx');
+    await page.getByLabel('다운로드 형식', { exact: true }).selectOption('docx');
     assert.equal(
       await page.evaluate(() => window.localStorage.getItem('smart-minutes-download-format')),
       'docx',
@@ -556,7 +508,7 @@ const run = async () => {
     );
     await sleep(900);
     assert.equal(routeState.settingsPatches.length, 0, 'the download format must not write engine settings');
-    await page.getByLabel('회의 요약 HWPX 자동 저장').check();
+    await page.getByLabel('회의 요약 HWPX 자동 저장', { exact: true }).check();
     for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {
       await sleep(250);
     }
@@ -564,11 +516,11 @@ const run = async () => {
     const firstPatch = routeState.settingsPatches[0];
     assert.equal('processing' in firstPatch, false, 'general save should preserve hidden processing settings');
     assert.deepEqual(firstPatch.diarization, { generate_during_analysis: false }, 'general save should not rewrite diarization.enabled');
-    assert.deepEqual(firstPatch.preprocessing, { enabled: true }, 'general save should not rewrite hidden preprocessing options');
+    assert.equal('preprocessing' in firstPatch, false, 'general save should leave the display-only 음량 자동 보정 setting alone');
 
     routeState.settingsPatches.length = 0;
     routeState.delayNextSettingsPatchMs = 900;
-    const autoSaveAudioCheckbox = page.getByLabel('음성 파일 자동 저장');
+    const autoSaveAudioCheckbox = page.getByLabel('음성 파일 자동 저장', { exact: true });
     await autoSaveAudioCheckbox.check();
     for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {
       await sleep(100);
@@ -588,21 +540,22 @@ const run = async () => {
 
     // Closing right after a change, inside the save delay, must still send it.
     routeState.settingsPatches.length = 0;
-    await page.getByLabel('음성 정리').uncheck();
+    await page.getByLabel('회의 요약 HWPX 자동 저장', { exact: true }).uncheck();
     await page.keyboard.press('Escape');
     await settingsDialog.waitFor({ state: 'detached', timeout: 10000 });
     for (let attempt = 0; attempt < 40 && routeState.settingsPatches.length === 0; attempt += 1) {
       await sleep(100);
     }
     assert.equal(
-      routeState.settingsPatches.at(-1)?.preprocessing?.enabled,
+      routeState.settingsPatches.at(-1)?.privacy?.auto_save_hwpx_copy,
       false,
       'a change made just before closing settings should still be saved',
     );
     // The saved change makes the writer re-read settings; let that finish before holding the next load.
     await sleep(1000);
 
-    // An engine that does not answer keeps settings loading; 재시작 must stay usable instead of waiting it out.
+    // An engine that has not answered yet shows 불러오는 중 and no guessed values. 재시작 belongs to the recovery
+    // context, so it appears once the read fails, next to one-line row failures and a single warning popup.
     let releaseSettingsGet = () => undefined;
     routeState.settingsGetGate = new Promise(resolve => { releaseSettingsGet = resolve; });
     await page.getByRole('complementary').getByRole('button', { name: '설정' }).click();
@@ -611,34 +564,26 @@ const run = async () => {
       await sleep(100);
     }
     assert.equal(routeState.heldSettingsGets, 1, 'the settings load should be held so the dialog is still loading');
-    // Before the engine answers, engine-backed controls show no guessed value and cannot be changed.
     assert.equal(await settingsDialog.getByRole('checkbox').count(), 0, 'no engine-backed switch should render before settings load');
-    assert.equal(await settingsDialog.getByText('불러오는 중', { exact: true }).count(), 6, 'each engine-backed control should show 불러오는 중');
-    assert.equal(await page.getByLabel('다운로드 형식').isEnabled(), true, 'the browser-only download format stays usable while loading');
-    await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should stay enabled while settings are still loading');
-    const restartCallsBeforeLoadingRestart = await page.evaluate(() => window.__restartCalls);
-    // Only the first load is held; the load after the restart answers normally.
-    const heldSettingsGate = routeState.settingsGetGate;
+    assert.equal(await settingsDialog.getByText('불러오는 중', { exact: true }).count(), 5, 'each engine-backed control should show 불러오는 중');
+    assert.equal(await page.getByLabel('다운로드 형식', { exact: true }).isEnabled(), true, 'the browser-only download format stays usable while loading');
+    assert.equal(await page.getByRole('button', { name: '재시작' }).count(), 0, 'a first load that has not failed yet is not a recovery context');
+    // Only this load is held; it then fails like an engine that stopped answering.
     routeState.settingsGetGate = null;
+    releaseSettingsGet();
+    await settingsDialog.getByText('설정을 불러오지 못했습니다', { exact: false }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await settingsDialog.getByText('불러오지 못함', { exact: true }).count(), 6, 'each engine-backed row and the 음량 자동 보정 status should show a one-line failure');
+    const restartCallsBeforeRecovery = await page.evaluate(() => window.__restartCalls);
+    await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should be offered once the settings read fails');
     await page.getByRole('button', { name: '재시작' }).click();
     for (let attempt = 0; attempt < 40; attempt += 1) {
-      if (await page.evaluate(() => window.__restartCalls) > restartCallsBeforeLoadingRestart) break;
+      if (await page.evaluate(() => window.__restartCalls) > restartCallsBeforeRecovery) break;
       await sleep(250);
     }
-    assert.equal(await page.evaluate(() => window.__restartCalls), restartCallsBeforeLoadingRestart + 1, 'restart should run while loading');
-    await page.getByText(/분석 기능을 다시 시작/).waitFor({ state: 'visible', timeout: 10000 });
-    // Now the old, superseded load fails; it must not replace the restarted state with an error.
-    releaseSettingsGet();
-    await heldSettingsGate;
-    for (let attempt = 0; attempt < 40 && routeState.abortedSettingsGets === 0; attempt += 1) {
-      await sleep(100);
-    }
-    assert.equal(routeState.abortedSettingsGets, 1, 'the held load should have failed');
-    // Let the failed fetch settle in the page before checking that it changed nothing.
-    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 300)));
-    assert.equal(await page.getByText('설정을 불러오지 못했습니다', { exact: false }).count(), 0, 'the superseded load should not leave an error behind');
-    assert.equal(await page.getByText(/분석 기능을 다시 시작/).count(), 1, 'the restart result should stay');
-    assert.equal(await page.getByLabel('음성 재생 파일 보관').isEnabled(), true, 'the restarted settings should stay loaded');
+    assert.equal(await page.evaluate(() => window.__restartCalls), restartCallsBeforeRecovery + 1, 'restart should run from the failure state');
+    await page.getByLabel('음성 재생 파일 보관', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await page.getByLabel('음성 재생 파일 보관', { exact: true }).isEnabled(), true, 'the restarted settings should be loaded');
+    assert.equal(await settingsDialog.getByText('설정을 불러오지 못했습니다', { exact: false }).count(), 0, 'the settings warning should clear after recovery');
 
     // A restart that fails (for example an engine that came up slowly) should still end with loaded settings.
     await page.keyboard.press('Escape');
@@ -649,8 +594,8 @@ const run = async () => {
     await expectDisabled(page.getByRole('button', { name: '재시작' }), false, 'restart should be available');
     await page.getByRole('button', { name: '재시작' }).click();
     await page.getByText('재시작은 확인하지 못했지만 분석 기능에 다시 연결했습니다.').waitFor({ state: 'visible', timeout: 10000 });
-    await page.getByLabel('음성 재생 파일 보관').waitFor({ state: 'visible', timeout: 10000 });
-    assert.equal(await page.getByLabel('음성 재생 파일 보관').isEnabled(), true, 'settings should be loaded again after a failed restart');
+    await page.getByLabel('음성 재생 파일 보관', { exact: true }).waitFor({ state: 'visible', timeout: 10000 });
+    assert.equal(await page.getByLabel('음성 재생 파일 보관', { exact: true }).isEnabled(), true, 'settings should be loaded again after a failed restart');
     await page.waitForFunction(() => document.activeElement?.textContent?.trim() === '재시작', undefined, { timeout: 5000 });
 
     await runTroubleshootingEntryScene(browser);

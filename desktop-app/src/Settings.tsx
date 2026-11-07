@@ -1507,13 +1507,6 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     }, [apiBase, isRestartingBackend, loadModelsStatus, modelStatusErrorMessage, modelStatusRetryRound]);
 
     useEffect(() => {
-        if (isRestartingBackend || !restartFocusPendingRef.current) return;
-        restartFocusPendingRef.current = false;
-        const active = document.activeElement;
-        if (!active || active === document.body) restartButtonRef.current?.focus();
-    }, [isRestartingBackend]);
-
-    useEffect(() => {
         if (!message) return;
         const timeoutId = window.setTimeout(() => {
             if (mountedRef.current) setMessage('');
@@ -1906,6 +1899,21 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
     // Not gated on isLoading: when the engine does not answer, each load waits up to 20s before the 5s retry,
     // and 재시작 is exactly what the user needs then.
     const canRestartBackend = isTauriRuntime() && !analysisActive && !isSaving && !isRestartingBackend;
+    useEffect(() => {
+        // The restart's own background-task signal can keep 재시작 disabled a render after the restart ends,
+        // and focus() on a disabled button is ignored, so return focus once the button is usable again.
+        if (!restartFocusPendingRef.current || isRestartingBackend) return undefined;
+        if (!canRestartBackend) {
+            // Something else (such as an analysis that started meanwhile) keeps it disabled: give up rather than
+            // move focus minutes later.
+            const timeoutId = window.setTimeout(() => { restartFocusPendingRef.current = false; }, 2000);
+            return () => window.clearTimeout(timeoutId);
+        }
+        restartFocusPendingRef.current = false;
+        const active = document.activeElement;
+        if (!active || active === document.body) restartButtonRef.current?.focus();
+        return undefined;
+    }, [canRestartBackend, isRestartingBackend]);
     const gpuUsable = Boolean(models?.stt_device_status?.gpu_usable);
     const gpuReason = models?.stt_device_status?.gpu_reason || 'CPU를 기본으로 사용합니다.';
     const installedSummaryModels = new Set(

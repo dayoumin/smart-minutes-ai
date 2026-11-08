@@ -132,6 +132,32 @@ class PortableReleaseScriptTest(unittest.TestCase):
         self.assertIn("PYTHONPATH", check_script)
         self.assertIn("IncludeModelSmoke", check_script)
 
+    def test_release_checks_continue_after_a_failed_step(self):
+        # One failed step must not hide later ones; the run reports every failure and then fails.
+        script = ROOT / "scripts" / "run_release_checks.ps1"
+        result = _run_powershell(
+            "$ErrorActionPreference = 'Stop'\n"
+            f"$ast = [System.Management.Automation.Language.Parser]::ParseFile('{script}', [ref]$null, [ref]$null)\n"
+            "$functions = $ast.FindAll({ param($node) $node -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false)\n"
+            "Invoke-Expression (($functions | ForEach-Object { $_.Extent.Text }) -join [Environment]::NewLine)\n"
+            "$script:FailedSteps = New-Object System.Collections.Generic.List[string]\n"
+            "Invoke-Step 'first' { throw 'first broke' }\n"
+            "Invoke-Step 'second' { Write-Host 'second ran' }\n"
+            "Invoke-Step 'third' { Invoke-External 'cmd.exe' @('/c', 'exit', '3') }\n"
+            "Write-Host ('FAILED=' + ($script:FailedSteps -join ','))\n"
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("FAIL first", result.stdout)
+        self.assertIn("first broke", result.stdout)
+        self.assertIn("second ran", result.stdout)
+        self.assertIn("PASS second", result.stdout)
+        self.assertIn("FAILED=first,third", result.stdout)
+
+        check_script = script.read_text(encoding="utf-8")
+        summary = check_script[check_script.index("if ($script:FailedSteps.Count -gt 0)"):]
+        self.assertIn("exit 1", summary)
+        self.assertLess(summary.index("exit 1"), summary.index("Release checks completed"))
+
     def test_project_local_release_build_skill_is_not_global(self):
         skill_path = ROOT / ".agents" / "skills" / "lmo-audio-release-build" / "SKILL.md"
         self.assertTrue(skill_path.exists())

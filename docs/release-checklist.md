@@ -652,6 +652,7 @@ corepack pnpm check:release
 corepack pnpm check:portable
 ```
 
+- 세 단계 모두 실패한 단계가 있어도 멈추지 않고 끝까지 실행한 뒤, 마지막에 실패한 단계 목록을 출력하고 exit 1로 끝난다(2026-11-08). 앞 단계 실패가 뒤 단계의 실패를 가리지 않게 하기 위해서다. 로그의 `FAIL` 줄과 마지막 목록을 함께 본다.
 - `check:quick`: 수정 중 반복 실행한다. 프론트 타입체크/린트, 가벼운 백엔드 unittest, 배포 스크립트 계약 테스트를 실행한다.
 - `check:release`: 배포 후보에서 실행한다. `check:quick` 범위에 백엔드 API·업데이트 작업 상태 unittest, hook 자체 회귀, 업데이트 패키지 테스트, 프론트 엔진/업데이트 Node 계약 3모듈과 사용자 흐름 시뮬레이션을 추가한다. push의 모든 검사 그룹을 포함하며 `-SkipFrontend`·`-SkipBackend`·`-SkipSimulations`로 일부를 생략한 결과는 부분 검증으로 기록한다.
 - `check:portable`: 이미 `releases\lmo_audio`를 만든 뒤 실행한다. `check:release` 범위에 portable 폴더의 읽기 전용 무결성 검사(`-ExistingInstallation`)를 추가한다. 앱 실행 smoke는 빌드 중 깨끗한 중간 빌드 폴더에서 이미 실행하며, 사용자 기록이 있을 수 있는 deploy 폴더에서는 다시 실행하지 않는다.

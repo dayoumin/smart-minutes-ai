@@ -57,6 +57,9 @@ function Invoke-External([string]$FilePath, [string[]]$ArgumentList) {
     }
 }
 
+# A failed step is recorded and the run continues, so one failure cannot hide later ones.
+$script:FailedSteps = New-Object System.Collections.Generic.List[string]
+
 function Invoke-Step([string]$Name, [scriptblock]$Block) {
     Write-Host ""
     Write-Host "== $Name"
@@ -68,8 +71,8 @@ function Invoke-Step([string]$Name, [scriptblock]$Block) {
     }
     catch {
         $stopwatch.Stop()
-        Write-Host ("FAIL {0} ({1:n1}s)" -f $Name, $stopwatch.Elapsed.TotalSeconds)
-        throw
+        Write-Host ("FAIL {0} ({1:n1}s): {2}" -f $Name, $stopwatch.Elapsed.TotalSeconds, $_.Exception.Message)
+        $script:FailedSteps.Add($Name)
     }
 }
 
@@ -157,26 +160,35 @@ else {
 }
 
 if (-not $SkipBackend) {
-    $python = Get-CheckPython
-    Write-Host "Python: $python"
-
-    Invoke-Step "backend quick unittest" {
-        Invoke-PythonUnittest $python $BackendQuickModules
+    $python = $null
+    Invoke-Step "backend python runtime" {
+        $script:python = Get-CheckPython
+        Write-Host "Python: $script:python"
     }
+    $python = $script:python
 
-    if ($Tier -in @("release", "portable")) {
-        Invoke-Step "backend API unittest" {
-            Invoke-PythonUnittest $python $BackendReleaseModules
-        }
-    }
-
-    if ($IncludeModelSmoke) {
-        Invoke-Step "backend model smoke unittest" {
-            Invoke-PythonUnittest $python @("backend.test_transcribe")
-        }
+    if (-not $python) {
+        Write-Host "SKIP backend unittests; no Python runtime was found."
     }
     else {
-        Write-Host "SKIP backend model smoke unittest; pass -IncludeModelSmoke to run backend.test_transcribe."
+        Invoke-Step "backend quick unittest" {
+            Invoke-PythonUnittest $python $BackendQuickModules
+        }
+
+        if ($Tier -in @("release", "portable")) {
+            Invoke-Step "backend API unittest" {
+                Invoke-PythonUnittest $python $BackendReleaseModules
+            }
+        }
+
+        if ($IncludeModelSmoke) {
+            Invoke-Step "backend model smoke unittest" {
+                Invoke-PythonUnittest $python @("backend.test_transcribe")
+            }
+        }
+        else {
+            Write-Host "SKIP backend model smoke unittest; pass -IncludeModelSmoke to run backend.test_transcribe."
+        }
     }
 }
 else {
@@ -221,4 +233,11 @@ elseif ($Tier -eq "portable") {
 }
 
 Write-Host ""
+if ($script:FailedSteps.Count -gt 0) {
+    Write-Host "Release checks failed: $Tier ($($script:FailedSteps.Count) step(s))"
+    foreach ($failed in $script:FailedSteps) {
+        Write-Host "  FAIL $failed"
+    }
+    exit 1
+}
 Write-Host "Release checks completed: $Tier"

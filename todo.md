@@ -55,7 +55,7 @@
   - [x] 2026-11-07 해결(`f3c9c79`): `test:meeting-detail-flow`는 `메뉴`로 `앱 메뉴` 서랍을 연 뒤 진행하고, `모델 준비`는 한 화면 설정의 `요약 모델` 묶음을 확인한다. 자세한 내용은 `docs/ui-production-audit.md` 2026-11-07 절.
   - [x] 2026-11-08 재확인(`a99fecb`, worktree): `check:release -SkipSimulations` 통과(typecheck·lint·계약, 백엔드 quick 158·API 266). 시뮬레이션 11개는 첫 실패에 가리지 않도록 하나씩 실행했고 10개 통과. 설정 두 시뮬레이션의 10-29 UI 기대값과 860×720 넘침은 `ed505cc`·`a99fecb`에서 정리했다(`docs/frontend-simulation-testing.md` 2026-11-08).
   - [ ] 2026-11-08 간헐 실패: `test:settings-model-management`가 1회 `addModel` 917×627 단계(928행)에서 `검색 결과 도움말`에 초점을 준 뒤 툴팁을 30초 기다리다 실패했다. 같은 명령 재실행 2회와 그 전 수동 실행 6회는 통과. 가설: 낮은 창에서 늦게 도착한 스크롤 이벤트가 `SettingsHint.tsx` 19–24행 조건(초점·보이는 영역)으로 방금 연 툴팁을 닫는다. 재현 근거를 얻기 전에는 고치지 않는다.
-  - [ ] `check:release`(`scripts/run_release_checks.ps1`)는 첫 실패에서 멈춰 뒤 단계를 가린다. 모든 단계를 실행하고 실패를 모아 보고할지 결정(검사 스크립트 변경이라 사용자 확인 필요).
+  - [x] 2026-11-08 해결(사용자 승인): `scripts/run_release_checks.ps1`는 실패한 단계를 기록하고 끝까지 실행한 뒤 실패 목록과 exit 1로 끝난다. `tests/test_portable_release_scripts.py`에 실패 뒤에도 다음 단계가 도는지 확인하는 동작 테스트를 추가했다.
 
 - [x] 2026-10-26 **회사 인계 분류·커밋 분리·push 전 검사 준비**: 장문·요약 성능12항목과 실험 이력을 `roadmap.md`로 이관하고 현재 실행 큐에서 제외했다. 업데이트 안내의 독립 수정·검사는 `985ce8e`, Windows pre-push 장치와 지침은 `59e030c`에 분리 커밋했다. 타입 검사·Node16개·백엔드35개·hook 회귀6개·변경 파일lint를 통과했고, 실제 Git hook의 미커밋 소스/다른 커밋 차단도 확인했다. 기존 설정·모델 관리·요약 실험의 소스 변경, 로컬 설정과 runtime 자료는 미커밋 상태로 보존했다. push·빌드·실제 설치·공개 배포는 실행하지 않았다.
 

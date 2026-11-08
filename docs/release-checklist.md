@@ -195,6 +195,14 @@ backend\.venv-desktop\Scripts\python.exe -B -X utf8 scripts\verify_web_local_eng
   | 시작 로그 | 같은 실행의 `logs\engine-startup.log`(29줄)에 서버·`--pair`·`--stop`·점검 모드마다 `start mode=… frozen=True`, 서버의 `ready engine.log configured`, 종료 코드가 남았다. 포트 충돌 시험은 `exit code=1`, 포트 사용 중 점검은 `exit code=2`로 남는다. 자료 폴더가 없던 처음 두 점검은 기록하지 않았다(의도대로). |
 
   남은 일: 이 진단 설치 파일을 실패했던 PC에서 실행하고 다운로드 폴더의 `LMO-install-diagnostic.log`를 받는다. 실제 메시지 상자 관찰과 실제 설치 경로 배치는 이 PC에서 확인하지 않았다.
+- **2026-11-09 웹 공개(시험용 임시).** 사용자가 직접 다른 PC에서 웹으로 받아 시험하도록 요청·승인했다(현재 외부 사용자 없음). 진단판을 공개 엔진 다운로드로 올렸다. 원인 확인·수정 뒤 일반 설치 파일로 되돌리는 배포가 필요하다.
+
+  | 항목 | 결과 |
+  | --- | --- |
+  | R2 업로드 | 임시 Worker `barorok-upload-20261109-fdb08290`(로컬 토큰의 SHA만 코드에 둠, 키 하나 고정, 기존 키면 거부)로 10MiB × 43조각 multipart 전송. 전체 read-back 450,702,296 bytes·SHA 일치, 저장 metadata `sha256` 확인. Worker 삭제 후 endpoint 404, 로컬 토큰 삭제. 기존 R2 객체는 건드리지 않았다. wrangler `r2 object put`은 300MB 제한과 custom metadata 미지원으로 쓰지 않는다. |
+  | 웹 배포 | source `5937998`(release.json 진단판 지정, 1027 경로는 이전 경로로 307). `prepare_cloudflare_web.ps1 -InstallerUrl/-UpdateUrl <진단판 URL> -TestRelease`(기존 공개본과 같은 설정). Worker `469ee540-e1df-4841-979d-50ed2da7c0d1`. 복원 기준은 이전 `9499459a-3139-4c1b-b2f3-760af0b3c6b6`(2026-10-28). 웹 화면도 main 기준으로 함께 바뀌었다. |
+  | 공개 확인 | `engine-beta.json` 새 버전, 설치 파일 HEAD 200·크기·ETag SHA, Range 206, 1027 경로 307, 알 수 없는 파일 404, POST 405, 데스크톱 feed 200. 공개 URL 전체 다운로드 SHA 일치. 웹 자산 6개 SHA가 로컬 빌드와 같음. 브라우저에서 첫 화면 표시 확인(로컬 엔진 접근 차단 오류는 앱 내 브라우저의 정상 차단). |
+  | 태그 | 로컬 annotated `prod-2026-11-08.1`(UTC 날짜)·`v0.1.13-beta-20261108`. 원격 push 안 함. |
 
 **진단 파일 준비 완료·다른 PC의 실제 실패 로그 대기. 원인은 계속 미확정이다.** 사용자 요청에 따라 `-DiagnosticLogs`를 지정한 임시 빌드만 실제 Windows 다운로드 폴더의 `LMO-install-diagnostic.log`에 기록한다. 일반 빌드는 로그 기능을 포함하지 않는다. 실행 시도별 PID·시각·버전·Windows 빌드/환경, 설치 전 점검·파일 배치·프로그램 시작·종료/복구 순서, 실행 파일 존재/크기, 각 오류 번호/코드/종료 코드, 최종 결과와 첫 오류를 한 파일에 이어 쓴다. Python 경고창의 원문 전체나 Python 시작 전 내부 traceback 수집을 보장하지 않으며, 회의록·설정·모델 파일 내용을 읽거나 전송하지 않는다.
 

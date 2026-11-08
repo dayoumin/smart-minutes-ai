@@ -136,7 +136,18 @@ if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $HelperPath -PathType L
 $Suffix = if ($DiagnosticLogs) { "-diagnostic" } else { "" }
 $InstallerPath = Join-Path $ResolvedOutputDir "Barorok-Local-Engine-Setup-$EngineVersion$Suffix.exe"
 $DiagnosticArguments = @()
-if ($DiagnosticLogs) { $DiagnosticArguments += "/DINSTALLER_DIAGNOSTICS" }
+if ($DiagnosticLogs) {
+    # The diagnostic-only report program explains an engine that does not start or stop.
+    $ReportPath = Join-Path $ResolvedOutputDir "build-input\barorok-installer-diagnostic-report.exe"
+    & (Join-Path $PSScriptRoot "build_installer_diagnostic_report.ps1") `
+        -Python $Python `
+        -OutputPath $ReportPath
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $ReportPath -PathType Leaf)) {
+        throw "Diagnostic report program build failed."
+    }
+    $DiagnosticArguments += "/DINSTALLER_DIAGNOSTICS"
+    $DiagnosticArguments += "/DDIAGNOSTIC_REPORT_PATH=$ReportPath"
+}
 & $ResolvedMakensis `
     "/V3" `
     "/INPUTCHARSET" "UTF8" `
@@ -193,9 +204,13 @@ if ($DiagnosticLogs) {
         temporary = $true
         path = "Downloads\LMO-install-diagnostic.log"
         append = $true
-        enginePayloadRebuilt = $false
+        # Identify the packaged engine instead of claiming whether it was rebuilt:
+        # the engine start-up log exists only in engines built after 2026-11-08.
+        engineVersion = $EngineVersion
+        engineExeSha256 = Get-FileHashValue $EnginePath
         helperRebuilt = $false
         helperSha256 = Get-FileHashValue $HelperPath
+        reportProgramSha256 = Get-FileHashValue $ReportPath
     }
 }
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)

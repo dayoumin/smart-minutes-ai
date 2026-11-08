@@ -170,6 +170,21 @@ backend\.venv-desktop\Scripts\python.exe -B -X utf8 scripts\verify_web_local_eng
 
 ### 임시 단일 파일 설치 진단 — 2026-10-29
 
+**2026-11-08 보강.** 10-29 진단 로그는 단계·종료 코드만 남겨, 다른 PC의 "Python 시작 오류 → 안전 종료 실패" 원인(경고창 문구·traceback)을 담지 못했다. `engine.log`가 import와 자료 폴더 준비 뒤에야 만들어져 그날 로그가 없었던 것과도 맞는다. 두 가지를 더했다.
+
+- 영구: 설치된 엔진은 무거운 import 전에 `engine-startup.log`를 연다(`backend/engine_startup_log.py`, 위 6-1 표). Python 단계의 import·시작 실패 traceback, faulthandler의 네이티브 충돌, 종료 코드가 남는다. 명령행 경로·회의 내용·설정은 기록하지 않는다. 진단 모드를 지워도 유지한다.
+  - 자료 폴더는 서버 실행·모델 받기 모드에서만 만든다. 점검 모드(`--preflight-json`, `--installer-target-preflight-json`)는 폴더가 이미 있을 때만 쓴다. `--stop`은 폴더가 없으면 `%TEMP%` 대체 위치에 쓴다. 점검이 사용자 자료를 만들지 않는다는 `verify_web_local_engine_poc.py`의 계약을 지키기 위해서다.
+  - 한계: PyInstaller 부트로더 단계 오류(예: `Failed to start embedded python interpreter!`, Python DLL 로드 실패)는 Python 코드가 돌기 전이라 이 로그에 남지 않는다. 아래 진단 빌드의 창 관찰로만 잡힌다.
+- 임시(`-DiagnosticLogs` 빌드만): 진단 전용 보고 프로그램이 두 가지 일을 한다. 결과는 다운로드 폴더 진단 로그의 `[엔진 실행 관찰 시작]`·`[엔진 보고서 시작]` 아래에 붙는다.
+  - 창 관찰 실행: 엔진 시작과 두 곳의 `--stop`(업데이트 전 종료, 시작 실패 뒤 되돌리기)을 보고 프로그램이 대신 실행한다. 실행 중 0.25초마다 엔진이 띄운 창의 제목·본문을 읽는다. 경고창은 사용자가 닫을 때까지 프로세스를 멈춰 세우므로, 열려 있는 동안 원문을 잡는다. 종료 코드는 16진수(예: `0xC0000135`)와 함께 남긴다.
+  - 관찰 실행의 동작: 시작은 엔진이 응답하거나 종료되거나 20초가 지나면 돌아오고, 엔진은 계속 실행된다. `--stop`은 `ExecWait`처럼 끝까지 기다리고 그 종료 코드를 그대로 돌려준다. 시작 전부터 17863 포트가 응답하면 그 응답을 준비 완료로 보지 않는다. 보고 프로그램을 못 띄우거나, 실행됐지만 결과 파일 없이 끝나면(단일 파일 압축 해제 차단·충돌) 원래 명령으로 다시 시작·종료한다. 진단판은 TEMP·DLL 문제가 있는 PC에 쓰이므로, 진단 도구 실패가 설치를 막지 않게 하기 위해서다. 같은 이유로 `--stop` 재실행은 안전하다(이미 멈춘 엔진은 3을 돌려준다).
+  - 실패 보고서: 엔진이 준비되지 않거나 종료 명령·종료 확인이 실패하면 추가로 수집한다. 항목은 엔진 시작 로그 끝 40줄, 엔진 창, 엔진 프로세스 수, 최근 30분 Windows `Application Error`(1000/1001) 기록, 폴더 보호(Controlled Folder Access)·경로 한글 여부·자료 폴더 쓰기 가능 여부다. 시작 실패 때는 되돌리기용 `--stop` 전에 수집한다.
+  - 각 항목은 실패해도 건너뛴다. 긴 줄은 400자 단위로 나눠 NSIS 한 줄 제한(1024자)에 잘리지 않게 한다.
+  - 일반 빌드에는 보고 프로그램·관찰·보고 호출이 들어가지 않는다. 일반 모드 NSIS 전처리 결과는 HEAD와 같다(2026-11-08 비교, 1,396줄 차이 0).
+- 빌드 순서: 진단 설치 파일은 같은 버전의 일반 설치 파일에서 점검 도구를 꺼내 쓴다. 새 시작 로그가 들어간 엔진으로 진단하려면 `build_web_local_engine_poc.ps1`(엔진) → `build_web_local_engine_installer_poc.ps1`(일반) → 같은 스크립트 `-DiagnosticLogs`(진단) 순서로 만든다. 예전 엔진 묶음을 다시 쓰면 보고서의 엔진 시작 로그는 항상 "없음"이다. 진단 설치 파일의 `installer-poc-manifest.json`에는 포함한 엔진 버전·실행 파일 SHA와 보고 프로그램 SHA가 남는다.
+- 진단 모드를 지울 때 함께 지울 것: `backend/installer_engine_failure_report.py`와 테스트, `scripts/build_installer_diagnostic_report.ps1`, `installer/diagnostic-log.nsh`의 `InstallerEngineStart`·`InstallerEngineStop` 매크로의 진단 분기와 `RunWatchedEngineStart`·`RunWatchedEngineStop`·`RunPlainEngineStop`·`InstallerDiagnosticEngineReport`·`RecordInstallerEngineReport`·`AppendInstallerEngineReportFile`, `web-local-engine.nsi`의 보고 호출 4곳과 `DIAGNOSTIC_REPORT_PATH` 파일 줄, `build_web_local_engine_installer_poc.ps1`의 보고 프로그램 빌드 분기와 manifest 항목. `InstallerEngineStart`·`InstallerEngineStop` 매크로는 일반 분기(원래 `Exec`/`ExecWait`)만 남기거나 원래 명령으로 되돌린다.
+- 검증 범위: 단위 테스트와 격리 NSIS 테스트로 확인했다. 실제 진단 설치 파일을 다른 PC에서 실행해 실패 원인을 얻는 일은 남아 있다. 이 실행 환경은 비대화형 데스크톱이라 실제 메시지 상자가 바로 닫힌다. 그래서 창 문구 수집과 관찰 실행은 별도 프로세스가 직접 만든 창(`#32770` 제목·본문, 한글 포함)으로 확인했다.
+
 **진단 파일 준비 완료·다른 PC의 실제 실패 로그 대기. 원인은 계속 미확정이다.** 사용자 요청에 따라 `-DiagnosticLogs`를 지정한 임시 빌드만 실제 Windows 다운로드 폴더의 `LMO-install-diagnostic.log`에 기록한다. 일반 빌드는 로그 기능을 포함하지 않는다. 실행 시도별 PID·시각·버전·Windows 빌드/환경, 설치 전 점검·파일 배치·프로그램 시작·종료/복구 순서, 실행 파일 존재/크기, 각 오류 번호/코드/종료 코드, 최종 결과와 첫 오류를 한 파일에 이어 쓴다. Python 경고창의 원문 전체나 Python 시작 전 내부 traceback 수집을 보장하지 않으며, 회의록·설정·모델 파일 내용을 읽거나 전송하지 않는다.
 
 | 항목 | 확인 결과 |
@@ -706,7 +721,8 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 | 웹 화면 자산 | 패키지 | 배포 때 전체 교체, 모든 사용자에게 즉시 반영 | `prepare_cloudflare_web.ps1`이 `.tmp\cloudflare-web\dist`에 만든다 |
 | 브라우저 회의 목록(IndexedDB) | 사용자 | 배포가 건드리지 않는다. 사이트 주소(프로토콜·도메인·포트)마다 따로 저장된다 | 운영 주소 `https://barorok.ecomarin.workers.dev` |
 | 엔진 프로그램 `%LOCALAPPDATA%\Programs\Barorok\LocalEngine` | 패키지 | 설치 프로그램이 준비 폴더에 풀어 교체한다. 새 엔진이 시작되지 않으면 되돌린다 | 정리는 설치 프로그램이 만든 파일 목록 안에서만 한다. 허용하는 웹 주소는 빌드 때 `defaults\engine-settings.json`에 고정된다 |
-| 엔진 자료 `%LOCALAPPDATA%\Barorok\LocalEngine`(설정·모델·DB·결과·임시·로그·런타임) | 사용자 | 설치·업데이트·제거 모두 보존한다 | |
+| 엔진 자료 `%LOCALAPPDATA%\Barorok\LocalEngine`(설정·모델·DB·결과·임시·로그·런타임) | 사용자 | 설치·업데이트·제거 모두 보존한다 | `logs\engine-startup.log`(2026-11-08)는 설치된 엔진이 무거운 import 전에 여는 시작 기록이다. 시작 방식·실패 traceback·종료 코드만 남기고 256KB를 넘으면 `.1`로 한 번 돌린다 |
+| `%TEMP%\Barorok-engine-startup.log` | 사용자(시작 기록 대체 위치) | 설치·업데이트·제거가 건드리지 않는다 | 엔진 자료의 `logs`에 쓸 수 없을 때만 엔진이 만든다 |
 | 실제 다운로드 폴더의 `LMO-install-diagnostic.log` | 사용자(임시 진단 기록) | `-DiagnosticLogs` 빌드만 누적 기록한다. 일반 설치·업데이트·제거는 건드리지 않는다 | Python 시작 전부터 기록. 원인 확인 뒤 진단 모드 제거, 기존 로그는 보존 |
 
 ### 체크 항목

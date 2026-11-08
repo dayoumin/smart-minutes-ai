@@ -21,6 +21,38 @@
 !endif
 !macroend
 
+; Runs the diagnostic-only report program and copies its findings (engine startup
+; log tail, open engine dialogs, Windows error records) into the Downloads log.
+!macro InstallerDiagnosticEngineReport Stage Exe
+!ifdef INSTALLER_DIAGNOSTICS
+  Push "${Exe}"
+  Push "${Stage}"
+  Call RecordInstallerEngineReport
+!endif
+!macroend
+
+; Engine start/stop. Normal builds run exactly the original commands; diagnostic
+; builds run them through the report program so an error dialog is read while open.
+!macro InstallerEngineStart Exe
+!ifdef INSTALLER_DIAGNOSTICS
+  Push "${Exe}"
+  Call RunWatchedEngineStart
+!else
+  Exec '"${Exe}"'
+!endif
+!macroend
+
+!macro InstallerEngineStop Stage Exe Result
+!ifdef INSTALLER_DIAGNOSTICS
+  Push "${Exe}"
+  Push "${Stage}"
+  Call RunWatchedEngineStop
+  Pop ${Result}
+!else
+  ExecWait '"${Exe}" --stop' ${Result}
+!endif
+!macroend
+
 !macro InstallerDiagnosticAbort
 !ifdef INSTALLER_DIAGNOSTICS
   Push "설치 중단 / install.aborted"
@@ -196,6 +228,161 @@ diagnostic_init_done:
   Pop $1
   Pop $0
   ClearErrors
+FunctionEnd
+
+!include "TextFunc.nsh"
+!define INSTALLER_ENGINE_REPORT_MAX_LINES 300
+Var InstallerEngineReportStage
+Var InstallerEngineReportExe
+Var InstallerEngineReportFile
+Var InstallerEngineReportHandle
+Var InstallerEngineReportLine
+Var InstallerEngineReportExit
+Var InstallerEngineReportFlag
+; Separate from the file reader's flag: the reader runs inside the report call.
+Var InstallerEngineReportCallerFlag
+Var InstallerEngineReportCount
+
+; Copies a UTF-16LE report (one record per line, no BOM) into the diagnostic log.
+Function AppendInstallerEngineReportFile
+  Pop $InstallerEngineReportFile
+  StrCpy $InstallerEngineReportFlag 0
+  IfErrors 0 +2
+  StrCpy $InstallerEngineReportFlag 1
+  StrCpy $InstallerEngineReportCount 0
+  ClearErrors
+  FileOpen $InstallerEngineReportHandle "$InstallerEngineReportFile" r
+  IfErrors engine_report_missing
+engine_report_next:
+  ClearErrors
+  FileReadUTF16LE $InstallerEngineReportHandle $InstallerEngineReportLine
+  IfErrors engine_report_close
+  IntOp $InstallerEngineReportCount $InstallerEngineReportCount + 1
+  ${If} $InstallerEngineReportCount > ${INSTALLER_ENGINE_REPORT_MAX_LINES}
+    Push "[엔진 보고서] ${INSTALLER_ENGINE_REPORT_MAX_LINES}줄 이후 생략"
+    Call AppendInstallerDiagnostic
+    Goto engine_report_close
+  ${EndIf}
+  ${TrimNewLines} "$InstallerEngineReportLine" $InstallerEngineReportLine
+  Push "$InstallerEngineReportLine"
+  Call AppendInstallerDiagnostic
+  Goto engine_report_next
+engine_report_close:
+  FileClose $InstallerEngineReportHandle
+  Goto engine_report_restore
+engine_report_missing:
+  Push "[엔진 보고서] 결과 파일 없음 path=$InstallerEngineReportFile"
+  Call AppendInstallerDiagnostic
+engine_report_restore:
+  ${If} $InstallerEngineReportFlag == 1
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+FunctionEnd
+
+Function RecordInstallerEngineReport
+  Pop $InstallerEngineReportStage
+  Pop $InstallerEngineReportExe
+  StrCpy $InstallerEngineReportCallerFlag 0
+  IfErrors 0 +2
+  StrCpy $InstallerEngineReportCallerFlag 1
+  ${If} $InstallerDiagnosticReady == 1
+    Push "[엔진 보고서 요청] stage=$InstallerEngineReportStage"
+    Call AppendInstallerDiagnostic
+    Delete "$PLUGINSDIR\engine-report.txt"
+    ClearErrors
+    ExecWait '"$PLUGINSDIR\barorok-installer-diagnostic-report.exe" --stage "$InstallerEngineReportStage" --engine-exe "$InstallerEngineReportExe" --output "$PLUGINSDIR\engine-report.txt"' $InstallerEngineReportExit
+    IfErrors 0 +2
+    StrCpy $InstallerEngineReportExit "launch_failed"
+    Push "[엔진 보고서] report-exit=$InstallerEngineReportExit"
+    Call AppendInstallerDiagnostic
+    Push "$PLUGINSDIR\engine-report.txt"
+    Call AppendInstallerEngineReportFile
+  ${EndIf}
+  ${If} $InstallerEngineReportCallerFlag == 1
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+FunctionEnd
+
+Var InstallerEngineWatchStage
+Var InstallerEngineWatchExe
+Var InstallerEngineWatchExit
+Var InstallerEngineWatchFlag
+
+; Starts the engine through the report program, which returns once the engine
+; answers, exits, or 20 seconds pass. The engine keeps running afterwards.
+Function RunWatchedEngineStart
+  Pop $InstallerEngineWatchExe
+  StrCpy $InstallerEngineWatchFlag 0
+  IfErrors 0 +2
+  StrCpy $InstallerEngineWatchFlag 1
+  Delete "$PLUGINSDIR\engine-watch.txt"
+  ClearErrors
+  ExecWait '"$PLUGINSDIR\barorok-installer-diagnostic-report.exe" --watch start --stage "engine.start" --engine-exe "$InstallerEngineWatchExe" --output "$PLUGINSDIR\engine-watch.txt"' $InstallerEngineWatchExit
+  ${If} ${Errors}
+    ; The report program itself could not run: start the engine the normal way.
+    Push "[엔진 실행 관찰] 보고 프로그램 실행 실패, 일반 방식으로 시작"
+    Call AppendInstallerDiagnostic
+    Exec '"$InstallerEngineWatchExe"'
+  ${ElseIfNot} ${FileExists} "$PLUGINSDIR\engine-watch.txt"
+    ; The report program started but did not finish (onefile extraction blocked,
+    ; crash). Start normally; a second engine exits on its single-instance mutex.
+    Push "[엔진 실행 관찰] 보고 프로그램이 관찰을 끝내지 못함 exit=$InstallerEngineWatchExit, 일반 방식으로 시작"
+    Call AppendInstallerDiagnostic
+    Exec '"$InstallerEngineWatchExe"'
+  ${Else}
+    Push "$PLUGINSDIR\engine-watch.txt"
+    Call AppendInstallerEngineReportFile
+  ${EndIf}
+  ${If} $InstallerEngineWatchFlag == 1
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+FunctionEnd
+
+Function RunPlainEngineStop
+  ClearErrors
+  ExecWait '"$InstallerEngineWatchExe" --stop' $InstallerEngineWatchExit
+  IfErrors 0 +2
+  StrCpy $InstallerEngineWatchExit "launch_failed"
+FunctionEnd
+
+; Runs "<engine> --stop" through the report program and pushes the stop command's
+; own exit code, so callers keep their ExecWait checks.
+Function RunWatchedEngineStop
+  Pop $InstallerEngineWatchStage
+  Pop $InstallerEngineWatchExe
+  StrCpy $InstallerEngineWatchFlag 0
+  IfErrors 0 +2
+  StrCpy $InstallerEngineWatchFlag 1
+  Delete "$PLUGINSDIR\engine-watch.txt"
+  ClearErrors
+  ExecWait '"$PLUGINSDIR\barorok-installer-diagnostic-report.exe" --watch stop --stage "$InstallerEngineWatchStage" --engine-exe "$InstallerEngineWatchExe" --output "$PLUGINSDIR\engine-watch.txt"' $InstallerEngineWatchExit
+  ${If} ${Errors}
+    ; The report program itself could not run: stop the engine the normal way.
+    Push "[엔진 실행 관찰] 보고 프로그램 실행 실패, 일반 방식으로 종료"
+    Call AppendInstallerDiagnostic
+    Call RunPlainEngineStop
+  ${ElseIfNot} ${FileExists} "$PLUGINSDIR\engine-watch.txt"
+    ; Started but never finished, so its exit code is not the stop command's.
+    ; Repeating --stop is safe: an engine that already stopped answers 3.
+    Push "[엔진 실행 관찰] 보고 프로그램이 관찰을 끝내지 못함 exit=$InstallerEngineWatchExit, 일반 방식으로 종료"
+    Call AppendInstallerDiagnostic
+    Call RunPlainEngineStop
+  ${Else}
+    Push "$PLUGINSDIR\engine-watch.txt"
+    Call AppendInstallerEngineReportFile
+  ${EndIf}
+  ${If} $InstallerEngineWatchFlag == 1
+    SetErrors
+  ${Else}
+    ClearErrors
+  ${EndIf}
+  Push $InstallerEngineWatchExit
 FunctionEnd
 
 Function .onInstSuccess

@@ -11,6 +11,15 @@ COMPILER = Path(os.environ.get("LMO_MAKENSIS", str(
 )))
 
 
+ENGINE_REPORT_LINES = (
+    "[엔진 보고서 시작] stage=fixture engine=C:\\엔진\\barorok-local-engine-x.exe",
+    "[엔진 창] pid=7 class=#32770 title=Fatal error detected",
+    "  | 내용: Failed to load Python DLL python312.dll",
+    "",
+    "[엔진 보고서 끝]",
+)
+
+
 @unittest.skipUnless(os.name == "nt" and COMPILER.is_file(), "Windows NSIS compiler required")
 class InstallerDiagnosticLogTest(unittest.TestCase):
     def _compile(self, folder, *, enabled=True, blocked=False, init_abort=False):
@@ -19,8 +28,11 @@ class InstallerDiagnosticLogTest(unittest.TestCase):
             log_dir.write_bytes(b"user sentinel")
         source = folder / "logger.nsi"
         binary = folder / "logger.exe"
+        engine_report = folder / "engine-report-fixture.txt"
+        engine_report.write_bytes("\r\n".join(ENGINE_REPORT_LINES).encode("utf-16-le") + b"\r\n\x00")
         defines = (f'!define INSTALLER_DIAGNOSTICS\n'
-                   f'!define INSTALLER_DIAGNOSTIC_TEST_DIR "{log_dir}"\n') if enabled else ""
+                   f'!define INSTALLER_DIAGNOSTIC_TEST_DIR "{log_dir}"\n'
+                   f'!define ENGINE_REPORT_FIXTURE "{engine_report}"\n') if enabled else ""
         initialization = ""
         if init_abort:
             # Reuse a real early-failure branch. Only its visible MessageBox is omitted;
@@ -69,6 +81,38 @@ Section
   IfErrors failed
   !insertmacro InstallerDiagnostic "after two independent errors"
   IfErrors failed
+  InitPluginsDir
+  SetErrors
+  !insertmacro InstallerDiagnosticEngineReport "fixture.stage" "$EXEPATH"
+  IfErrors +2
+  Goto failed
+  ClearErrors
+!ifdef INSTALLER_DIAGNOSTICS
+  Push "${ENGINE_REPORT_FIXTURE}"
+  Call AppendInstallerEngineReportFile
+  IfErrors failed
+  ; No report program in this fixture: stop falls back to the plain command, which
+  ; also cannot run, so the caller must see launch_failed (a failed stop).
+  SetErrors
+  !insertmacro InstallerEngineStop "fixture.stop" "$EXEDIR\\missing-engine.exe" $3
+  IfErrors +2
+  Goto failed
+  StrCmp $3 "launch_failed" 0 failed
+  ClearErrors
+  !insertmacro InstallerEngineStart "$EXEDIR\\missing-engine.exe"
+  ; A report program that runs but writes nothing (blocked onefile extraction,
+  ; crash) must not decide the stop result: the plain command runs instead.
+  CopyFiles /SILENT "$SYSDIR\\whoami.exe" "$PLUGINSDIR\\barorok-installer-diagnostic-report.exe"
+  StrCpy $3 "unchanged"
+  SetErrors
+  !insertmacro InstallerEngineStop "fixture.unfinished" "$EXEDIR\\missing-engine.exe" $3
+  IfErrors +2
+  Goto failed
+  StrCmp $3 "launch_failed" 0 failed
+  ClearErrors
+  !insertmacro InstallerEngineStart "$EXEDIR\\missing-engine.exe"
+!endif
+  IfErrors failed
   StrCmp $0 "register-zero" 0 failed
   StrCmp $1 "register-one" 0 failed
   StrCmp $R0 "register-r-zero" 0 failed
@@ -112,6 +156,24 @@ SectionEnd
             self.assertEqual(appended.count(b"\xff\xfe"), 1, "one UTF-16 BOM for the entire file")
             self.assertEqual(appended.decode("utf-16").count("=== 실행 시도 시작"), 2)
 
+    def test_engine_report_is_copied_and_a_missing_report_program_is_recorded(self):
+        with tempfile.TemporaryDirectory(prefix="nsis-engine-report-", dir=ROOT / ".tmp") as value:
+            binary, folder = self._compile(Path(value))
+            self._run(binary)
+            text = (folder / "LMO-install-diagnostic.log").read_bytes().decode("utf-16")
+            self.assertIn("[엔진 보고서 요청] stage=fixture.stage", text)
+            self.assertIn("[엔진 보고서] report-exit=launch_failed", text)
+            self.assertIn("[엔진 보고서] 결과 파일 없음", text)
+            positions = [text.index(line) for line in ENGINE_REPORT_LINES if line]
+            self.assertEqual(positions, sorted(positions), "report lines keep their order")
+            self.assertIn("Failed to load Python DLL python312.dll (error_flag=0)", text, "trailing line breaks are trimmed")
+            self.assertIn("errors=2 first-error=PYTHON_START_FAILED", text, "a report is evidence, not another error")
+            self.assertIn("[엔진 실행 관찰] 보고 프로그램 실행 실패, 일반 방식으로 종료", text)
+            self.assertIn("[엔진 실행 관찰] 보고 프로그램 실행 실패, 일반 방식으로 시작", text)
+            self.assertIn("보고 프로그램이 관찰을 끝내지 못함", text)
+            self.assertIn("일반 방식으로 종료", text.split("보고 프로그램이 관찰을 끝내지 못함", 1)[1])
+            self.assertIn("일반 방식으로 시작", text.split("보고 프로그램이 관찰을 끝내지 못함", 2)[2])
+
     def test_disabled_build_has_no_downloads_log_or_logging_side_effects(self):
         with tempfile.TemporaryDirectory(prefix="nsis-no-log-", dir=ROOT / ".tmp") as value:
             binary, folder = self._compile(Path(value), enabled=False)
@@ -142,6 +204,8 @@ SectionEnd
             (artifact / "poc-manifest.json").write_text("{}", encoding="utf-8")
             helper = folder / "helper.exe"
             helper.write_bytes(b"MZ inert helper, never executed")
+            report = folder / "report.exe"
+            report.write_bytes(b"MZ inert report, never executed")
             for enabled in (False, True):
                 with self.subTest(enabled=enabled):
                     arguments = [str(COMPILER), "/V2", "/INPUTCHARSET", "UTF8",
@@ -150,7 +214,7 @@ SectionEnd
                                  "/DENGINE_EXE_NAME=fixture.exe", "/DENGINE_VERSION=fixture",
                                  f"/DICON_PATH={ROOT / 'desktop-app/src-tauri/icons/icon.ico'}", "/DBRAND_NAME=LMO"]
                     if enabled:
-                        arguments.append("/DINSTALLER_DIAGNOSTICS")
+                        arguments += ["/DINSTALLER_DIAGNOSTICS", f"/DDIAGNOSTIC_REPORT_PATH={report}"]
                     arguments.append(str(ROOT / "installer/web-local-engine.nsi"))
                     result = subprocess.run(arguments, cwd=ROOT, capture_output=True, timeout=30)
                     self.assertEqual(result.returncode, 0, result.stderr.decode("utf-8", "replace"))

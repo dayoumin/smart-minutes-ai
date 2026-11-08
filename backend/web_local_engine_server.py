@@ -9,39 +9,48 @@ import threading
 from pathlib import Path
 from typing import Mapping
 
-import uvicorn
+import engine_startup_log
 
-from brand import BRAND_NAME
-from local_engine_browser_approval import BrowserApprovalCoordinator, BrowserApprovalDataError
-from local_engine_preflight import (
-    InstallerTargetPaths,
-    collect_installer_target_preflight,
-    collect_windows_preflight,
-    inspect_fixed_port,
-    read_installer_preflight_request,
-    write_preflight_json,
-)
-from local_engine_security import PRODUCT_ID
-from ollama_utils import stop_embedded_ollama_server
-from web_local_engine_runtime import (
-    WindowsNamedEvent,
-    WindowsNamedMutex,
-    apply_web_local_engine_environment,
-    approve_browser_connection,
-    build_web_local_engine_environment,
-    confirm_browser_approval_recovery,
-    engine_stop_event_name,
-    load_web_local_engine_settings,
-    make_pairing_code_presenter,
-    pairing_helper_is_armed,
-    pairing_mutex_name,
-    prepare_web_local_engine_data,
-    resolve_web_local_engine_layout,
-    signal_engine_stop,
-    show_windows_message,
-    validate_production_web_origin,
-    windows_named_mutex_exists,
-)
+# Opened before any third-party or project import so that an import or DLL failure
+# in the installed engine leaves a traceback instead of only a dialog.
+_STARTUP_LOG = engine_startup_log.begin(sys.argv[1:])
+try:
+    import uvicorn
+
+    from brand import BRAND_NAME
+    from local_engine_browser_approval import BrowserApprovalCoordinator, BrowserApprovalDataError
+    from local_engine_preflight import (
+        InstallerTargetPaths,
+        collect_installer_target_preflight,
+        collect_windows_preflight,
+        inspect_fixed_port,
+        read_installer_preflight_request,
+        write_preflight_json,
+    )
+    from local_engine_security import PRODUCT_ID
+    from ollama_utils import stop_embedded_ollama_server
+    from web_local_engine_runtime import (
+        WindowsNamedEvent,
+        WindowsNamedMutex,
+        apply_web_local_engine_environment,
+        approve_browser_connection,
+        build_web_local_engine_environment,
+        confirm_browser_approval_recovery,
+        engine_stop_event_name,
+        load_web_local_engine_settings,
+        make_pairing_code_presenter,
+        pairing_helper_is_armed,
+        pairing_mutex_name,
+        prepare_web_local_engine_data,
+        resolve_web_local_engine_layout,
+        signal_engine_stop,
+        show_windows_message,
+        validate_production_web_origin,
+        windows_named_mutex_exists,
+    )
+except BaseException:
+    _STARTUP_LOG.record_exception("import")
+    raise
 
 
 LOCAL_ENGINE_PORT = 17863
@@ -225,6 +234,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     apply_web_local_engine_environment(runtime_environment)
     _configure_logging(layout.logs_dir / "engine.log")
+    _STARTUP_LOG.ready("engine.log configured")
 
     mutex = WindowsNamedMutex(pairing_mutex_name(layout))
     if not mutex.acquire():
@@ -285,4 +295,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except BaseException:
+        _STARTUP_LOG.record_exception("main")
+        raise
+    _STARTUP_LOG.finish(exit_code)
+    raise SystemExit(exit_code)

@@ -156,11 +156,12 @@ FunctionEnd
 Function StopInstalledEngine
   !insertmacro InstallerDiagnostic "engine.stop.begin exe=$EngineExe"
   IfFileExists "$EngineExe" 0 done
-  ExecWait '"$EngineExe" --stop' $0
+  !insertmacro InstallerEngineStop "engine.stop" "$EngineExe" $0
   !insertmacro InstallerDiagnostic "engine.stop.end exit=$0"
   ${If} $0 != 0
   ${AndIf} $0 != 3
     !insertmacro InstallerDiagnosticError "ENGINE_STOP_FAILED" "종료 명령 실행 실패 exit=$0 exe=$EngineExe"
+    !insertmacro InstallerDiagnosticEngineReport "engine.stop.failed" "$EngineExe"
     SetErrorLevel 30
     MessageBox MB_OK|MB_ICONSTOP "실행 중인 음성 분석 프로그램을 안전하게 종료하지 못했습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요.${INSTALLER_DIAGNOSTIC_SUFFIX}"
     !insertmacro InstallerDiagnosticAbort
@@ -186,6 +187,7 @@ wait_retry:
   ${EndIf}
   ${If} $0 >= 20
     !insertmacro InstallerDiagnosticError "ENGINE_STOP_TIMEOUT" "종료 확인 실패 probe-exit=$1 attempts=$0"
+    !insertmacro InstallerDiagnosticEngineReport "engine.stop.timeout" "$EngineExe"
     SetErrorLevel 30
     MessageBox MB_OK|MB_ICONSTOP "음성 분석 프로그램 종료가 완료되지 않았습니다. 잠시 후 다시 실행하고, 계속되면 컴퓨터를 다시 시작한 뒤 설치 파일을 다시 실행해 주세요.${INSTALLER_DIAGNOSTIC_SUFFIX}"
     !insertmacro InstallerDiagnosticAbort
@@ -375,6 +377,9 @@ Function .onInit
   SetOutPath "$PLUGINSDIR"
   File /oname=barorok-installer-preflight.exe "${HELPER_PATH}"
   File /oname=poc-manifest.json "${ARTIFACT_DIR}\poc-manifest.json"
+!ifdef INSTALLER_DIAGNOSTICS
+  File /oname=barorok-installer-diagnostic-report.exe "${DIAGNOSTIC_REPORT_PATH}"
+!endif
   !insertmacro InstallerDiagnostic "init.helper.extracted dir=$PLUGINSDIR"
   !insertmacro InstallerDiagnosticFile "$PLUGINSDIR\barorok-installer-preflight.exe"
   StrCpy $PreflightResult "$PLUGINSDIR\preflight-result.json"
@@ -538,7 +543,7 @@ create_stage:
   !insertmacro InstallerDiagnosticFile "$EngineExe"
   !insertmacro InstallerDiagnosticFile "$INSTDIR\engine\_internal\python312.dll"
   !insertmacro InstallerDiagnosticFile "$INSTDIR\engine\_internal\base_library.zip"
-  Exec '"$EngineExe"'
+  !insertmacro InstallerEngineStart "$EngineExe"
   !insertmacro InstallerDiagnostic "engine.start.requested"
   StrCpy $ReadinessAttempts 0
 readiness_retry:
@@ -598,13 +603,16 @@ shortcuts:
 
 readiness_failed:
   !insertmacro InstallerDiagnosticError "ENGINE_START_NOT_READY" "배치한 프로그램 시작 확인 실패 attempts=$ReadinessAttempts last-probe-exit=$0"
+  ; Read the first engine's state (and any open error dialog) before the rollback stop command runs.
+  !insertmacro InstallerDiagnosticEngineReport "engine.start.not-ready" "$EngineExe"
   !insertmacro InstallerDiagnostic "engine.start.failed rollback.begin activated=$StageActivated previous-moved=$PreviousMoved"
-  ExecWait '"$EngineExe" --stop' $0
+  !insertmacro InstallerEngineStop "rollback.engine.stop" "$EngineExe" $0
   !insertmacro InstallerDiagnostic "rollback.engine.stop exit=$0"
 !ifdef INSTALLER_DIAGNOSTICS
   ${If} $0 != 0
   ${AndIf} $0 != 3
     !insertmacro InstallerDiagnosticError "ROLLBACK_ENGINE_STOP_FAILED" "시작 실패 후 정리 중 종료 명령도 실패 exit=$0"
+    !insertmacro InstallerDiagnosticEngineReport "rollback.engine.stop.failed" "$EngineExe"
   ${EndIf}
 !endif
   Call WaitForEngineStopped

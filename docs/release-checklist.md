@@ -184,6 +184,17 @@ backend\.venv-desktop\Scripts\python.exe -B -X utf8 scripts\verify_web_local_eng
 - 빌드 순서: 진단 설치 파일은 같은 버전의 일반 설치 파일에서 점검 도구를 꺼내 쓴다. 새 시작 로그가 들어간 엔진으로 진단하려면 `build_web_local_engine_poc.ps1`(엔진) → `build_web_local_engine_installer_poc.ps1`(일반) → 같은 스크립트 `-DiagnosticLogs`(진단) 순서로 만든다. 예전 엔진 묶음을 다시 쓰면 보고서의 엔진 시작 로그는 항상 "없음"이다. 진단 설치 파일의 `installer-poc-manifest.json`에는 포함한 엔진 버전·실행 파일 SHA와 보고 프로그램 SHA가 남는다.
 - 진단 모드를 지울 때 함께 지울 것: `backend/installer_engine_failure_report.py`와 테스트, `scripts/build_installer_diagnostic_report.ps1`, `installer/diagnostic-log.nsh`의 `InstallerEngineStart`·`InstallerEngineStop` 매크로의 진단 분기와 `RunWatchedEngineStart`·`RunWatchedEngineStop`·`RunPlainEngineStop`·`InstallerDiagnosticEngineReport`·`RecordInstallerEngineReport`·`AppendInstallerEngineReportFile`, `web-local-engine.nsi`의 보고 호출 4곳과 `DIAGNOSTIC_REPORT_PATH` 파일 줄, `build_web_local_engine_installer_poc.ps1`의 보고 프로그램 빌드 분기와 manifest 항목. `InstallerEngineStart`·`InstallerEngineStop` 매크로는 일반 분기(원래 `Exec`/`ExecWait`)만 남기거나 원래 명령으로 되돌린다.
 - 검증 범위: 단위 테스트와 격리 NSIS 테스트로 확인했다. 실제 진단 설치 파일을 다른 PC에서 실행해 실패 원인을 얻는 일은 남아 있다. 이 실행 환경은 비대화형 데스크톱이라 실제 메시지 상자가 바로 닫힌다. 그래서 창 문구 수집과 관찰 실행은 별도 프로세스가 직접 만든 창(`#32770` 제목·본문, 한글 포함)으로 확인했다.
+- **2026-11-09 빌드 (`c2537b8` 기준, 로컬 파일만이고 공개·업로드하지 않음).** 위 순서대로 엔진(약 28분) → 일반(2분) → 진단(2분)을 새로 만들었다. 엔진 첫 빌드는 ffmpeg 확인이 10초 제한을 넘겨 실패했고(첫 실행 백신 검사로 추정), 다시 돌리니 1.3초에 통과했다.
+
+  | 항목 | 결과 |
+  | --- | --- |
+  | 진단 설치 파일 | `releases\web-local-engine-installer-diagnostic\Barorok-Local-Engine-Setup-0.1.13-beta-20261108-diagnostic.exe`, 450,702,296 bytes, SHA-256 `7cc3d7029033ef0f307117c86a062d13ff559f305fb202351af39c252da71367` |
+  | 일반 설치 파일(같은 버전) | `releases\web-local-engine-installer-poc\Barorok-Local-Engine-Setup-0.1.13-beta-20261108.exe`, 442,441,128 bytes, SHA-256 `b0cb756375dae7e59b787a7229aeb0f2e6ba2e6b901cf78a2c592982a92fc6a7` |
+  | 진단 manifest | 엔진 `0.1.13-beta-20261108`, 엔진 실행 파일 SHA `826173c2…e7f731`, 보고 프로그램 SHA `60b4ce5f…bf4c104e`, 점검 도구는 일반 설치 파일의 것을 재사용(`helperRebuilt: false`, `50172329…eca825`) |
+  | 실제 엔진 검사 | `verify_web_local_engine_poc.py releases\web-local-engine-poc --keep-data` 통과(21초). 두 점검 모드가 자료 폴더를 만들지 않음, 고정 포트 충돌, 중단 경합, 폴더 이동 등을 포함한다. |
+  | 시작 로그 | 같은 실행의 `logs\engine-startup.log`(29줄)에 서버·`--pair`·`--stop`·점검 모드마다 `start mode=… frozen=True`, 서버의 `ready engine.log configured`, 종료 코드가 남았다. 포트 충돌 시험은 `exit code=1`, 포트 사용 중 점검은 `exit code=2`로 남는다. 자료 폴더가 없던 처음 두 점검은 기록하지 않았다(의도대로). |
+
+  남은 일: 이 진단 설치 파일을 실패했던 PC에서 실행하고 다운로드 폴더의 `LMO-install-diagnostic.log`를 받는다. 실제 메시지 상자 관찰과 실제 설치 경로 배치는 이 PC에서 확인하지 않았다.
 
 **진단 파일 준비 완료·다른 PC의 실제 실패 로그 대기. 원인은 계속 미확정이다.** 사용자 요청에 따라 `-DiagnosticLogs`를 지정한 임시 빌드만 실제 Windows 다운로드 폴더의 `LMO-install-diagnostic.log`에 기록한다. 일반 빌드는 로그 기능을 포함하지 않는다. 실행 시도별 PID·시각·버전·Windows 빌드/환경, 설치 전 점검·파일 배치·프로그램 시작·종료/복구 순서, 실행 파일 존재/크기, 각 오류 번호/코드/종료 코드, 최종 결과와 첫 오류를 한 파일에 이어 쓴다. Python 경고창의 원문 전체나 Python 시작 전 내부 traceback 수집을 보장하지 않으며, 회의록·설정·모델 파일 내용을 읽거나 전송하지 않는다.
 

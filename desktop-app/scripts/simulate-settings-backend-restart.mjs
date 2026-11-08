@@ -447,6 +447,10 @@ const run = async () => {
     await page.addInitScript(installTauriMock);
     const routeState = await installRoutes(page);
     await page.goto(APP_URL, { waitUntil: 'networkidle' });
+    // Under load networkidle can settle before the app mounts and sends its first readiness check, so wait for it.
+    for (let attempt = 0; attempt < 150 && !routeState.readinessAuthHeaders.includes('desktop-test-token'); attempt += 1) {
+      await sleep(100);
+    }
     assert.equal(
       routeState.readinessAuthHeaders.includes('desktop-test-token'),
       true,

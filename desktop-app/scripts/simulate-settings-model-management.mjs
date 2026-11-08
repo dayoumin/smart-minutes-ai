@@ -578,7 +578,7 @@ const installRoutes = async (page, state) => {
           model,
           active: false,
           status: 'failed',
-          message: 'broken-model:1b 모델을 받지 못했습니다.',
+          message: '저장 공간이 부족해 broken-model:1b 모델을 받지 못했습니다.',
         }),
       });
       return;
@@ -660,7 +660,7 @@ const installRoutes = async (page, state) => {
     const pullStarted = state.pullRequests.includes(model);
     if (model === 'broken-model:1b' && pullStarted) {
       return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({
-        model, active: false, status: 'failed', message: 'broken-model:1b 모델을 받지 못했습니다.',
+        model, active: false, status: 'failed', message: '저장 공간이 부족해 broken-model:1b 모델을 받지 못했습니다.',
       }) });
     }
     if (model === 'runtime-needs-update:1b' && pullStarted
@@ -1572,7 +1572,7 @@ const run = async () => {
     }
     await revealModel(summaryPanel, 'broken-model:1b');
     await download('broken-model:1b').click();
-    await summaryPanel.getByText('받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.', { exact: true }).waitFor();
+    await summaryPanel.getByText('저장 공간이 부족합니다. 공간을 비우고 다시 시도해 주세요.', { exact: true }).waitFor();
     assert.equal(state.pullRequests.at(-1), 'broken-model:1b');
     // The engine keeps the failed result, so reopening Settings shows the same reason instead of a bare 받기 button.
     const pullsBeforeFailedReopen = state.pullRequests.length;
@@ -1580,8 +1580,8 @@ const run = async () => {
     await settingsDialog.waitFor({ state: 'hidden' });
     await settingsButton.click();
     await revealModel(summaryPanel, 'broken-model:1b');
-    // The row maps the engine's failure to the same short reason (2026-10-29 short error copy).
-    await summaryPanel.locator('[data-model-name="broken-model:1b"]').getByText('받지 못했습니다. 인터넷 연결을 확인하고 다시 시도해 주세요.', { exact: true }).waitFor();
+    // A classified (storage) reason proves the engine's stored message, not just the failed status, reaches the row.
+    await summaryPanel.locator('[data-model-name="broken-model:1b"]').getByText('저장 공간이 부족합니다. 공간을 비우고 다시 시도해 주세요.', { exact: true }).waitFor();
     assert.equal(await download('broken-model:1b').isEnabled(), true, 'a failed summary model download can be retried after reopening');
     assert.equal(state.pullRequests.length, pullsBeforeFailedReopen, 'reopening Settings does not retry a failed download');
     const registrationsBeforeExistingSearch = state.registrationRequests.length;

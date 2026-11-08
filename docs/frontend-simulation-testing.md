@@ -4,10 +4,10 @@
 
 `simulate-settings-model-management.mjs`와 `simulate-settings-backend-restart.mjs`는 eb69811(10-29 설정 UI) 병합 뒤 깨끗한 `main`에서 실패했다. 10-29에는 Storybook과 `SETTINGS_MODEL_SCENARIO=controls/downloads`만 실행해서, 일찍 끝나지 않는 전체 흐름의 뒤쪽 단계는 새 UI로 한 번도 돌지 않았다.
 
-- 의도된 변경을 따라 기대값을 바꿨다: 음량 자동 보정이 스위치가 되어 `불러오는 중`이 6개다. 요약 패널은 16px 여백과 68px 행 기준으로 178px다(빈 두 번째 행 검사는 목록 높이 ≤ 행 높이로 바꿈). 준비 중 문구는 `AI 모델 사용을 준비하고 있습니다.`다. 다시 연 설정의 받기 실패 사유는 `getDownloadFailureMessage`의 짧은 문구로 보인다. 분석 모델 시나리오는 `저장 공간` 사유를 보내 상태만이 아니라 엔진 사유가 문구를 바꾸는지 확인한다.
+- 의도된 변경을 따라 기대값을 바꿨다: 음량 자동 보정이 스위치가 되어 `불러오는 중`이 6개다. 요약 패널은 1360×900에서 16px 여백과 68px 행 기준 178px, 높이760px 이하 창에서는 12px 여백으로 약170px다(상한 180px; 빈 두 번째 행 검사는 목록 높이 ≤ 행 높이로 바꿈). 준비 중 문구는 `AI 모델 사용을 준비하고 있습니다.`다. 다시 연 설정의 받기 실패 사유는 `getDownloadFailureMessage`의 짧은 문구로 보인다. 요약 모델(broken-model)과 분석 모델 시나리오 모두 `저장 공간` 사유를 보내, 실패 상태만이 아니라 엔진 사유가 문구를 바꾸는지 확인한다.
 - 스크롤 없음 검사는 디자인 규칙대로 높이720px 이상 창에만 적용한다. 917×627은 본문 스크롤을 허용한다.
-- 860×720에서 모델 4개·검색 결과일 때 생긴 25px 넘침은 UI에서 고쳤다(`docs/design.md` 2026-11-08, 높이760px 이하 창의 간격 축소). `check-storybook.mjs`는 그 창의 아래 여백16px을 기대하고, 860×540 스크롤 확인은 마지막 저장 행으로 스크롤한다.
-- 검증(모의 API): 두 시뮬레이션 단독 실행 통과(`APP_URL=http://127.0.0.1:5173/?view=minutes`), `tsc --noEmit`, `storybook build` 후 `check-storybook.mjs` 19개 통과. 두 시뮬레이션을 같은 dev 서버에서 동시에 돌렸을 때 재시작 시뮬레이션이 한 번 실패했고 단독 재실행 두 번은 통과했으니 순서대로 실행한다. worktree의 `node_modules`에는 `recast`의 `tslib` 링크가 빠져 있어 Storybook 빌드가 멈췄다. pnpm 10.33.2는 이때 `Already up to date`로 넘어가므로 `corepack pnpm install --frozen-lockfile --force`로 복구했다.
+- 860×720에서 모델 4개 목록 페이지일 때 생긴 25px 넘침은 UI에서 고쳤다(검색 결과 화면은 일반 설정 대신 렌더링되며 넘치지 않았다. 커밋 ed505cc 메시지의 "or search results"는 잘못된 설명)(`docs/design.md` 2026-11-08, 높이760px 이하 창의 간격 축소). `check-storybook.mjs`는 그 창의 아래 여백16px을 기대하고, 860×540 스크롤 확인은 마지막 저장 행으로 스크롤한다.
+- 검증(모의 API): 두 시뮬레이션 단독 실행 통과(`APP_URL=http://127.0.0.1:5173/?view=minutes`), `tsc --noEmit`, `storybook build` 후 `check-storybook.mjs` 19개 통과. 두 시뮬레이션을 같은 dev 서버에서 동시에 돌리면 재시작 시뮬레이션이 시작 직후 `Tauri readiness requests should use the desktop action token` 단언에서 실패했다(2회 재현). 부하가 걸리면 앱이 마운트되어 첫 준비 상태 요청을 보내기 전에 `networkidle`이 끝나기 때문이다. 그 요청을 최대 15초 기다린 뒤 검사하도록 고쳐 동시 실행도 통과한다. worktree의 `node_modules`에는 `recast`의 `tslib` 링크가 빠져 있어 Storybook 빌드가 멈췄다. pnpm 10.33.2는 이때 `Already up to date`로 넘어가므로 `corepack pnpm install --frozen-lockfile --force`로 복구했다.
 
 ## 설정 내용 맞춤 높이·상태별 기준선 — 2026-10-29
 

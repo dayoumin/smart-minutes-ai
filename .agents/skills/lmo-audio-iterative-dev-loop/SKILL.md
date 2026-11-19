@@ -45,7 +45,7 @@ Ask at most one clarifying question only if a wrong assumption would change the 
    - backend: focused `unittest` or `py_compile`
    - UI flow: relevant `desktop-app/scripts/simulate-*.mjs` when worth the browser cost
    - always: `git -c core.excludesFile= diff --check`
-5. If the user requested agents, split review into non-duplicate scopes:
+5. Follow [Agent Coordination](../../../AGENTS.md#agent-coordination). After focused checks on a code change, obtain an independent review of the affected behavior. Recheck any fixes. For documentation-only changes, use a focused self-review. Split reviews only when the risks call for distinct perspectives:
    - **Large**: product flow, user understanding, ownership, docs/operations.
    - **Small**: bugs, stale state, disabled states, nulls, tests, copy mismatches.
 6. Triage findings:
@@ -71,7 +71,8 @@ When the user asks to commit:
 - Keep functional changes and planning/docs changes as separate commits when practical.
 - Before staging, run status and make sure unrelated user edits are not included.
 - If `roadmap.md` or `todo.md` contain useful next-work context, commit them separately unless the user says not to.
-- Push only when the user asks to push.
+
+Before pushing, check the scope the user authorized and apply the branch and release rules in the [project instructions](../../../AGENTS.md), including any required hook or confirmation. A commit request alone does not authorize a push.
 
 ## Final Summary
 

@@ -1,5 +1,31 @@
 # Frontend Simulation Testing
 
+## 요약 모델 조작 위치·키보드 선택 — 2026-11-19
+
+`Settings.tsx`의 요약 모델 받기·중지·이어받기를 같은 32px `TooltipIconButton`으로 유지한다. 이어받기는 재개 아이콘과 도움말·접근성 이름으로 구분한다. 실제 엔진은 중지 요청에 `active=true/status=cancelling`을 먼저 반환하므로 Storybook fixture도 중지 중→중지됨 단계를 거친다. 중지 중에는 `aria-disabled`와 클릭 실행 차단을 함께 써 초점을 유지하고 중복 요청을 막는다.
+
+- Windows Node22.22.2, `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`, `PLAYWRIGHT_BROWSERS_PATH=D:\Projects\LMO_audio\.cache\ms-playwright`에서 `corepack pnpm --dir desktop-app typecheck`, 변경 TS/TSX/MJS ESLint, `storybook:build` 후 `storybook:check` 23개 통과. 기존19개에 두 지원 창(1360×900/860×720)×Enter/Space 4장면을 추가했다. 제목·버튼·아이콘 중심, Tab/Shift+Tab, 중지 중 키/포인터 중복 요청 차단, 다른 항목으로 이동한 초점을 조회/취소 완료가 빼앗지 않는지 확인한다. 860×540 내부 스크롤도 기존 검사로 확인한다.
+- 두 지원 창에서 버튼32×32px, 받기→중지 중→이어받기→재개의 버튼·아이콘 중심 이동0px. 실제 API 유출0, 브라우저 예외0. 근거 `.tmp/settings-actions-20261119/final/report.json`과 같은 폴더 화면이다. 선택하지 않은 추천 모델은 삭제가 비활성이므로 Tab은 다음 활성 조작으로 간다. 클릭 뒤 도움말을 닫고 같은 버튼을 유지하므로 도움말 검사는 포인터가 영역을 나갔다 재진입하도록 했다.
+- `STORYBOOK_CHECK_SCOPE=download-actions`를 지정하면 새4장면만 실행한다. 미지정 시 전체23개를 실행하며, 항상 현재 소스의 `storybook:build`를 먼저 수행한다. 검사 자체가 빈 loopback 포트에 정적 서버를 열고 브라우저/서버를 `finally`에서 정리한다. 사용자 서버·모델·설정·파일을 사용하지 않는다.
+- 독립 검토에서 발견한 실제 취소 중 단계의 검사 공백을 보완하고 재검토에서 추가 P1/P2 없음. 이는 격리된 모의 응답의 브라우저 검사이며 새 Windows 실행 파일·실제 다운로드/중단 데이터·설치·공개 HTTPS 검증을 뜻하지 않는다. 해당 실물 QA는 기존 릴리스 체크리스트에 남아 있다.
+
+## 설정·모델 관리 사용자 시나리오 — 2026-11-19
+
+위 UI 수정 뒤 다음 네 시뮬레이션을 Windows Node22.22.2·프로젝트 Playwright 캐시로 직렬 실행했다. 모두 종료 코드0이며 실제 API·모델 전송·사용자 저장소를 사용하지 않는다.
+
+| 실행 | 확인한 사용자 흐름 |
+| --- | --- |
+| `corepack pnpm --dir desktop-app test:settings-model-management` | 준비 상태 미확인·키보드 이동, 검색/추가/받기/선택/삭제, 늦은 응답·선택/저장 경합, 실행 도구 업데이트 뒤 명시적 재시도, 실패 사유의 닫기/재열기 보존 |
+| `SETTINGS_MODEL_SCENARIO=downloads`로 같은 명령 | 음성 인식·요약 모델·실행 도구의 중지/이어받기, 중지가 자동 재시작하지 않음, 이어받기가 명시적 두 번째 요청임, 선택 모델 보존, 부분 내용이 없는 상태의 새 받기, 긴 내부 오류를 짧은 복구 안내로 표시 |
+| `SETTINGS_MODEL_SCENARIO=controls`로 같은 명령 | 장치/모델 정렬, 음량 보정 켜기/끄기, 성공 안내·배치 유지, 저장 직후 닫기/재열기와 다른 전처리 옵션 보존 |
+| `corepack pnpm --dir desktop-app test:settings-backend-restart` | 문제 해결 진입 시 재시작에 초점, 응답 지연/실패와 재시작·설정 재조회, 잠금 및 복구 상태 |
+
+첫 전체 검사는 자체 배정한 `55408` 서버를 썼다. 검사 통과 후 Windows 샌드박스의 자식 서버 정리가 지연되어 명령줄로 소유권을 확인하고 해당 프로세스만 종료한 뒤 exit0을 확인했다. 추가 검사는 `desktop-app`에서 직접 시작한 `corepack pnpm exec vite --host 127.0.0.1 --port 55409 --strictPort --configLoader runner`에 `APP_URL=http://127.0.0.1:55409/?view=minutes`로 연결했다. API는 각 검사 내부의 격리된 모의 응답이다.
+
+진행 중 PC 여유 메모리가420MB/전체 약16GB(약2.5%)로 내려가 브라우저 준비가 지연됐다. 이번 시험의 브라우저·시험 프로세스·55409 서버만 정리하고 약3.4GB로 회복됨을 확인했다. 다른 프로젝트의 서버는 종료하지 않았다. 같은 명령·작업 폴더·55409 포트를 복원해 페이지 진입과 나머지 시나리오 통과를 확인했으며, 최종 시험 서버/브라우저 종료와55409 포트 해제까지 확인했다. 실행 도구의 환경 지연을 제품 결함으로 처리하거나 검사를 생략하지 않았다.
+
+화면 근거는 `.tmp/settings-scenarios-20261119/{management,downloads,controls}`다. 위 네 시뮬레이션과 Storybook23개는 서로 다른 검사 범위다. 새 Windows 실행 파일·다른 PC·실제 모델 전송/분석/설치·공개 웹의 합격을 뜻하지 않는다.
+
 ## 설정 시뮬레이션 10-29 UI 정렬·낮은 창 간격 — 2026-11-08
 
 `simulate-settings-model-management.mjs`와 `simulate-settings-backend-restart.mjs`는 eb69811(10-29 설정 UI) 병합 뒤 깨끗한 `main`에서 실패했다. 10-29에는 Storybook과 `SETTINGS_MODEL_SCENARIO=controls/downloads`만 실행해서, 일찍 끝나지 않는 전체 흐름의 뒤쪽 단계는 새 UI로 한 번도 돌지 않았다.

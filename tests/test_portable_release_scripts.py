@@ -1,4 +1,3 @@
-import ast
 import hashlib
 import json
 import os
@@ -882,15 +881,7 @@ Assert-PortableDataLayout '{portable}'
                     self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                     self.assertEqual(before, {path: _sha256(path) for path in root.rglob("*") if path.is_file()})
 
-    def test_installed_runtime_may_replace_only_readme_placeholder(self):
-        backend_source = (ROOT / "backend/main.py").read_text(encoding="utf-8")
-        functions = ast.parse(backend_source)
-        installer = {"Path": Path, "shutil": shutil}
-        for node in functions.body:
-            if isinstance(node, ast.FunctionDef) and node.name in {
-                "_clear_ollama_runtime_dir", "_install_extracted_ollama_runtime",
-            }:
-                exec(compile(ast.Module(body=[node], type_ignores=[]), "backend/main.py", "exec"), installer)
+    def test_existing_installation_accepts_missing_legacy_ollama_readme_only(self):
         verifier = (ROOT / "scripts/verify_portable.ps1").read_text(encoding="utf-8")
         add_result = re.search(r"function Add-Result[\s\S]+?(?=\r?\nfunction Get-PeSubsystem)", verifier).group(0)
         check = re.search(r"function Test-ReleaseManifest[\s\S]+?(?=\r?\nfunction Test-CleanPortableSurface)", verifier).group(0)
@@ -937,17 +928,13 @@ if ($Failed -ne ${str(failed).lower()}) {{ throw 'Unexpected manifest verificati
                 self.assertEqual(before, {path: _sha256(path) for path in portable.rglob("*") if path.is_file()})
 
             verify(False, False)
-            extract = root / "extracted"
-            extract.mkdir()
-            (extract / "ollama.exe").write_bytes(b"fake downloaded executable; never run")
-            (extract / "ollama.dll").write_bytes(b"fake downloaded library")
-            download = runtime / ".download"
-            download.mkdir()
-            installer["_install_extracted_ollama_runtime"](extract, runtime, download)
-            self.assertFalse(readme.exists())
+            # Older installers replaced the guide with the downloaded runtime.
+            # Recreate their installed files under the original build manifest.
+            readme.unlink()
+            executable = runtime / "ollama.exe"
+            executable.write_bytes(b"fake downloaded executable; never run")
             verify(True, False)
             verify(False, True, "README.txt missing")
-            executable = runtime / "ollama.exe"
             original = executable.read_bytes()
             executable.unlink()
             verify(True, True, "README.txt missing")

@@ -440,6 +440,7 @@ CPU 기본 경로에서 clean `8e76d159` 웹과 설치 엔진 `0.1.12-beta-20261
 - 같은 날 후속 P2: `D:private-model` 같은 드라이브 상대 경로는 릴리스 셸 위치가 아니라 데스크톱 엔진의 `backend` 작업 위치 기준으로 검사한다. 드라이브 문자 대소문자·루트 상대 경로를 함께 처리하며, 확인된 모델 파일은 절대 경로로 보호 목록에 넣는다. `q:7b` 같은 이름은 실제 로컬 파일이 없으면 계속 허용한다. 업데이트의 source/destination과 전달 진입점에서 변경 전 거부·파일 해시 보존을 검증했다.
 - Ollama 최초 설치는 `runtime\ollama\README.txt`를 실행 파일로 대체한다. `-ExistingInstallation`에서는 이 정확한 안내 파일만 없고 `runtime\ollama\ollama.exe`가 있을 때 정상으로 인정한다. 새 패키지 검사나 실행 코드의 누락·해시 불일치는 계속 실패해야 한다. 회귀 검사는 실제 backend 설치 함수·payload 목록·manifest 판정 함수를 임시 fixture에서 실행하며 가짜 실행 파일을 실행하지 않는다.
 - 후속 P2 검증: 동일한 `backend\.venv-desktop\Scripts\python.exe`(Python3.12.14), `TEMP`/`TMP=.tmp\p2-followup\temp`, `-B -X utf8 -m unittest tests.test_portable_release_scripts`로 **31/31 통과**했다. 경로·무결성 검사를 나눈 독립 agent 2개의 재검토에서도 남은 지적이 없었다. 기존 미커밋 변경은 보존했으며 실제 실행 파일 검사·전체 portable 빌드·커밋·푸시·배포는 수행하지 않았다.
+- 2026-11-19 회귀 검사 정리. 현재 Ollama 최초 설치는 README를 보존한다. 기존 설치본 검사에서 README가 사라진 구버전의 호환성을 확인할 때는 해당 파일 상태를 임시 폴더에 직접 구성한다. 현재 최초 설치의 README 보존은 `backend.test_api`에서 확인한다.
 
 - 2026-10-20 자동 연결 웹/설치형 엔진은 같은 소스 기준으로 함께 제공한다. 새 엔진의 `--pair`는 시작 별칭이며 이전 숫자 코드 웹의 준비 절차와 호환된다고 안내하지 않는다. `PYINSTALLER_CONFIG_DIR=D:\Projects\audio\.cache\pyinstaller`를 사용한 전용 웹 엔진 빌드는 중간 산출물 삭제 권한 오류 시 실제 설치 엔진과 경로가 다른지 먼저 확인한다. 실행 중인 사용자 엔진을 빌드 캐시로 오인해 종료하지 않는다.
   - 0.1.8 실제 current-user 업데이트 exit0, 기존 데이터 보존·재시작 복원/해제, 비공개 R2 전체 read-back SHA와 운영 웹6파일 SHA·이전 링크2개를 확인했다. 운영 Chrome의 무코드 자동 연결·reload 후 `분석 준비 완료`까지 통과했다. 임시 업로드 Worker/로컬 인증은 정리했고 사용자 모델·회의록은 전송하지 않았다. 근거 `.tmp/browser-connection-20261020`, 자세한 현재 범위/남은 QA는 followup-plan과 기존 release QA 표를 따른다.
@@ -785,7 +786,7 @@ portable 앱은 프로그램과 사용자 자료가 같은 `lmo_audio` 폴더 �
 - [ ] **지울 파일의 근거**: 사용자 자료가 섞인 폴더(`backend\`)에서는 설치본의 이전 manifest 목록에 있고 그 뒤 바뀌지 않은 파일만 지운다. 폴더를 훑어 "새 빌드에 없으니 지운다"로 판단하지 않는다. 공통 규칙은 `portable_data_safety.ps1`의 `Remove-StalePortablePackageFiles`·`Test-PortableUserDataPath`에 있다.
 - [ ] **시험 실행 위치**: 앱을 실제로 켜는 smoke는 중간 빌드 폴더에서만 실행한다. `releases\lmo_audio`는 `-ExistingInstallation`으로 읽기만 한다. 검사를 통과시키려고 기록·로그·설정을 지우지 않는다.
 - [ ] **비교 기준**: 설치본 무결성은 검증된 빌드 manifest와 비교한다. 동기화 뒤 대상 폴더로 manifest를 다시 만들지 않는다. 다시 만들면 잘못 복사된 파일도 정상으로 기록된다.
-- [ ] **앱이 스스로 바꾸는 파일**: 설치 후 앱이 바꾸는 파일(`backend\config.json`, Ollama 설치로 사라지는 `runtime\ollama\README.txt`)을 알고 있다. 검사 예외는 정확한 파일과 조건으로만 둔다.
+- [ ] **앱이 스스로 바꾸는 파일** `backend\config.json`의 변경을 허용한다. 기존 설치본에 `runtime\ollama\ollama.exe`가 있으면 누락된 `runtime\ollama\README.txt`를 허용한다. 현재 최초 설치는 README를 보존하므로 누락된 사례의 회귀 검사는 구버전 상태를 직접 구성한다.
 - [ ] **종료 범위**: 프로세스 종료는 그 설치 폴더 안의 실행 파일 경로로만 고른다. 이름이나 명령행으로 넓게 고르지 않는다. 웹 엔진(17863)과 다른 설치본은 종료하지 않는다.
 - [ ] **두 제품 공존**: 데스크톱 포트는 17864부터 고르고 17863은 쓰지 않는다. 기록·설정 위치는 제품마다 따로 둔다. RAM·GPU·시스템 Ollama 공유는 허용된 제약이며 완전 격리로 설명하지 않는다.
 - [ ] **업데이트 패키지·신규 설치 패키지**: 빌드 manifest 목록대로 담고, 설치본 파일을 빌드 해시와 대조한다. 다르거나 빠진 파일이 있으면 만들지 않는다. 설정은 담지 않거나(업데이트) HEAD 기본값으로 넣는다(신규 설치 패키지). 목록에 없는 `backend` 안 개인 파일은 담기지 않는다.

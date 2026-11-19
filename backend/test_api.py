@@ -1,7 +1,9 @@
 import asyncio
 import copy
+import hashlib
 import json
 import os
+import stat
 import sys
 import types
 import tempfile
@@ -1444,6 +1446,7 @@ class AnalyzeApiTest(unittest.TestCase):
 
         with (
             patch.object(main, "_ollama_runtime_target_candidates", return_value=[portable_target, local_target]),
+            patch.object(main, "_prepare_first_runtime_download_cache"),
             patch.object(main, "_ollama_runtime_download_preflight", side_effect=fake_preflight),
         ):
             target, error = main._resolve_ollama_runtime_download_target()
@@ -1529,12 +1532,14 @@ class AnalyzeApiTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             target_dir = Path(tmp) / "runtime" / "ollama"
             target_dir.mkdir(parents=True)
+            (target_dir / "README.txt").write_bytes(b"portable instructions")
 
             def fake_download_runtime_zip(target_path: Path, zip_part_path: Path) -> None:
                 self.assertEqual(target_path, target_dir)
                 with zipfile.ZipFile(zip_part_path, "w") as archive:
                     archive.writestr("ollama/ollama.exe", "fake exe")
                     archive.writestr("ollama/ollama.dll", "fake dll")
+                    archive.writestr("ollama/lib/ollama/runner.dll", "fake runner")
                 main._set_ollama_runtime_download_status(
                     available=False,
                     active=True,
@@ -1552,6 +1557,7 @@ class AnalyzeApiTest(unittest.TestCase):
             try:
                 with (
                     patch.object(main, "_download_ollama_runtime_zip", side_effect=fake_download_runtime_zip),
+                    patch.object(main, "_ollama_runtime_target_candidates", return_value=[target_dir]),
                     patch.object(
                         main,
                         "find_embedded_ollama_executable",
@@ -1566,12 +1572,194 @@ class AnalyzeApiTest(unittest.TestCase):
 
             self.assertTrue((target_dir / "ollama.exe").is_file())
             self.assertTrue((target_dir / "ollama.dll").is_file())
+            self.assertTrue((target_dir / "lib/ollama/runner.dll").is_file())
+            self.assertEqual((target_dir / "README.txt").read_bytes(), b"portable instructions")
             self.assertFalse((target_dir / ".download").exists())
             self.assertFalse(status["active"])
             self.assertTrue(status["available"])
             self.assertEqual(status["status"], "completed")
 
-    def test_run_ollama_runtime_download_honors_cancel_after_install(self) -> None:
+    def test_first_runtime_install_failed_publish_preserves_files_and_can_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "runtime" / "ollama"
+            target.mkdir(parents=True)
+            (target / "README.txt").write_bytes(b"portable instructions")
+            download = target / ".download"
+            events = []
+
+            def fake_download(_target, part):
+                with zipfile.ZipFile(part, "w") as archive:
+                    archive.writestr("ollama.exe", "new executable")
+                    archive.writestr("lib/ollama/library.dll", "new library")
+
+            rename = Path.rename
+
+            def fail_once(source, destination):
+                if destination == target and source.name == "bundle" and not events:
+                    events.append("publish blocked")
+                    raise PermissionError("simulated locked target")
+                return rename(source, destination)
+
+            with (
+                patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True),
+                patch.object(main, "find_embedded_ollama_executable", return_value=""),
+                patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]),
+                patch.object(main, "_download_ollama_runtime_zip", side_effect=fake_download),
+                patch.object(Path, "rename", fail_once),
+            ):
+                with self.assertLogs(level="ERROR"):
+                    main._run_ollama_runtime_download(target)
+                self.assertEqual(events, ["publish blocked"])
+                self.assertEqual(main._ollama_runtime_snapshot()["status"], "failed")
+                self.assertFalse((target / "ollama.exe").exists())
+                self.assertFalse((target / "lib").exists())
+                self.assertEqual((target / "README.txt").read_bytes(), b"portable instructions")
+                self.assertTrue((download / "ollama-windows-amd64.zip.part").is_file())
+                main._run_ollama_runtime_download(target)
+                self.assertEqual(main._ollama_runtime_snapshot()["status"], "completed")
+                self.assertEqual((target / "ollama.exe").read_bytes(), b"new executable")
+                self.assertFalse(download.exists())
+
+    def test_first_runtime_install_preserves_unrecognized_existing_files(self) -> None:
+        for name in ("old.dll", "models/config.json", ".download/saved-file.txt", ".download/extracted"):
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                target = Path(tmp) / "ollama"
+                previous = target / name
+                previous.parent.mkdir(parents=True)
+                previous.write_bytes(b"preserve")
+                with (
+                    patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True),
+                    patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]),
+                    patch.object(main, "_download_ollama_runtime_zip") as download,
+                    self.assertLogs(level="ERROR"),
+                ):
+                    main._run_ollama_runtime_download(target)
+                    status = main._ollama_runtime_snapshot()
+                self.assertEqual(previous.read_bytes(), b"preserve")
+                self.assertFalse((target / "ollama.exe").exists())
+                self.assertEqual(status["status"], "failed")
+                self.assertIn(str(target), status["message"])
+                download.assert_not_called()
+
+    def test_first_runtime_install_preflight_preserves_redirected_extraction(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "ollama"
+            extract = target / ".download/extracted"
+            extract.mkdir(parents=True)
+            saved = extract / "keep.txt"
+            saved.write_bytes(b"keep")
+            lstat = Path.lstat
+
+            def redirected(path):
+                info = lstat(path)
+                if path == extract:
+                    return types.SimpleNamespace(st_mode=info.st_mode, st_file_attributes=stat.FILE_ATTRIBUTE_REPARSE_POINT)
+                return info
+
+            with (
+                patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]),
+                patch.object(Path, "lstat", redirected),
+            ):
+                _, error = main._resolve_ollama_runtime_download_target()
+            self.assertIn(str(target), error)
+            self.assertEqual(saved.read_bytes(), b"keep")
+
+    def test_first_runtime_install_preserves_backup_when_restore_is_blocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "ollama"
+            target.mkdir()
+            (target / "README.txt").write_bytes(b"original")
+
+            def write_zip(_target, part):
+                with zipfile.ZipFile(part, "w") as archive:
+                    archive.writestr("ollama.exe", "new")
+                    archive.writestr("lib/ollama/runner.dll", "new")
+
+            rename = Path.rename
+
+            def deny_publish_and_restore(source, destination):
+                if destination == target:
+                    raise PermissionError("target locked")
+                return rename(source, destination)
+
+            with (
+                patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True),
+                patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]),
+                patch.object(main, "find_embedded_ollama_executable", return_value=""),
+                patch.object(main, "_download_ollama_runtime_zip", side_effect=write_zip),
+                patch.object(Path, "rename", deny_publish_and_restore),
+                self.assertLogs(level="ERROR"),
+            ):
+                main._run_ollama_runtime_download(target)
+                status = main._ollama_runtime_snapshot()
+            backup, = target.parent.glob(".ollama-backup-*")
+            self.assertEqual((backup / "README.txt").read_bytes(), b"original")
+            self.assertTrue((backup / ".download/ollama-windows-amd64.zip.part").is_file())
+            self.assertFalse(target.exists())
+            self.assertEqual(status["status"], "failed")
+            self.assertIn(str(backup), status["message"])
+
+    def test_first_runtime_install_recovers_crashed_extraction_before_space_check(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "ollama"
+            cache = target / ".download"
+            extract = cache / "extracted"
+            extract.mkdir(parents=True)
+            (extract / "unfinished.dll").write_bytes(b"incomplete")
+            finished = cache / "ollama-windows-amd64.zip"
+            with zipfile.ZipFile(finished, "w") as archive:
+                archive.writestr("ollama.exe", "new")
+                archive.writestr("lib/ollama/runner.dll", "new library")
+            payload = finished.read_bytes()
+            sha256 = hashlib.sha256(payload).hexdigest()
+            identity = dict(url=main.OLLAMA_RUNTIME_DOWNLOAD_URL, sha256=sha256, expected_bytes=len(payload))
+            (cache / "ollama-windows-amd64.zip.part.json").write_text(json.dumps(identity), encoding="utf-8")
+            available = (main.runtime_download_peak_bytes(len(payload)) - len(payload)
+                         + main.OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES)
+
+            def disk_usage(_path):
+                return types.SimpleNamespace(free=0 if extract.exists() else available)
+
+            with (
+                patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True),
+                patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]),
+                patch.object(main, "find_embedded_ollama_executable", return_value=""),
+                patch.object(main, "OLLAMA_RUNTIME_SHA256", sha256),
+                patch.object(main, "OLLAMA_RUNTIME_EXPECTED_BYTES", len(payload)),
+                patch.object(main.shutil, "disk_usage", side_effect=disk_usage),
+                patch("resumable_download.urllib.request.urlopen") as network,
+            ):
+                self.assertEqual(main._resolve_ollama_runtime_download_target(), (target, ""))
+                main._run_ollama_runtime_download(target)
+                self.assertEqual(main._ollama_runtime_snapshot()["status"], "completed")
+                network.assert_not_called()
+            self.assertEqual((target / "lib/ollama/runner.dll").read_bytes(), b"new library")
+            self.assertFalse(cache.exists())
+
+    def test_first_runtime_install_reports_extraction_space_shortfall(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "ollama"
+            target.mkdir()
+
+            def write_zip(_target, part):
+                with zipfile.ZipFile(part, "w") as archive:
+                    archive.writestr("ollama.exe", "new")
+
+            with (
+                patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True),
+                patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]),
+                patch.object(main, "find_embedded_ollama_executable", return_value=""),
+                patch.object(main, "_download_ollama_runtime_zip", side_effect=write_zip),
+                patch.object(main.shutil, "disk_usage", return_value=types.SimpleNamespace(free=0)),
+                self.assertLogs(level="ERROR"),
+            ):
+                main._run_ollama_runtime_download(target)
+                status = main._ollama_runtime_snapshot()
+                self.assertEqual(status["status"], "failed")
+                self.assertIn("여유 공간을 확보", status["message"])
+                self.assertTrue((target / ".download/ollama-windows-amd64.zip.part").is_file())
+
+    def test_run_ollama_runtime_download_reports_completed_after_publication(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             target_dir = Path(tmp) / "runtime" / "ollama"
             target_dir.mkdir(parents=True)
@@ -1592,6 +1780,7 @@ class AnalyzeApiTest(unittest.TestCase):
                 with (
                     patch.object(main, "_download_ollama_runtime_zip", side_effect=fake_download_runtime_zip),
                     patch.object(main, "_install_extracted_ollama_runtime", side_effect=fake_install_runtime),
+                    patch.object(main, "_ollama_runtime_target_candidates", return_value=[target_dir]),
                     patch.object(
                         main,
                         "find_embedded_ollama_executable",
@@ -1606,7 +1795,9 @@ class AnalyzeApiTest(unittest.TestCase):
                     main.OLLAMA_RUNTIME_DOWNLOAD_STATUS.pop(main.OLLAMA_RUNTIME_DOWNLOAD_KEY, None)
 
             self.assertFalse(status["active"])
-            self.assertEqual(status["status"], "cancelled")
+            self.assertTrue(status["available"])
+            self.assertEqual(status["status"], "completed")
+            self.assertTrue(Path(status["executable_path"]).is_file())
 
     def test_model_status_marks_stt_downloadable_only(self) -> None:
         response = self.client.get("/api/models/status")
@@ -5889,6 +6080,126 @@ class AnalyzeApiTest(unittest.TestCase):
             if os.path.exists(output_path):
                 os.remove(output_path)
 
+    def test_first_manual_summary_can_retry_after_preparation_and_missing_model(self) -> None:
+        job_id = "first_manual_summary"
+        segments = [{"speaker": "SPEAKER_00", "text": "예산을 논의했다."}]
+        before = {
+            "segments": segments,
+            "display_segments": segments,
+            "summary": main._skipped_summary("회의 기록에서 별도로 정리해 주세요."),
+        }
+        with (
+            tempfile.TemporaryDirectory() as tmp,
+            patch.object(main, "_get_output_dir", return_value=tmp),
+            patch.object(main, "load_config", return_value={"summary": {"model": "test-model"}}),
+            patch.object(main, "_summary_model_readiness", side_effect=[
+                {"ready": False, "reason": "runtime_preparing"},
+                {"ready": False, "reason": "model_missing"},
+                {"ready": True, "model": "test-model"},
+            ]),
+            patch("pipeline.summarize.summarize_meeting", return_value={"overview": "예산 논의"}) as summarize,
+            patch.object(main, "_refresh_transcript_and_summary_exports", return_value=main._result_outputs(job_id)),
+        ):
+            path = Path(tmp) / f"{job_id}_result.json"
+            path.write_text(json.dumps(before, ensure_ascii=False), encoding="utf-8")
+            endpoint = f"/api/outputs/{job_id}/generate-summary"
+            for code, state in (("runtime_preparing", "not_started"), ("model_missing", "failed")):
+                response = self.client.post(endpoint)
+                self.assertEqual(response.status_code, main.failure_for_code(code).http_status)
+                self.assertEqual(response.json()["detail"]["code"], code)
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["summary"]["generation_status"]["summary"], state)
+                self.assertEqual(saved["summary"]["generation_error"], response.json()["detail"])
+                self.assertEqual(saved["segments"], segments)
+                summarize.assert_not_called()
+
+            response = self.client.post(endpoint)
+            self.assertEqual(response.status_code, 200, response.text)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["summary"]["generation_status"]["summary"], "completed")
+            self.assertEqual(saved["summary"]["overview"], "예산 논의")
+            self.assertNotIn("generation_error", saved["summary"])
+            self.assertNotIn("generation_error_detail", saved["summary"])
+            self.assertEqual(saved["segments"], segments)
+            summarize.assert_called_once()
+
+    def test_interrupted_summary_failure_restores_previous_content_or_first_run(self) -> None:
+        job_id = "interrupted_summary"
+        segments = [{"speaker": "A", "text": "예산을 논의했다."}]
+        deferred = main._skipped_summary("회의 기록에서 별도로 정리해 주세요.")
+        existing = {"overview": "예산 합의", "actions": ["금요일 공유"]}
+        for summary, reason, expected in (
+            (deferred, "runtime_preparing", "not_started"),
+            (deferred, "model_missing", "failed"),
+            (main._failed_summary(main.failure_for_code("request_timeout")), "model_missing", "failed"),
+            (existing, "model_missing", "completed"),
+            ({"decisions": ["예산 확정"]}, "model_missing", "completed"),
+            ({"overview": "예산 미확정", "needs_check": ["예산 미확정"]}, "model_missing", "completed"),
+            ({"overview": "이전 안내", "summary_completed_before_generation": False}, "model_missing", "failed"),
+        ):
+            with (
+                self.subTest(summary=summary, reason=reason),
+                tempfile.TemporaryDirectory() as tmp,
+                patch.object(main, "_get_output_dir", return_value=tmp),
+                patch.object(main, "load_config", return_value={}),
+                patch.object(main, "_summary_model_readiness", return_value={"ready": False, "reason": reason}),
+                patch("pipeline.summarize.summarize_meeting") as generate,
+            ):
+                before = copy.deepcopy(summary)
+                before.setdefault("generation_status", {})["summary"] = "generating"
+                path = Path(tmp) / f"{job_id}_result.json"
+                path.write_text(json.dumps({"segments": segments, "summary": before}), encoding="utf-8")
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+                self.assertEqual(response.status_code, main.failure_for_code(reason).http_status, response.text)
+                self.assertEqual(response.json()["detail"]["code"], reason)
+                saved = json.loads(path.read_text(encoding="utf-8"))
+                self.assertEqual(saved["summary"]["generation_status"]["summary"], expected)
+                self.assertEqual(saved["summary"]["generation_error"], response.json()["detail"])
+                for field in ("overview", "decisions", "actions", "needs_check"):
+                    self.assertEqual(saved["summary"].get(field), before.get(field))
+                self.assertNotIn("summary_completed_before_generation", saved["summary"])
+                self.assertEqual(saved["segments"], segments)
+                generate.assert_not_called()
+
+    def test_interrupted_summary_retries_once_and_rejects_overlapping_post(self) -> None:
+        job_id = "interrupted_summary_single_worker"
+        endpoint = f"/api/outputs/{job_id}/generate-summary"
+        segments = [{"speaker": "A", "text": "예산을 논의했다."}]
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / f"{job_id}_result.json"
+            path.write_text(json.dumps({
+                "segments": segments,
+                "summary": {"overview": "이전 요약", "generation_status": {"summary": "generating"}},
+            }), encoding="utf-8")
+
+            def generate(*_args, **_kwargs):
+                before = path.read_bytes()
+                running = json.loads(before)["summary"]
+                self.assertTrue(running["summary_completed_before_generation"])
+                self.assertEqual(running["generation_status"]["summary"], "generating")
+                duplicate = self.client.post(endpoint)
+                self.assertEqual(duplicate.status_code, 409, duplicate.text)
+                self.assertEqual(duplicate.json()["detail"], "Summary is already being generated")
+                self.assertEqual(path.read_bytes(), before)
+                return {"overview": "새 요약"}
+
+            with (
+                patch.object(main, "_get_output_dir", return_value=tmp),
+                patch.object(main, "load_config", return_value={}),
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "model": "fixture"}),
+                patch("pipeline.summarize.summarize_meeting", side_effect=generate) as summarize,
+                patch.object(main, "_refresh_transcript_and_summary_exports", return_value=main._result_outputs(job_id)),
+            ):
+                response = self.client.post(endpoint)
+            self.assertEqual(response.status_code, 200, response.text)
+            self.assertEqual(response.json()["summary"], "새 요약")
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["segments"], segments)
+            self.assertEqual(saved["summary"]["generation_status"]["summary"], "completed")
+            self.assertNotIn("summary_completed_before_generation", saved["summary"])
+            self.assertNotIn((job_id, "summary"), main.ACTIVE_GENERATIONS)
+            summarize.assert_called_once()
+
     def test_generate_summary_preserves_existing_summary_when_summary_model_is_not_ready(self) -> None:
         output_dir = os.path.join(BACKEND_DIR, "outputs")
         os.makedirs(output_dir, exist_ok=True)
@@ -5955,7 +6266,6 @@ class AnalyzeApiTest(unittest.TestCase):
                         "display_segments": [{"speaker": "SPEAKER_00", "text": "Discuss budget."}],
                         "summary": {
                             "overview": "기존 요약",
-                            "generation_status": {"summary": "completed"},
                         },
                     },
                     f,
@@ -6227,6 +6537,35 @@ class AnalyzeApiTest(unittest.TestCase):
         finally:
             if os.path.exists(output_path):
                 os.remove(output_path)
+
+    def test_generate_summary_ignores_failure_after_transcript_edit(self) -> None:
+        job_id = "failed_summary_older_input"
+        segments = [{"speaker": "A", "text": "수정 전 발언"}]
+        with tempfile.TemporaryDirectory() as tmp, patch.object(main, "_get_output_dir", return_value=tmp):
+            path = Path(tmp) / f"{job_id}_result.json"
+            path.write_text(json.dumps({
+                "segments": segments,
+                "summary": {"overview": "기존 요약", "generation_status": {"summary": "completed"}},
+            }), encoding="utf-8")
+
+            def edit_then_fail(*_args, **_kwargs):
+                current = json.loads(path.read_text(encoding="utf-8"))
+                current["segments"][0]["text"] = "수정 후 발언"
+                path.write_text(json.dumps(current), encoding="utf-8")
+                raise RuntimeError("model stopped")
+
+            with (
+                patch.object(main, "_summary_model_readiness", return_value={"ready": True, "model": "test"}),
+                patch("pipeline.summarize.summarize_meeting", side_effect=edit_then_fail),
+            ):
+                response = self.client.post(f"/api/outputs/{job_id}/generate-summary")
+            self.assertEqual(response.status_code, 409, response.text)
+            self.assertEqual(response.json()["detail"], main.DETAIL_SUMMARY_INPUT_CHANGED)
+            saved = json.loads(path.read_text(encoding="utf-8"))
+            self.assertEqual(saved["segments"][0]["text"], "수정 후 발언")
+            self.assertEqual(saved["summary"]["overview"], "기존 요약")
+            self.assertEqual(saved["summary"]["generation_status"]["summary"], "not_started")
+            self.assertNotIn("generation_error", saved["summary"])
 
     def test_generate_summary_does_not_persist_rebuilt_result_when_generation_fails(self) -> None:
         output_dir = os.path.join(BACKEND_DIR, "outputs")

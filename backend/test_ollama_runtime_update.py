@@ -138,6 +138,46 @@ class RuntimeBundleUpdateTest(unittest.TestCase):
 
 
 class RuntimeUpdateApiTest(unittest.TestCase):
+    def test_runtime_space_credits_only_resumable_first_install_bytes(self):
+        import json
+
+        from web_local_engine_download_sizes import (
+            DOWNLOAD_FREE_SPACE_BUFFER_BYTES,
+            SUMMARY_RUNTIME_ARCHIVE_BYTES,
+            SUMMARY_RUNTIME_INSTALLED_BYTES,
+        )
+        required = SUMMARY_RUNTIME_ARCHIVE_BYTES + SUMMARY_RUNTIME_INSTALLED_BYTES + DOWNLOAD_FREE_SPACE_BUFFER_BYTES
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(
+            main, "OLLAMA_RUNTIME_EXPECTED_BYTES", SUMMARY_RUNTIME_ARCHIVE_BYTES
+        ), patch.object(main.shutil, "disk_usage") as disk_usage:
+            target = Path(temp_dir)
+            disk_usage.return_value.free = required
+            self.assertEqual(main._ollama_runtime_download_preflight(target), "")
+            disk_usage.return_value.free = required - 1
+            self.assertIn("저장 공간이 부족", main._ollama_runtime_download_preflight(target))
+            part = target / ".download" / "ollama-windows-amd64.zip.part"
+            part.parent.mkdir()
+            part.write_bytes(b"x")
+            metadata = part.with_suffix(part.suffix + ".json")
+            identity = dict(url=main.OLLAMA_RUNTIME_DOWNLOAD_URL, sha256=main.OLLAMA_RUNTIME_SHA256,
+                            expected_bytes=SUMMARY_RUNTIME_ARCHIVE_BYTES)
+            metadata.write_text(json.dumps(identity), encoding="utf-8")
+            self.assertEqual(main._ollama_runtime_download_preflight(target), "")
+            self.assertIn("저장 공간이 부족", main._ollama_runtime_download_preflight(target, update=True))
+            metadata.write_text(json.dumps(dict(identity, sha256="changed")), encoding="utf-8")
+            self.assertIn("저장 공간이 부족", main._ollama_runtime_download_preflight(target))
+
+    def test_extraction_checks_actual_required_space_before_writing(self):
+        with tempfile.TemporaryDirectory() as temp_dir, patch.object(main.shutil, "disk_usage") as disk_usage:
+            extract_dir = Path(temp_dir) / "staged"
+            with zipfile.ZipFile(io.BytesIO(), "w") as archive:
+                archive.writestr("ollama.exe", b"1234")
+                disk_usage.return_value.free = main.OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES + 3
+                with self.assertRaises(OSError) as failure:
+                    main._safe_extract_zip(archive, extract_dir)
+                self.assertEqual(failure.exception.errno, main.errno.ENOSPC)
+                self.assertFalse(extract_dir.exists())
+
     def setUp(self):
         self.stack = ExitStack()
         self.addCleanup(self.stack.close)

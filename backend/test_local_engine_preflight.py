@@ -301,8 +301,8 @@ class LocalEnginePreflightTest(unittest.TestCase):
         )
         cases = (
             (64 * 1024 ** 3, "pass", "space_sufficient"),
-            (install_bytes + 16_200_685_472, "pass", "space_sufficient"),
-            (install_bytes + 16_200_685_471, "warning", "space_below_recommended"),
+            (install_bytes + 15_713_544_098, "pass", "space_sufficient"),
+            (install_bytes + 15_713_544_097, "warning", "space_below_recommended"),
             (install_bytes + 13_219_366_817, "warning", "space_insufficient_for_future_readiness"),
         )
         for available, status, reason in cases:
@@ -320,7 +320,7 @@ class LocalEnginePreflightTest(unittest.TestCase):
                     self.assertEqual(checks[check_id]["status"], status)
                     self.assertEqual(checks[check_id]["reason_code"], reason)
                     self.assertEqual(checks[check_id]["measured"]["aggregate_required_bytes"], 13_219_366_818)
-                    self.assertEqual(checks[check_id]["measured"]["aggregate_recommended_bytes"], 16_200_685_472)
+                    self.assertEqual(checks[check_id]["measured"]["aggregate_recommended_bytes"], 15_713_544_098)
                     self.assertEqual(
                         checks[check_id]["measured"]["available_after_install_bytes"],
                         available - install_bytes,
@@ -375,7 +375,7 @@ class LocalEnginePreflightTest(unittest.TestCase):
             self.assertEqual(measured["aggregate_required_bytes"], 1_764_941_824 + 268_435_456)
             self.assertEqual(
                 measured["aggregate_recommended_bytes"],
-                (12_210_001_824 - 11_185_989_538) + 2_916_941_824 + 1_073_741_824,
+                (11_722_860_450 - 11_185_989_538) + 2_916_941_824 + 1_073_741_824,
             )
             self.assertEqual(measured["available_after_install_bytes"], available)
             self.assertEqual(measured["reused_bytes"], install_bytes + 11_185_989_538)

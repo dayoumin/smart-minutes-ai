@@ -363,35 +363,44 @@ export const getMeetingById = async (id: string): Promise<MeetingRecord | undefi
     });
 };
 
-export const updateMeeting = async (meeting: MeetingRecord): Promise<void> => {
-    const existing = await getMeetingById(meeting.id);
-    if (!existing) {
-        throw new Error('수정할 회의록을 찾을 수 없습니다.');
-    }
-
+export const modifyMeeting = async (
+    id: string,
+    change: (latest: MeetingRecord) => MeetingRecord,
+): Promise<MeetingRecord> => {
     const db = await initDB();
     return new Promise((resolve, reject) => {
         const transaction = db.transaction(STORE_NAME, 'readwrite');
         const store = transaction.objectStore(STORE_NAME);
-        const request = store.put({
-            ...meeting,
-            createdAt: meeting.createdAt ?? existing.createdAt ?? new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-        });
-        request.onerror = () => transaction.abort();
+        const request = store.get(id);
+        let saved: MeetingRecord | undefined;
+        let changeError: unknown;
+        request.onsuccess = () => {
+            if (!request.result) return;
+            try {
+                const latest = normalizeMeetingRecord(request.result);
+                const next = change(latest);
+                const now = new Date().toISOString();
+                saved = { ...next, id, createdAt: next.createdAt ?? latest.createdAt ?? now, updatedAt: now };
+                store.put(saved);
+            } catch (error) {
+                changeError = error;
+                transaction.abort();
+            }
+        };
         transaction.oncomplete = () => {
             db.close();
-            resolve();
-        };
-        transaction.onerror = () => {
-            db.close();
-            reject(transaction.error ?? request.error);
+            if (saved) resolve(saved);
+            else reject(new Error('수정할 회의록을 찾을 수 없습니다.'));
         };
         transaction.onabort = () => {
             db.close();
-            reject(transaction.error ?? request.error);
+            reject(changeError ?? transaction.error ?? request.error);
         };
     });
+};
+
+export const updateMeeting = async (meeting: MeetingRecord): Promise<void> => {
+    await modifyMeeting(meeting.id, () => meeting);
 };
 
 export const updateMeetingPinned = async (meetingId: string, pinned: boolean): Promise<void> => {

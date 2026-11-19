@@ -137,11 +137,6 @@ class EngineStartupLog:
         self.write(f"FAILED stage={stage}")
         self.write("".join(traceback.format_exc()).rstrip())
 
-    def ready(self, detail: str = "") -> None:
-        """The regular engine.log has taken over; stop holding the startup log open."""
-        self.write(("ready " + detail).rstrip())
-        self._close_faulthandler()
-
     def finish(self, code: object) -> None:
         self.write(f"exit code={code}")
         self._close_faulthandler()

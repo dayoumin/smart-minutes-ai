@@ -2,6 +2,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import textwrap
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -139,6 +140,74 @@ class EngineStartupLogTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("FAILED stage=import", text)
         self.assertIn("uvicorn", text)
+
+    def test_native_fault_handler_survives_backend_import_and_server_lifecycle(self):
+        # Use a child interpreter so the real process-wide fault handler is isolated.
+        code = textwrap.dedent('''
+            import builtins, faulthandler, sys, types
+            from pathlib import Path
+            from unittest.mock import Mock, patch
+            import web_local_engine_server as server
+
+            layout = server.resolve_web_local_engine_layout(local_app_data=Path.cwd() / "local", install_root=Path.cwd() / "program")
+            backend = types.ModuleType("main")
+            backend.LOCAL_ENGINE_PAIRING = types.SimpleNamespace()
+            backend.LOCAL_ENGINE_BROWSER_APPROVAL = Mock()
+            backend.app = object()
+            original_import = builtins.__import__
+            stages = []
+            def assert_handler(stage):
+                assert faulthandler.is_enabled(), stage
+                stages.append(stage)
+            def import_backend(name, *args, **kwargs):
+                if name == "main":
+                    assert_handler("backend import")
+                return original_import(name, *args, **kwargs)
+            def run():
+                assert_handler("server startup")
+                raise RuntimeError("deliberate startup failure")
+            try:
+                with (
+                    patch.object(server, "_resolve_startup_layout", return_value=layout),
+                    patch.object(server, "_resolve_startup_settings", return_value=("https://minutes.example", "1.2.3")),
+                    patch.object(server, "prepare_web_local_engine_data"),
+                    patch.object(server, "apply_web_local_engine_environment"),
+                    patch.object(server, "_configure_logging"),
+                    patch.object(server, "WindowsNamedMutex"),
+                    patch.object(server, "WindowsNamedEvent") as event,
+                    patch.object(server, "threading") as threading,
+                    patch.object(server, "stop_embedded_ollama_server", side_effect=lambda: assert_handler("shutdown")),
+                    patch.object(server, "_create_server", return_value=types.SimpleNamespace(run=run)),
+                    patch.dict(sys.modules, {"main": backend}),
+                    patch("builtins.__import__", side_effect=import_backend),
+                ):
+                    event.return_value.wait.return_value = False
+                    try:
+                        server.main([])
+                    except RuntimeError as error:
+                        assert str(error) == "deliberate startup failure"
+                        server._STARTUP_LOG.record_exception("main")
+                    else:
+                        raise AssertionError("startup failure must propagate")
+                    assert stages == ["backend import", "server startup", "shutdown"], stages
+            finally:
+                server._STARTUP_LOG.finish(1)
+            assert not faulthandler.is_enabled()
+        ''')
+        with tempfile.TemporaryDirectory() as root:
+            path = Path(root) / "engine-startup.log"
+            env = dict(os.environ, PYTHONPATH=str(BACKEND_DIR))
+            env[engine_startup_log.OVERRIDE_ENV] = str(path)
+            result = subprocess.run(
+                [sys.executable, "-B", "-c", code], cwd=root, env=env,
+                capture_output=True, text=True, timeout=120,
+            )
+            text = path.read_text(encoding="utf-8")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("engine.log configured", text)
+        self.assertNotIn("ready engine.log configured", text)
+        self.assertIn("RuntimeError: deliberate startup failure", text)
+        self.assertIn("exit code=1", text)
 
 
 if __name__ == "__main__":

@@ -258,6 +258,9 @@ export const parseApiErrorBody = (body: string, fallback: string): ApiErrorInfo 
         }
         const detail = typeof parsed.detail === 'string' ? parsed.detail.trim() : '';
         if (!detail) return { message: fallback };
+        if (detail === API_ERROR_MESSAGES.summary_input_changed) {
+            return { message: detail, detail, code: 'summary_input_changed' };
+        }
         return {
             message: mapApiErrorDetail(detail) ?? fallback,
             detail,

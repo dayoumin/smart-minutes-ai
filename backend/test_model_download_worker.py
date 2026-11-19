@@ -69,7 +69,7 @@ class ModelDownloadWorkerTest(unittest.TestCase):
                     path.write_bytes(b"keep the pinned prefix")
                     path.with_suffix(path.suffix + ".json").write_text(json.dumps({"url": main.OLLAMA_RUNTIME_DOWNLOAD_URL, "sha256": main.OLLAMA_RUNTIME_SHA256, "expected_bytes": main.OLLAMA_RUNTIME_EXPECTED_BYTES}), encoding="utf-8")
                     raise failure
-                with patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True), patch.object(main, "find_embedded_ollama_executable", return_value=""), patch.object(main, "_download_ollama_runtime_zip", side_effect=download):
+                with patch.dict(main.OLLAMA_RUNTIME_DOWNLOAD_STATUS, {}, clear=True), patch.object(main, "_ollama_runtime_target_candidates", return_value=[target]), patch.object(main, "find_embedded_ollama_executable", return_value=""), patch.object(main, "_download_ollama_runtime_zip", side_effect=download):
                     main._run_ollama_runtime_download(target)
                     self.assertEqual(part.read_bytes(), b"keep the pinned prefix")
                     self.assertTrue(main._ollama_runtime_snapshot()["can_resume"])

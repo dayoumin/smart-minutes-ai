@@ -52,7 +52,7 @@ const readMeeting = (page, id) => page.evaluate(key => new Promise((resolve, rej
 }), id);
 
 const openOrganize = async (page, record) => {
-  const expand = page.getByRole('button', { name: '메뉴 펼치기', exact: true });
+  const expand = page.getByRole('button', { name: '메뉴', exact: true, expanded: false });
   if (await expand.isVisible()) await expand.click();
   await page.locator('.barorok-navigation').getByText(record.title, { exact: true }).click();
   await page.locator('.meeting-detail-shell').getByRole('heading', { name: record.title, exact: true }).waitFor();
@@ -151,8 +151,8 @@ const run = async (browser, width) => {
   });
 
   try {
-    await page.goto(appUrl, { waitUntil: 'domcontentloaded' });
-    await page.getByRole('button', { name: '새 회의록', exact: true }).first().waitFor();
+    await page.goto(appUrl, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.locator('.barorok-navigation').waitFor();
     await putMeetings(page, [fresh, existing, refresh, failure, topicOnly, legacySpeaker, topicNew, speakerNew, speakerExisting]);
     await openOrganize(page, fresh);
     const panel = page.locator('#meeting-detail-panel-summary');

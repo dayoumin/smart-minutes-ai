@@ -85,6 +85,12 @@ from ollama_catalog import (
     CatalogSelectionError, CatalogUnavailableError, search_summary_models, verify_summary_catalog_model,
 )
 from media_limits import MediaDurationError, enforce_media_duration, validate_media_duration
+from web_local_engine_download_sizes import (
+    DOWNLOAD_FREE_SPACE_BUFFER_BYTES,
+    STT_MODEL_BYTES,
+    runtime_archive_bytes,
+    runtime_download_peak_bytes,
+)
 from analysis_errors import classify_analysis_failure
 from ollama_utils import (
     ensure_ollama_server_running,
@@ -104,7 +110,7 @@ from ollama_utils import (
     stop_managed_ollama_for_update,
     verify_managed_ollama_version,
 )
-from ollama_runtime_update import RuntimeOwnershipError, checked_runtime_path, replace_runtime_bundle
+from ollama_runtime_update import RuntimeOwnershipError, RuntimeRecoveryError, checked_runtime_path, replace_runtime_bundle
 from pipeline.transcribe import get_stt_device_status
 from pipeline.transcript_display import SPEAKER_REVIEW_FLAG_ALIASES, speaker_review_flags
 from pipeline.transcript_review import review_fields
@@ -154,9 +160,9 @@ OLLAMA_PULL_PROCESSES: dict[str, subprocess.Popen] = {}
 OLLAMA_RUNTIME_DOWNLOAD_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_STATUS: dict[str, dict] = {}
 MODEL_DOWNLOAD_EXPECTED_BYTES = {
-    "stt_faster_whisper": 3_090_839_274,
+    "stt_faster_whisper": STT_MODEL_BYTES,
 }
-MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
+MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES = DOWNLOAD_FREE_SPACE_BUFFER_BYTES
 OLLAMA_RUNTIME_DOWNLOAD_KEY = "ollama_runtime"
 OLLAMA_RUNTIME_DEFAULT_VERSION = os.environ.get("LMO_OLLAMA_RUNTIME_VERSION", "v0.40.10")
 OLLAMA_RUNTIME_DOWNLOAD_URL = os.environ.get(
@@ -168,11 +174,8 @@ OLLAMA_RUNTIME_SHA256 = os.environ.get(
     "d52aea2d323bdd324bf66a4b1226844aa5fb665cc5974fbcceceda1ce3d934eb"
     if OLLAMA_RUNTIME_DEFAULT_VERSION == "v0.40.10" and "LMO_OLLAMA_RUNTIME_DOWNLOAD_URL" not in os.environ else "",
 ).strip().lower()
-try:
-    OLLAMA_RUNTIME_EXPECTED_BYTES = int(os.environ.get("LMO_OLLAMA_RUNTIME_EXPECTED_BYTES", "1586229413"))
-except ValueError:
-    OLLAMA_RUNTIME_EXPECTED_BYTES = 1600000000
-OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES = 512 * 1024 * 1024
+OLLAMA_RUNTIME_EXPECTED_BYTES = runtime_archive_bytes(os.environ.get("LMO_OLLAMA_RUNTIME_EXPECTED_BYTES"))
+OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES = DOWNLOAD_FREE_SPACE_BUFFER_BYTES
 OLLAMA_RUNTIME_DOWNLOAD_CHUNK_BYTES = 1024 * 1024
 try:
     OLLAMA_RUNTIME_MAX_ZIP_MEMBERS = int(os.environ.get("LMO_OLLAMA_RUNTIME_MAX_ZIP_MEMBERS", "5000"))
@@ -1679,7 +1682,7 @@ def _request_ollama_runtime_download_stop() -> dict:
     return _ollama_runtime_snapshot()
 
 
-def _ollama_runtime_download_preflight(target_path: Path) -> str:
+def _ollama_runtime_download_preflight(target_path: Path, *, update: bool = False) -> str:
     try:
         target_path.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -1702,10 +1705,15 @@ def _ollama_runtime_download_preflight(target_path: Path) -> str:
                 pass
 
     try:
-        required_free_bytes = max(
-            OLLAMA_RUNTIME_EXPECTED_BYTES + OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES,
-            (OLLAMA_RUNTIME_EXPECTED_BYTES * 3) + OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES,
+        required_free_bytes = (
+            runtime_download_peak_bytes(OLLAMA_RUNTIME_EXPECTED_BYTES)
+            + OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES
         )
+        if not update:
+            part = target_path / ".download" / "ollama-windows-amd64.zip.part"
+            required_free_bytes -= partial_size(
+                part, OLLAMA_RUNTIME_DOWNLOAD_URL, OLLAMA_RUNTIME_SHA256, OLLAMA_RUNTIME_EXPECTED_BYTES
+            )
         free_bytes = shutil.disk_usage(str(target_path)).free
     except OSError:
         return ""
@@ -1720,7 +1728,14 @@ def _ollama_runtime_download_preflight(target_path: Path) -> str:
 def _resolve_ollama_runtime_download_target() -> tuple[Path, str]:
     errors: list[str] = []
     for target_path in _ollama_runtime_target_candidates():
-        error = _ollama_runtime_download_preflight(target_path)
+        try:
+            # A stopped extraction can occupy the space that preflight needs.
+            _prepare_first_runtime_download_cache(target_path)
+            error = _ollama_runtime_download_preflight(target_path)
+        except RuntimeInstallFolderConflict as exc:
+            error = str(exc)
+        except OSError:
+            error = "이전 다운로드의 임시 파일을 정리하지 못했습니다. 폴더 접근 권한을 확인한 뒤 다시 받아 주세요."
         if not error:
             return target_path, ""
         errors.append(f"{target_path}: {error}")
@@ -1729,38 +1744,73 @@ def _resolve_ollama_runtime_download_target() -> tuple[Path, str]:
     return fallback, f"요약 프로그램을 저장할 위치를 준비하지 못했습니다. {detail}"
 
 
-def _clear_ollama_runtime_dir(target_dir: Path, skip_dir: Path) -> None:
-    resolved_skip = skip_dir.resolve()
-    for child in target_dir.iterdir():
-        try:
-            if child.resolve() == resolved_skip:
+class RuntimeInstallFolderConflict(RuntimeError):
+    """The first installer cannot establish ownership of existing files."""
+
+    def __init__(self, target: Path):
+        super().__init__(f"기존 파일이 있어 요약 프로그램을 설치하지 못했습니다. 앱을 닫고 “{target}” 폴더를 "
+                         "다른 이름으로 보관한 뒤 앱에서 다시 받아 주세요.")
+
+
+def _check_first_runtime_install_folder(target: Path) -> None:
+    try:
+        checked_runtime_path(target, _ollama_runtime_target_candidates())
+    except RuntimeError as exc:
+        raise RuntimeInstallFolderConflict(target) from exc
+    if not target.exists():
+        return
+    download = target / ".download"
+    for entry in target.iterdir():
+        if entry == target / "README.txt" and entry.is_file():
+            continue
+        if entry != download or not entry.is_dir():
+            raise RuntimeInstallFolderConflict(target)
+        archive = "ollama-windows-amd64.zip"
+        for cached in download.iterdir():
+            if cached == download / "extracted" and cached.is_dir():
                 continue
-        except OSError:
-            pass
-        if child.is_dir():
-            shutil.rmtree(child)
-        else:
-            child.unlink()
+            if cached.name not in (archive, archive + ".part", archive + ".part.json") or not cached.is_file():
+                raise RuntimeInstallFolderConflict(target)
+
+
+def _prepare_first_runtime_download_cache(target: Path) -> None:
+    _check_first_runtime_install_folder(target)
+    download = target / ".download"
+    extract = download / "extracted"
+    if extract.exists():
+        shutil.rmtree(extract)
+    # Older versions renamed the verified part before extraction. Restore its
+    # original name so the downloader checks the pinned identity and full hash.
+    finished = download / "ollama-windows-amd64.zip"
+    part = finished.with_suffix(".zip.part")
+    if finished.exists() and not part.exists():
+        finished.rename(part)
 
 
 def _install_extracted_ollama_runtime(extract_dir: Path, target_dir: Path, download_dir: Path) -> str:
+    if download_dir != target_dir / ".download" or extract_dir != download_dir / "extracted":
+        raise RuntimeError("Unexpected runtime download directory.")
+    _check_first_runtime_install_folder(target_dir)
     executable_candidates = [candidate for candidate in extract_dir.rglob("ollama.exe") if candidate.is_file()]
-    if not executable_candidates:
-        raise RuntimeError("Downloaded archive did not include ollama.exe.")
+    if len(executable_candidates) != 1:
+        raise RuntimeError("Downloaded archive must contain exactly one Ollama executable.")
 
     source_dir = executable_candidates[0].parent
-    _clear_ollama_runtime_dir(target_dir, download_dir)
-    for child in source_dir.iterdir():
-        destination = target_dir / child.name
-        if child.is_dir():
-            shutil.copytree(child, destination, dirs_exist_ok=True)
-        else:
-            shutil.copy2(child, destination)
-
-    installed_executable = target_dir / "ollama.exe"
-    if not installed_executable.is_file():
-        raise RuntimeError("Downloaded files did not include runtime\\ollama\\ollama.exe.")
-    return str(installed_executable)
+    readme = target_dir / "README.txt"
+    with tempfile.TemporaryDirectory(prefix=".ollama-install-", dir=target_dir.parent) as staging:
+        bundle = Path(staging) / "bundle"
+        source_dir.rename(bundle)
+        if readme.exists():
+            shutil.copy2(readme, bundle / readme.name)
+        # The first install has no prior executable or server to stop/restart.
+        # Stage outside the target so the same-volume rename publishes the EXE
+        # and its libraries together and a denied rename can restore .download.
+        with managed_ollama_update_lock():
+            return replace_runtime_bundle(
+                bundle, target_dir, allowed_targets=_ollama_runtime_target_candidates(),
+                stop=lambda: None, start_and_verify=lambda: None, restart_original=lambda: None,
+                cancelled=_ollama_runtime_cancel_requested,
+            )
 
 
 def _safe_extract_zip(archive: zipfile.ZipFile, extract_dir: Path) -> None:
@@ -1778,6 +1828,10 @@ def _safe_extract_zip(archive: zipfile.ZipFile, extract_dir: Path) -> None:
         target_path = (extract_dir / member.filename).resolve()
         if target_path != extract_root and not str(target_path).lower().startswith(str(extract_root).lower() + os.sep):
             raise RuntimeError("Downloaded archive contains an unsafe path.")
+    # The installed-size estimate is based on an earlier build. Once we have
+    # the actual ZIP, check its declared expansion on the staging volume.
+    if shutil.disk_usage(extract_dir.parent).free < total_uncompressed_bytes + OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES:
+        raise OSError(errno.ENOSPC, "요약 프로그램의 압축을 풀 저장 공간이 부족합니다.")
     if archive.testzip():
         raise RuntimeError("Downloaded archive failed integrity validation.")
     archive.extractall(extract_dir)
@@ -1809,25 +1863,20 @@ def _download_ollama_runtime_zip(target_path: Path, zip_part_path: Path) -> None
 def _run_ollama_runtime_download(target_path: Path) -> None:
     download_dir = target_path / ".download"
     zip_part_path = download_dir / "ollama-windows-amd64.zip.part"
-    zip_path = download_dir / "ollama-windows-amd64.zip"
     extract_dir = download_dir / "extracted"
     try:
-        if download_dir.resolve() != target_path.resolve() / ".download":
-            raise RuntimeError("Download directory must not be a link to another location.")
         if _ollama_runtime_cancel_requested():
             _mark_ollama_runtime_cancelled(str(target_path))
             return
 
+        _prepare_first_runtime_download_cache(target_path)
         download_dir.mkdir(parents=True, exist_ok=True)
-        if extract_dir.exists():
-            shutil.rmtree(extract_dir)
 
         _download_ollama_runtime_zip(target_path, zip_part_path)
         if _ollama_runtime_cancel_requested():
             _mark_ollama_runtime_cancelled(str(target_path))
             return
 
-        zip_part_path.replace(zip_path)
         _set_ollama_runtime_download_status(
             active=True,
             status="extracting",
@@ -1835,7 +1884,7 @@ def _run_ollama_runtime_download(target_path: Path) -> None:
             target_path=str(target_path),
             error="",
         )
-        with zipfile.ZipFile(zip_path) as archive:
+        with zipfile.ZipFile(zip_part_path) as archive:
             _safe_extract_zip(archive, extract_dir)
 
         if _ollama_runtime_cancel_requested():
@@ -1843,9 +1892,6 @@ def _run_ollama_runtime_download(target_path: Path) -> None:
             return
 
         executable_path = _install_extracted_ollama_runtime(extract_dir, target_path, download_dir)
-        if _ollama_runtime_cancel_requested():
-            _mark_ollama_runtime_cancelled(str(target_path))
-            return
         _set_ollama_runtime_download_status(
             available=True,
             active=False,
@@ -1859,31 +1905,27 @@ def _run_ollama_runtime_download(target_path: Path) -> None:
     except InterruptedError:
         _mark_ollama_runtime_cancelled(str(target_path))
     except Exception as exc:
-        if _ollama_runtime_cancel_requested():
+        if _ollama_runtime_cancel_requested() and not isinstance(exc, RuntimeRecoveryError):
             _mark_ollama_runtime_cancelled(str(target_path))
             return
         logging.exception("Failed to download Ollama runtime")
+        message = _download_blocked_message("요약 프로그램을", "요약 프로그램 파일 준비를")
+        if isinstance(exc, RuntimeInstallFolderConflict):
+            message = str(exc)
+        elif isinstance(exc, RuntimeRecoveryError):
+            message = f"이전 폴더를 자동 복구하지 못했습니다. 앱을 닫고 보관된 폴더 “{exc.backup}”를 확인해 주세요."
+        elif isinstance(exc, OSError) and (exc.errno == errno.ENOSPC or getattr(exc, "winerror", None) == 112):
+            message = "요약 프로그램을 저장할 공간이 부족합니다. 여유 공간을 확보한 뒤 다시 받아 주세요."
         _set_ollama_runtime_download_status(
             available=bool(find_embedded_ollama_executable()),
             active=False,
             status="failed",
-            message=_download_blocked_message("요약 프로그램을", "요약 프로그램 파일 준비를"),
+            message=message,
             target_path=str(target_path),
             executable_path=find_embedded_ollama_executable(),
             error=str(exc),
             cancel_requested=False,
         )
-    finally:
-        try:
-            # Stop/failure keeps only this download's partial file for resume.
-            # Installed executables and model directories are never cleared here.
-            if download_dir.resolve() == target_path.resolve() / ".download":
-                if _ollama_runtime_snapshot().get("status") == "completed" and download_dir.exists():
-                    shutil.rmtree(download_dir)
-                elif zip_path.exists() and not zip_part_path.exists():
-                    zip_path.replace(zip_part_path)
-        except OSError:
-            pass
 
 
 def _runtime_update_active() -> bool:
@@ -2025,7 +2067,7 @@ def _admit_ollama_runtime_download(update: bool = False) -> dict:
         target_path = Path(embedded_executable).parent
         try:
             target_path = checked_runtime_path(target_path, _ollama_runtime_target_candidates())
-            preflight_error = _ollama_runtime_download_preflight(target_path)
+            preflight_error = _ollama_runtime_download_preflight(target_path, update=True)
         except (OSError, RuntimeError) as exc:
             _, preflight_error = _runtime_update_failure(exc)
     else:
@@ -3568,8 +3610,37 @@ def _has_existing_summary_content(summary: dict | None) -> bool:
         return False
     return any(
         bool(summary.get(key))
-        for key in ("overview", "topics", "topic_sections", "speaker_context_summaries", "participant_summaries")
+        for key in (
+            "overview", "topics", "decisions", "actions",
+            "topic_sections", "speaker_context_summaries", "participant_summaries",
+        )
     )
+
+
+def _had_completed_manual_summary(summary: dict, state: str) -> bool:
+    if state != "generating":
+        return state == "completed" and _has_existing_summary_content(summary)
+    previous = summary.get("summary_completed_before_generation")
+    if isinstance(previous, bool):
+        return previous and _has_existing_summary_content(summary)
+    # Older engines only persisted "generating". A skipped or failed run
+    # can leave guidance in overview even though it never produced a summary.
+    overview = summary.get("overview")
+    error = summary.get("generation_error")
+    status = summary.get("generation_status", {})
+    if overview and (
+        (summary.get("needs_check") == [overview] and status.get("topic_sections") == "skipped")
+        or (isinstance(error, dict) and error.get("message") == overview)
+        or overview == "음성 인식까지 완료된 임시 저장본입니다."
+    ):
+        return bool(summary.get("topics") or summary.get("decisions") or summary.get("actions"))
+    return _has_existing_summary_content(summary)
+
+
+def _summary_status_after_failure(had_completed_summary: bool, code: str) -> str:
+    if had_completed_summary:
+        return "completed"
+    return "not_started" if code == "runtime_preparing" else "failed"
 
 
 def _result_outputs(job_id: str, include_audio: bool | None = None) -> dict:
@@ -4556,15 +4627,16 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
 
             summary = result_data.setdefault("summary", {})
             status = _ensure_generation_status(summary)
-            if status.get("summary") == "generating":
+            if (job_id, "summary") in ACTIVE_GENERATIONS:
                 raise HTTPException(status_code=409, detail="Summary is already being generated")
-            had_existing_summary_content = _has_existing_summary_content(summary)
-            previous_summary_status = status.get("summary") if isinstance(status.get("summary"), str) else "not_started"
+            had_completed_summary = _had_completed_manual_summary(summary, status["summary"])
             generation_key = _begin_generation(job_id, "summary")
+            summary["summary_completed_before_generation"] = had_completed_summary
             status["summary"] = "generating"
             if had_saved_result:
                 _save_job_result(job_id, result_data)
 
+        generation_error = None
         try:
             config = load_config()
             readiness = await asyncio.to_thread(_summary_model_readiness, config, preparation_timeout_seconds=300)
@@ -4583,33 +4655,20 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
 
                 summary_data = await asyncio.to_thread(generate_prepared_summary)
         except Exception as exc:
-            http_error = _generation_http_exception(exc, "summary")
-            with GENERATION_STATUS_LOCK:
-                if os.path.exists(_get_job_result_path(job_id)):
-                    latest_result = _load_latest_generation_result(job_id, result_data)
-                    latest_summary = latest_result.setdefault("summary", {})
-                    latest_status = _ensure_generation_status(latest_summary)
-                    latest_status["summary"] = (
-                        previous_summary_status
-                        if had_existing_summary_content and previous_summary_status != "generating"
-                        else "failed"
-                    )
-                    _set_generation_error(latest_summary, http_error.detail["code"], "summary")
-                    _save_job_result(job_id, latest_result)
+            generation_error = _generation_http_exception(exc, "summary")
+            summary_data = {}
             logging.exception("Failed to generate summary")
-            raise http_error
 
         with GENERATION_STATUS_LOCK:
             latest_result = _load_latest_generation_result(job_id, result_data)
+            latest_summary = latest_result.setdefault("summary", {})
+            latest_summary.pop("summary_completed_before_generation", None)
+            latest_status = _ensure_generation_status(latest_summary)
             if _generation_input_fingerprint(latest_result, get_transcript_segments(latest_result)) != input_fingerprint:
-                latest_summary = latest_result.setdefault("summary", {})
-                latest_status = _ensure_generation_status(latest_summary)
                 latest_status["summary"] = "not_started"
                 if os.path.exists(_get_job_result_path(job_id)):
                     _save_job_result(job_id, latest_result)
                 raise HTTPException(status_code=409, detail=DETAIL_SUMMARY_INPUT_CHANGED)
-            latest_summary = latest_result.setdefault("summary", {})
-            latest_status = _ensure_generation_status(latest_summary)
             previous_topic_sections = latest_summary.get("topic_sections", [])
             previous_speaker_context = latest_summary.get("speaker_context_summaries", [])
             previous_participant_summaries = latest_summary.get("participant_summaries", [])
@@ -4621,20 +4680,19 @@ async def generate_output_summary(job_id: str, payload: dict | None = Body(None)
             )
             if summary_state == "failed":
                 failure = _summary_failure_from_result(summary_data)
-                latest_status["summary"] = (
-                    previous_summary_status
-                    if had_existing_summary_content and previous_summary_status != "generating"
-                    else "failed"
-                )
-                _set_generation_error(latest_summary, failure.code, "summary")
-                if os.path.exists(_get_job_result_path(job_id)):
-                    _save_job_result(job_id, latest_result)
-                raise HTTPException(
+                generation_error = HTTPException(
                     status_code=failure.http_status,
                     detail=failure.as_detail("summary"),
                 )
-            if summary_state == "skipped" and had_existing_summary_content:
-                latest_status["summary"] = previous_summary_status if previous_summary_status != "generating" else "completed"
+            if generation_error is not None:
+                code = generation_error.detail["code"]
+                latest_status["summary"] = _summary_status_after_failure(had_completed_summary, code)
+                _set_generation_error(latest_summary, code, "summary")
+                if os.path.exists(_get_job_result_path(job_id)):
+                    _save_job_result(job_id, latest_result)
+                raise generation_error
+            if summary_state == "skipped" and had_completed_summary:
+                latest_status["summary"] = "completed"
                 latest_summary["generation_status"] = latest_status
                 _save_job_result(job_id, latest_result)
                 raise HTTPException(status_code=409, detail="summary_model_not_ready")

@@ -1,9 +1,7 @@
-import ast
 import functools
 import json
 import modulefinder
 import os
-import re
 import subprocess
 import sys
 import tempfile
@@ -13,6 +11,7 @@ from unittest.mock import patch
 
 import web_local_engine_installer_preflight as installer_preflight
 import web_local_engine_storage_requirements as storage_requirements_module
+from web_local_engine_download_sizes import SUMMARY_RUNTIME_ARCHIVE_BYTES, runtime_archive_bytes
 from config_normalization import DEFAULT_SUMMARY_MODEL
 from web_local_engine_installer_preflight import (
     EXPECTED_CHECK_IDS,
@@ -41,7 +40,7 @@ class WebLocalEngineStorageRequirementsTest(unittest.TestCase):
         derived = storage_requirements()
         self.assertEqual(set(derived), {"models", "analysisTemp", "results"})
         self.assertEqual(derived["models"]["requiredBytes"], 11_185_989_538)
-        self.assertEqual(derived["models"]["recommendedBytes"], 12_210_001_824)
+        self.assertEqual(derived["models"]["recommendedBytes"], 11_722_860_450)
         self.assertEqual(derived["analysisTemp"]["requiredBytes"], 1_764_941_824)
         self.assertEqual(derived["analysisTemp"]["recommendedBytes"], 2_916_941_824)
         self.assertEqual(derived["results"]["requiredBytes"], 268_435_456)
@@ -50,34 +49,24 @@ class WebLocalEngineStorageRequirementsTest(unittest.TestCase):
             self.assertTrue(entry["basis"])
             self.assertGreaterEqual(entry["recommendedBytes"], entry["requiredBytes"])
 
-    def test_sources_still_match_backend_constants(self) -> None:
-        main_source = (Path(__file__).resolve().parent / "main.py").read_text(encoding="utf-8")
-        constants = {}
-        for node in ast.parse(main_source).body:
-            if isinstance(node, ast.Assign) and len(node.targets) == 1 and isinstance(node.targets[0], ast.Name):
-                if node.targets[0].id in {
-                    "MODEL_DOWNLOAD_EXPECTED_BYTES",
-                    "MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES",
-                    "OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES",
-                }:
-                    constants[node.targets[0].id] = eval(compile(ast.Expression(node.value), "main.py", "eval"), {})
-        self.assertEqual(
-            constants["MODEL_DOWNLOAD_EXPECTED_BYTES"]["stt_faster_whisper"],
-            storage_requirements_module.STT_MODEL_BYTES,
-        )
-        self.assertEqual(
-            constants["MODEL_DOWNLOAD_FREE_SPACE_BUFFER_BYTES"],
-            storage_requirements_module.DOWNLOAD_FREE_SPACE_BUFFER_BYTES,
-        )
-        self.assertEqual(
-            constants["OLLAMA_RUNTIME_FREE_SPACE_BUFFER_BYTES"],
-            storage_requirements_module.DOWNLOAD_FREE_SPACE_BUFFER_BYTES,
-        )
-        runtime_default = re.search(r'"LMO_OLLAMA_RUNTIME_EXPECTED_BYTES", "(\d+)"', main_source)
-        self.assertIsNotNone(runtime_default)
-        self.assertEqual(int(runtime_default.group(1)), storage_requirements_module.SUMMARY_RUNTIME_ARCHIVE_BYTES)
+    def test_runtime_size_override_and_pinned_defaults(self) -> None:
+        self.assertEqual(SUMMARY_RUNTIME_ARCHIVE_BYTES, 1_586_229_413)
+        for configured in (None, "", "invalid", "0", "-42"):
+            with self.subTest(configured=configured):
+                self.assertEqual(runtime_archive_bytes(configured), SUMMARY_RUNTIME_ARCHIVE_BYTES)
+        self.assertEqual(runtime_archive_bytes("9876"), 9876)
         # SUMMARY_MODEL_BYTES is the measured gemma4:e2b size; a new default needs a new measurement.
         self.assertEqual(DEFAULT_SUMMARY_MODEL, "gemma4:e2b")
+
+    def test_manifest_reserves_archive_peak_when_it_exceeds_all_ready_models(self) -> None:
+        larger_archive = 6 * GIB
+        with patch.object(storage_requirements_module, "SUMMARY_RUNTIME_ARCHIVE_BYTES", larger_archive):
+            models = storage_requirements()["models"]
+        self.assertEqual(models["requiredBytes"], 11_185_989_538)
+        self.assertEqual(
+            models["recommendedBytes"],
+            3_090_839_274 + 33_695_880 + larger_archive + 3_474_297_879 + 512 * 1024 ** 2,
+        )
 
     def test_script_prints_ascii_manifest_block_accepted_by_the_installer(self) -> None:
         with patch("sys.stdout") as stdout:
@@ -209,7 +198,7 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             requirements = requirements_from_artifact_manifest(manifest)
         self.assertIsNone(legacy["models"].recommended_bytes)
         self.assertEqual(requirements["models"].required_bytes, 11_185_989_538)
-        self.assertEqual(requirements["models"].recommended_bytes, 12_210_001_824)
+        self.assertEqual(requirements["models"].recommended_bytes, 11_722_860_450)
         self.assertEqual(requirements["analysis_temp"].required_bytes, 1_764_941_824)
         self.assertEqual(requirements["analysis_temp"].recommended_bytes, 2_916_941_824)
         self.assertEqual(requirements["results"].required_bytes, 268_435_456)
@@ -858,7 +847,6 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             linked = subprocess.run(
                 ["cmd", "/c", "mklink", "/J", str(models / "linked"), str(elsewhere)],
                 capture_output=True,
-                text=True,
             )
             self.assertEqual(linked.returncode, 0, linked.stdout + linked.stderr)
             self.assertTrue((models / "linked" / "big.bin").exists())
@@ -949,7 +937,7 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             measured = check["measured"]
             self.assertIn(check["status"], {"pass", "warning"})
             self.assertEqual(measured["aggregate_required_bytes"], 13_219_366_818)
-            self.assertEqual(measured["aggregate_recommended_bytes"], 16_200_685_472)
+            self.assertEqual(measured["aggregate_recommended_bytes"], 15_713_544_098)
             self.assertEqual(measured["reused_bytes"], 0)
             self.assertEqual(
                 measured["available_after_install_bytes"],
@@ -957,7 +945,7 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
             )
         self.assertNotIn("unknown", {check["status"] for check in payload["checks"]})
         after_install = future[0]["measured"]["available_after_install_bytes"]
-        if after_install >= 16_200_685_472:
+        if after_install >= 15_713_544_098:
             self.assertEqual(exit_code, 0)
             self.assertIn("decision=ready", decision)
         else:
@@ -987,11 +975,11 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
         for check_id in future_checks:
             self.assertEqual(checks[check_id]["status"], "pass")
             self.assertEqual(checks[check_id]["reason_code"], "space_sufficient")
-            self.assertEqual(checks[check_id]["measured"]["aggregate_recommended_bytes"], 16_200_685_472)
+            self.assertEqual(checks[check_id]["measured"]["aggregate_recommended_bytes"], 15_713_544_098)
         self.assertNotIn("unknown", {check["status"] for check in payload["checks"]})
 
         # 14 GiB after install is above the 13,219,366,818-byte need but below the
-        # 16,200,685,472-byte pass level, so the warning names what to free.
+        # 15,713,544,098-byte pass level, so the warning names what to free.
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             install_bytes = requirements_from_artifact_manifest(
@@ -1012,7 +1000,7 @@ class WebLocalEngineInstallerPreflightTest(unittest.TestCase):
                 "decision=confirm",
                 "primary_action=free_space_and_retry",
                 "request_generation=3",
-                "free_space_gb=2",
+                "free_space_gb=1",
                 f"free_space_drive={drive}",
             ],
         )

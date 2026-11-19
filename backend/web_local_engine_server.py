@@ -234,7 +234,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     apply_web_local_engine_environment(runtime_environment)
     _configure_logging(layout.logs_dir / "engine.log")
-    _STARTUP_LOG.ready("engine.log configured")
+    # Python logging does not capture native faults. Keep the crash handler and
+    # its file open through backend imports, server startup and normal shutdown.
+    _STARTUP_LOG.write("engine.log configured")
 
     mutex = WindowsNamedMutex(pairing_mutex_name(layout))
     if not mutex.acquire():

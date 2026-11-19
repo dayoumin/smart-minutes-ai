@@ -192,6 +192,7 @@ def _run_text(command: Sequence[str], runner: Callable[..., subprocess.Completed
         list(command), capture_output=True, text=True, errors="replace", timeout=20,
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
+    result.check_returncode()
     return result.stdout or ""
 
 

@@ -169,7 +169,7 @@ class WebLocalEnginePackagingTest(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         storage = json.loads(completed.stdout)["storageRequirements"]
         self.assertEqual(storage["models"]["requiredBytes"], 11_185_989_538)
-        self.assertEqual(storage["models"]["recommendedBytes"], 12_210_001_824)
+        self.assertEqual(storage["models"]["recommendedBytes"], 11_722_860_450)
         self.assertEqual(storage["analysisTemp"]["requiredBytes"], 1_764_941_824)
         self.assertEqual(storage["analysisTemp"]["recommendedBytes"], 2_916_941_824)
         self.assertEqual(storage["results"]["requiredBytes"], 268_435_456)

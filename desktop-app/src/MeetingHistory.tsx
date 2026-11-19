@@ -2,7 +2,7 @@
 import { AudioLines, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
 import type { LeaveGuard } from './appView';
 import { Button, IconButton, Input, StatusBanner, ProgressBar, AppToast, AppToastMessage, AppToastTone, useAppDialog } from './components/common';
-import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, updateMeeting } from './meetingRepository';
+import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, modifyMeeting, updateMeeting } from './meetingRepository';
 import { isTauriRuntime, openSavedFileLocation } from './apiBase';
 import { localEngineClient } from './localEngineClient';
 import { useLocalEngineConnection } from './LocalEngineConnectionContext';
@@ -73,7 +73,7 @@ interface MeetingHistoryProps {
 }
 
 type OrganizeTab = 'summary' | 'topics' | 'speakers';
-// Preserve machine-readable preparation errors so a retryable wait never becomes a failed result.
+// Keep engine codes available when deciding which generation state to persist.
 class GenerationResponseError extends Error {
     readonly code?: string;
     constructor(message: string, code?: string) {
@@ -267,12 +267,18 @@ interface SyncOutputRecordResponse {
     export_error?: string | null;
 }
 
-const isStaleGenerationMessage = (message: string): boolean => (
-    message.includes('이번 결과는 저장하지 않았습니다')
-    || message.includes('주제별 정리를 저장하지 않았습니다')
-    || message.includes('참석자별 정리를 저장하지 않았습니다')
-    || message.includes('이번 보고서는 저장하지 않았습니다')
-);
+const inputChangedCodes = new Set(['summary_input_changed', 'topic_input_changed', 'speaker_input_changed', 'report_input_changed']);
+const isGenerationInputChanged = (error: unknown): boolean => {
+    if (error instanceof GenerationResponseError && error.code && inputChangedCodes.has(error.code)) return true;
+    // Older engines can return the user-facing message without a code.
+    return error instanceof Error && (
+        error.message.includes('이번 결과는 저장하지 않았습니다')
+        || error.message.includes('이번 정리는 저장하지 않았습니다')
+        || error.message.includes('주제별 정리를 저장하지 않았습니다')
+        || error.message.includes('참석자별 정리를 저장하지 않았습니다')
+        || error.message.includes('이번 보고서는 저장하지 않았습니다')
+    );
+};
 
 const isGuidanceNeedsCheckItem = (message: string): boolean => (
     message.includes('정리는 회의 기록에서 별도로 실행')
@@ -1552,16 +1558,10 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
         const nextTask = previousTask
             .catch(() => undefined)
             .then(async () => {
-                const latestMeeting = (
-                    (selectedMeetingRef.current?.id === targetId ? selectedMeetingRef.current : null)
-                    ?? recordsRef.current.find(record => record.id === targetId)
-                    ?? await getMeetingById(targetId)
-                );
-                if (!latestMeeting) return;
-
-                const resolvedPatch = typeof patch === 'function' ? patch(latestMeeting) : patch;
-                const nextMeeting = { ...latestMeeting, ...resolvedPatch };
-                await updateMeeting(nextMeeting);
+                const nextMeeting = await modifyMeeting(targetId, latestMeeting => ({
+                    ...latestMeeting,
+                    ...(typeof patch === 'function' ? patch(latestMeeting) : patch),
+                }));
 
                 if (currentSelectedMeetingIdRef.current === nextMeeting.id) {
                     selectedMeetingRef.current = nextMeeting;
@@ -2490,7 +2490,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
         } catch (error) {
             const preparationPending = isGenerationPreparation(error);
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+            const nextState = isGenerationInputChanged(error)
                 ? 'not_started'
                 : hadCompletedSummaryBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
@@ -2740,7 +2740,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
         } catch (error) {
             const preparationPending = isGenerationPreparation(error);
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+            const nextState = isGenerationInputChanged(error)
                 ? 'not_started'
                 : hadCompletedTopicSectionsBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
@@ -2841,7 +2841,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
         } catch (error) {
             const preparationPending = isGenerationPreparation(error);
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message) ? 'not_started' : preparationPending ? 'not_started' : 'failed';
+            const nextState = isGenerationInputChanged(error) ? 'not_started' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
                 generationStatus: normalizeGenerationStatus(currentMeeting.generationStatus, {
                     topicSections: hadCompletedTopicSectionsBeforeRequest ? 'completed' : nextState,
@@ -2936,7 +2936,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
         } catch (error) {
             const preparationPending = isGenerationPreparation(error);
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+            const nextState = isGenerationInputChanged(error)
                 ? 'not_started'
                 : hadCompletedSpeakerContextBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({
@@ -3028,7 +3028,7 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
             }
         } catch (error) {
             const preparationPending = isGenerationPreparation(error);
-            const nextState = error instanceof Error && isStaleGenerationMessage(error.message)
+            const nextState = isGenerationInputChanged(error)
                 ? 'not_started'
                 : hadCompletedMeetingReportBeforeRequest ? 'completed' : preparationPending ? 'not_started' : 'failed';
             await updateSelectedMeeting(currentMeeting => ({

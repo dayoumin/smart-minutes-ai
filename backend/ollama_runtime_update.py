@@ -14,6 +14,12 @@ class RuntimeOwnershipError(RuntimeError):
     """The app does not own the listener, so it must not stop or restart it."""
 
 
+class RuntimeRecoveryError(RuntimeError):
+    def __init__(self, backup: Path):
+        self.backup = backup
+        super().__init__(f"Runtime update failed; automatic recovery failed. Original bundle: {backup}")
+
+
 def checked_runtime_path(path: Path, allowed_targets: list[Path]) -> Path:
     absolute = Path(os.path.abspath(path))
     if absolute not in [Path(os.path.abspath(item)) for item in allowed_targets]:
@@ -87,7 +93,7 @@ def replace_runtime_bundle(
             if stopped and had_original:
                 restart_original()
         except Exception as recovery_error:
-            raise RuntimeError(f"Runtime update failed; automatic recovery failed. Original bundle: {backup}") from recovery_error
+            raise RuntimeRecoveryError(backup) from recovery_error
         raise original_error
     if moved_original:
         try:

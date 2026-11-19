@@ -153,7 +153,16 @@ const seedMeeting = async (page) => {
 
     await new Promise((resolve, reject) => {
       const tx = db.transaction('meetings', 'readwrite');
-      tx.objectStore('meetings').put(meeting);
+      const meetings = tx.objectStore('meetings');
+      meetings.put(meeting);
+      meetings.put({
+        ...meeting,
+        id: meetingId + '-first',
+        jobId: jobId + '-first',
+        title: '첫 요약 시뮬레이션',
+        summary: '',
+        generationStatus: { ...meeting.generationStatus, summary: 'not_started' },
+      });
       tx.oncomplete = resolve;
       tx.onerror = () => reject(tx.error);
     });
@@ -161,7 +170,7 @@ const seedMeeting = async (page) => {
   }, { meetingId, jobId });
 };
 
-const installRoutes = async (page, apiCalls) => {
+const installRoutes = async (page, apiCalls, editingTab) => {
   await page.route('**/api/health', route => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -186,11 +195,23 @@ const installRoutes = async (page, apiCalls) => {
     });
   });
 
-  await page.route(`**/api/outputs/${jobId}/generate-summary`, route => route.fulfill({
-    status: 409,
-    contentType: 'application/json',
-    body: JSON.stringify({ detail: 'summary_input_changed' }),
-  }));
+  await page.route(`**/api/outputs/${jobId}*/generate-summary`, async route => {
+    const first = route.request().url().includes(jobId + '-first/');
+    const id = first ? meetingId + '-first' : meetingId;
+    await editingTab.evaluate(async key => {
+      const { getMeetingById, updateMeeting } = await import('/src/meetingRepository.ts');
+      const record = await getMeetingById(key);
+      await updateMeeting({
+        ...record,
+        editedDisplaySegments: [{ ...record.segments[0], text: '다른 탭에서 저장한 최신 대화록입니다.' }],
+      });
+    }, id);
+    return route.fulfill({
+      status: 409,
+      contentType: 'application/json',
+      body: JSON.stringify({ detail: first ? staleSummaryMessage : 'summary_input_changed' }),
+    });
+  });
 
   await page.route('**/api/export-record/**', route => {
     apiCalls.push(`UNEXPECTED_EXPORT ${route.request().url()}`);
@@ -205,7 +226,8 @@ const installRoutes = async (page, apiCalls) => {
 const run = async () => {
   const server = await startServer();
   const browser = await chromium.launch({ headless: true });
-  const page = await browser.newPage({ viewport: { width: 1280, height: 900 } });
+  const context = await browser.newContext({ viewport: { width: 1280, height: 900 } });
+  const page = await context.newPage();
   const apiCalls = [];
   page.on('request', request => {
     if (request.url().includes('/api/')) {
@@ -214,7 +236,10 @@ const run = async () => {
   });
 
   try {
-    await installRoutes(page, apiCalls);
+    const editingTab = await context.newPage();
+    // Same Vite origin and IndexedDB, without a second running app.
+    await editingTab.goto(new URL('/@vite/client', APP_URL).href);
+    await installRoutes(page, apiCalls, editingTab);
     await page.goto(APP_URL, { waitUntil: 'domcontentloaded' });
     await seedMeeting(page);
     await page.reload({ waitUntil: 'domcontentloaded' });
@@ -270,11 +295,22 @@ const run = async () => {
     await page.getByRole('button', { name: '저장', exact: true }).click();
     await page.getByText('대화록 수정본을 저장했습니다.').waitFor({ timeout: 10000 });
 
-    await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
-    await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();
-    await page.getByRole('button', { name: '전체 요약 정리' }).click();
-    await page.getByText(staleSummaryMessage).waitFor({ timeout: 10000 });
-    await page.getByRole('button', { name: '전체 요약 정리' }).waitFor({ timeout: 10000 });
+    for (const id of [meetingId, meetingId + '-first']) {
+      const firstSummary = id !== meetingId;
+      if (firstSummary) await page.getByText('첫 요약 시뮬레이션', { exact: true }).first().click();
+      await page.locator('.tab-list').getByRole('tab', { name: '기록 정리' }).click();
+      await page.locator('.detail-mode-switch').getByRole('tab', { name: '전체 요약' }).click();
+      await page.getByRole('button', { name: '전체 요약 정리' }).click();
+      await page.getByText(staleSummaryMessage).waitFor({ timeout: 10000 });
+      assert.equal(await page.getByRole('button', { name: '전체 요약 정리' }).isEnabled(), true);
+
+      await page.reload({ waitUntil: 'domcontentloaded' });
+      const saved = await page.evaluate(async key => (await import('/src/meetingRepository.ts')).getMeetingById(key), id);
+      assert.equal(saved.generationStatus.summary, 'not_started');
+      assert.equal(saved.summary, firstSummary ? '' : '기본 요약입니다.');
+      assert.equal(saved.segments[0].text, '처음 생성된 대화록입니다.');
+      assert.equal(saved.editedDisplaySegments[0].text, '다른 탭에서 저장한 최신 대화록입니다.');
+    }
 
     console.log('ok - edit guard and stale summary flow simulation');
   } catch (error) {

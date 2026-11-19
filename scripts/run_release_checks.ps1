@@ -31,6 +31,8 @@ $BackendQuickModules = @(
 
 $BackendReleaseModules = @(
     "backend.test_api",
+    "backend.test_web_local_engine_installer_preflight",
+    "backend.test_ollama_runtime_update",
     "backend.test_update_activity",
     "tests.test_pre_push_hook",
     "tests.test_update_package_scripts"

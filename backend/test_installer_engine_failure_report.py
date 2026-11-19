@@ -79,6 +79,24 @@ class InstallerEngineFailureReportTest(unittest.TestCase):
         self.assertIn("[Windows 오류 기록] 조회 실패 (TimeoutExpired)", text)
         self.assertEqual(lines[-1], "[엔진 보고서 끝]")
 
+    def test_nonzero_queries_are_failures_even_with_empty_or_partial_stdout(self):
+        for output in ("", EVENTS):
+            with self.subTest(stdout=bool(output)):
+                def denied(command, **_kwargs):
+                    return subprocess.CompletedProcess(command, 5, stdout=output, stderr="Access is denied.")
+
+                events = "\n".join(report.application_error_section("barorok-local-engine-abc.exe", denied))
+                processes = "\n".join(report.engine_process_section("barorok-local-engine-abc.exe", denied))
+                self.assertIn("조회 실패 (CalledProcessError)", events)
+                self.assertIn("조회 실패 (CalledProcessError)", processes)
+                self.assertNotIn("기록 없음", events)
+                self.assertNotIn("실행 중", processes)
+
+    def test_successful_empty_queries_remain_distinct_from_failures(self):
+        runner = _fake_runner({})
+        self.assertIn("기록 없음", "\n".join(report.application_error_section("engine.exe", runner)))
+        self.assertEqual(report.engine_process_section("engine.exe", runner), ["[엔진 프로세스] 실행 중 0개"])
+
     def test_main_always_exits_zero_and_writes_utf16le_without_bom(self):
         with tempfile.TemporaryDirectory() as root:
             output = Path(root) / "engine-report.txt"

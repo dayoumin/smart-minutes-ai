@@ -26,6 +26,7 @@ from web_local_engine_download_sizes import (
     SUMMARY_MODEL_BYTES,
     SUMMARY_RUNTIME_ARCHIVE_BYTES,
     SUMMARY_RUNTIME_INSTALLED_BYTES,
+    runtime_download_peak_bytes,
 )
 
 # Room for meeting history beyond the per-analysis output margin. A 120-minute
@@ -44,14 +45,12 @@ def storage_requirements() -> dict[str, dict[str, object]]:
         + SUMMARY_MODEL_BYTES
         + SUMMARY_RUNTIME_INSTALLED_BYTES
     )
-    # The summary program unpacks its archive and then copies the unpacked
-    # files into place, so all three coexist. The summary model needs the
-    # program, so it cannot be pulled before that peak.
+    # The program publishes its extracted bundle by rename; the ZIP and one
+    # extracted tree coexist before the summary model can be pulled.
     summary_runtime_peak = (
         STT_MODEL_BYTES
         + DIARIZATION_MODEL_BYTES
-        + SUMMARY_RUNTIME_ARCHIVE_BYTES
-        + 2 * SUMMARY_RUNTIME_INSTALLED_BYTES
+        + runtime_download_peak_bytes(SUMMARY_RUNTIME_ARCHIVE_BYTES)
     )
     models_recommended = max(models_ready, summary_runtime_peak) + DOWNLOAD_FREE_SPACE_BUFFER_BYTES
 
@@ -72,7 +71,8 @@ def storage_requirements() -> dict[str, dict[str, object]]:
             "basis": (
                 "Required: speech recognition model + speaker separation model + default summary "
                 "model + installed summary program. Recommended: peak while the summary program "
-                "is unpacked (archive + unpacked copy + installed copy) plus the backend download buffer."
+                "is unpacked (archive + extracted tree) or all models are installed, whichever is "
+                "larger, plus the backend download buffer."
             ),
         },
         "analysisTemp": {

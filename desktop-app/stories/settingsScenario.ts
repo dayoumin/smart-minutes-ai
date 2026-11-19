@@ -61,7 +61,7 @@ export const configureSettingsScenario = (scenario?: SettingsScenario) => {
     const initialStatus = scenario === 'downloading' ? 'running'
         : scenario === 'paused' ? 'cancelled' : scenario === 'failed' ? 'failed' : 'idle';
     const status = (key: string, state = initialStatus) => ({
-        key, model: key, active: state === 'running', status: state, message: '',
+        key, model: key, active: state === 'running' || state === 'cancelling', status: state, message: '',
         downloaded_bytes: state === 'idle' ? 0 : 9_000_000,
         completed: state === 'idle' ? 0 : 9_000_000, total: 3_000_000_000,
         expected_bytes: 3_000_000_000, progress_percent: state === 'idle' ? 0 : 0.3,
@@ -71,6 +71,7 @@ export const configureSettingsScenario = (scenario?: SettingsScenario) => {
     });
     let stt = status('stt_faster_whisper');
     const pulls = new Map(['gemma4:e2b', 'gemma4:e4b'].map(model => [model, status(model)]));
+    const cancellationReadyAt = new Map<string, number>();
     const observedJobs = new Set<string>();
     // Settings currently restores active jobs only. Show a real polling transition
     // into paused/failed, rather than pretending an inactive job was restored.
@@ -121,10 +122,17 @@ export const configureSettingsScenario = (scenario?: SettingsScenario) => {
         if (path === '/api/models/download/stop') { stt = status('stt_faster_whisper', 'cancelled'); return json(stt); }
         if (path === '/api/models/ollama/pull-status') {
             const model = url.searchParams.get('model') ?? '';
+            if (pulls.get(model)?.status === 'cancelling' && Date.now() >= (cancellationReadyAt.get(model) ?? Infinity)) {
+                pulls.set(model, status(model, 'cancelled'));
+                cancellationReadyAt.delete(model);
+            }
             return json(observe(model, pulls.get(model) ?? status(model, 'idle')));
         }
         if (path === '/api/models/ollama/pull' || path === '/api/models/ollama/pull/stop') {
-            const next = status(body.model, path.endsWith('/stop') ? 'cancelled' : 'running');
+            const stopping = path.endsWith('/stop');
+            // The real engine returns active/cancelling before the worker exits.
+            const next = status(body.model, stopping ? 'cancelling' : 'running');
+            if (stopping) cancellationReadyAt.set(body.model, Date.now() + 1200);
             pulls.set(body.model, next);
             return json(next);
         }

@@ -38,7 +38,13 @@ export const Ready: Story = {
 };
 export const Missing: Story = { name: '처음 받기', parameters: { settingsScenario: 'missing' } };
 export const Downloading: Story = { name: '받는 중 · 0.3%', parameters: { settingsScenario: 'downloading' } };
-export const Paused: Story = { name: '중지됨 · 이어받기', parameters: { settingsScenario: 'paused' } };
+export const Paused: Story = {
+    name: '중지됨 · 이어받기',
+    parameters: {
+        settingsScenario: 'paused',
+        docs: { description: { story: '요약 모델의 받기·중지·이어받기는 같은 32px 버튼을 유지합니다. 이어받기는 재개 아이콘과 마우스·키보드 도움말로 구분합니다. 중지 요청 후에는 실제 엔진처럼 중지 중 단계를 거치며, 반복 요청을 막고 키보드 선택 위치를 유지합니다.' } },
+    },
+};
 export const Failed: Story = { name: '실패 · 복구 안내', parameters: { settingsScenario: 'failed' } };
 export const RuntimeMissing: Story = { name: '실행 도구 준비 필요', parameters: { settingsScenario: 'runtime-missing' } };
 export const Loading: Story = { name: '상태 확인 중', parameters: { settingsScenario: 'loading' } };

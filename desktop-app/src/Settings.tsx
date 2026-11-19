@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Check, ChevronLeft, ChevronRight, Download, Loader2, Mail, RefreshCw, Square, Trash2, X } from 'lucide-react';
+import { ArrowLeft, Check, ChevronLeft, ChevronRight, Download, Loader2, Mail, Play, RefreshCw, Square, Trash2, X } from 'lucide-react';
 import { AppToast, Button, ProgressBar, StatusBanner, TooltipIconButton } from './components/common';
 import {
     DEFAULT_DOWNLOAD_FORMAT,
@@ -2754,18 +2754,20 @@ export const Settings: React.FC<SettingsProps> = ({ onClose, analysisActive = fa
                                                 <div className="settings-model-controls">
                                                     <div className="settings-model-label"><span className="settings-model-name" title={optionModel}>{optionModel}</span></div>
                                                     <div className="settings-model-actions">
-                                                        {pullActive ? <button type="button" className="settings-model-icon" aria-label={`${optionModel} 중지`} title="받기 중지" disabled={pullStopping}
-                                                            onClick={() => void handleStopOllamaModelDownload(optionModel)}>{pullStopping ? <Loader2 size={16} className="animate-spin" /> : <Square size={16} />}</button>
-                                                            : (summaryModelInventoryUnknown || installed) ? <label className="settings-model-choice" title={summaryModelInventoryUnknown ? (selected ? '선택한 요약 모델 · 준비 확인 필요' : '준비 상태를 확인한 뒤 선택할 수 있습니다.') : selected ? '현재 사용 중인 요약 모델' : '요약 모델로 선택'}>
+                                                        {!pullActive && (summaryModelInventoryUnknown || installed) ? <label className="settings-model-choice" title={summaryModelInventoryUnknown ? (selected ? '선택한 요약 모델 · 준비 확인 필요' : '준비 상태를 확인한 뒤 선택할 수 있습니다.') : selected ? '현재 사용 중인 요약 모델' : '요약 모델로 선택'}>
                                                                     <input type="radio" name="settings-summary-model" aria-label={`${optionModel} 요약 모델로 선택`} checked={selected}
                                                                         aria-description={summaryModelInventoryUnknown ? '저장된 선택을 표시합니다. 준비 상태는 아직 확인하지 못했습니다.' : undefined}
                                                                         disabled={ollamaRuntimeActive || summaryModelInventoryUnknown || isSaving || deleting} onChange={() => { if (!selected) void handleSaveSummaryModel(optionModel); }} />
                                                                     <Check size={16} strokeWidth={selected ? 2.5 : 2} aria-hidden="true" />
                                                                 </label>
-                                                                    : pullStatus?.can_resume ? <button type="button" className="btn btn-outline h-8 shrink-0 px-3 text-xs" aria-label={`${optionModel} 이어받기`} title="이어받기" disabled={!canPull || deleting}
-                                                                        onClick={() => void handleDownloadOllamaModel(optionModel)}><Download size={16} aria-hidden="true" />이어받기</button>
-                                                                        : <TooltipIconButton className="settings-model-icon" aria-label={`${optionModel} AI 모델 받기`} tooltip="AI 모델 받기" icon={<Download size={16} aria-hidden="true" />} disabled={!canPull || deleting}
-                                                                            onClick={() => void handleDownloadOllamaModel(optionModel)} />}
+                                                                    : <TooltipIconButton className="settings-model-icon"
+                                                                        aria-label={`${optionModel} ${pullActive ? '중지' : pullStatus?.can_resume ? '이어받기' : 'AI 모델 받기'}`}
+                                                                        tooltip={pullActive ? (pullStopping ? '중지 중' : '받기 중지') : pullStatus?.can_resume ? '이어받기' : 'AI 모델 받기'}
+                                                                        icon={pullActive ? (pullStopping ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <Square size={16} aria-hidden="true" />)
+                                                                            : pullStatus?.can_resume ? <Play size={16} aria-hidden="true" /> : <Download size={16} aria-hidden="true" />}
+                                                                        disabled={!pullActive && (!canPull || deleting)}
+                                                                        aria-disabled={pullStopping || undefined}
+                                                                        onClick={() => { if (!pullStopping) void (pullActive ? handleStopOllamaModelDownload(optionModel) : handleDownloadOllamaModel(optionModel)); }} />}
                                                         <div data-summary-model-menu-root>
                                                             <button type="button" className="settings-model-icon settings-model-delete" aria-label={`${optionModel} 삭제 옵션`} aria-haspopup="menu"
                                                                 aria-expanded={openSummaryModelMenu === optionModel} aria-controls={menuId} disabled={deleteDisabled} title={deleteReason}

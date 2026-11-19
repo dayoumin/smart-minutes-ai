@@ -9,6 +9,7 @@ process.env.PLAYWRIGHT_BROWSERS_PATH ??= fileURLToPath(new URL('../../.cache/ms-
 const { chromium } = await import('playwright');
 const root = fileURLToPath(new URL('../storybook-static', import.meta.url));
 const output = process.env.QA_OUTPUT_DIR ?? fileURLToPath(new URL('../../.tmp/storybook-check', import.meta.url));
+const downloadActionsOnly = process.env.STORYBOOK_CHECK_SCOPE === 'download-actions';
 const types = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.woff2': 'font/woff2', '.svg': 'image/svg+xml', '.png': 'image/png' };
 await stat(resolve(root, 'index.json')); // Run storybook:build first; never reuse another session's server.
 await mkdir(output, { recursive: true });
@@ -70,6 +71,91 @@ try {
         }
         assert.ok(Math.abs(before.dialog.height - after.dialog.height) <= 1, `${label}: progress uses reserved space`);
     };
+    // These regressions exercise the production Settings component in isolated fixtures.
+    // Check both edges and the icon, rather than only the formerly stable right edge.
+    const actionGeometry = locator => locator.evaluate(button => {
+        const box = button.getBoundingClientRect();
+        const icon = button.querySelector('svg').getBoundingClientRect();
+        return { x: box.x, y: box.y, width: box.width, height: box.height,
+            iconX: icon.x + icon.width / 2, iconY: icon.y + icon.height / 2 };
+    });
+    const assertActionGeometry = (before, after, label) => {
+        for (const key of Object.keys(before)) assert.ok(Math.abs(before[key] - after[key]) <= 1,
+            `${label}: ${key} stays fixed (${before[key]} → ${after[key]})`);
+        assert.equal(after.width, 32, 'download actions keep their square footprint');
+    };
+    for (const [width, height] of [[1360, 900], [860, 720]]) {
+        await page.setViewportSize({ width, height });
+        for (const key of ['Enter', 'Space']) {
+            await visit('settings-screen--ready');
+            const download = page.getByRole('button', { name: 'gemma4:e4b AI 모델 받기', exact: true });
+            await download.waitFor();
+            const before = await measure();
+            const geometry = await actionGeometry(download);
+            await page.evaluate(() => {
+                const fixtureFetch = window.fetch;
+                window.__qaSummaryStopRequests = 0;
+                window.fetch = (...args) => {
+                    if (String(args[0]).includes('/api/models/ollama/pull/stop')) window.__qaSummaryStopRequests++;
+                    return fixtureFetch(...args);
+                };
+            });
+            await download.focus();
+            await page.keyboard.press(key);
+            const stop = page.getByRole('button', { name: 'gemma4:e4b 중지', exact: true });
+            await stop.waitFor();
+            assert.equal(await stop.evaluate(el => el === document.activeElement), true, `${key} start retains focus on stop`);
+            assertActionGeometry(geometry, await actionGeometry(stop), 'start');
+            assertAnchors(before, await measure(), 'keyboard summary start');
+            await page.keyboard.press(key);
+            await page.waitForFunction(() => document.querySelector('[aria-label="gemma4:e4b 중지"]')?.getAttribute('aria-disabled') === 'true');
+            assert.equal(await stop.evaluate(el => el === document.activeElement), true, 'cancelling keeps keyboard focus');
+            assertActionGeometry(geometry, await actionGeometry(stop), 'cancelling');
+            await page.keyboard.press(key);
+            await stop.dispatchEvent('click');
+            assert.equal(await page.evaluate(() => window.__qaSummaryStopRequests), 1, 'cancelling rejects repeated keyboard and pointer activation');
+            const resume = page.getByRole('button', { name: 'gemma4:e4b 이어받기', exact: true });
+            await resume.waitFor();
+            assert.equal(await resume.evaluate(el => el === document.activeElement), true, `${key} stop retains focus on resume`);
+            assertActionGeometry(geometry, await actionGeometry(resume), 'pause');
+            assertAnchors(before, await measure(), 'keyboard summary pause');
+            // Re-enter: clicking closes the tooltip while the same button stays under the pointer.
+            await page.mouse.move(0, 0);
+            await resume.hover();
+            await page.getByRole('tooltip', { name: '이어받기', exact: true }).waitFor();
+            await page.keyboard.press('Escape');
+            const next = await resume.evaluateHandle(button => {
+                const controls = [...button.closest('[role="dialog"]').querySelectorAll('button, input, select, textarea, a[href], [tabindex]')]
+                    .filter(el => el.tabIndex >= 0 && !el.matches(':disabled') && el.getClientRects().length > 0);
+                return controls[controls.indexOf(button) + 1];
+            });
+            await page.keyboard.press('Tab');
+            assert.equal(await next.evaluate(el => Boolean(el) && el === document.activeElement), true, 'Tab continues to the next enabled control');
+            await page.keyboard.press('Shift+Tab');
+            assert.equal(await resume.evaluate(el => el === document.activeElement), true, 'Shift+Tab returns to resume');
+            await page.keyboard.press(key);
+            await stop.waitFor();
+            assert.equal(await stop.evaluate(el => el === document.activeElement), true, `${key} resume retains focus on stop`);
+            assertActionGeometry(geometry, await actionGeometry(stop), 'resume');
+            // Polling after focus moves elsewhere must not pull focus back to the action.
+            const device = page.locator('#settings-analysis-device select');
+            await device.focus();
+            await page.waitForTimeout(2300);
+            assert.equal(await device.evaluate(el => el === document.activeElement), true, 'background status keeps the current focus');
+            await stop.click();
+            await page.waitForFunction(() => document.querySelector('[aria-label="gemma4:e4b 중지"]')?.getAttribute('aria-disabled') === 'true');
+            assert.equal(await stop.evaluate(el => el === document.activeElement), true, 'mouse stop keeps its own focus while cancelling');
+            await device.focus();
+            await resume.waitFor();
+            assert.equal(await device.evaluate(el => el === document.activeElement), true, 'cancellation completion does not steal focus after the user moves');
+            await page.mouse.move(0, 0);
+            await resume.hover();
+            await page.screenshot({ path: resolve(output, `summary-actions-${width}-${key}.png`) });
+            results.push({ story: 'summary-download-keyboard-and-geometry', width, height, key, geometry,
+                pausedGeometry: await actionGeometry(resume), passed: true });
+        }
+    }
+    if (!downloadActionsOnly) {
     for (const name of ['ready', 'missing', 'downloading', 'paused', 'failed', 'runtime-missing', 'loading']) {
         await visit(`settings-screen--${name}`);
         await page.getByRole('dialog', { name: '설정', exact: true }).waitFor();
@@ -138,7 +224,10 @@ try {
         await stop.click();
         const resume = page.getByRole('button', { name: 'gemma4:e4b 이어받기', exact: true });
         await resume.waitFor();
-        assert.match(await resume.innerText(), /이어받기/, 'paused downloads keep a visible resume label');
+        await page.mouse.move(0, 0);
+        await resume.hover();
+        await page.getByRole('tooltip', { name: '이어받기', exact: true }).waitFor();
+        assert.equal((await resume.innerText()).trim(), '', 'resume uses an icon with an explanatory tooltip');
         results.push({ story: 'icon-actions-hover-focus-contact-download', width, passed: true });
     }
     for (const width of [1360, 860]) {
@@ -204,7 +293,8 @@ try {
         await summaryResume.waitFor();
         assertAnchors(before, await measure(), 'summary stop');
         const resumedAction = await summaryResume.boundingBox();
-        assert.ok(Math.abs(action.x + action.width - resumedAction.x - resumedAction.width) <= 1, 'longer resume label keeps the same action edge');
+        assertActionGeometry({ x: action.x, y: action.y, width: action.width, height: action.height },
+            { x: resumedAction.x, y: resumedAction.y, width: resumedAction.width, height: resumedAction.height }, 'summary resume');
         await page.screenshot({ path: resolve(output, `layout-${width}x${height}.png`) });
         if (height < 600) {
             // The last storage row stays below the fold; the compact short-window spacing can bring 다운로드 형식 into view.
@@ -248,6 +338,7 @@ try {
     await page.locator('iframe[id="iframe--settings-screen--paused"]').scrollIntoViewIfNeeded();
     await pausedFrame.getByRole('button', { name: '음성 인식 모델 이어받기', exact: true }).waitFor();
     results.push({ story: 'settings-docs-isolation', passed: true });
+    }
     assert.deepEqual(escaped, [], 'all engine requests stayed in fixtures');
     assert.deepEqual(errors, [], 'stories rendered without browser exceptions');
     await writeFile(resolve(output, 'report.json'), JSON.stringify({ registered: required.length, networkEscapes: escaped, layouts, results }, null, 2));

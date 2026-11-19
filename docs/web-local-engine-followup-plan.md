@@ -786,6 +786,8 @@ $auditPython = 'D:\Projects\LMO_audio\backend\.venv-desktop\Scripts\python.exe'
 
 ### 설치 전 점검: 모델·작업 공간 크기와 표시 이름 — 2026-10-20
 
+2026-11-19 소스 갱신. 아래 표는 10월 설치 파일의 계산 기록이다. 새 소스는 Ollama v0.40.10의 압축 파일 크기 1,586,229,413바이트를 사용한다. 같은 드라이브에서 압축을 한 번 풀고 폴더 이름을 바꿔 설치하므로 설치본 복사 공간을 중복해서 더하지 않는다. 처음 받는 PC에서 모든 기본 모델과 프로그램을 준비하는 데 필요한 공간은 11,185,989,538바이트, 권장 공간은 11,722,860,450바이트다. 세 역할이 같은 볼륨에 있으면 권장 공간 합계는 15,713,544,098바이트다. 새 설치 파일의 실제 표시값은 다른 PC에서 확인한다.
+
 - 증상: 공개 `0.1.8-beta-20261020` 설치 파일을 정상 PC에 설치하면 점검 결과 중 `installer_model_space`·`installer_analysis_temp_space`·`installer_results_space`가 `unknown`/`space_requirement_unavailable`이었다. 어떤 release script도 이 세 역할의 크기를 manifest에 쓰지 않아 도우미가 exit10을 내고, NSIS가 모든 사용자에게 "권장값은 아직 확정되지 않았습니다" Yes/No를 띄웠다.
 - 사용자 결정 1: 필요한 정보를 채운다. `scripts/build_web_local_engine_poc.ps1`이 `backend/web_local_engine_storage_requirements.py`의 결과를 `poc-manifest.json`의 `storageRequirements`(`models`/`analysisTemp`/`results`, 각 `requiredBytes`·`recommendedBytes`·`basis`)에 넣는다. 도우미는 이 블록을 엄격히 검증하고, 블록이 없는 이전 manifest만 기존처럼 `unknown`으로 둔다. `verify_web_local_engine_poc.py`(설치 파일 빌드 전 `--manifest-only` 포함)는 블록이 없거나 잘못되면 실패한다.
 - 값과 근거(모두 사용자 데이터 볼륨 `%LOCALAPPDATA%\Barorok\LocalEngine` 기준):

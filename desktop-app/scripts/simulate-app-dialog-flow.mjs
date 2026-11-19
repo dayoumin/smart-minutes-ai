@@ -224,6 +224,40 @@ const run = async browser => {
     await leaveDialog.getByRole('button', { name: '이동', exact: true }).click();
     await shell.getByRole('heading', { name: '고친 대화록 회의' }).waitFor({ timeout: 10000 });
 
+    // A stored, unrestricted title must not put the delete controls outside a short window.
+    const longTitle = '회의제목'.repeat(250);
+    await page.evaluate(async title => {
+      const repository = await import('/src/meetingRepository.ts');
+      const current = await repository.getMeetingById('dialog-rename');
+      await repository.updateMeeting({ ...current, title });
+      window.dispatchEvent(new Event('meetings:updated'));
+    }, longTitle);
+    await menuTrigger(longTitle).focus();
+    await menuTrigger(longTitle).press('Enter');
+    await recordMenu.getByRole('button', { name: '삭제', exact: true }).click();
+    const longDialog = page.getByRole('alertdialog');
+    await longDialog.waitFor();
+    for (const viewport of [{ width: 1360, height: 900 }, { width: 860, height: 720 }, { width: 860, height: 540 }]) {
+      await page.setViewportSize(viewport);
+      await page.evaluate(() => document.fonts.ready);
+      await settleFrames(page);
+      const dimensions = await longDialog.evaluate(dialog => {
+        const rect = dialog.getBoundingClientRect();
+        return { top: rect.top, bottom: rect.bottom, height: rect.height, scrollHeight: dialog.scrollHeight, clientHeight: dialog.clientHeight };
+      });
+      assert.ok(dimensions.top >= 15 && dimensions.bottom <= viewport.height - 15, 'the dialog fits inside window margins');
+      assert.ok(dimensions.scrollHeight > dimensions.clientHeight, 'the full long title remains available by scrolling');
+      await longDialog.getByRole('button', { name: '취소', exact: true }).focus();
+      await longDialog.evaluate(dialog => { dialog.scrollTop = 0; });
+      await page.keyboard.press('Tab');
+      const deleteButton = longDialog.getByRole('button', { name: '삭제', exact: true });
+      assert.equal(await deleteButton.evaluate(button => button === document.activeElement), true);
+      const buttonRect = await deleteButton.boundingBox();
+      assert.ok(buttonRect.y >= 0 && buttonRect.y + buttonRect.height <= viewport.height, 'Tab scrolls the destructive action fully into view');
+    }
+    await longDialog.getByRole('button', { name: '취소', exact: true }).click();
+    assert.equal((await readMeeting(page, 'dialog-rename')).title, longTitle, 'cancelling with a long title preserves the record');
+
     assert.deepEqual(nativeDialogs, []);
     assert.deepEqual(errors, []);
     console.log('ok - app dialogs keep focus, cancel safely and guard destructive actions');

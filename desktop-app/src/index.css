@@ -3508,6 +3508,9 @@
 
   .app-dialog {
     @apply w-full max-w-md border bg-background p-5 text-foreground;
+    max-height: calc(100dvh - 2rem);
+    overflow-y: auto;
+    overscroll-behavior: contain;
     word-break: keep-all;
     overflow-wrap: anywhere;
     border-radius: var(--radius-dialog);

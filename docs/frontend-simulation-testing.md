@@ -26,6 +26,22 @@
 
 화면 근거는 `.tmp/settings-scenarios-20261119/{management,downloads,controls}`다. 위 네 시뮬레이션과 Storybook23개는 서로 다른 검사 범위다. 새 Windows 실행 파일·다른 PC·실제 모델 전송/분석/설치·공개 웹의 합격을 뜻하지 않는다.
 
+## 앱 확인창의 긴 제목 — 2026-11-19 재확인
+
+`simulate-app-dialog-flow.mjs`는 기존 취소·초점·삭제/복원/이동 보호에 더해, 저장된 1,000자 회의 제목의 삭제 확인을 연다. 1360×900·860×720·860×540에서 창의 위아래 여백, 내부 스크롤, Tab으로 이동한 삭제 버튼의 화면 내 위치, 취소 후 원래 기록 보존을 확인한다. 행 메뉴 진입은 기존 검사와 같은 키보드 경로다.
+
+- 이전 세션의 앱 흐름 실행: 프로젝트 Playwright 캐시를 지정하고 `APP_URL=http://127.0.0.1:5175/`에서 `node desktop-app/scripts/simulate-app-dialog-flow.mjs`. 전용 서버는 `desktop-app`에서 `corepack pnpm exec vite --host 127.0.0.1 --port 5175 --strictPort --configLoader runner`로 시작했고 세 창 크기에서 통과했다. 이번에는 해당 소스 변경 없이 이 증거를 재사용하고 Storybook을 집중 검증했다.
+- 이번 Storybook 실행: 포트가 비어 있음을 확인한 뒤 저장소 루트에서 `COREPACK_HOME=D:\Projects\LMO_audio\.cache\corepack`으로 `corepack pnpm --dir desktop-app storybook`을 실행했다(`http://127.0.0.1:6011/`). 첫 샌드박스 실행은 사용자 폴더 설정 쓰기 경고와 HTTP 응답 지연이 있어 해당 세션의 서버만 종료하고 같은 명령·폴더·포트로 권한을 확보해 재시작했다. HTTP200과 실제 예제 표시를 확인한 뒤 Ego 브라우저에서 검사했다.
+- 실제 공통 부품을 가져오는 `Common/확인창`의 기본·긴 제목 두 예제를 각각 860×720·860×540에서 확인했다. 긴 창은 아래 수치처럼 내부에서 스크롤되며, 기본 창은 높이 약183px로 스크롤 없이 들어온다. 네 장면 모두 초기 취소 초점, Tab/Shift+Tab 순환과 버튼 전체 표시, Escape 취소, Enter로 취소·모의 삭제 후 원래 `확인창 열기` 버튼으로 초점 복귀를 통과했다. 긴 제목은 맨 위부터 마우스 휠로 맨 아래까지 읽을 수 있고 바깥 페이지에는 세로 넘침이 없다. 실제 자료는 삭제하지 않았다.
+
+| 창 크기 | 긴 확인창 위/아래 | 내부 전체/표시 높이 |
+| --- | --- | --- |
+| 860×720 | 16/704px | 1302/686px |
+| 860×540 | 16/524px | 1302/506px |
+
+- 근거: `.tmp/app-dialog-storybook-20261119/report.json`, `default-{720,540}.png`, `long-title-{720,540}-{top,bottom}.png`. 540px 창의 위·아래 캡처도 직접 확인했다. 검사 뒤 임시 창 크기를 해제하고 검사 탭과 이번6011 서버를 종료했으며 포트의 수신 대기가 해제됐다. Storybook은 기존 네트워크 격리 fixture를 사용하며, 이 검사를 실제 엔진 파일 삭제·Windows 실행 파일·공개 웹 검증으로 해석하지 않는다.
+- Windows Node22.22.2에서 `corepack pnpm --dir desktop-app typecheck`, `corepack pnpm --dir desktop-app exec eslint stories/AppDialog.stories.tsx scripts/simulate-app-dialog-flow.mjs`, `node --check desktop-app/scripts/simulate-app-dialog-flow.mjs`, `git diff --check` 통과. 좁은 독립 소스 검토에서도 추가 P1/P2가 없었으며 앱/CSS/예제의 추가 수정은 필요하지 않았다.
+
 ## 설정 시뮬레이션 10-29 UI 정렬·낮은 창 간격 — 2026-11-08
 
 `simulate-settings-model-management.mjs`와 `simulate-settings-backend-restart.mjs`는 eb69811(10-29 설정 UI) 병합 뒤 깨끗한 `main`에서 실패했다. 10-29에는 Storybook과 `SETTINGS_MODEL_SCENARIO=controls/downloads`만 실행해서, 일찍 끝나지 않는 전체 흐름의 뒤쪽 단계는 새 UI로 한 번도 돌지 않았다.

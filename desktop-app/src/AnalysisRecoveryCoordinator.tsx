@@ -14,6 +14,7 @@ import {
     removeAnalysisResumeDraft,
     removePendingAnalysisDraftCleanup,
     removePendingCancelledAnalysisCleanup,
+    sameSttHotwords,
     upsertAnalysisResumeDraft,
 } from './analysisResumeDrafts';
 import { ANALYSIS_RECOVERY_SYNC_REQUESTED_EVENT, setAnalysisResumeSyncState } from './analysisResumeState';
@@ -250,6 +251,7 @@ export const AnalysisRecoveryCoordinator: React.FC = () => {
                             const completedCandidates = listAnalysisResumeDrafts()
                                 .filter(candidate => (
                                     getResumeDraftKey(candidate) === completedDraftKey
+                                    && sameSttHotwords(candidate.sttHotwords, currentDraft.sttHotwords)
                                     && !isAnalysisJobClaimed(candidate.jobId)
                                     && (
                                         candidate.jobId === draft.jobId

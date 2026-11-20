@@ -314,6 +314,59 @@ const runLongTermScene = async browser => {
     await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).click();
     await assertLongTermFits(page);
     console.log('ok - the 40-character term and its delete action fit the information column');
+    const termInput = page.getByLabel('주요 용어 (선택)');
+    await termInput.pressSequentially('1,000');
+    await termInput.press('Enter');
+    const chips = page.locator('.writer-term-chip');
+    assert.deepEqual(await chips.allTextContents(), ['1,000']);
+
+    const addGlossary = page.getByRole('button', { name: '새 용어집', exact: true });
+    await addGlossary.click();
+    const dialog = page.getByRole('dialog', { name: '새 용어집' });
+    await dialog.getByLabel('용어집 이름').fill('기술 회의');
+    await dialog.getByRole('button', { name: '용어 추가' }).click();
+    await dialog.getByRole('textbox', { name: '용어 1', exact: true }).fill('1,000톤');
+    await dialog.getByRole('button', { name: '저장', exact: true }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    const glossary = page.getByRole('combobox', { name: '용어집', exact: true });
+    assert.equal(await glossary.locator('option:checked').textContent(), '기술 회의');
+    assert.deepEqual(await chips.allTextContents(), ['1,000톤', '1,000']);
+    await page.getByRole('button', { name: '1,000톤 용어 삭제', exact: true }).click();
+    assert.deepEqual(await chips.allTextContents(), ['1,000']);
+    assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('meetingTermGlossaries'))[0].entries[0].canonical), '1,000톤');
+
+    await page.getByRole('button', { name: '용어집 편집', exact: true }).click();
+    const editor = page.getByRole('dialog', { name: '용어집 편집' });
+    await editor.getByLabel('용어집 이름').fill('수정한 기술 회의');
+    await editor.getByRole('button', { name: '저장', exact: true }).click();
+    await editor.waitFor({ state: 'hidden' });
+    assert.equal(await glossary.locator('option:checked').textContent(), '수정한 기술 회의');
+    assert.deepEqual(await chips.allTextContents(), ['1,000'], 'saving the same glossary preserves an excluded term');
+    await page.getByRole('button', { name: '용어집 편집', exact: true }).click();
+    await editor.getByRole('textbox', { name: '용어 1', exact: true }).fill('A-007');
+    await page.evaluate(() => {
+      const setItem = Storage.prototype.setItem;
+      Storage.prototype.setItem = function (key, value) {
+        if (key === 'meetingTermGlossaries') throw new Error('fixture storage failure');
+        return setItem.call(this, key, value);
+      };
+    });
+    await editor.getByRole('button', { name: '저장', exact: true }).click();
+    await editor.getByRole('alert').getByText(/용어집을 저장할 수 없습니다/).waitFor();
+    assert.equal(await editor.getByRole('textbox', { name: '용어 1', exact: true }).inputValue(), 'A-007');
+    await page.keyboard.press('Escape');
+    await editor.waitFor({ state: 'hidden' });
+    await page.reload({ waitUntil: 'domcontentloaded' });
+    await glossary.selectOption({ label: '수정한 기술 회의' });
+    assert.deepEqual(await chips.allTextContents(), ['1,000톤']);
+    await page.getByRole('button', { name: '용어집 편집', exact: true }).click();
+    await editor.getByRole('button', { name: '삭제', exact: true }).click();
+    await editor.getByRole('button', { name: '용어집 삭제 확인' }).click();
+    await editor.waitFor({ state: 'hidden' });
+    assert.equal(await glossary.locator('option:checked').textContent(), '용어집 선택');
+    assert.equal(await chips.count(), 0);
+    await assertNoHorizontalOverflow(page);
+    console.log('ok - glossary create, apply, remove chip, failed save, reload and delete');
   } finally { await context.close(); }
 };
 

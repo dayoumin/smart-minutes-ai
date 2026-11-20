@@ -3872,6 +3872,194 @@ class AnalyzeApiTest(unittest.TestCase):
             self.assertEqual(payload["candidates"][0]["completed_chunk_count"], 2)
             self.assertTrue(payload["candidates"][0]["last_progress"]["transcript_ready"])
 
+    def test_hotword_mismatch_rejects_both_same_job_entry_paths_before_upload(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = main.normalize_app_config({"paths": {"temp_dir": work_dir, "output_dir": work_dir}})
+            job_id = "hotwords_a"
+            paths = build_job_checkpoint_paths(work_dir, job_id)
+            atomic_write_json(paths.state_path, {
+                "stt_hotwords_fingerprint": main.stt_hotwords_fingerprint(["EFSA"]),
+                "config_fingerprint": main._analysis_config_fingerprint(config),
+                "stage": "transcribing",
+                "resume_supported": True,
+                "source_filename": "meeting.wav",
+                "completed_chunk_indices": [0],
+            })
+            state_before = Path(paths.state_path).read_bytes()
+            with patch("main.load_config", return_value=config), patch("main.save_analysis_upload") as upload:
+                for terms, resume in ((["BioHub"], "true"), ([], "false")):
+                    response = self.client.post("/api/analyze", data={
+                        "title": "회의", "date": "2026-11-20", "job_id": job_id,
+                        "resume_requested": resume, "stt_hotwords": json.dumps(terms),
+                    }, files={"file": ("meeting.wav", _pcm_wav_fixture(), "audio/wav")})
+                    self.assertEqual(response.status_code, 409, response.text)
+                    self.assertEqual(response.json()["detail"]["code"], "stt_hotwords_mismatch")
+                    self.assertFalse(main.ANALYSIS_JOBS.has(job_id))
+                upload.assert_not_called()
+                for terms, expected in ((["EFSA"], True), (["BioHub"], False), ([], False)):
+                    candidates = self.client.post("/api/analyze/resume-candidates", json={
+                        "source_filename": "meeting.wav", "stt_hotwords": terms,
+                    }).json()["candidates"]
+                    self.assertEqual(candidates[0]["job_id"], job_id)
+                    self.assertEqual(candidates[0]["stt_hotwords_match"], expected)
+                legacy_request = {"source_filename": "meeting.wav"}
+                legacy = self.client.post("/api/analyze/resume-candidates", json=legacy_request).json()
+                self.assertEqual(legacy, {"candidates": [], "recommended_job_id": None})
+                active_job = main.ANALYSIS_JOBS.create(job_id)
+                try:
+                    legacy = self.client.post("/api/analyze/resume-candidates", json=legacy_request).json()
+                    self.assertIsNone(legacy["recommended_job_id"])
+                    self.assertTrue(legacy["candidates"][0]["active"])
+                finally:
+                    main.ANALYSIS_JOBS.remove(job_id, active_job)
+            self.assertEqual(Path(paths.state_path).read_bytes(), state_before)
+
+    def test_hotwords_pass_from_multipart_through_admission_to_analysis_stream(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = main.normalize_app_config({"paths": {"temp_dir": work_dir, "output_dir": work_dir}})
+            audio = _pcm_wav_fixture()
+            for job_id, raw_terms, expected in (
+                ("multipart_with_terms", '[" EFSA ", "A-007", "1,000톤", "EFSA"]', ["EFSA", "A-007", "1,000톤"]),
+                ("multipart_without_terms", None, []),
+            ):
+                with self.subTest(job_id=job_id):
+                    async def stream(_title, _date, _participants, _file, admitted_job_id, **options):
+                        self.assertEqual(admitted_job_id, job_id)
+                        self.assertEqual(options["stt_hotwords"], expected)
+                        self.assertEqual(Path(options["prepared_upload_path"]).read_bytes(), audio)
+                        main.ANALYSIS_JOBS.remove(job_id, options["prepared_cancel_event"])
+                        yield main.sse_event("[DONE]", event="done")
+
+                    form = {"title": "회의", "date": "2026-11-20", "job_id": job_id}
+                    if raw_terms is not None:
+                        form["stt_hotwords"] = raw_terms
+                    with (
+                        patch("main.load_config", return_value=config),
+                        patch("main.validate_media_duration"),
+                        patch("main.validate_stt_hotword_budget") as validate_budget,
+                        patch("main.stream_real_analysis", new=stream),
+                    ):
+                        response = self.client.post("/api/analyze", data=form,
+                            files={"file": ("meeting.wav", audio, "audio/wav")})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertIn("event: done", response.text)
+                    if expected:
+                        validate_budget.assert_called_once()
+                        self.assertEqual(validate_budget.call_args.args[0], expected)
+                    else:
+                        validate_budget.assert_not_called()
+                    paths = build_job_checkpoint_paths(work_dir, job_id)
+                    state = load_json_checkpoint(paths.state_path)
+                    self.assertEqual(state["stt_hotwords_fingerprint"], main.stt_hotwords_fingerprint(expected))
+
+    def test_stop_or_cancel_during_failed_hotword_validation_preserves_resume_state(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = main.normalize_app_config({"paths": {"temp_dir": work_dir, "output_dir": work_dir}})
+            terms = ["EFSA"]
+            for action, event in (("stop", "stopped"), ("cancel", "cancelled")):
+                with self.subTest(action=action):
+                    job_id = f"validating_{action}"
+                    paths = build_job_checkpoint_paths(work_dir, job_id)
+                    atomic_write_json(paths.state_path, {
+                        "stt_hotwords_fingerprint": main.stt_hotwords_fingerprint(terms),
+                        "completed_chunk_indices": [0],
+                    })
+                    state_before = Path(paths.state_path).read_bytes()
+
+                    def stop_during_validation(_terms, _model_path):
+                        response = self.client.post(f"/api/analyze/{job_id}/cancel", json={"action": action})
+                        self.assertEqual(response.status_code, 200, response.text)
+                        self.assertTrue(response.json()["cancel_requested"])
+                        self.assertTrue(response.json()["preserve_existing"])
+                        raise ValueError("model tokenizer is not available")
+
+                    with (
+                        patch("main.load_config", return_value=config),
+                        patch("main.validate_stt_hotword_budget", side_effect=stop_during_validation),
+                        patch("main.save_analysis_upload") as upload,
+                    ):
+                        response = self.client.post("/api/analyze", data={
+                            "title": "회의", "date": "2026-11-20", "job_id": job_id,
+                            "resume_requested": "true", "stt_hotwords": json.dumps(terms),
+                        }, files={"file": ("meeting.wav", _pcm_wav_fixture(), "audio/wav")})
+                    self.assertEqual(response.status_code, 200, response.text)
+                    self.assertIn(f"event: {event}", response.text)
+                    self.assertIn('"preserve_existing": true', response.text)
+                    upload.assert_not_called()
+                    self.assertFalse(main.ANALYSIS_JOBS.has(job_id))
+                    self.assertEqual(Path(paths.state_path).read_bytes(), state_before)
+
+    def test_hotword_reanalysis_isolated_and_same_terms_resume(self) -> None:
+        with tempfile.TemporaryDirectory() as work_dir:
+            config = main.normalize_app_config({
+                "paths": {
+                    "temp_dir": work_dir, "output_dir": work_dir, "ffmpeg": "ffmpeg",
+                    "stt_model": "faster-whisper-large-v3", "diarization_model": "", "llm_model": "",
+                },
+                "stt": {"language": "ko", "device": "cpu", "chunk_seconds": 30},
+                "processing": {"enable_long_audio_chunking": True},
+                "diarization": {"enabled": False}, "summary": {"enabled": False},
+                "preprocessing": {"enabled": False},
+            })
+            chunks = [
+                {"path": TEST_AUDIO_PATH, "offset": index * 0.5, "duration": 0.5}
+                for index in range(2)
+            ]
+            input_path = Path(work_dir) / "source.wav"
+            input_path.write_bytes(_pcm_wav_fixture())
+
+            def convert(_source, output, *_args, **_kwargs):
+                Path(output).write_bytes(_pcm_wav_fixture())
+                return {}
+
+            def decode(text, expected_terms):
+                def transcribe(*_args, **kwargs):
+                    self.assertEqual(kwargs.get("hotwords"), expected_terms)
+                    return [{"start": 0.0, "end": 0.4, "text": text}]
+                return transcribe
+
+            def pipeline(job, terms):
+                return process_audio_pipeline(str(input_path), job, config, meeting_context={"stt_hotwords": terms})
+
+            with (
+                patch("pipeline.audio_preprocess.convert_to_wav", side_effect=convert),
+                patch("pipeline.chunk_audio.split_wav_by_duration", return_value=chunks),
+                patch("pipeline.export_txt.export_txt"),
+                patch("pipeline.transcribe.transcribe_audio") as model,
+            ):
+                old_paths = build_job_checkpoint_paths(work_dir, "terms_a")
+                old_chunk = Path(old_paths.stt_dir) / "chunk_001.json"
+                def stop_after_first(*args, **kwargs):
+                    if model.call_count == 2:
+                        raise AnalysisCancelledError("stop")
+                    return decode("old first", "EFSA")(*args, **kwargs)
+
+                model.side_effect = stop_after_first
+                with self.assertRaises(AnalysisCancelledError):
+                    pipeline("terms_a", ["EFSA"])
+                old_bytes = old_chunk.read_bytes()
+                main._write_job_state(old_paths, {"resume_requested": True})
+                model.reset_mock()
+                model.side_effect = decode("old second", "EFSA")
+                resumed = pipeline("terms_a", ["EFSA"])
+                self.assertEqual(resumed["resume"]["reused_chunk_count"], 1)
+                self.assertEqual(model.call_count, 1)
+                self.assertEqual([seg["text"] for seg in resumed["result_data"]["raw_stt_segments"]],
+                                 ["old first", "old second"])
+
+                for job, terms, expected in (("terms_b", ["BioHub"], "BioHub"), ("terms_off", [], None)):
+                    model.reset_mock()
+                    model.side_effect = decode(job, expected)
+                    new = pipeline(job, terms)
+                    self.assertEqual(new["resume"]["reused_chunk_count"], 0)
+                    self.assertEqual(model.call_count, 2)
+                    self.assertEqual([seg["text"] for seg in new["result_data"]["raw_stt_segments"]], [job, job])
+                    with patch("main.load_config", return_value=config):
+                        saved = self.client.get(f"/api/analyze/{job}/recoverable-result")
+                    self.assertEqual(saved.status_code, 200, saved.text)
+                    self.assertEqual(saved.json()["stt_hotwords"], terms)
+                self.assertEqual(old_chunk.read_bytes(), old_bytes)
+
     def test_analysis_config_fingerprint_ignores_summary_and_diarization_execution_policy(self) -> None:
         base_config = {
             "paths": {
@@ -5571,12 +5759,16 @@ class AnalyzeApiTest(unittest.TestCase):
         self.assertEqual(plan["audio_filter"], "speechnorm")
 
     def test_faster_whisper_auto_retries_on_cpu_when_cuda_runtime_breaks_during_transcribe(self) -> None:
+        received_hints: list[str] = []
+
         class FailingCudaModel:
             def transcribe(self, *args, **kwargs):
+                received_hints.append(kwargs["hotwords"])
                 raise RuntimeError("Library cublas64_12.dll is not found or cannot be loaded")
 
         class CpuModel:
             def transcribe(self, *args, **kwargs):
+                received_hints.append(kwargs["hotwords"])
                 segment = types.SimpleNamespace(start=0.0, end=1.0, text="안녕하세요")
                 return iter([segment]), {}
 
@@ -5597,9 +5789,10 @@ class AnalyzeApiTest(unittest.TestCase):
             patch.dict(sys.modules, {"faster_whisper": fake_faster_whisper, "torch": fake_torch}),
             patch("pipeline.transcribe._windows_cuda_runtime_is_usable", return_value=True),
         ):
-            segments = transcribe_audio_fallback_whisper("dummy.wav", "dummy-model", device="auto")
+            segments = transcribe_audio_fallback_whisper("dummy.wav", "dummy-model", device="auto", hotwords="EFSA, A-007")
 
         self.assertEqual(calls, ["auto", "cpu"])
+        self.assertEqual(received_hints, ["EFSA, A-007", "EFSA, A-007"])
         self.assertEqual(len(segments), 1)
         self.assertEqual(segments[0]["text"], "안녕하세요")
 

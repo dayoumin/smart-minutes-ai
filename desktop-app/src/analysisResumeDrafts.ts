@@ -13,6 +13,7 @@ export interface AnalysisResumeDraft {
     reportTemplate?: ReportTemplate;
     selectedTermGlossaryIds?: string[];
     termGlossaries?: TermGlossary[];
+    sttHotwords?: string[];
     sourceFilename: string;
     sourceSize: number;
     sourceLastModified: number;
@@ -35,6 +36,10 @@ export interface AnalysisResumeDraftFileKey {
     sourceSize: number;
     sourceLastModified: number;
 }
+
+export const sameSttHotwords = (left: string[] = [], right: string[] = []): boolean => (
+    left.length === right.length && left.every((term, index) => term === right[index])
+);
 
 const STORAGE_KEY = 'analysisResumeDrafts';
 const SUPPRESSED_STORAGE_KEY = 'suppressedResumeCandidateKeys';
@@ -293,6 +298,7 @@ export const markAnalysisResumeDraftsForKeyUnavailable = (
         updatedAt?: string;
         exceptJobId?: string | null;
         clearSuppression?: boolean;
+        sttHotwords?: string[];
     } = {},
 ): void => {
     const draftKey = getResumeDraftKey(value);
@@ -300,7 +306,8 @@ export const markAnalysisResumeDraftsForKeyUnavailable = (
     const drafts = readDrafts();
     let draftsChanged = false;
     const next = drafts.map(draft => {
-        if (getResumeDraftKey(draft) !== draftKey || draft.jobId === options.exceptJobId) return draft;
+        if (getResumeDraftKey(draft) !== draftKey || draft.jobId === options.exceptJobId
+            || !sameSttHotwords(draft.sttHotwords, options.sttHotwords)) return draft;
         draftsChanged = true;
         return {
             ...draft,

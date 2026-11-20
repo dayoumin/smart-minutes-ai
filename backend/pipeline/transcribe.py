@@ -193,6 +193,8 @@ def transcribe_audio_fallback_whisper(
     model_path: str = "large-v3",
     language: str = "ko",
     device: str = "auto",
+    *,
+    hotwords: str = "",
 ) -> List[Dict]:
     import traceback
 
@@ -217,7 +219,7 @@ def transcribe_audio_fallback_whisper(
         _clear_faster_whisper_model_cache()
         if device == "auto" and _looks_like_cuda_runtime_error(exc):
             print("[STT] CUDA runtime is unavailable in auto mode; retrying faster-whisper on CPU.")
-            return transcribe_audio_fallback_whisper(wav_path, model_path, language, "cpu")
+            return transcribe_audio_fallback_whisper(wav_path, model_path, language, "cpu", hotwords=hotwords)
         raise RuntimeError(f"Failed to load faster-whisper model: {exc}") from exc
 
     try:
@@ -228,6 +230,7 @@ def transcribe_audio_fallback_whisper(
             beam_size=1,
             vad_filter=True,
             vad_parameters=dict(min_silence_duration_ms=500),
+            **({"hotwords": hotwords} if hotwords else {}),
         )
 
         results = []
@@ -248,7 +251,7 @@ def transcribe_audio_fallback_whisper(
         _clear_faster_whisper_model_cache()
         if device == "auto" and _looks_like_cuda_runtime_error(exc):
             print("[STT] CUDA runtime failed during transcription; retrying faster-whisper on CPU.")
-            return transcribe_audio_fallback_whisper(wav_path, model_path, language, "cpu")
+            return transcribe_audio_fallback_whisper(wav_path, model_path, language, "cpu", hotwords=hotwords)
         raise RuntimeError(f"STT processing failed: {exc}") from exc
 
 
@@ -578,12 +581,16 @@ def transcribe_audio(
     chunk_seconds: int = 30,
     fallback_model_path: str | None = None,
     qwen_aligner_model_path: str | None = None,
+    *,
+    hotwords: str = "",
 ) -> List[Dict]:
     if "faster-whisper" in model_path.lower() or "large-v3" in model_path.lower():
         print(f"[STT] Defaulting to faster-whisper ({model_path}).")
-        return transcribe_audio_fallback_whisper(wav_path, model_path, language, device)
+        return transcribe_audio_fallback_whisper(wav_path, model_path, language, device, hotwords=hotwords)
 
     if "qwen" in model_path.lower():
+        if hotwords:
+            raise RuntimeError("선택한 음성 인식 모델은 주요 용어를 지원하지 않습니다.")
         print(f"[STT] Defaulting to Qwen ASR ({model_path}).")
         return transcribe_audio_qwen(wav_path, model_path, qwen_aligner_model_path, language, device)
 

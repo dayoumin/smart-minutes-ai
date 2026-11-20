@@ -115,6 +115,12 @@ from pipeline.transcribe import get_stt_device_status
 from pipeline.transcript_display import SPEAKER_REVIEW_FLAG_ALIASES, speaker_review_flags
 from pipeline.transcript_review import review_fields
 from process_utils import hidden_subprocess_kwargs
+from stt_hotwords import (
+    format_stt_hotwords,
+    normalize_stt_hotwords,
+    stt_hotwords_fingerprint,
+    validate_stt_hotword_budget,
+)
 from storage_preflight import build_analysis_storage_preflight
 
 BASE_DIR = os.path.abspath(
@@ -572,6 +578,7 @@ def _seed_analysis_job_state(
     source_size: int | None,
     source_last_modified: int | None,
     resume_requested: bool,
+    hotwords_fingerprint: str = "",
 ) -> None:
     temp_dir = resolve_config_path(config["paths"]["temp_dir"])
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
@@ -595,6 +602,7 @@ def _seed_analysis_job_state(
         # Keep the cache's identity until the pipeline checks the actual input.
         # Relabeling old checkpoints with a new config could wrongly reuse audio.
         "config_fingerprint": previous.get("config_fingerprint") if previous else _analysis_config_fingerprint(config),
+        "stt_hotwords_fingerprint": hotwords_fingerprint,
         "pipeline_version": ANALYSIS_PIPELINE_VERSION,
         "checkpoint_version": ANALYSIS_CHECKPOINT_VERSION,
         "resume_requested": bool(resume_requested),
@@ -651,6 +659,7 @@ def _find_resume_candidates(
     source_filename: str,
     source_size: int | None,
     source_last_modified: int | None,
+    hotwords_fingerprint: str | None = None,
 ) -> list[dict]:
     temp_dir = resolve_config_path(config["paths"]["temp_dir"])
     jobs_root = os.path.join(os.path.abspath(temp_dir), "jobs")
@@ -688,7 +697,10 @@ def _find_resume_candidates(
             and _normalize_resume_last_modified(state.get("source_last_modified")) != expected_last_modified
         ):
             continue
-        candidates.append(_build_resume_candidate_payload(job_id, state))
+        candidate = _build_resume_candidate_payload(job_id, state)
+        if hotwords_fingerprint is not None:
+            candidate["stt_hotwords_match"] = state.get("stt_hotwords_fingerprint", "") == hotwords_fingerprint
+        candidates.append(candidate)
 
     candidates.sort(
         key=lambda item: (
@@ -1040,6 +1052,7 @@ async def models_status() -> dict:
         status["ready"] = all(model.get("installed") for model in required_models)
         status["selected_stt_model"] = selected_stt
         status["selected_stt_device"] = selected_device
+        status["stt_hotwords_supported"] = True
         status["diarization_enabled"] = diarization_enabled
         status["diarization_generate_during_analysis"] = diarization_during_analysis
         status["summary_ready"] = bool(summary_readiness.get("ready"))
@@ -5892,6 +5905,7 @@ def _meeting_record_to_export_result(payload: dict) -> dict:
         "context_template": payload.get("contextTemplate") or payload.get("context_template") or {},
         "selected_term_glossary_ids": payload.get("selectedTermGlossaryIds") or payload.get("selected_term_glossary_ids") or [],
         "term_glossaries": payload.get("termGlossaries") or payload.get("term_glossaries") or [],
+        "stt_hotwords": payload.get("sttHotwords") or payload.get("stt_hotwords") or [],
         "meeting_report": meeting_report,
         "segments": segments,
         "display_segments": display_segments,
@@ -6238,6 +6252,44 @@ async def analyze_preflight(payload: dict = Body(...)) -> dict:
     )
 
 
+def _parse_analysis_hotwords(value: object, *, from_form: bool = False) -> list[str]:
+    try:
+        if from_form and isinstance(value, str):
+            # The form is optional for older browsers. A provided JSON value must be a list.
+            if len(value) > 8_192:
+                raise ValueError("주요 용어가 너무 깁니다. 목록의 길이를 줄여 주세요.")
+            value = json.loads(value) if value else []
+        elif from_form:  # Direct calls in other analysis entry points use FastAPI's default.
+            value = []
+        return normalize_stt_hotwords(value)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(422, detail={
+            "code": "invalid_stt_hotwords", "message": "주요 용어 목록을 읽을 수 없습니다.",
+        }) from exc
+    except ValueError as exc:
+        raise HTTPException(422, detail={"code": "invalid_stt_hotwords", "message": str(exc)}) from exc
+
+
+def _check_analysis_hotword_ownership(config: dict, job_id: str, fingerprint: str) -> None:
+    paths = build_job_checkpoint_paths(resolve_config_path(config["paths"]["temp_dir"]), job_id)
+    state = _load_job_state(paths)
+    if state:
+        mismatch = state.get("stt_hotwords_fingerprint", "") != fingerprint
+    else:
+        output_dir = resolve_config_path(config["paths"]["output_dir"])
+        mismatch = (
+            os.path.exists(paths.state_path)
+            or (os.path.isdir(paths.stt_dir) and bool(os.listdir(paths.stt_dir)))
+            or any(os.path.isfile(os.path.join(output_dir, f"{job_id}{suffix}"))
+                   for suffix in ("_result.json", "_partial_result.json"))
+        )
+    if mismatch:
+        raise HTTPException(409, detail={
+            "code": "stt_hotwords_mismatch",
+            "message": "이전 분석과 적용 용어가 다르거나 확인할 수 없습니다. 새 분석으로 시작해 주세요.",
+        })
+
+
 @app.post("/api/analyze")
 async def analyze_meeting(
     title: str = Form(...),
@@ -6257,6 +6309,7 @@ async def analyze_meeting(
     context_template: str = Form(""),
     selected_term_glossary_ids: str = Form(""),
     term_glossaries: str = Form(""),
+    stt_hotwords: str = Form(""),
 ) -> StreamingResponse:
     if not isinstance(meeting_purpose, str):
         meeting_purpose = ""
@@ -6266,6 +6319,7 @@ async def analyze_meeting(
     context_template_payload = _parse_json_form_field(context_template, {})
     selected_term_glossary_ids_payload = _parse_json_form_field(selected_term_glossary_ids, [])
     term_glossaries_payload = _parse_json_form_field(term_glossaries, [])
+    hotwords = _parse_analysis_hotwords(stt_hotwords, from_form=True)
     if mode not in {"mock", "real"}:
         raise HTTPException(status_code=400, detail="mode must be 'mock' or 'real'")
 
@@ -6277,8 +6331,27 @@ async def analyze_meeting(
                 cancel_event = ANALYSIS_JOBS.create(analysis_job_id, admission_pending=True)
         except ValueError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        config = load_config()
+        upload_started = False
         try:
+            config = load_config()
+            hotwords_fingerprint = stt_hotwords_fingerprint(hotwords)
+            _check_analysis_hotword_ownership(config, analysis_job_id, hotwords_fingerprint)
+            if hotwords:
+                model_path = resolve_model_path(BASE_DIR, get_model_spec("stt_faster_whisper"))
+                try:
+                    await asyncio.to_thread(validate_stt_hotword_budget, hotwords, model_path)
+                except Exception as exc:
+                    if cancel_event.is_set():
+                        raise AnalysisCancelledError() from exc
+                    message = str(exc) if isinstance(exc, ValueError) else (
+                        "주요 용어를 확인할 수 없습니다. 음성 인식 모델을 확인해 주세요."
+                    )
+                    raise HTTPException(422, detail={
+                        "code": "invalid_stt_hotwords", "message": message,
+                    }) from exc
+            if cancel_event.is_set():
+                raise AnalysisCancelledError()
+            upload_started = True
             upload_path = await save_analysis_upload(
                 file, analysis_job_id, verify_duration=True, verify_cached_audio=resume_requested,
                 cancel_event=cancel_event,
@@ -6290,6 +6363,7 @@ async def analyze_meeting(
                 source_size=file_size,
                 source_last_modified=file_last_modified,
                 resume_requested=resume_requested,
+                hotwords_fingerprint=hotwords_fingerprint,
             )
         except MediaDurationError as exc:
             ANALYSIS_JOBS.remove(analysis_job_id, cancel_event)
@@ -6319,6 +6393,8 @@ async def analyze_meeting(
         except asyncio.CancelledError:
             # save_analysis_upload releases this registry entry only after its native probe
             # and staged-file cleanup have actually finished.
+            if not upload_started:
+                ANALYSIS_JOBS.remove(analysis_job_id, cancel_event)
             raise
         except BaseException:
             ANALYSIS_JOBS.remove(analysis_job_id, cancel_event)
@@ -6337,6 +6413,7 @@ async def analyze_meeting(
                 context_template=context_template_payload,
                 selected_term_glossary_ids=selected_term_glossary_ids_payload,
                 term_glossaries=term_glossaries_payload,
+                stt_hotwords=hotwords,
                 diarization_during_analysis=diarization_during_analysis,
                 prepared_upload_path=upload_path,
                 source_filename=file.filename,
@@ -6442,15 +6519,21 @@ async def analyze_resume_candidates(payload: dict = Body(...)) -> dict:
         raise HTTPException(status_code=400, detail="source_filename is required")
 
     config = load_config()
+    has_hotwords = "stt_hotwords" in payload
+    hotwords = _parse_analysis_hotwords(payload.get("stt_hotwords", []))
     candidates = _find_resume_candidates(
         config=config,
         source_filename=source_filename,
         source_size=_normalize_resume_file_size(payload.get("source_size")),
         source_last_modified=_normalize_resume_last_modified(payload.get("source_last_modified")),
+        hotwords_fingerprint=stt_hotwords_fingerprint(hotwords),
     )
+    if not has_hotwords:
+        # Older clients submit without hints. Still report active jobs so they can block a duplicate.
+        candidates = [item for item in candidates if item["stt_hotwords_match"] or item["active"]]
     return {
         "candidates": candidates,
-        "recommended_job_id": candidates[0]["job_id"] if candidates else None,
+        "recommended_job_id": next((item["job_id"] for item in candidates if item["stt_hotwords_match"]), None),
     }
 
 
@@ -6513,6 +6596,7 @@ def _analysis_saved_result_for_ui(job_id: str, result_data: dict, *, partial: bo
         "context_template": result_data.get("context_template", {}),
         "selected_term_glossary_ids": result_data.get("selected_term_glossary_ids", []),
         "term_glossaries": result_data.get("term_glossaries", []),
+        "stt_hotwords": result_data.get("stt_hotwords", []),
         "diarization_requested": bool(settings.get("diarization_requested")) if isinstance(settings, dict) else False,
         "diarization_applied": bool(settings.get("diarization")) if isinstance(settings, dict) else False,
         "diarization_skipped": bool(settings.get("diarization_skipped")) if isinstance(settings, dict) else False,
@@ -6667,6 +6751,7 @@ async def stream_real_analysis(
     context_template: dict | None = None,
     selected_term_glossary_ids: list | None = None,
     term_glossaries: list | None = None,
+    stt_hotwords: list[str] | None = None,
     diarization_during_analysis: bool = True,
     prepared_upload_path: str | None = None,
     source_filename: str | None = None,
@@ -6851,6 +6936,7 @@ async def stream_real_analysis(
                 "context_template": context_template or {},
                 "selected_term_glossary_ids": selected_term_glossary_ids or [],
                 "term_glossaries": term_glossaries or [],
+                "stt_hotwords": stt_hotwords or [],
                 "source_filename": source_filename or (file.filename if file else ""),
             }
             raise_if_cancelled()
@@ -6907,6 +6993,7 @@ async def stream_real_analysis(
                 "context_template": result_data.get("context_template", context_template or {}),
                 "selected_term_glossary_ids": result_data.get("selected_term_glossary_ids", selected_term_glossary_ids or []),
                 "term_glossaries": result_data.get("term_glossaries", term_glossaries or []),
+                "stt_hotwords": result_data.get("stt_hotwords", stt_hotwords or []),
                 "segments": segments_for_ui(result_data.get("segments", [])),
                 "display_segments": segments_for_ui(result_data.get("display_segments", [])),
                 "diarization_skipped": bool(result_settings.get("diarization_skipped")),
@@ -7132,6 +7219,9 @@ def process_audio_pipeline(
     else:
         config = normalize_app_config(config)
     meeting_context = meeting_context or config.get("_meeting_context") or {}
+    stt_hotwords = normalize_stt_hotwords(meeting_context.get("stt_hotwords", []))
+    hotwords_fingerprint = stt_hotwords_fingerprint(stt_hotwords)
+    hotwords = format_stt_hotwords(stt_hotwords)
     validate_media_duration(input_file)
 
     def _raise_if_cancelled():
@@ -7157,6 +7247,8 @@ def process_audio_pipeline(
     compatible_config_fingerprints = _analysis_compatible_config_fingerprints(config)
     checkpoint_paths = build_job_checkpoint_paths(temp_dir, job_id)
     existing_state = _load_job_state(checkpoint_paths)
+    if existing_state and existing_state.get("stt_hotwords_fingerprint", "") != hotwords_fingerprint:
+        raise RuntimeError("이전 분석과 적용 용어가 다릅니다. 새 분석으로 시작해 주세요.")
     if (
         existing_state.get("source_wav_completed")
         and os.path.isfile(checkpoint_paths.source_wav_path)
@@ -7199,6 +7291,7 @@ def process_audio_pipeline(
         "pipeline_version": ANALYSIS_PIPELINE_VERSION,
         "checkpoint_version": ANALYSIS_CHECKPOINT_VERSION,
         "config_fingerprint": config_fingerprint,
+        "stt_hotwords_fingerprint": hotwords_fingerprint,
         "input_fingerprint": input_fingerprint,
         "owner_run_id": owner_run_id,
         "stage": "preprocessing",
@@ -7491,6 +7584,10 @@ def process_audio_pipeline(
         measured_real_seconds = 0.0
         stt_started_at = time.monotonic()
         execution_fingerprint = _stt_execution_fingerprint(model_path, stt_device, stt_chunk_seconds)
+        checkpoint_fingerprint = (
+            build_config_fingerprint({"execution": execution_fingerprint, "stt_hotwords": hotwords_fingerprint})
+            if hotwords_fingerprint else execution_fingerprint
+        )
         stt_baseline_rate = _stt_eta_baseline_rate(config, stt_device, execution_fingerprint)
         _set_stage("transcribing")
 
@@ -7538,7 +7635,7 @@ def process_audio_pipeline(
             checkpoint_payload = load_json_checkpoint(chunk_checkpoint_path) if os.path.exists(chunk_checkpoint_path) else None
             if (
                 checkpoint_payload
-                and _stt_chunk_checkpoint_matches(checkpoint_payload, chunk, idx, execution_fingerprint)
+                and _stt_chunk_checkpoint_matches(checkpoint_payload, chunk, idx, checkpoint_fingerprint)
             ):
                 adjusted_segments = apply_time_offset(
                     checkpoint_payload["segments"],
@@ -7559,6 +7656,7 @@ def process_audio_pipeline(
                     device=stt_device,
                     chunk_seconds=stt_chunk_seconds,
                     fallback_model_path=fallback_stt_model_path if allow_internal_fallback else None,
+                    **({"hotwords": hotwords} if hotwords else {}),
                 )
                 _raise_if_cancelled()
                 adjusted_segments = apply_time_offset(
@@ -7567,7 +7665,7 @@ def process_audio_pipeline(
                     duration_seconds=effective_chunk_durations[idx] or None,
                 )
                 atomic_write_json(chunk_checkpoint_path, {
-                    **_stt_chunk_checkpoint_metadata(chunk, idx, execution_fingerprint),
+                    **_stt_chunk_checkpoint_metadata(chunk, idx, checkpoint_fingerprint),
                     "segments": chunk_segments,
                 })
                 _mark_chunk_completed(idx)
@@ -7652,6 +7750,7 @@ def process_audio_pipeline(
         "context_template": (meeting_context or {}).get("context_template", {}),
         "selected_term_glossary_ids": (meeting_context or {}).get("selected_term_glossary_ids", []),
         "term_glossaries": (meeting_context or {}).get("term_glossaries", []),
+        "stt_hotwords": stt_hotwords,
         "settings": {
             "stt_model": stt_model_path,
             "diarization_model": config["paths"].get("diarization_model"),
@@ -7861,6 +7960,7 @@ def process_audio_pipeline(
         "context_template": (meeting_context or {}).get("context_template", {}),
         "selected_term_glossary_ids": (meeting_context or {}).get("selected_term_glossary_ids", []),
         "term_glossaries": (meeting_context or {}).get("term_glossaries", []),
+        "stt_hotwords": stt_hotwords,
         "settings": {
             "stt_model": stt_model_path,
             "diarization_model": config["paths"].get("diarization_model"),

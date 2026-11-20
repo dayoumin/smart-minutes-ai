@@ -135,6 +135,7 @@ const installBaseRoutes = async (page) => {
     contentType: 'application/json',
     body: JSON.stringify({
       ready: true,
+      stt_hotwords_supported: true,
       models: [
         { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
       ],
@@ -333,6 +334,7 @@ const runScenario = async (
       analyzeOptionalFields = {
         participants: multipartField(postData, 'participants'),
         termGlossaries: JSON.parse(multipartField(postData, 'term_glossaries') ?? '[]'),
+        sttHotwords: JSON.parse(multipartField(postData, 'stt_hotwords') ?? 'null'),
       };
       markAnalyzeStarted();
       if (!delayPartialDuringCancel) await analyzeCanFinish;
@@ -403,12 +405,17 @@ const runScenario = async (
     await page.locator('.writer-local-promise').getByText(LOCAL_PROMISE, { exact: true }).waitFor({ timeout: 10000 });
     const titleInput = page.getByLabel('회의 제목', { exact: true });
     await page.getByLabel('회의 목적', { exact: true }).fill('분석 중 중지와 취소 동작 확인');
-    // Optional inputs: participants as typed text, key terms as chips (one left typed to prove it still counts).
+    // Combine a selected glossary with a term left in the input field.
     await page.getByRole('button', { name: '참석자·주요 용어 (선택)' }).click();
     await page.getByLabel('참석자 (선택)').fill('김수산, 이자원');
+    await page.getByRole('button', { name: '새 용어집', exact: true }).click();
+    const glossaryDialog = page.getByRole('dialog', { name: '새 용어집' });
+    await glossaryDialog.getByLabel('용어집 이름').fill('분석 중지 실험');
+    await glossaryDialog.getByRole('button', { name: '용어 추가' }).click();
+    await glossaryDialog.getByRole('textbox', { name: '용어 1', exact: true }).fill('연근해 자원조사');
+    await glossaryDialog.getByRole('button', { name: '저장', exact: true }).click();
+    await glossaryDialog.waitFor({ state: 'hidden' });
     const keyTermInput = page.getByLabel('주요 용어 (선택)');
-    await keyTermInput.fill('연근해 자원조사');
-    await keyTermInput.press('Enter');
     await keyTermInput.fill('수산과학원');
     const fileChooserPromise = page.waitForEvent('filechooser');
     await page.getByRole('button', { name: /영상 또는 음성 파일 선택/ }).press('Enter');
@@ -493,6 +500,7 @@ const runScenario = async (
         contentType: 'application/json',
         body: JSON.stringify({
           ready: true,
+          stt_hotwords_supported: true,
           models: [
             { key: 'stt_faster_whisper', label: '음성 인식 기본 모델', installed: true, required: true },
           ],
@@ -514,9 +522,11 @@ const runScenario = async (
     assert.equal(analyzeOptionalFields.termGlossaries.length, 1);
     assert.equal(analyzeOptionalFields.termGlossaries[0].id, 'meeting-key-terms');
     assert.deepEqual(analyzeOptionalFields.termGlossaries[0].entries.map(entry => entry.canonical), ['연근해 자원조사', '수산과학원']);
+    assert.deepEqual(analyzeOptionalFields.sttHotwords, ['연근해 자원조사', '수산과학원']);
     const runningDraft = (await readLocalStorageJson(page, 'analysisResumeDrafts') ?? []).find(draft => draft.jobId === analyzeJobId);
     assert.equal(runningDraft?.participants, '김수산, 이자원', 'the resume draft keeps participants');
     assert.deepEqual(runningDraft?.termGlossaries?.[0]?.entries?.map(entry => entry.canonical), ['연근해 자원조사', '수산과학원']);
+    assert.deepEqual(runningDraft?.sttHotwords, ['연근해 자원조사', '수산과학원']);
     if (delayPartialDuringCancel) await partialRequested;
     const stopMenuButton = page.getByRole('button', { name: '중지/취소' });
     await stopMenuButton.waitFor({ timeout: 10000 });

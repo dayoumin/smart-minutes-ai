@@ -1,5 +1,5 @@
 ﻿import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { AudioLines, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Target, Trash2, Users, X } from 'lucide-react';
+import { AudioLines, CalendarDays, CheckCircle2, ChevronDown, ChevronRight, CircleHelp, Copy, Edit3, FileAudio, ListChecks, Loader2, MoreVertical, Pause, Play, Plus, Save, Search, Square, Tags, Target, Trash2, Users, X } from 'lucide-react';
 import type { LeaveGuard } from './appView';
 import { Button, IconButton, Input, StatusBanner, ProgressBar, AppToast, AppToastMessage, AppToastTone, useAppDialog } from './components/common';
 import { getAllMeetings, getMeetingById, MeetingRecord, MeetingSegment, MeetingSpeakerContextSummary, MeetingTopicSection, modifyMeeting, updateMeeting } from './meetingRepository';
@@ -887,6 +887,7 @@ const buildGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON
     minutesTemplate: meeting.minutesTemplate || {},
     selectedTermGlossaryIds: meeting.selectedTermGlossaryIds || [],
     termGlossaries: meeting.termGlossaries || [],
+    sttHotwords: meeting.sttHotwords,
 });
 
 const buildReportGenerationInputFingerprint = (meeting: MeetingRecord): string => JSON.stringify({
@@ -4235,6 +4236,17 @@ export const MeetingHistory: React.FC<MeetingHistoryProps> = ({
                                             <dt className="meeting-meta-label"><Users size={15} aria-hidden="true" /><span>참석자</span></dt>
                                             <dd className="meeting-meta-value">
                                                 <MeetingParticipants key={selectedMeeting.id} names={participantNames} placeholder={selectedMeeting.participants || (analysisRunning ? '분석 후 확인할 수 있습니다.' : '참석자 정보 없음')} />
+                                            </dd>
+                                        </div>
+                                    )}
+                                    {Boolean(selectedMeeting.sttHotwords?.length) && (
+                                        <div className="meeting-meta-item meeting-meta-item-purpose">
+                                            <dt className="meeting-meta-label"><Tags size={15} aria-hidden="true" /><span>전사 용어</span></dt>
+                                            <dd className="meeting-meta-value">
+                                                <details>
+                                                    <summary>{selectedMeeting.sttHotwords?.length}개</summary>
+                                                    <p className="break-words">{selectedMeeting.sttHotwords?.join(' · ')}</p>
+                                                </details>
                                             </dd>
                                         </div>
                                     )}

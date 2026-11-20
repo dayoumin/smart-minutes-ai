@@ -164,18 +164,22 @@ export const DEFAULT_TERM_GLOSSARIES: TermGlossary[] = [
     },
 ];
 
-const parseGlossaries = (value: string | null): TermGlossary[] | null => {
+const parseGlossaries = (value: string | null, strict = false): TermGlossary[] | null => {
     if (!value) return null;
     try {
         const parsed = JSON.parse(value) as unknown;
         if (!Array.isArray(parsed)) return null;
-        return parsed.filter((item): item is TermGlossary => (
+        const glossaries = parsed.filter((item): item is TermGlossary => (
             Boolean(item)
             && typeof item === 'object'
             && typeof (item as TermGlossary).id === 'string'
             && typeof (item as TermGlossary).name === 'string'
             && Array.isArray((item as TermGlossary).entries)
+            && (item as TermGlossary).entries.every(entry => (
+                Boolean(entry) && typeof entry.id === 'string' && typeof entry.canonical === 'string'
+            ))
         ));
+        return strict && glossaries.length !== parsed.length ? null : glossaries;
     } catch {
         return null;
     }
@@ -357,17 +361,10 @@ export const getReportTemplateById = (templateId?: string): ReportTemplate => (
 export const listTermGlossaries = (): TermGlossary[] => {
     if (typeof window === 'undefined') return DEFAULT_TERM_GLOSSARIES.map(cloneTermGlossary);
     try {
-        const stored = parseGlossaries(window.localStorage.getItem(TERM_GLOSSARIES_STORAGE_KEY));
-        if (!stored) {
-            window.localStorage.setItem(TERM_GLOSSARIES_STORAGE_KEY, JSON.stringify(DEFAULT_TERM_GLOSSARIES));
-            return DEFAULT_TERM_GLOSSARIES.map(cloneTermGlossary);
-        }
+        const stored = parseGlossaries(window.localStorage.getItem(TERM_GLOSSARIES_STORAGE_KEY)) ?? [];
         const storedIds = new Set(stored.map(glossary => glossary.id));
         const missingBuiltIns = DEFAULT_TERM_GLOSSARIES.filter(glossary => !storedIds.has(glossary.id));
-        if (!missingBuiltIns.length) return stored.map(cloneTermGlossary);
-        const next = [...stored, ...missingBuiltIns];
-        window.localStorage.setItem(TERM_GLOSSARIES_STORAGE_KEY, JSON.stringify(next));
-        return next.map(cloneTermGlossary);
+        return [...stored, ...missingBuiltIns].filter(item => item.id !== MEETING_KEY_TERMS_GLOSSARY_ID).map(cloneTermGlossary);
     } catch {
         return DEFAULT_TERM_GLOSSARIES.map(cloneTermGlossary);
     }
@@ -389,15 +386,54 @@ interface GlossaryLike {
     entries?: Array<{ canonical: string; active?: boolean }>;
 }
 
-/** Splits typed text on commas and line breaks, trims, drops repeats, and caps count and length. */
+/** Normalizes entries that have already been separated by the input control. */
 export const normalizeMeetingKeyTerms = (terms: string[]): string[] => {
-    const result: string[] = [];
-    for (const raw of terms.flatMap(term => term.split(/[,\n]/))) {
-        const term = raw.replace(/\s+/g, ' ').trim().slice(0, MAX_MEETING_KEY_TERM_LENGTH);
-        if (term && !result.includes(term)) result.push(term);
-        if (result.length >= MAX_MEETING_KEY_TERMS) break;
+    return [...new Set(terms.map(term => term.replace(/\s+/g, ' ').trim()).filter(Boolean))];
+};
+
+export const meetingKeyTermsError = (terms: string[]): string | null => {
+    if (terms.length > MAX_MEETING_KEY_TERMS) return `주요 용어는 최대 ${MAX_MEETING_KEY_TERMS}개까지 적용할 수 있습니다.`;
+    if (terms.some(term => [...term].length > MAX_MEETING_KEY_TERM_LENGTH)) {
+        return `주요 용어는 한 항목에 ${MAX_MEETING_KEY_TERM_LENGTH}자까지 입력할 수 있습니다.`;
     }
-    return result;
+    return null;
+};
+
+export const getGlossaryTerms = (glossary?: TermGlossary): string[] => normalizeMeetingKeyTerms(
+    glossary?.entries.filter(entry => entry.active !== false).map(entry => entry.canonical) ?? [],
+);
+
+const updateStoredTermGlossaries = (update: (stored: TermGlossary[]) => TermGlossary[]) => {
+    const raw = window.localStorage.getItem(TERM_GLOSSARIES_STORAGE_KEY);
+    const stored = raw === null ? [] : parseGlossaries(raw, true);
+    // Preserve the original stored data if it cannot be parsed safely.
+    if (!stored) throw new Error('invalid_term_glossaries');
+    window.localStorage.setItem(TERM_GLOSSARIES_STORAGE_KEY, JSON.stringify(update(stored)));
+};
+
+const assertEditableGlossary = (id: string) => {
+    if (id === MEETING_KEY_TERMS_GLOSSARY_ID || DEFAULT_TERM_GLOSSARIES.some(item => item.id === id)) {
+        throw new Error('reserved_term_glossary');
+    }
+};
+
+export const saveTermGlossary = (glossary: TermGlossary): void => {
+    assertEditableGlossary(glossary.id);
+    const next = cloneTermGlossary(glossary);
+    updateStoredTermGlossaries(stored => {
+        if (stored.some(item => item.id === next.id && item.builtIn)) throw new Error('reserved_term_glossary');
+        return stored.some(item => item.id === next.id)
+            ? stored.map(item => item.id === next.id ? next : item)
+            : [...stored, next];
+    });
+};
+
+export const deleteTermGlossary = (id: string): void => {
+    assertEditableGlossary(id);
+    updateStoredTermGlossaries(stored => {
+        if (stored.some(item => item.id === id && item.builtIn)) throw new Error('reserved_term_glossary');
+        return stored.filter(item => item.id !== id);
+    });
 };
 
 export const buildMeetingKeyTermsGlossaries = (terms: string[]): TermGlossary[] => {

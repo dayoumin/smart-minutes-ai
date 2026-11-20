@@ -77,6 +77,7 @@ export interface AnalyzeResult {
     selectedTermGlossaryIds?: string[];
     term_glossaries?: TermGlossary[];
     termGlossaries?: TermGlossary[];
+    stt_hotwords?: string[];
     meeting?: {
         source_file?: string;
         job_id?: string;
@@ -390,6 +391,7 @@ export const meetingRecordFromSavedAnalysis = (
         || data.term_glossaries
         || draft.termGlossaries
         || [],
+    sttHotwords: data.stt_hotwords,
     summary: data.summary || '대화록을 저장했습니다.',
     segments: data.segments || [],
     displaySegments: data.displaySegments || data.display_segments || [],

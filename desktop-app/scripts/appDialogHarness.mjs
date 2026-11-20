@@ -59,7 +59,7 @@ export const installAppDialogs = async page => {
       }
     };
     new MutationObserver(() => {
-      for (const element of document.querySelectorAll('.app-dialog')) {
+      for (const element of document.querySelectorAll('.app-dialog-backdrop .app-dialog')) {
         if (seen.has(element)) continue;
         seen.add(element);
         void answer(element);

@@ -26,12 +26,14 @@ import {
     removePendingCancelledAnalysisCleanup,
     removePendingAnalysisDraftCleanup,
     suppressResumeCandidateKey,
+    sameSttHotwords,
     unsuppressResumeCandidateKey,
     upsertAnalysisResumeDraft,
 } from './analysisResumeDrafts';
 import type { LeaveGuard } from './appView';
 import { Button, IconButton, Input, ProgressBar, StatusBanner, AppToast, AppToastMessage, AppToastTone, useAppDialog } from './components/common';
 import { DesktopInstallDownload } from './DesktopInstallDownload';
+import { TermGlossaryDialog } from './TermGlossaryDialog';
 import type { MeetingRecord } from './meetingRepository';
 import { getApiBase, isTauriRuntime, openSavedFileLocation, writeFrontendLog } from './apiBase';
 import { BRAND_NAME, LOCAL_ENGINE_NAME, withJosa } from './brand';
@@ -51,8 +53,14 @@ import {
     getContextTemplateById,
     getReportTemplateById,
     buildMeetingKeyTermsGlossaries,
+    deleteTermGlossary,
+    getGlossaryTerms,
     getMeetingKeyTerms,
+    listTermGlossaries,
+    saveTermGlossary,
+    meetingKeyTermsError,
     normalizeMeetingKeyTerms,
+    type TermGlossary,
 } from './meetingKnowledge';
 import { claimAnalysisJob, queueAnalysisJobMutation, releaseAnalysisJob } from './analysisJobRuntime';
 import {
@@ -178,6 +186,7 @@ interface ResumeCandidate {
     active: boolean;
     chunk_count: number;
     completed_chunk_count: number;
+    stt_hotwords_match?: boolean;
     last_progress?: {
         message?: string;
         progress?: number;
@@ -208,6 +217,7 @@ interface ModelsPayload {
     models: ModelStatus[];
     errors?: string[];
     selected_stt_device?: string;
+    stt_hotwords_supported?: boolean;
     stt_device_status?: { gpu_usable?: boolean; gpu_reason?: string };
     diarization_generate_during_analysis?: boolean;
 }
@@ -591,11 +601,20 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     const [participants, setParticipants] = useState('');
     const [keyTerms, setKeyTerms] = useState<string[]>([]);
     const [keyTermDraft, setKeyTermDraft] = useState('');
+    const [termGlossaries, setTermGlossaries] = useState(listTermGlossaries);
+    const [selectedGlossaryId, setSelectedGlossaryId] = useState('');
+    const [glossaryTerms, setGlossaryTerms] = useState<string[]>([]);
+    const [editingGlossary, setEditingGlossary] = useState<TermGlossary | null | undefined>(undefined);
     const [optionalInfoOpen, setOptionalInfoOpen] = useState(readOptionalInfoOpen);
     const keyTermInputRef = useRef<HTMLInputElement>(null);
+    const glossarySelectRef = useRef<HTMLSelectElement>(null);
+    const analysisSttHotwordsRef = useRef<string[] | undefined>(undefined);
+    const selectedGlossary = termGlossaries.find(glossary => glossary.id === selectedGlossaryId);
+    const keyTermChips = useMemo(() => normalizeMeetingKeyTerms([...glossaryTerms, ...keyTerms]), [glossaryTerms, keyTerms]);
     // A term typed but not yet turned into a chip still counts when the analysis starts.
-    const submittedKeyTerms = useMemo(() => normalizeMeetingKeyTerms([...keyTerms, keyTermDraft]), [keyTermDraft, keyTerms]);
+    const submittedKeyTerms = useMemo(() => normalizeMeetingKeyTerms([...keyTermChips, keyTermDraft]), [keyTermDraft, keyTermChips]);
     const keyTermGlossaries = useMemo(() => buildMeetingKeyTermsGlossaries(submittedKeyTerms), [submittedKeyTerms]);
+    const keyTermsIssue = meetingKeyTermsError(submittedKeyTerms);
     const participantCount = countParticipantNames(participants);
     const optionalInfoSummary = [
         participantCount > 0 ? `참석자 ${participantCount}명` : '',
@@ -614,6 +633,33 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
     };
     const addKeyTerms = (values: string[]) => {
         setKeyTerms(current => normalizeMeetingKeyTerms([...current, ...values]));
+    };
+    const removeKeyTerm = (term: string) => {
+        setKeyTerms(current => current.filter(item => item !== term));
+        setGlossaryTerms(current => current.filter(item => item !== term));
+    };
+    const selectGlossary = (glossary?: TermGlossary) => {
+        setSelectedGlossaryId(glossary?.id ?? '');
+        setGlossaryTerms(getGlossaryTerms(glossary));
+    };
+    const closeGlossaryEditor = () => setEditingGlossary(undefined);
+    const handleSaveGlossary = (glossary: TermGlossary) => {
+        saveTermGlossary(glossary);
+        setTermGlossaries(listTermGlossaries());
+        if (selectedGlossary?.id === glossary.id) {
+            const excluded = getGlossaryTerms(selectedGlossary).filter(term => !glossaryTerms.includes(term));
+            setGlossaryTerms(getGlossaryTerms(glossary).filter(term => !excluded.includes(term)));
+        } else {
+            selectGlossary(glossary);
+        }
+        closeGlossaryEditor();
+    };
+    const handleDeleteGlossary = (id: string) => {
+        deleteTermGlossary(id);
+        setTermGlossaries(listTermGlossaries());
+        selectGlossary();
+        closeGlossaryEditor();
+        window.requestAnimationFrame(() => glossarySelectRef.current?.focus());
     };
     const commitKeyTermDraft = () => {
         if (keyTermDraft.trim()) addKeyTerms([keyTermDraft]);
@@ -803,13 +849,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         Boolean(title.trim())
         || Boolean(meetingPurpose.trim())
         || Boolean(participants.trim())
-        || keyTerms.length > 0
+        || keyTermChips.length > 0
         || Boolean(keyTermDraft.trim())
         || selectedReportTemplateId !== DEFAULT_REPORT_TEMPLATE_ID
         || Boolean(file)
         || Boolean(selectedResumeDraftId)
         || date !== initialDateValue
-    ), [date, file, initialDateValue, keyTermDraft, keyTerms.length, meetingPurpose, participants, selectedReportTemplateId, selectedResumeDraftId, title]);
+    ), [date, file, initialDateValue, keyTermDraft, keyTermChips.length, meetingPurpose, participants, selectedReportTemplateId, selectedResumeDraftId, title]);
     const hasWriterCloseRisk = isAnalyzing || isExtractingAudio || hasDraftableInput;
 
     useEffect(() => {
@@ -1109,6 +1155,8 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         () => resumeDrafts.find(draft => draft.jobId === selectedResumeDraftId) ?? null,
         [resumeDrafts, selectedResumeDraftId],
     );
+    const resumeTermsChanged = selectedResumeDraft !== null
+        && !sameSttHotwords(submittedKeyTerms, getMeetingKeyTerms(selectedResumeDraft.termGlossaries));
     const selectedResumeDraftActive = selectedResumeDraft?.status === 'active';
 
     const activeResumeDrafts = useMemo(
@@ -1285,14 +1333,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         return { state: 'error', message };
     };
 
-    const ensureModelsReady = async (): Promise<boolean> => {
-        if (ANALYSIS_MODE !== 'real') return true;
+    const ensureModelsReady = async (): Promise<ReadinessCheck | null> => {
+        if (ANALYSIS_MODE !== 'real') return { state: 'ready', message: '' };
 
         setAnalysisPhase('checking-models');
         setStatusMessage('분석 환경을 확인하고 있습니다.');
         const check = await waitForBackendReady(analysisAbortControllerRef.current?.signal);
-        if (analysisCancelledRef.current) return false;
-        if (check.state === 'ready') return true;
+        if (analysisCancelledRef.current) return null;
+        if (check.state === 'ready') return check;
 
         if (check.state === 'missing-models') {
             // Keep refreshReadiness' sentence: it already prefers the engine's own reason over the generic one.
@@ -1300,12 +1348,12 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             setReadinessMessage(check.message);
             setErrorMessage('');
             setAnalysisPhase('idle');
-            return false;
+            return null;
         }
 
         setErrorMessage(check.message);
         setAnalysisPhase('error');
-        return false;
+        return null;
     };
 
     // 다시 확인 from a readiness error: one strict check, without raising status banners.
@@ -1369,6 +1417,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             selectedReportTemplateId: selectedReportTemplate.id,
             reportTemplate: selectedReportTemplate,
             termGlossaries: keyTermGlossaries,
+            sttHotwords: analysisSttHotwordsRef.current ?? existing?.sttHotwords,
             sourceFilename: file.name,
             sourceSize: file.size,
             sourceLastModified: file.lastModified,
@@ -1432,6 +1481,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         setParticipants(draft.meetingPurpose ? draft.participants || '' : '');
         setKeyTerms(getMeetingKeyTerms(draft.termGlossaries));
         setKeyTermDraft('');
+        setSelectedGlossaryId('');
+        setGlossaryTerms([]);
+        if (getMeetingKeyTerms(draft.termGlossaries).length > 0) setOptionalInfoOpen(true);
         setSelectedReportTemplateId(draft.selectedReportTemplateId || DEFAULT_REPORT_TEMPLATE_ID);
         setSelectedResumeDraftId(draft.jobId);
         if (canResumeDraft(draft)) {
@@ -1769,9 +1821,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             if (firstMissing) document.getElementById(firstMissing.focusId)?.focus();
             return;
         }
+        if (keyTermsIssue) {
+            setOptionalInfoOpen(true);
+            window.requestAnimationFrame(() => keyTermInputRef.current?.focus());
+            return;
+        }
 
         analysisInFlightRef.current = true;
-        const initialAnalysisId = selectedResumeDraft?.jobId || crypto.randomUUID();
+        const initialAnalysisId = crypto.randomUUID();
         setAnalysisViewMeeting({
             id: initialAnalysisId,
             title: title.trim(),
@@ -1805,6 +1862,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         analysisStopActionRef.current = null;
         analysisStopAcceptedActionRef.current = null;
         analysisPreserveExistingRef.current = false;
+        analysisSttHotwordsRef.current = undefined;
         analysisResumeDraftBeforeRequestRef.current = undefined;
         analysisStopDecisionPromiseRef.current = null;
         setStatusMessage('분석 환경을 확인하고 있습니다.');
@@ -1816,7 +1874,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             videoFileInputRef.current.value = '';
         }
 
-        let mediaAdmissionRejected = false;
+        let admissionRejected = false;
         try {
             const startSettingsRequestId = analysisSettingsRequestRef.current + 1;
             analysisSettingsRequestRef.current = startSettingsRequestId;
@@ -1834,6 +1892,23 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             const modelsReady = await ensureModelsReady();
             if (!modelsReady) return;
             if (analysisCancelledRef.current) return;
+            const supportsHotwords = modelsReady.models?.stt_hotwords_supported === true;
+            let hotwords = selectedResumeDraft && !resumeTermsChanged
+                ? selectedResumeDraft.sttHotwords ?? []
+                : submittedKeyTerms;
+            let startFresh = false;
+            if (ANALYSIS_MODE === 'real' && !supportsHotwords && (hotwords.length || selectedResumeDraft?.sttHotwords?.length)) {
+                startFresh = Boolean(selectedResumeDraft?.sttHotwords?.length);
+                const confirmed = await appDialog.confirm({
+                    title: '이 엔진은 전사에 주요 용어를 적용할 수 없습니다',
+                    description: startFresh
+                        ? '기존 분석을 이어가려면 이 PC의 분석 엔진을 업데이트해 주세요. 전사에 용어를 적용하지 않고 새로 분석할 수도 있습니다.'
+                        : '현재 엔진에서는 입력한 용어를 요약에만 참고합니다. 전사에도 적용하려면 분석 엔진을 업데이트해 주세요.',
+                    confirmLabel: startFresh ? '용어 없이 새로 분석' : '용어 없이 분석',
+                });
+                if (!confirmed || analysisCancelledRef.current) return;
+                hotwords = [];
+            }
             let analysisJobId: string = initialAnalysisId;
             let resumeRequested = false;
             let resumePayload: ResumeCandidatesPayload | null = null;
@@ -1852,6 +1927,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                             source_filename: file.name,
                             source_size: file.size,
                             source_last_modified: file.lastModified,
+                            ...(supportsHotwords ? { stt_hotwords: hotwords } : {}),
                         }),
                         signal: analysisAbortControllerRef.current?.signal,
                     });
@@ -1864,6 +1940,9 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 // The resume check swallows its own failures, so a 중지 during it is noticed here.
                 if (analysisCancelledRef.current) return;
             }
+
+            const canReuseHotwordCandidate = (candidate: ResumeCandidate) => candidate.stt_hotwords_match
+                ?? (hotwords.length === 0 && !getAnalysisResumeDraft(candidate.job_id)?.sttHotwords?.length);
 
             if (selectedResumeDraft) {
                 if (!canResumeDraft(selectedResumeDraft)) {
@@ -1902,7 +1981,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     selectedJobId: selectedResumeDraft.jobId,
                 });
                 const matchingCandidate = orderedCandidates.find(candidate => candidate.job_id === selectedResumeDraft.jobId) || null;
-                if (!matchingCandidate) {
+                if (!matchingCandidate && !startFresh) {
                     const unavailableReason: AnalysisResumeDraftUnavailableReason = selectedResumeDraft.resumeEligible === false || selectedResumeDraft.completedChunkCount === 0
                         ? 'no-checkpoint'
                         : 'not-candidate';
@@ -1919,9 +1998,19 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     setProgress(0);
                     return;
                 }
-                analysisJobId = matchingCandidate.job_id;
-                resumeRequested = true;
-                setStatusMessage('이전 음성 인식 진행분 재사용을 시도합니다.');
+                if (matchingCandidate && !startFresh && canReuseHotwordCandidate(matchingCandidate)
+                    && sameSttHotwords(hotwords, selectedResumeDraft.sttHotwords)) {
+                    analysisJobId = matchingCandidate.job_id;
+                    resumeRequested = true;
+                    setStatusMessage('이전 음성 인식 진행분 재사용을 시도합니다.');
+                } else if (!startFresh) {
+                    const confirmed = await appDialog.confirm({
+                        title: '바꾼 용어로 새로 분석할까요?',
+                        description: '이전 작업은 보관하고 새 용어 목록으로 처음부터 분석합니다.',
+                        confirmLabel: '새로 분석',
+                    });
+                    if (!confirmed || analysisCancelledRef.current) return;
+                }
             } else if (resumePayload) {
                 const allCandidates = sortResumeCandidates(resumePayload.candidates, resumePayload.recommended_job_id);
                 const activeCandidate = allCandidates.find(candidate => candidate.active) || null;
@@ -1935,7 +2024,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 const orderedCandidates = filterPromptableResumeCandidates(allCandidates, {
                     suppressed: suppressedResumeKeys.has(currentFileResumeKey),
                 });
-                const availableCandidate = orderedCandidates[0] || null;
+                const availableCandidate = orderedCandidates.find(canReuseHotwordCandidate) ?? null;
                 if (availableCandidate) {
                     const resumeChoice = await appDialog.choose({
                         title: '같은 파일로 이어서 할 분석이 있습니다',
@@ -1956,6 +2045,13 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     } else {
                         setStatusMessage('새 분석을 처음부터 시작합니다.');
                     }
+                } else if (orderedCandidates.length > 0) {
+                    const confirmed = await appDialog.confirm({
+                        title: '현재 용어로 새로 분석할까요?',
+                        description: '같은 파일에 다른 용어로 진행한 작업이 있습니다. 이전 작업은 보관합니다.',
+                        confirmLabel: '새로 분석',
+                    });
+                    if (!confirmed || analysisCancelledRef.current) return;
                 }
             }
             if (ANALYSIS_MODE === 'real' && file) {
@@ -1975,6 +2071,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 setStatusMessage(resumeRequested ? '이전 음성 인식 진행분 재사용을 시도합니다.' : '');
             }
             if (analysisCancelledRef.current) return;
+            analysisSttHotwordsRef.current = hotwords;
             analysisJobIdRef.current = analysisJobId;
             setAnalysisViewMeeting(current => current ? { ...current, id: analysisJobId } : current);
             analysisResumeDraftIdRef.current = analysisJobId;
@@ -2011,6 +2108,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             formData.append('context_template', JSON.stringify(defaultContextTemplate));
             formData.append('selected_term_glossary_ids', '[]');
             formData.append('term_glossaries', JSON.stringify(keyTermGlossaries));
+            if (supportsHotwords) formData.append('stt_hotwords', JSON.stringify(hotwords));
             formData.append('mode', ANALYSIS_MODE);
             formData.append('job_id', analysisJobId);
             formData.append('file', file as File);
@@ -2027,8 +2125,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
 
             if (!response.ok) {
                 const errorInfo = await readApiErrorInfo(response, `서버 응답 오류: ${response.status}`);
-                mediaAdmissionRejected = errorInfo.code === 'duration_limit_exceeded'
-                    || errorInfo.code === 'media_duration_unavailable';
+                admissionRejected = errorInfo.code === 'duration_limit_exceeded'
+                    || errorInfo.code === 'media_duration_unavailable'
+                    || errorInfo.code === 'invalid_stt_hotwords'
+                    || errorInfo.code === 'stt_hotwords_mismatch';
                 // Keep legacy string details while also accepting structured backend error codes.
                 throw new EngineError(errorInfo.detail || errorInfo.message, errorInfo.code);
             }
@@ -2080,6 +2180,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     termGlossaries: partialData.termGlossaries
                         || partialData.term_glossaries
                         || [],
+                    sttHotwords: partialData.stt_hotwords,
                     summary: partialData.summary || '대화록을 저장했습니다. 참석자 구분을 진행하고 있습니다.',
                     segments: partialData.segments || [],
                     displaySegments: partialData.displaySegments || partialData.display_segments || [],
@@ -2246,6 +2347,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     || finalData.term_glossaries
                     || finalData.meeting?.term_glossaries
                     || [],
+                sttHotwords: finalData.stt_hotwords,
                 summary: finalData.summary || '요약 결과가 없습니다.',
                 segments: finalData.segments || [],
                 displaySegments: finalData.displaySegments || finalData.display_segments || [],
@@ -2305,6 +2407,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                         status: 'completed',
                         errorMessage: completedDraftMessage,
                         exceptJobId: null,
+                        sttHotwords: hotwords,
                     },
                 );
             }
@@ -2334,6 +2437,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             setParticipants('');
             setKeyTerms([]);
             setKeyTermDraft('');
+            selectGlossary();
             setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
             const nextInitialDate = toLocalDateTimeInputValue();
             setInitialDateValue(nextInitialDate);
@@ -2404,7 +2508,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                 && (failure.cause === 'gpu' || /cuda|cublas|cudnn|gpu/i.test(rawFailureText));
             await writeFrontendLog(`analysis failed ${error instanceof Error ? `${error.name}: ${error.message}` : String(error)}`);
             const failedJobId = analysisResumeDraftIdRef.current;
-            if (mediaAdmissionRejected || analysisPreserveExistingRef.current) {
+            if (admissionRejected || analysisPreserveExistingRef.current) {
                 // Admission did not change backend progress; keep the matching local recovery state too.
                 if (failedJobId) restoreUnadmittedAnalysis(failedJobId);
             } else {
@@ -2416,7 +2520,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                     errorMessage: message,
                 });
             }
-            const transcriptKept = !mediaAdmissionRejected && !analysisPreserveExistingRef.current && failedJobId && transcriptReadyRef.current;
+            const transcriptKept = !admissionRejected && !analysisPreserveExistingRef.current && failedJobId && transcriptReadyRef.current;
             if (transcriptKept) {
                 try {
                     await queueMeetingMutation(
@@ -2450,6 +2554,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             analysisStopAcceptedActionRef.current = null;
             analysisPreserveExistingRef.current = false;
             analysisResumeDraftBeforeRequestRef.current = undefined;
+            analysisSttHotwordsRef.current = undefined;
             analysisStopDecisionPromiseRef.current = null;
             analysisFinalMeetingSavePromiseRef.current = null;
             setIsAnalyzing(false);
@@ -2711,6 +2816,7 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
         setParticipants('');
         setKeyTerms([]);
         setKeyTermDraft('');
+        selectGlossary();
         setSelectedReportTemplateId(DEFAULT_REPORT_TEMPLATE_ID);
         const nextInitialDate = toLocalDateTimeInputValue();
         setInitialDateValue(nextInitialDate);
@@ -2874,6 +2980,10 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
             {/* App hides this writer surface while the analysis meeting view is shown, so its toasts would render
                 unseen: during that view they join the detail screen's toast stack, otherwise they go to the page. */}
             {operationToastNode && createPortal(operationToastNode, operationToastTarget)}
+            {editingGlossary !== undefined && (
+                <TermGlossaryDialog glossary={editingGlossary ?? undefined} onClose={closeGlossaryEditor}
+                    onSave={handleSaveGlossary} onDelete={handleDeleteGlossary} />
+            )}
             {showLocalProcessingIntro && (
                 <LocalProcessingNotice
                     runtime={localEngineConnection.runtime}
@@ -2945,14 +3055,14 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                             <div className="writer-field">
                                 <label htmlFor="meeting-key-terms">주요 용어 <span className="writer-optional-mark">(선택)</span></label>
                                 <div className={`input-field writer-term-input ${isAnalyzing ? 'writer-term-input-disabled' : ''}`}>
-                                    {keyTerms.map(term => (
+                                    {keyTermChips.map(term => (
                                         <span key={term} className="writer-term-chip">
                                             <span className="writer-term-chip-label">{term}</span>
                                             <button
                                                 type="button"
                                                 aria-label={`${term} 용어 삭제`}
                                                 onClick={() => {
-                                                    setKeyTerms(current => current.filter(item => item !== term));
+                                                    removeKeyTerm(term);
                                                     // The chip and its button go away; keep the keyboard in the term box.
                                                     keyTermInputRef.current?.focus();
                                                 }}
@@ -2966,27 +3076,48 @@ export const MeetingWriter: React.FC<MeetingWriterProps> = ({ onAnalysisViewChan
                                         ref={keyTermInputRef}
                                         id="meeting-key-terms"
                                         value={keyTermDraft}
+                                        aria-invalid={Boolean(keyTermsIssue)}
+                                        aria-describedby={keyTermsIssue ? 'meeting-key-terms-error' : undefined}
                                         onChange={event => {
-                                            const parts = event.target.value.split(/[,\n]/);
+                                            const input = event.target.value;
+                                            if ((event.nativeEvent as InputEvent).isComposing) {
+                                                setKeyTermDraft(input);
+                                                return;
+                                            }
+                                            // Keep numeric separators such as the comma in 1,000톤.
+                                            const parts = input.split(/(?<!\d),|(?<=\d),(?!\d|$)|[\r\n]/);
                                             const rest = parts.pop() ?? '';
                                             if (parts.length > 0) addKeyTerms(parts);
                                             setKeyTermDraft(rest);
                                         }}
                                         onKeyDown={event => {
                                             // Korean input composes syllables; Enter during composition only finishes the syllable.
-                                            if (event.nativeEvent.isComposing) return;
+                                            if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
                                             if (event.key === 'Enter') {
                                                 event.preventDefault();
                                                 commitKeyTermDraft();
-                                            } else if (event.key === 'Backspace' && !keyTermDraft && keyTerms.length > 0) {
+                                            } else if (event.key === 'Backspace' && !keyTermDraft && keyTermChips.length > 0) {
                                                 event.preventDefault();
-                                                setKeyTerms(current => current.slice(0, -1));
+                                                removeKeyTerm(keyTermChips[keyTermChips.length - 1]);
                                             }
                                         }}
                                         onBlur={commitKeyTermDraft}
-                                        placeholder={keyTerms.length > 0 ? '' : '예: 연근해 자원조사, 수산과학원'}
+                                        placeholder={keyTermChips.length > 0 ? '' : '예: 연근해 자원조사, 수산과학원'}
                                         disabled={isAnalyzing}
                                     />
+                                </div>
+                                {keyTermsIssue && <p id="meeting-key-terms-error" className="app-dialog-error" role="alert">{keyTermsIssue}</p>}
+                                <div className="writer-glossary-actions">
+                                    <select ref={glossarySelectRef} aria-label="용어집" className="input-field"
+                                        value={selectedGlossaryId} disabled={isAnalyzing}
+                                        onChange={event => selectGlossary(termGlossaries.find(item => item.id === event.target.value))}>
+                                        <option value="">용어집 선택</option>
+                                        {termGlossaries.map(glossary => <option key={glossary.id} value={glossary.id}>{glossary.name}</option>)}
+                                    </select>
+                                    <Button type="button" variant="outline" disabled={isAnalyzing}
+                                        onClick={() => setEditingGlossary(null)}>새 용어집</Button>
+                                    <Button type="button" variant="outline" disabled={isAnalyzing || !selectedGlossary}
+                                        onClick={() => setEditingGlossary(selectedGlossary)}>{selectedGlossary?.builtIn ? '용어집 복제' : '용어집 편집'}</Button>
                                 </div>
                             </div>
                         </div>

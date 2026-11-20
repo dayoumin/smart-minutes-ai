@@ -92,6 +92,7 @@ export interface MeetingRecord {
     minutesTemplate?: MeetingReportTemplate;
     selectedTermGlossaryIds?: string[];
     termGlossaries?: MeetingTermGlossary[];
+    sttHotwords?: string[];
     confirmedMinutes?: {
         updatedAt: string;
         segments: MeetingSegment[];
@@ -171,6 +172,7 @@ type StoredMeetingRecord = Partial<MeetingRecord> & {
     minutes_template?: MeetingReportTemplate;
     selected_term_glossary_ids?: string[];
     term_glossaries?: MeetingTermGlossary[];
+    stt_hotwords?: string[];
     confirmed_minutes?: MeetingRecord['confirmedMinutes'];
     meeting_report?: MeetingRecord['meetingReport'];
     folder_id?: string;
@@ -206,6 +208,7 @@ const normalizeMeetingRecord = (record: StoredMeetingRecord): MeetingRecord => (
     minutesTemplate: record.minutesTemplate ?? record.minutes_template,
     selectedTermGlossaryIds: record.selectedTermGlossaryIds ?? record.selected_term_glossary_ids ?? [],
     termGlossaries: record.termGlossaries ?? record.term_glossaries ?? [],
+    sttHotwords: record.sttHotwords ?? record.stt_hotwords,
     confirmedMinutes: record.confirmedMinutes ?? record.confirmed_minutes,
     meetingReport: record.meetingReport ?? record.meeting_report,
     folderId: record.folderId ?? record.folder_id,

@@ -2231,7 +2231,7 @@
     display: none;
   }
 
-  /* Key terms: chips inside an input-looking box; Enter or a comma turns the typed text into a chip. */
+  /* Key terms: chips inside an input-looking box, with numeric commas preserved. */
   .writer-term-input {
     @apply flex h-auto min-h-10 flex-wrap items-center gap-1.5 py-1.5;
   }
@@ -2275,6 +2275,14 @@
   .writer-term-chip button:focus-visible {
     outline: 2px solid var(--focus-ring-color);
     outline-offset: 1px;
+  }
+
+  .writer-glossary-actions {
+    @apply flex flex-wrap items-center gap-2;
+  }
+
+  .writer-glossary-actions select {
+    @apply min-w-0;
   }
 
   .writer-field-grid {
@@ -3545,6 +3553,39 @@
 
   .app-dialog-form .app-dialog-actions {
     @apply mt-1;
+  }
+
+  .glossary-dialog {
+    @apply m-auto;
+    width: calc(100% - 2rem);
+  }
+
+  .glossary-dialog::backdrop {
+    background: var(--bg-overlay);
+  }
+
+  .glossary-dialog-terms {
+    @apply grid min-w-0 gap-2;
+  }
+
+  .glossary-dialog-terms legend {
+    @apply mb-1 text-sm font-medium;
+  }
+
+  .glossary-dialog-row {
+    @apply grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2;
+  }
+
+  .glossary-delete-confirm {
+    @apply flex flex-wrap items-center gap-2 text-sm;
+  }
+
+  .glossary-delete-confirm p {
+    @apply w-full;
+  }
+
+  .glossary-delete-trigger {
+    @apply mr-auto;
   }
 
   .app-dialog-danger {

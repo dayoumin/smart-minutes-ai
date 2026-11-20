@@ -35,6 +35,13 @@
 
 # 0. Immediate queue
 
+## 집에서 이어서 — 전사·참석자 구분 라이브러리 점검 (2026-11-20)
+
+- [ ] **CTranslate2 `4.7.1 → 4.9.0` 비교.** `faster-whisper`가 Whisper 모델을 CPU·GPU에서 실행할 때 쓰는 라이브러리다. 집 Windows PC의 설치 버전과 CPU/GPU를 다시 확인하고, 격리된 환경에서 같은 `large-v3`, 음성, 설정으로 새 프로세스의 첫 전사와 모델 재사용 시 처리 시간을 각각 기록한다. Intel CPU는 `4.8.0`부터 적용된 MKL 최적화 효과를 확인한다. NVIDIA CUDA를 쓸 수 있으면 전사 완료와 엔진 정상 종료도 확인한다. Windows CUDA 종료 문제는 사용자 보고와 수정이 있지만, 같은 Windows CPU·모델 조합의 공개 버전 비교 수치는 확인하지 못했다. [변경 이력](https://github.com/OpenNMT/CTranslate2/blob/v4.9.0/CHANGELOG.md) · [Windows CUDA 종료 보고 및 수정](https://github.com/OpenNMT/CTranslate2/pull/1912)
+- [ ] **pyannote.audio `4.0.4 → 4.1.1` 비교는 증상 재현 시 진행.** 같은 로컬 `Community-1`로 파일 끝에 발화가 있는 짧은 음성의 완료 여부와 마지막 화자 구간을 비교한다. 화자 수 범위를 직접 지정한 환경이라면 짧은 음성에 최소 화자 수를 높게 잡은 사례도 확인한다. Windows에서 TorchCodec이 오디오를 열지 못한 공개 사례가 있다. LMO 회의록은 `soundfile`로 먼저 읽은 파형을 넘기므로 집에서도 앱의 실제 입력 경로로 확인한다. [4.1.0 변경](https://github.com/pyannote/pyannote-audio/releases/tag/4.1.0) · [4.1.1 변경](https://github.com/pyannote/pyannote-audio/releases/tag/4.1.1) · [Windows 사용 사례](https://github.com/alexmonegrop/video-extraction-tool#readme)
+- 2026-11-20 기준 이 PC의 `.venv-desktop` 설치 용량은 CTranslate2 60.97 MiB, pyannote.audio 2.45 MiB, PyTorch 폴더 447.52 MiB다. 포터블의 별도 모델 폴더는 `large-v3` 2.88 GiB, `Community-1` 32.13 MiB다. PyPI 설치 파일(wheel)은 Windows x64·Python 3.12의 CTranslate2 18.84 → 20.41 MB, pyannote.audio 약 0.89 → 0.90 MB다. [CTranslate2 배포 파일](https://pypi.org/project/ctranslate2/4.9.0/#files) · [pyannote.audio 배포 파일](https://pypi.org/pypi/pyannote-audio/4.1.1/json)
+- 완료 조건은 동일 조건의 실행 결과와 채택·유지 판단을 [오디오 성능 기록](docs/audio-performance-improvement-log.md)에 남기는 것이다. 정기 점검은 2개월마다 실제 사용 버전, 공식 변경, Windows 사용자 보고를 확인해 앱에 영향이 있는 항목만 추린다.
+
 ## 집에서 이어서 — 2026-11-19
 
 - 이번 설정 수정은 완료했다. 받기·중지·이어받기의 초점/위치, 중지 중 중복 요청 차단, Storybook23개와 사용자 시나리오4개를 확인했고 독립 agent2명의 최종 검토에서 추가 P1/P2가 없었다. 상세는 `docs/frontend-simulation-testing.md`의 2026-11-19 기록이다.
